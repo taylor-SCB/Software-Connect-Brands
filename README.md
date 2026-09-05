@@ -8,16 +8,22 @@ their data.
 ## Stack
 
 - **Next.js** (App Router) + **TypeScript** — pages and backend logic in one project
-- **Prisma** + **SQLite** — the database (swap SQLite for Postgres later without touching your queries)
+- **Prisma** + **PostgreSQL** — the database
 - **NextAuth (Auth.js)** — login/signup, using email + password
 - **Tailwind CSS** — styling
 
 ## Running it locally
 
+**Just want it on the internet?** See [DEPLOY.md](./DEPLOY.md) — a
+click-by-click guide that needs no terminal.
+
+To run it on your own machine you need Node.js 20+ and a PostgreSQL
+database:
+
 ```bash
 npm install
-cp .env.example .env      # then fill in AUTH_SECRET
-npx prisma migrate dev    # creates the local SQLite database (dev.db)
+cp .env.example .env      # fill in DATABASE_URL and AUTH_SECRET
+npx prisma migrate dev    # creates the tables
 npm run dev
 ```
 
@@ -99,6 +105,7 @@ up to exactly the quote total.
   and give you a link to paste; there's no mail provider wired up yet.
 - **Team members.** The `Role` enum (OWNER/ADMIN/MEMBER) gates branding
   today, but there's no invite flow.
-- **Postgres in production.** Swap the SQLite adapter in
-  `src/lib/prisma.ts` for `@prisma/adapter-pg` and repoint `DATABASE_URL`.
+- **Restricting signup.** Anyone who reaches the URL can create a
+  workspace today. Fine while evaluating, not fine once the address is
+  public.
 - **Custom domains per business**, and **billing** per organization.
