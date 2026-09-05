@@ -1,23 +1,18 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/format";
+import { DEAL_STAGES, DEAL_STAGE_LABELS } from "@/lib/constants";
+import { PageHeader, Card, EmptyState } from "@/components/ui";
+import { IconTrending } from "@/components/icons";
 import { StageSelect } from "./stage-select";
 
-const STAGES = ["NEW", "CONTACTED", "WON", "LOST"] as const;
-
-const stageLabels: Record<string, string> = {
-  NEW: "New",
-  CONTACTED: "Contacted",
-  WON: "Won",
-  LOST: "Lost",
+const STAGE_ACCENTS: Record<string, string> = {
+  NEW: "#38bdf8",
+  CONTACTED: "#fbbf24",
+  WON: "#34d399",
+  LOST: "#fb7185",
 };
-
-function formatCents(cents: number) {
-  return (cents / 100).toLocaleString(undefined, {
-    style: "currency",
-    currency: "USD",
-  });
-}
 
 export default async function DealsPage() {
   const { organizationId } = await requireSession();
@@ -25,53 +20,93 @@ export default async function DealsPage() {
   const deals = await prisma.deal.findMany({
     where: { organizationId },
     orderBy: { createdAt: "desc" },
-    include: { contact: { select: { id: true, name: true } } },
+    include: { contact: { select: { id: true, name: true, company: true } } },
   });
+
+  const openValue = deals
+    .filter((deal) => deal.stage === "NEW" || deal.stage === "CONTACTED")
+    .reduce((sum, deal) => sum + deal.valueCents, 0);
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-gray-900">Deals</h1>
+      <PageHeader
+        eyebrow="Sales"
+        title="Pipeline"
+        subtitle={`${formatCents(openValue)} in open deals`}
+      />
 
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {STAGES.map((stage) => {
-          const stageDeals = deals.filter((deal) => deal.stage === stage);
-          return (
-            <div key={stage} className="rounded-lg border border-gray-200 bg-white">
-              <div className="border-b border-gray-200 px-3 py-2">
-                <h2 className="text-sm font-semibold text-gray-700">
-                  {stageLabels[stage]}{" "}
-                  <span className="text-gray-400">({stageDeals.length})</span>
-                </h2>
-              </div>
-              <div className="space-y-2 p-3">
-                {stageDeals.length === 0 && (
-                  <p className="text-xs text-gray-400">No deals</p>
-                )}
-                {stageDeals.map((deal) => (
-                  <div
-                    key={deal.id}
-                    className="rounded-md border border-gray-200 p-2"
-                  >
-                    <p className="text-sm font-medium text-gray-900">{deal.title}</p>
-                    <Link
-                      href={`/dashboard/contacts/${deal.contact.id}`}
-                      className="text-xs text-indigo-600 hover:underline"
-                    >
-                      {deal.contact.name}
-                    </Link>
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="text-xs text-gray-500">
-                        {formatCents(deal.valueCents)}
-                      </span>
-                      <StageSelect dealId={deal.id} stage={deal.stage} />
-                    </div>
+      {deals.length === 0 ? (
+        <Card lit>
+          <EmptyState
+            icon={<IconTrending size={20} />}
+            title="No deals yet"
+            body="Deals are added from a contact's page — they track the work you're chasing before it becomes a quote."
+            action={
+              <Link href="/dashboard/contacts" className="btn btn-primary btn-sm">
+                Go to contacts
+              </Link>
+            }
+          />
+        </Card>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {DEAL_STAGES.map((stage) => {
+            const stageDeals = deals.filter((deal) => deal.stage === stage);
+            const stageValue = stageDeals.reduce(
+              (sum, deal) => sum + deal.valueCents,
+              0,
+            );
+            return (
+              <div key={stage} className="card card-lit flex flex-col">
+                <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{
+                        background: STAGE_ACCENTS[stage],
+                        boxShadow: `0 0 10px ${STAGE_ACCENTS[stage]}`,
+                      }}
+                    />
+                    <h2 className="text-sm font-semibold">
+                      {DEAL_STAGE_LABELS[stage]}
+                    </h2>
+                    <span className="faint num text-xs">{stageDeals.length}</span>
                   </div>
-                ))}
+                  <span className="num text-xs font-medium">
+                    {formatCents(stageValue)}
+                  </span>
+                </div>
+
+                <div className="flex-1 space-y-2 p-3">
+                  {stageDeals.length === 0 && (
+                    <p className="faint py-4 text-center text-xs">No deals</p>
+                  )}
+                  {stageDeals.map((deal) => (
+                    <div
+                      key={deal.id}
+                      className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3"
+                    >
+                      <p className="text-sm font-medium">{deal.title}</p>
+                      <Link
+                        href={`/dashboard/contacts/${deal.contact.id}`}
+                        className="link text-xs"
+                      >
+                        {deal.contact.company || deal.contact.name}
+                      </Link>
+                      <div className="mt-2.5 flex items-center justify-between gap-2">
+                        <span className="num text-xs font-medium">
+                          {formatCents(deal.valueCents)}
+                        </span>
+                        <StageSelect dealId={deal.id} stage={deal.stage} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

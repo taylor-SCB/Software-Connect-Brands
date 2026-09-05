@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { login } from "./actions";
+import { FormError } from "@/components/ui";
 
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState<{ error?: string }, FormData>(
@@ -11,54 +12,52 @@ export default function LoginPage() {
   );
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Log in</h1>
-          <p className="mt-1 text-sm text-gray-500">Welcome back.</p>
+    <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-12">
+      <div className="fade-up w-full max-w-sm">
+        <div className="card card-lit p-6">
+          <h1 className="page-title !text-2xl">Log in</h1>
+          <p className="muted mt-1 text-sm">Welcome back.</p>
+
+          <form action={formAction} className="mt-6 space-y-4">
+            <div>
+              <label className="label" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                className="input"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="password">
+                Password
+              </label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                className="input"
+              />
+            </div>
+
+            <FormError message={state?.error} />
+
+            <button type="submit" disabled={pending} className="btn btn-primary w-full">
+              {pending ? "Logging in…" : "Log in"}
+            </button>
+          </form>
         </div>
 
-        <form action={formAction} className="space-y-4">
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-              Email
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
-
-          {state?.error && <p className="text-sm text-red-600">{state.error}</p>}
-
-          <button
-            type="submit"
-            disabled={pending}
-            className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {pending ? "Logging in..." : "Log in"}
-          </button>
-        </form>
-
-        <p className="text-center text-sm text-gray-500">
+        <p className="faint mt-5 text-center text-xs">
           Don&apos;t have an account?{" "}
-          <Link href="/signup" className="font-medium text-indigo-600 hover:text-indigo-500">
-            Sign up
+          <Link href="/signup" className="link">
+            Create a workspace
           </Link>
         </p>
       </div>

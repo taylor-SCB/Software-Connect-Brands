@@ -2,7 +2,8 @@
 
 A CRM that small service businesses can put their own name and colors on.
 Each business gets its own workspace ("organization") with its own
-contacts, deals, and branding — nobody else can see their data.
+contacts, products, quotes, contracts and branding — nobody else can see
+their data.
 
 ## Stack
 
@@ -15,55 +16,89 @@ contacts, deals, and branding — nobody else can see their data.
 
 ```bash
 npm install
-npx prisma migrate dev   # creates the local SQLite database (dev.db)
+cp .env.example .env      # then fill in AUTH_SECRET
+npx prisma migrate dev    # creates the local SQLite database (dev.db)
 npm run dev
 ```
 
-Open http://localhost:3000, click "Get started," and create an account.
-Signing up creates a new organization (your business) and makes you its
-first user.
+Open http://localhost:3000, click "Create your workspace," and sign up.
+Signing up creates a new organization, makes you its owner, and seeds your
+two starter contract templates.
+
+## What's in it
+
+**Contacts** — company name, contact name, email, phone and website, with a
+notes counter and separate counters for each activity type (text, email,
+phone call, meeting) on every row. The contact page is the hub: log
+activity, add notes, open deals, and see every quote and contract for that
+customer.
+
+**Pipeline** — deals by stage (New → Contacted → Won/Lost) with per-stage
+value totals.
+
+**Products** — the catalog you quote from. Each product carries a
+description, SKU, unit price and a default tag.
+
+**Quotes** — two templates, **Simple** (clean and printable) and **Modern**
+(branded dark layout). Every line item has the product name, a *product
+description* sub-note, a *project specific notes* sub-note, quantity, unit
+value, line total and a required tag. Under the table is the quote total,
+and under that a grid totalling every tag — labor, materials, software,
+project services, shipping and taxes. Marking a quote sent produces a
+public link the customer can open without an account.
+
+**Contracts** — reusable templates with merge fields (`{{client_name}}`,
+`{{company_name}}`, `{{contract_number}}`…), seeded with a **Service
+Agreement** and a **Change Order**. Generating a contract resolves the merge
+fields into a frozen copy, and sending it produces a link where the
+customer reads and e-signs it. Signed contracts are locked from editing.
+
+**Branding** — company name, logo and primary color, applied across the
+dashboard *and* customer-facing quotes and contracts.
 
 ## How multi-tenancy works
 
-Every row in the database that belongs to a business — contacts, deals,
-notes, users — has an `organizationId`. Every query in the app is scoped
-to `session.organizationId`, so one business's data is never visible to
-another's. `src/lib/session.ts` has the `requireSession()` helper every
-dashboard page and action calls first, and `src/app/dashboard/layout.tsx`
-reads the organization's branding and renders it (name, logo, accent
-color via the `--brand` CSS variable) around every dashboard page.
+Every row that belongs to a business carries an `organizationId`, and every
+query is scoped to `session.organizationId`. Writes use `updateMany`/
+`deleteMany` with the organization in the WHERE clause, so an id guessed
+from another tenant matches zero rows rather than updating someone else's
+record. `src/lib/session.ts` has the `requireSession()` helper every
+dashboard page and action calls first.
+
+Public document links (`/q/<token>`, `/c/<token>`) are the one exception:
+they're unauthenticated by design, keyed on a 24-byte random token, and
+only ever render that single document. Drafts aren't public at all — the
+link only resolves for the team that owns it until the document is sent.
 
 ## Project layout
 
 ```
-prisma/schema.prisma          data model (Organization, User, Contact, Deal, Note)
-src/lib/auth.ts, auth.config.ts   NextAuth setup (split for Edge middleware, see below)
-src/lib/prisma.ts              shared database client
-src/lib/session.ts             requireSession() helper
-src/proxy.ts                   protects everything under /dashboard
-src/app/signup, /login         account creation and sign-in
-src/app/dashboard/...          the app itself: contacts, deals, settings
+prisma/schema.prisma              data model
+src/lib/                          prisma client, auth, session, formatting,
+                                  quote math, merge fields, seed templates
+src/components/                   UI kit, icons, quote + contract renderers
+src/proxy.ts                      protects everything under /dashboard
+src/app/dashboard/...             the app: contacts, deals, products,
+                                  quotes, contracts, settings
+src/app/q/[token]                 public quote view
+src/app/c/[token]                 public contract view + e-signature
 ```
 
-`auth.ts` vs `auth.config.ts`: Next.js runs the `/dashboard` gatekeeping
-in the Edge runtime, which can't load `bcrypt` or Prisma. `auth.config.ts`
-holds the Edge-safe pieces (pages, the `authorized` check); `auth.ts` adds
-the actual Credentials provider (password hashing, database lookups) on
-top of it for use everywhere else.
+`auth.ts` vs `auth.config.ts`: Next.js runs the `/dashboard` gatekeeping in
+the Edge runtime, which can't load `bcrypt` or Prisma. `auth.config.ts`
+holds the Edge-safe pieces; `auth.ts` adds the Credentials provider on top
+for use everywhere else.
+
+Money is stored as integer cents everywhere, and line totals are rounded
+per line then summed as integers — that's what keeps the tag totals adding
+up to exactly the quote total.
 
 ## Where to go next
 
-This covers the core loop (sign up → brand your workspace → track
-contacts and deals). Natural next steps if you keep building:
-
-- **Team members**: invite more users into an organization (the `Role`
-  enum on `User` — OWNER/ADMIN/MEMBER — is already there but unused
-  beyond the signup owner).
-- **Postgres in production**: swap the SQLite adapter in `src/lib/prisma.ts`
-  for `@prisma/adapter-pg` (or similar) and point `DATABASE_URL` at a
-  real Postgres instance — the schema doesn't need to change.
-- **Custom domains per business**: true white-labeling usually means
-  `acme.yourcrm.com` or a fully custom domain resolving to the right
-  organization.
-- **Billing**: Stripe subscriptions per organization, since this is meant
-  to be sold to multiple businesses.
+- **Sending email.** "Mark as sent" and "Send for signature" change status
+  and give you a link to paste; there's no mail provider wired up yet.
+- **Team members.** The `Role` enum (OWNER/ADMIN/MEMBER) gates branding
+  today, but there's no invite flow.
+- **Postgres in production.** Swap the SQLite adapter in
+  `src/lib/prisma.ts` for `@prisma/adapter-pg` and repoint `DATABASE_URL`.
+- **Custom domains per business**, and **billing** per organization.

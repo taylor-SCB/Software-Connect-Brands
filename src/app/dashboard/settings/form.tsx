@@ -1,70 +1,114 @@
 "use client";
 
-import { useActionState } from "react";
-import type { Organization } from "@/generated/prisma/client";
+import { useActionState, useState } from "react";
+import { Field, FormError, FormSuccess } from "@/components/ui";
 import { updateBranding } from "./actions";
+import type { ActionState } from "@/lib/forms";
 
-export function BrandingForm({ organization }: { organization: Organization }) {
-  const [state, formAction, pending] = useActionState<
-    { error?: string; success?: boolean },
-    FormData
-  >(updateBranding, { error: undefined, success: false });
+const PRESETS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7"];
+
+export function BrandingForm({
+  organization,
+  canEdit,
+}: {
+  organization: { name: string; logoUrl: string | null; primaryColor: string };
+  canEdit: boolean;
+}) {
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(
+    updateBranding,
+    {},
+  );
+  // Local state drives the live preview so the swatch and button update
+  // as the color changes, before anything is saved.
+  const [color, setColor] = useState(organization.primaryColor);
 
   return (
-    <form action={formAction} className="mt-6 space-y-4">
+    <form action={formAction} className="space-y-5 p-5">
+      <Field
+        label="Company name"
+        name="name"
+        defaultValue={organization.name}
+        required
+      />
+
+      <Field
+        label="Logo URL"
+        name="logoUrl"
+        placeholder="https://yourcompany.com/logo.png"
+        defaultValue={organization.logoUrl ?? ""}
+        hint="Shown in the sidebar and on quotes and contracts."
+      />
+
       <div>
-        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-          Company name
-        </label>
-        <input
-          id="name"
-          name="name"
-          defaultValue={organization.name}
-          required
-          className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        />
-      </div>
-      <div>
-        <label htmlFor="logoUrl" className="block text-sm font-medium text-gray-700">
-          Logo URL
-        </label>
-        <input
-          id="logoUrl"
-          name="logoUrl"
-          placeholder="https://..."
-          defaultValue={organization.logoUrl ?? ""}
-          className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        />
-      </div>
-      <div>
-        <label htmlFor="primaryColor" className="block text-sm font-medium text-gray-700">
+        <label className="label" htmlFor="primaryColor">
           Primary color
         </label>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             id="primaryColor"
             name="primaryColor"
-            defaultValue={organization.primaryColor}
-            className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            value={color}
+            onChange={(event) => setColor(event.target.value)}
+            disabled={!canEdit}
+            className="input num w-32"
           />
-          <span
-            className="h-9 w-9 flex-shrink-0 rounded-md border border-gray-300"
-            style={{ backgroundColor: organization.primaryColor }}
+          <input
+            type="color"
+            value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6366f1"}
+            onChange={(event) => setColor(event.target.value)}
+            disabled={!canEdit}
+            aria-label="Pick primary color"
+            className="h-9 w-12 cursor-pointer rounded-lg border border-[var(--border)] bg-transparent"
           />
+          <div className="flex gap-1.5">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setColor(preset)}
+                disabled={!canEdit}
+                aria-label={`Use ${preset}`}
+                className="h-7 w-7 rounded-md border border-[var(--border)] transition-transform hover:scale-110"
+                style={{ background: preset }}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
-      {state?.error && <p className="text-sm text-red-600">{state.error}</p>}
-      {state?.success && <p className="text-sm text-green-600">Saved.</p>}
-
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        style={{ backgroundColor: organization.primaryColor }}
+      <div
+        className="rounded-xl border p-4"
+        style={{
+          borderColor: "color-mix(in srgb, var(--preview) 35%, transparent)",
+          background: "color-mix(in srgb, var(--preview) 10%, transparent)",
+          ["--preview" as string]: /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6366f1",
+        }}
       >
-        {pending ? "Saving..." : "Save changes"}
-      </button>
+        <p className="eyebrow mb-2">Preview</p>
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
+            style={{ background: "var(--preview)" }}
+          >
+            {organization.name.charAt(0).toUpperCase()}
+          </div>
+          <span
+            className="btn btn-sm text-white"
+            style={{ background: "var(--preview)" }}
+          >
+            Primary button
+          </span>
+        </div>
+      </div>
+
+      <FormError message={state?.error} />
+      <FormSuccess message={state?.success} />
+
+      {canEdit && (
+        <button type="submit" disabled={pending} className="btn btn-primary">
+          {pending ? "Saving…" : "Save changes"}
+        </button>
+      )}
     </form>
   );
 }

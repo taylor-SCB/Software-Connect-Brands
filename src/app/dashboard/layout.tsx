@@ -1,14 +1,8 @@
-import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { SidebarNav, MobileNav } from "@/components/sidebar-nav";
+import { IconLogout } from "@/components/icons";
 import { logout } from "./actions";
-
-const navItems = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/contacts", label: "Contacts" },
-  { href: "/dashboard/deals", label: "Deals" },
-  { href: "/dashboard/settings", label: "Settings" },
-];
 
 export default async function DashboardLayout({
   children,
@@ -20,61 +14,84 @@ export default async function DashboardLayout({
     where: { id: session.organizationId },
   });
 
+  const initials = organization.name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join("");
+
   return (
+    // The tenant's brand color is injected here, so every descendant —
+    // buttons, glows, focus rings, badges — reskins from one variable.
     <div
-      className="flex min-h-screen"
+      className="relative z-10 flex min-h-screen flex-col lg:flex-row"
       style={{ ["--brand" as string]: organization.primaryColor }}
     >
-      <aside className="flex w-60 flex-col justify-between border-r border-gray-200 bg-white p-4">
+      <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--border)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
         <div>
-          <div className="mb-6 flex items-center gap-2 px-2">
+          <div className="mb-6 flex items-center gap-2.5 px-1">
             {organization.logoUrl ? (
+              // Tenant-supplied URL; next/image would need per-tenant
+              // remote host config, so a plain img is the right call.
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={organization.logoUrl}
-                alt={organization.name}
-                className="h-8 w-8 rounded object-cover"
+                alt=""
+                className="h-9 w-9 rounded-lg border border-[var(--border)] object-cover"
               />
             ) : (
               <div
-                className="flex h-8 w-8 items-center justify-center rounded text-sm font-semibold text-white"
-                style={{ backgroundColor: "var(--brand)" }}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-xs font-bold text-white"
+                style={{
+                  background:
+                    "linear-gradient(140deg, color-mix(in srgb, var(--brand) 88%, white), var(--brand))",
+                  boxShadow:
+                    "0 6px 20px -8px color-mix(in srgb, var(--brand) 90%, transparent)",
+                }}
               >
-                {organization.name.charAt(0).toUpperCase()}
+                {initials || "W"}
               </div>
             )}
-            <span className="truncate font-semibold text-gray-900">
-              {organization.name}
-            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{organization.name}</p>
+              <p className="faint truncate text-[0.68rem]">Workspace</p>
+            </div>
           </div>
 
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="block rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
+          <SidebarNav />
         </div>
 
-        <div className="space-y-2 border-t border-gray-200 pt-4">
-          <p className="truncate px-2 text-xs text-gray-500">{session.email}</p>
+        <div className="space-y-2">
+          <div className="divider" />
+          <div className="px-1">
+            <p className="truncate text-xs font-medium">{session.name}</p>
+            <p className="faint truncate text-[0.68rem]">{session.email}</p>
+          </div>
           <form action={logout}>
-            <button
-              type="submit"
-              className="w-full rounded-md px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-100"
-            >
+            <button type="submit" className="nav-item w-full text-left">
+              <IconLogout size={15} className="opacity-70" />
               Log out
             </button>
           </form>
         </div>
       </aside>
 
-      <main className="flex-1 bg-gray-50 p-8">{children}</main>
+      <div className="border-b border-[var(--border)] p-3 lg:hidden">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-sm font-semibold">{organization.name}</p>
+          <form action={logout}>
+            <button type="submit" className="btn btn-ghost btn-sm">
+              <IconLogout size={14} />
+              Log out
+            </button>
+          </form>
+        </div>
+        <MobileNav />
+      </div>
+
+      <main className="min-w-0 flex-1 p-5 sm:p-8">
+        <div className="fade-up mx-auto max-w-[1400px]">{children}</div>
+      </main>
     </div>
   );
 }

@@ -1,6 +1,22 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { IconSparkles } from "@/components/icons";
+
+const FEATURES = [
+  {
+    title: "Contacts & activity",
+    body: "Company, contact, phone, site — with note and touchpoint counters on every row.",
+  },
+  {
+    title: "Quotes that close",
+    body: "Line items tagged by labor, materials and more, totalled by category automatically.",
+  },
+  {
+    title: "Contracts & e-sign",
+    body: "Service agreements and change orders from your own templates, signed in the browser.",
+  },
+];
 
 export default async function Home() {
   const session = await auth();
@@ -9,27 +25,41 @@ export default async function Home() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-gray-50 px-4 text-center">
-      <h1 className="text-4xl font-bold tracking-tight text-gray-900">
-        A CRM your business can put its own name on
-      </h1>
-      <p className="max-w-md text-gray-600">
-        Track leads, deals, and customer notes in one place — branded with
-        your company&apos;s name and colors.
-      </p>
-      <div className="flex gap-3">
-        <Link
-          href="/signup"
-          className="rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-500"
-        >
-          Get started
-        </Link>
-        <Link
-          href="/login"
-          className="rounded-md border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
-        >
-          Log in
-        </Link>
+    <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-5 py-16">
+      <div className="fade-up w-full max-w-3xl text-center">
+        <span className="badge mx-auto mb-6 border-[var(--border)] bg-[var(--surface)] text-[var(--text-dim)]">
+          <IconSparkles size={13} />
+          White-label CRM for service businesses
+        </span>
+
+        <h1 className="page-title text-balance !text-4xl sm:!text-6xl">
+          Run the whole job.
+          <br />
+          Under your own name.
+        </h1>
+
+        <p className="muted mx-auto mt-5 max-w-xl text-pretty text-sm leading-relaxed sm:text-base">
+          Contacts, pipeline, products, quotes and signed contracts — one
+          workspace per business, branded with their logo and colors.
+        </p>
+
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <Link href="/signup" className="btn btn-primary">
+            Create your workspace
+          </Link>
+          <Link href="/login" className="btn btn-ghost">
+            Log in
+          </Link>
+        </div>
+
+        <div className="mt-14 grid gap-3 text-left sm:grid-cols-3">
+          {FEATURES.map((feature) => (
+            <div key={feature.title} className="card card-lit card-hover p-4">
+              <p className="text-sm font-semibold">{feature.title}</p>
+              <p className="faint mt-1.5 text-xs leading-relaxed">{feature.body}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

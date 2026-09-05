@@ -1,20 +1,42 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { PageHeader, Card, CardHeader } from "@/components/ui";
 import { BrandingForm } from "./form";
 
 export default async function SettingsPage() {
-  const { organizationId } = await requireSession();
+  const session = await requireSession();
   const organization = await prisma.organization.findUniqueOrThrow({
-    where: { id: organizationId },
+    where: { id: session.organizationId },
   });
 
+  const canEdit = session.role === "OWNER" || session.role === "ADMIN";
+
   return (
-    <div className="max-w-lg">
-      <h1 className="text-2xl font-semibold text-gray-900">Branding</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        This is how your CRM appears to everyone on your team.
-      </p>
-      <BrandingForm organization={organization} />
+    <div className="max-w-2xl">
+      <PageHeader
+        eyebrow="Workspace"
+        title="Branding"
+        subtitle="Your name and colors across the dashboard, quotes and contracts."
+      />
+
+      <Card lit>
+        <CardHeader
+          title="White-label settings"
+          subtitle={
+            canEdit
+              ? "Changes apply everywhere immediately, including customer-facing documents."
+              : "Only owners and admins can change these."
+          }
+        />
+        <BrandingForm
+          organization={{
+            name: organization.name,
+            logoUrl: organization.logoUrl,
+            primaryColor: organization.primaryColor,
+          }}
+          canEdit={canEdit}
+        />
+      </Card>
     </div>
   );
 }

@@ -18,14 +18,23 @@ model Organization {
   name         String
   slug         String   @unique
   logoUrl      String?
-  primaryColor String   @default("#4f46e5")
+  primaryColor String   @default("#6366f1")
+  // Money is stored in cents everywhere; these drive human-readable
+  // sequential document numbers (QUO-1004, CON-1002...).
+  nextQuoteNumber    Int @default(1000)
+  nextContractNumber Int @default(1000)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  users    User[]
-  contacts Contact[]
-  deals    Deal[]
-  notes    Note[]
+  users             User[]
+  contacts          Contact[]
+  deals             Deal[]
+  notes             Note[]
+  activities        Activity[]
+  products          Product[]
+  quotes            Quote[]
+  contractTemplates ContractTemplate[]
+  contracts         Contract[]
 }
 
 enum Role {
@@ -44,7 +53,8 @@ model User {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())
 
-  notes Note[]
+  notes      Note[]
+  activities Activity[]
 
   @@index([organizationId])
 }
@@ -59,16 +69,20 @@ model Contact {
   id             String        @id @default(cuid())
   organizationId String
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company        String?
   name           String
   email          String?
   phone          String?
-  company        String?
+  website        String?
   status         ContactStatus @default(LEAD)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  deals Deal[]
-  notes Note[]
+  deals      Deal[]
+  notes      Note[]
+  activities Activity[]
+  quotes     Quote[]
+  contracts  Contract[]
 
   @@index([organizationId])
 }
@@ -107,6 +121,177 @@ model Note {
   body           String
   createdAt      DateTime     @default(now())
 
+  @@index([organizationId])
+  @@index([contactId])
+}
+
+// Touchpoints with a contact. Each type is counted separately in the
+// contacts list so reps can see engagement at a glance.
+enum ActivityType {
+  TEXT
+  EMAIL
+  PHONE_CALL
+  MEETING
+}
+
+model Activity {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           ActivityType
+  body           String
+  occurredAt     DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([contactId])
+  @@index([contactId, type])
+}
+
+// Every quote line must carry one of these so the tag totals grid at the
+// bottom of a quote adds up to the quote total.
+enum LineItemTag {
+  LABOR
+  MATERIALS
+  SOFTWARE
+  PROJECT_SERVICES
+  SHIPPING
+  TAXES
+}
+
+model Product {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String       @default("")
+  sku            String?
+  unitPriceCents Int          @default(0)
+  defaultTag     LineItemTag  @default(MATERIALS)
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  lineItems QuoteLineItem[]
+
+  @@index([organizationId])
+}
+
+enum QuoteTemplate {
+  SIMPLE
+  MODERN
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+}
+
+model Quote {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  number         Int
+  title          String
+  template       QuoteTemplate @default(SIMPLE)
+  status         QuoteStatus   @default(DRAFT)
+  introNote      String        @default("")
+  terms          String        @default("")
+  validUntil     DateTime?
+  publicToken    String        @unique
+  sentAt         DateTime?
+  respondedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  lineItems QuoteLineItem[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId])
+  @@index([contactId])
+}
+
+model QuoteLineItem {
+  id        String  @id @default(cuid())
+  quoteId   String
+  quote     Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  // Copied from the product at insert time so editing a product later
+  // never rewrites history on a quote that was already sent.
+  name             String
+  description      String      @default("")
+  projectNotes     String      @default("")
+  quantity         Float       @default(1)
+  unitPriceCents   Int         @default(0)
+  tag              LineItemTag
+  position         Int         @default(0)
+
+  @@index([quoteId])
+}
+
+enum ContractType {
+  SERVICE_AGREEMENT
+  CHANGE_ORDER
+  CUSTOM
+}
+
+model ContractTemplate {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  type           ContractType @default(CUSTOM)
+  description    String       @default("")
+  body           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  contracts Contract[]
+
+  @@index([organizationId])
+}
+
+enum ContractStatus {
+  DRAFT
+  SENT
+  SIGNED
+  DECLINED
+}
+
+model Contract {
+  id             String            @id @default(cuid())
+  organizationId String
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  templateId     String?
+  template       ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  number         Int
+  title          String
+  type           ContractType      @default(CUSTOM)
+  // Merge fields are resolved when the contract is created, so the
+  // signed copy is a frozen snapshot of what the customer agreed to.
+  body           String
+  status         ContractStatus    @default(DRAFT)
+  publicToken    String            @unique
+  sentAt         DateTime?
+  signedAt       DateTime?
+  signerName     String?
+  signerEmail    String?
+  declinedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([organizationId, number])
   @@index([organizationId])
   @@index([contactId])
 }

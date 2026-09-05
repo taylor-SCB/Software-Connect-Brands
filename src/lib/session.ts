@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 // the pieces every tenant-scoped query needs.
 export async function requireSession() {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.organizationId) {
     redirect("/login");
   }
   return {
@@ -16,4 +16,14 @@ export async function requireSession() {
     name: session.user.name,
     email: session.user.email,
   };
+}
+
+// Org-wide settings (branding, templates) are owner/admin territory.
+// Members can still work the pipeline but can't re-skin the product.
+export async function requireAdminSession() {
+  const session = await requireSession();
+  if (session.role !== "OWNER" && session.role !== "ADMIN") {
+    return { ...session, allowed: false as const };
+  }
+  return { ...session, allowed: true as const };
 }
