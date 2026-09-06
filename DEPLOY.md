@@ -33,14 +33,27 @@ cost note at the bottom before you rely on the free one.
 
 ## Step 2 — Import the project
 
-1. On the Vercel dashboard click **Add New… → Project**.
-2. Find **Software-Connect-Brands** in the list and click **Import**.
-   - If you don't see it, click *Adjust GitHub App Permissions* and give
-     Vercel access to the repository.
-3. On the configuration screen, **change the branch** from `main` to
-   `claude/first-app-creation-cdtbrb` (that's where the app lives).
-4. **Do not click Deploy yet.** The app needs a database first, and a
-   deploy without one will fail. Continue to Step 3.
+On the Vercel dashboard click **Add New… → Project**. You land on a screen
+titled **Import Git Repository** showing a list of your repositories, each
+with an **Import** button.
+
+Find **Software-Connect-Brands** and click **Import**.
+
+**If the list is empty, or that repo isn't in it**, Vercel hasn't been
+given access to it yet. Fix that here:
+
+> **https://github.com/apps/vercel/installations/new**
+
+Choose your **taylor-SCB** account, then either **All repositories** or
+**Only select repositories → Software-Connect-Brands**, and click
+**Install / Save**. GitHub returns you to Vercel and the repo appears.
+
+You don't need to pick a branch. This repo has exactly one —
+`claude/first-app-creation-cdtbrb` — and it's already the default, so
+Vercel selects it on its own.
+
+**Do not click Deploy yet.** The app needs a database first, and a deploy
+without one fails. Continue to Step 3.
 
 ## Step 3 — Create the database
 
