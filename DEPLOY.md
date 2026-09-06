@@ -57,10 +57,18 @@ without one fails. Continue to Step 3.
 
 ## Step 3 — Create the database
 
-1. In your Vercel project, open the **Storage** tab.
+The **Storage** tab lives *inside a project*, so it doesn't exist until
+Step 2 is finished. If you can't find it, you haven't got a project yet —
+go back.
+
+1. Open your project, then the **Storage** tab.
+   Direct link: `vercel.com/<your-team>/<your-project>/stores`
 2. Click **Create Database** and choose **Neon** (Postgres). Accept the
    free plan.
 3. When it asks which project to connect it to, choose this one.
+
+Newer Vercel accounts may route this through **Marketplace** instead of a
+Storage tab — same thing, look for Neon under database integrations.
 
 Vercel adds the connection details to your project automatically. Its
 variable is usually named `DATABASE_URL` — if it created `POSTGRES_URL`
