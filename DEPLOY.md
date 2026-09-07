@@ -100,6 +100,19 @@ everyone gets logged out, nothing else breaks.
    landing page.
 4. Click **Create your workspace** and sign up. **Do this immediately** —
    see the security note at the bottom.
+5. Your signup is held for approval like everyone else's, and on a brand new
+   install there is nobody to approve it yet. Break the deadlock once, in
+   your database provider's SQL editor (Neon: **SQL Editor** in the
+   sidebar), with your own email:
+
+   ```sql
+   UPDATE "Organization" SET status = 'ACTIVE'
+    WHERE id = (SELECT "organizationId" FROM "User" WHERE email = 'you@yourcompany.com');
+   UPDATE "User" SET "isSuperAdmin" = true WHERE email = 'you@yourcompany.com';
+   ```
+
+   That opens your workspace and makes you the operator. Every signup after
+   this one you approve from `/admin` — see *Approving who gets in* below.
 
 If the build fails, read the last red lines of the log. Almost always it's
 a missing `DATABASE_URL` or `AUTH_SECRET` from Steps 3–4.
@@ -226,31 +239,20 @@ makes "forgot my password" possible, and neither exists yet.
 **Nothing here charges anybody.** Approval controls access; billing is a
 separate build.
 
-## Two websites: the real one and the workshop
+## One website
 
-There are two copies of this app running, on purpose.
+There is one address: **softwareconnectbrands.com**. It is built from the
+`claude/first-app-creation-cdtbrb` branch, and every push to that branch
+rebuilds and redeploys it. There is no separate staging or preview site --
+that was tried and removed, because a second address to remember was worse
+than the problem it solved.
 
-**The real one — `softwareconnectbrands.com`.** This is what customers and
-clients use. It is open to the public: no Vercel login, no gate. It is
-built from the `claude/first-app-creation-cdtbrb` branch. Nothing reaches
-it unless that branch changes.
-
-**The workshop — the `.vercel.app` addresses.** Every other branch gets its
-own address automatically, of the form
-`software-connect-brands-git-<branch>-software-connect.vercel.app`. New
-work happens on the `dev` branch and lands there first. These addresses ask
-for a Vercel login before showing anything, so only the account owner can
-open them — a half-finished feature is never visible to a customer.
-
-Shipping a change means merging `dev` into
-`claude/first-app-creation-cdtbrb` and pushing. That rebuild is what
-updates the real website.
-
-**Both currently share one database.** Test data entered in the workshop
-shows up on the real site, because there is only one Neon database behind
-both. Before there are real customers in here, the workshop needs its own
-separate database — otherwise a test contact and a paying client's contact
-sit in the same table.
+What that means in practice: changes are tested locally against a real
+Postgres database and a real browser before they are pushed, and the push is
+what makes them live. If something does go out broken, Vercel keeps every
+previous deployment -- open the project's **Deployments** tab, find the last
+good one, and use **Instant Rollback**. It takes about ten seconds and does
+not touch the database.
 
 ## Two things to know before you rely on this
 
