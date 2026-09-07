@@ -68,6 +68,17 @@ console at `/admin` where signups are approved, paused or deleted.
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
+## Where this is in its life
+
+Pre-launch, roughly a month or two out from real customers (as of Sept 2026).
+Nobody is paying yet and there is no customer data to lose, which is why
+pushing straight to the live site is acceptable for now — he was told the
+trade-off and accepted it. **Revisit before launch**: at that point a broken
+push costs real money and a way to preview changes is worth having again.
+
+The same clock applies to the gaps below. They are not urgent this week; they
+are all blocking before the first paying customer.
+
 ## Known gaps — say so rather than implying otherwise
 
 - **No email is sent, ever.** No approval notice, no receipts, and **no
