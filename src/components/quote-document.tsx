@@ -16,7 +16,12 @@ export type QuoteDocumentData = {
   terms: string;
   validUntil: Date | null;
   createdAt: Date;
-  organization: { name: string; logoUrl: string | null; primaryColor: string };
+  organization: {
+    name: string;
+    logoUrl: string | null;
+    primaryColor: string;
+    timeZone: string;
+  };
   contact: {
     name: string;
     company: string | null;
@@ -88,8 +93,8 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           <p className="font-mono text-sm font-semibold text-[#111827]">
             QUO-{quote.number}
           </p>
-          <p className="mt-1">Issued {formatDate(quote.createdAt)}</p>
-          {quote.validUntil && <p>Valid until {formatDate(quote.validUntil)}</p>}
+          <p className="mt-1">Issued {formatDate(quote.createdAt, quote.organization.timeZone)}</p>
+          {quote.validUntil && <p>Valid until {formatDate(quote.validUntil, quote.organization.timeZone)}</p>}
         </div>
       </header>
 
@@ -270,11 +275,11 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
               QUO-{quote.number}
             </span>
             <p className="mt-2 text-xs text-white/45">
-              Issued {formatDate(quote.createdAt)}
+              Issued {formatDate(quote.createdAt, quote.organization.timeZone)}
             </p>
             {quote.validUntil && (
               <p className="text-xs text-white/45">
-                Valid until {formatDate(quote.validUntil)}
+                Valid until {formatDate(quote.validUntil, quote.organization.timeZone)}
               </p>
             )}
           </div>

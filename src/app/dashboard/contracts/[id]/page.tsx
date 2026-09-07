@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatDate, formatDateTime } from "@/lib/format";
 import {
   PageHeader,
@@ -22,6 +23,8 @@ export default async function ContractDetailPage({
 }) {
   const { id } = await params;
   const { organizationId } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const contract = await prisma.contract.findFirst({
     where: { id, organizationId },
@@ -78,7 +81,7 @@ export default async function ContractDetailPage({
           <p className="text-sm">
             <span className="font-semibold">{contract.signerName}</span> accepted this
             contract on{" "}
-            {contract.signedAt ? formatDateTime(contract.signedAt) : "—"} UTC.
+            {contract.signedAt ? formatDateTime(contract.signedAt, timeZone) : "—"}.
           </p>
         </Card>
       )}
@@ -89,7 +92,7 @@ export default async function ContractDetailPage({
           <PublicLinkField path={publicPath} />
           <p className="faint mt-2 text-xs">
             Send this to your customer — they can read and sign it in the browser.
-            {contract.sentAt && ` Sent ${formatDate(contract.sentAt)}.`}
+            {contract.sentAt && ` Sent ${formatDate(contract.sentAt, timeZone)}.`}
           </p>
           {!signed && (
             <div className="mt-3 flex flex-wrap gap-2">

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDate } from "@/lib/format";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { PageHeader, Card, EmptyState, StatusBadge, Badge } from "@/components/ui";
@@ -8,6 +9,8 @@ import { IconPlus, IconFileText } from "@/components/icons";
 
 export default async function QuotesPage() {
   const { organizationId } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const quotes = await prisma.quote.findMany({
     where: { organizationId },
@@ -102,7 +105,7 @@ export default async function QuotesPage() {
                       <td className="num text-right font-medium">
                         {formatCents(totals.totalCents)}
                       </td>
-                      <td className="faint text-xs">{formatDate(quote.createdAt)}</td>
+                      <td className="faint text-xs">{formatDate(quote.createdAt, timeZone)}</td>
                     </tr>
                   );
                 })}

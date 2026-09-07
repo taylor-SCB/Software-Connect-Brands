@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
 import { PageHeader, Card, EmptyState, StatusBadge, Badge } from "@/components/ui";
 import { IconPlus, IconSignature, IconFileText } from "@/components/icons";
@@ -8,6 +9,8 @@ import { CONTRACT_TYPE_LABELS, type ContractTypeValue } from "@/lib/constants";
 
 export default async function ContractsPage() {
   const { organizationId } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const [contracts, templateCount] = await Promise.all([
     prisma.contract.findMany({
@@ -95,7 +98,7 @@ export default async function ContractsPage() {
                     <td>
                       <StatusBadge status={contract.status} />
                     </td>
-                    <td className="faint text-xs">{formatDate(contract.createdAt)}</td>
+                    <td className="faint text-xs">{formatDate(contract.createdAt, timeZone)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -22,7 +22,13 @@ export default async function PublicContractPage({
     where: { publicToken: token },
     include: {
       organization: {
-        select: { id: true, name: true, logoUrl: true, primaryColor: true },
+        select: {
+          id: true,
+          name: true,
+          logoUrl: true,
+          primaryColor: true,
+          timeZone: true,
+        },
       },
       contact: { select: { name: true, company: true, email: true } },
     },

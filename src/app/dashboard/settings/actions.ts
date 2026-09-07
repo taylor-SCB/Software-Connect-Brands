@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/session";
 import { parseForm, optionalText, type ActionState } from "@/lib/forms";
+import { TIME_ZONES } from "@/lib/format";
 
 const brandingSchema = z.object({
   name: z.string().trim().min(2, "Company name is too short").max(120),
@@ -26,6 +27,9 @@ const brandingSchema = z.object({
     .string()
     .trim()
     .regex(/^#[0-9a-fA-F]{6}$/, "Enter a color as a 6-digit hex code, e.g. #6366f1"),
+  // Constrained to the offered list — an arbitrary string would throw
+  // inside Intl on every page that renders a date.
+  timeZone: z.enum(TIME_ZONES.map((zone) => zone.value) as [string, ...string[]]),
 });
 
 export async function updateBranding(
@@ -41,6 +45,7 @@ export async function updateBranding(
     name: formData.get("name"),
     logoUrl: formData.get("logoUrl") ?? undefined,
     primaryColor: formData.get("primaryColor"),
+    timeZone: formData.get("timeZone"),
   });
   if (!parsed.ok) return { error: parsed.error };
 
@@ -50,6 +55,7 @@ export async function updateBranding(
       name: parsed.data.name,
       logoUrl: optionalText(formData.get("logoUrl")),
       primaryColor: parsed.data.primaryColor.toLowerCase(),
+      timeZone: parsed.data.timeZone,
     },
   });
 

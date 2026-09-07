@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
 import {
   PageHeader,
@@ -28,6 +29,8 @@ export default async function QuoteBuilderPage({
 }) {
   const { id } = await params;
   const { organizationId } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const [quote, products] = await Promise.all([
     prisma.quote.findFirst({
@@ -105,7 +108,7 @@ export default async function QuoteBuilderPage({
           <PublicLinkField path={publicPath} />
           <p className="faint mt-2 text-xs">
             Anyone with this link can view the quote — send it by email or text.
-            {quote.sentAt && ` Marked sent ${formatDate(quote.sentAt)}.`}
+            {quote.sentAt && ` Marked sent ${formatDate(quote.sentAt, timeZone)}.`}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <form action={setQuoteStatus}>

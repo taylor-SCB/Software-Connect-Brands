@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
 import { PageHeader, Card, EmptyState, Badge, BackLink } from "@/components/ui";
 import { IconPlus, IconFileText } from "@/components/icons";
@@ -8,6 +9,8 @@ import { CONTRACT_TYPE_LABELS, type ContractTypeValue } from "@/lib/constants";
 
 export default async function TemplatesPage() {
   const { organizationId } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const templates = await prisma.contractTemplate.findMany({
     where: { organizationId },
@@ -74,7 +77,7 @@ export default async function TemplatesPage() {
                   {template._count.contracts === 1 ? "" : "s"} generated
                 </span>
                 <span>·</span>
-                <span>Updated {formatDate(template.updatedAt)}</span>
+                <span>Updated {formatDate(template.updatedAt, timeZone)}</span>
               </div>
             </Link>
           ))}

@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Field, FormError, FormSuccess } from "@/components/ui";
+import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
+import { TIME_ZONES } from "@/lib/format";
 import { updateBranding } from "./actions";
 import type { ActionState } from "@/lib/forms";
 
@@ -11,7 +12,12 @@ export function BrandingForm({
   organization,
   canEdit,
 }: {
-  organization: { name: string; logoUrl: string | null; primaryColor: string };
+  organization: {
+    name: string;
+    logoUrl: string | null;
+    primaryColor: string;
+    timeZone: string;
+  };
   canEdit: boolean;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
@@ -37,6 +43,14 @@ export function BrandingForm({
         placeholder="https://yourcompany.com/logo.png"
         defaultValue={organization.logoUrl ?? ""}
         hint="Shown in the sidebar and on quotes and contracts."
+      />
+
+      <SelectField
+        label="Time zone"
+        name="timeZone"
+        defaultValue={organization.timeZone}
+        options={TIME_ZONES.map((zone) => ({ value: zone.value, label: zone.label }))}
+        hint="Dates and times across the app, and on quotes and contracts your customers receive."
       />
 
       <div>

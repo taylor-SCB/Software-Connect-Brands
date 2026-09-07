@@ -33,6 +33,7 @@ export default async function SettingsPage() {
             name: organization.name,
             logoUrl: organization.logoUrl,
             primaryColor: organization.primaryColor,
+            timeZone: organization.timeZone,
           }}
           canEdit={canEdit}
         />

@@ -43,8 +43,24 @@ export async function renderPdf({ url, cookieHeader }: PdfOptions): Promise<Uint
     // Forward the caller's session so an owner can export a draft that
     // isn't public yet. Without this the page would redirect to /login
     // and we'd silently produce a PDF of the login screen.
+    const headers: Record<string, string> = {};
     if (cookieHeader) {
-      await page.setExtraHTTPHeaders({ cookie: cookieHeader });
+      headers.cookie = cookieHeader;
+    }
+
+    // Vercel's Deployment Protection guards *.vercel.app with an SSO wall.
+    // The app's own session cookie doesn't satisfy it, so a self-fetch would
+    // capture the login page instead of the document. This secret is exposed
+    // automatically when Protection Bypass for Automation is enabled; where
+    // it isn't set (custom domains, local dev) no header is sent.
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    if (bypass) {
+      headers["x-vercel-protection-bypass"] = bypass;
+      headers["x-vercel-set-bypass-cookie"] = "true";
+    }
+
+    if (Object.keys(headers).length > 0) {
+      await page.setExtraHTTPHeaders(headers);
     }
 
     const response = await page.goto(url, {

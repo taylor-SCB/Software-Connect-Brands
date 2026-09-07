@@ -19,6 +19,11 @@ model Organization {
   slug         String   @unique
   logoUrl      String?
   primaryColor String   @default("#6366f1")
+  // Dates and times render in the business's own zone, everywhere —
+  // dashboard, quotes and contracts alike. Storing it per organization
+  // keeps server-rendered output deterministic (no hydration mismatch)
+  // and means a document shows the sender's local time, not the reader's.
+  timeZone     String   @default("America/Chicago")
   // Money is stored in cents everywhere; these drive human-readable
   // sequential document numbers (QUO-1004, CON-1002...).
   nextQuoteNumber    Int @default(1000)

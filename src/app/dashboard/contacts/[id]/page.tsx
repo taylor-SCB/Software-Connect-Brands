@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime, formatDate } from "@/lib/format";
 import {
   ACTIVITY_LABELS,
@@ -43,6 +44,8 @@ export default async function ContactDetailPage({
 }) {
   const { id } = await params;
   const { organizationId } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const contact = await prisma.contact.findFirst({
     where: { id, organizationId },
@@ -171,7 +174,7 @@ export default async function ContactDetailPage({
                         <p className="text-sm leading-relaxed">{activity.body}</p>
                         <p className="faint mt-1 text-[0.7rem]">
                           {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} ·{" "}
-                          {activity.user.name} · {formatDateTime(activity.occurredAt)}
+                          {activity.user.name} · {formatDateTime(activity.occurredAt, timeZone)}
                         </p>
                       </div>
                     </li>
@@ -193,7 +196,7 @@ export default async function ContactDetailPage({
                   <li key={note.id} className="px-5 py-3">
                     <p className="text-sm leading-relaxed">{note.body}</p>
                     <p className="faint mt-1 text-[0.7rem]">
-                      {note.author.name} · {formatDateTime(note.createdAt)}
+                      {note.author.name} · {formatDateTime(note.createdAt, timeZone)}
                     </p>
                   </li>
                 ))}
@@ -243,7 +246,7 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
-              <Detail label="Added" value={formatDate(contact.createdAt)} />
+              <Detail label="Added" value={formatDate(contact.createdAt, timeZone)} />
             </dl>
           </Card>
 

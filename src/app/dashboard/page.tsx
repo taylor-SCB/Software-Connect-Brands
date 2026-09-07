@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime } from "@/lib/format";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { ACTIVITY_LABELS, type ActivityTypeValue } from "@/lib/constants";
@@ -24,6 +25,8 @@ const ACTIVITY_ICONS = {
 
 export default async function DashboardPage() {
   const { organizationId, name } = await requireSession();
+
+  const timeZone = await getTimeZone();
 
   const [
     contactCount,
@@ -146,7 +149,7 @@ export default async function DashboardPage() {
                           {activity.contact.company || activity.contact.name}
                         </Link>{" "}
                         · {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} ·{" "}
-                        {formatDateTime(activity.occurredAt)}
+                        {formatDateTime(activity.occurredAt, timeZone)}
                       </p>
                     </div>
                   </li>

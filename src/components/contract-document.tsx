@@ -10,7 +10,12 @@ export type ContractDocumentData = {
   createdAt: Date;
   signedAt: Date | null;
   signerName: string | null;
-  organization: { name: string; logoUrl: string | null; primaryColor: string };
+  organization: {
+    name: string;
+    logoUrl: string | null;
+    primaryColor: string;
+    timeZone: string;
+  };
   contact: { name: string; company: string | null; email: string | null };
 };
 
@@ -48,7 +53,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
           <p className="font-mono text-sm font-semibold text-[#111827]">
             CON-{contract.number}
           </p>
-          <p className="mt-1">Issued {formatDate(contract.createdAt)}</p>
+          <p className="mt-1">Issued {formatDate(contract.createdAt, contract.organization.timeZone)}</p>
         </div>
       </header>
 
@@ -75,7 +80,8 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
               {contract.signerName}
             </p>
             <p className="mt-1 text-xs text-[#047857]">
-              Accepted electronically on {formatDateTime(contract.signedAt)} UTC
+              Accepted electronically on{" "}
+              {formatDateTime(contract.signedAt, contract.organization.timeZone)}
               {contract.contact.email ? ` · ${contract.contact.email}` : ""}
             </p>
           </div>
