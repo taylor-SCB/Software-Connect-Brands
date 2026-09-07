@@ -160,6 +160,72 @@ and changed nothing about the existing ones.
   deploys never wipe contacts or quotes.
 - **Check it on your phone.** It's built to work there.
 
+## Approving who gets in
+
+Signing up no longer opens a workspace. A new signup is stored as **waiting**
+and cannot log in until you approve it, so nobody uses the app without your
+say-so.
+
+**The operator console** lives at `/admin` — for example
+`https://softwareconnectbrands.com/admin`. Only an account with the operator
+flag can open it; anyone else gets a 404, so nobody can tell the page exists.
+There is also an **Operator console** link in your sidebar once you have the
+flag.
+
+Each workspace shows the owner's name, email and phone, when they signed up,
+when anyone last logged in, and how many contacts, quotes and contracts they
+have. The buttons:
+
+- **Approve** — they can log in from that moment.
+- **Reject** — they cannot.
+- **Pause** — locks a workspace without touching a single row of its data.
+  This is the lever for someone who stops paying; **Unpause** gives it all
+  back. Pausing takes effect immediately, even for someone already logged in.
+- **Delete** — removes the workspace and every contact, quote and contract in
+  it. You have to type the company name to arm the button, and the server
+  checks the name again, so a stray click can't do it.
+
+### Making yourself the operator
+
+The flag is not a button anywhere — nothing in the app can grant it, so no
+signup form or bug can hand out operator access. It is set directly against
+the database, once.
+
+**Easiest way (Neon's web console):**
+
+1. Open your project at [console.neon.tech](https://console.neon.tech).
+2. Click **SQL Editor** in the sidebar.
+3. Paste this, with your own email, and hit Run:
+
+   ```sql
+   UPDATE "User" SET "isSuperAdmin" = true WHERE email = 'you@yourcompany.com';
+   ```
+
+4. Log out of the CRM and back in. The **Operator console** link appears in
+   your sidebar.
+
+If it says `UPDATE 0`, the email doesn't match an account — check for a typo.
+
+**From a terminal instead**, with `DATABASE_URL` set to the same connection
+string:
+
+```bash
+npm run promote-admin -- you@yourcompany.com          # grant
+npm run promote-admin -- you@yourcompany.com --revoke # take it back
+npm run promote-admin -- --list                       # who has it
+```
+
+### What this does not do yet
+
+**Approving somebody does not tell them.** Nothing in the app sends email, so
+after you click Approve you have to call or text them — which is why signup
+now asks for a phone number, and why it's on the console next to their name.
+Sending real email needs an email service wired up; that same piece is what
+makes "forgot my password" possible, and neither exists yet.
+
+**Nothing here charges anybody.** Approval controls access; billing is a
+separate build.
+
 ## Two websites: the real one and the workshop
 
 There are two copies of this app running, on purpose.
@@ -188,11 +254,10 @@ sit in the same table.
 
 ## Two things to know before you rely on this
 
-**Anyone who finds the URL can create their own workspace.** That's how a
-self-serve product is supposed to work, and each workspace is walled off
-from the others — but there's no invite gate and no payment wall yet. Sign
-up first so you own the first workspace, and expect to add a signup
-restriction before you advertise the address anywhere.
+**There is still no password reset.** If someone forgets their password
+there is no way back in on their own, and no way for you to send them one —
+it needs the same email service approving somebody does. Until that exists,
+a forgotten password is a database edit.
 
 **Vercel's free Hobby plan is for non-commercial use.** Running a CRM you
 sell to clients is commercial, so plan on the Pro plan (about $20/month)

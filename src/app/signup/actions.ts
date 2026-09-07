@@ -1,15 +1,19 @@
 "use server";
 
 import bcrypt from "bcryptjs";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { signIn } from "@/lib/auth";
 import { DEFAULT_CONTRACT_TEMPLATES } from "@/lib/default-templates";
 
 const signupSchema = z.object({
   companyName: z.string().trim().min(2, "Company name is too short"),
   name: z.string().trim().min(1, "Your name is required"),
   email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email")),
+  // Nothing sends email yet, so this is the only way to reach an applicant
+  // once they've been approved. Required for that reason, not validated
+  // beyond a length — phone formats vary too much to reject on a guess.
+  phone: z.string().trim().min(7, "Enter a phone number we can reach you on").max(40),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
@@ -27,6 +31,7 @@ export async function signup(_prevState: { error?: string }, formData: FormData)
     companyName: formData.get("companyName"),
     name: formData.get("name"),
     email: formData.get("email"),
+    phone: formData.get("phone"),
     password: formData.get("password"),
   });
 
@@ -34,7 +39,7 @@ export async function signup(_prevState: { error?: string }, formData: FormData)
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const { companyName, name, email, password } = parsed.data;
+  const { companyName, name, email, phone, password } = parsed.data;
   const passwordHash = await bcrypt.hash(password, 10);
   const base = slugify(companyName) || "workspace";
 
@@ -48,8 +53,11 @@ export async function signup(_prevState: { error?: string }, formData: FormData)
         data: {
           name: companyName,
           slug,
+          // The gate. Nothing here decides its own status, so a crafted
+          // request can't sign itself up as ACTIVE.
+          status: "PENDING",
           users: {
-            create: { name, email, passwordHash, role: "OWNER" },
+            create: { name, email, phone, passwordHash, role: "OWNER" },
           },
           contractTemplates: {
             create: DEFAULT_CONTRACT_TEMPLATES.map((template) => ({
@@ -74,7 +82,6 @@ export async function signup(_prevState: { error?: string }, formData: FormData)
     }
   }
 
-  // Throws a redirect on success, so nothing below runs.
-  await signIn("credentials", { email, password, redirectTo: "/dashboard" });
-  return { error: undefined };
+  // No sign-in: the account exists but can't be used until it's approved.
+  redirect("/signup/submitted");
 }

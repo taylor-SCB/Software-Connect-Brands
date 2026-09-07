@@ -8,7 +8,8 @@
     "build:app": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "promote-admin": "tsx scripts/promote-admin.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -34,6 +35,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }

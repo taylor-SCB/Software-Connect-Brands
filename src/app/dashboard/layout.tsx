@@ -1,7 +1,8 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SidebarNav, MobileNav } from "@/components/sidebar-nav";
-import { IconLogout } from "@/components/icons";
+import { IconLogout, IconSparkles } from "@/components/icons";
+import Link from "next/link";
 import { logout } from "./actions";
 
 export default async function DashboardLayout({
@@ -63,6 +64,12 @@ export default async function DashboardLayout({
 
         <div className="space-y-2">
           <div className="divider" />
+          {session.isSuperAdmin && (
+            <Link href="/admin" className="nav-item w-full">
+              <IconSparkles size={15} className="opacity-70" />
+              Operator console
+            </Link>
+          )}
           <div className="px-1">
             <p className="truncate text-xs font-medium">{session.name}</p>
             <p className="faint truncate text-[0.68rem]">{session.email}</p>

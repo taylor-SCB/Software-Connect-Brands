@@ -18,11 +18,28 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials?.password as string | undefined;
         if (!email || !password) return null;
 
-        const user = await prisma.user.findUnique({ where: { email } });
+        const user = await prisma.user.findUnique({
+          where: { email },
+          include: { organization: { select: { status: true } } },
+        });
         if (!user) return null;
 
         const valid = await bcrypt.compare(password, user.passwordHash);
         if (!valid) return null;
+
+        // Right password, wrong workspace state. Returning null rather
+        // than throwing: a custom error thrown out of authorize does not
+        // survive NextAuth's serialization, and the caller gets a crashed
+        // page instead of a login form. The login action works out which
+        // of the two happened and words the message accordingly.
+        if (user.organization.status !== "ACTIVE") return null;
+
+        // Drives the "last login" column in the admin list — the quickest
+        // read on whether a workspace is actually being used.
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() },
+        });
 
         return {
           id: user.id,
@@ -30,6 +47,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email,
           organizationId: user.organizationId,
           role: user.role,
+          isSuperAdmin: user.isSuperAdmin,
         };
       },
     }),
@@ -40,6 +58,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.organizationId = user.organizationId;
         token.role = user.role;
+        token.isSuperAdmin = user.isSuperAdmin;
       }
       return token;
     },
@@ -48,6 +67,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.id = token.sub as string;
         session.user.organizationId = token.organizationId as string;
         session.user.role = token.role as string;
+        session.user.isSuperAdmin = token.isSuperAdmin === true;
       }
       return session;
     },

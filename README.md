@@ -62,6 +62,13 @@ customer reads and e-signs it. Signed contracts are locked from editing.
 **Branding** — company name, logo and primary color, applied across the
 dashboard *and* customer-facing quotes and contracts.
 
+**Operator console** (`/admin`) — the view across every workspace, for
+whoever runs the product. Signups land in a `PENDING` state and cannot log
+in until they are approved; each row shows the owner's contact details, when
+they last logged in, and how much they have in the workspace, with Approve,
+Reject, Pause and Delete. Pause locks a workspace without touching its data,
+which is the intended answer to a customer who stops paying.
+
 ## How multi-tenancy works
 
 Every row that belongs to a business carries an `organizationId`, and every
@@ -70,6 +77,15 @@ query is scoped to `session.organizationId`. Writes use `updateMany`/
 from another tenant matches zero rows rather than updating someone else's
 record. `src/lib/session.ts` has the `requireSession()` helper every
 dashboard page and action calls first.
+
+Operator access is a separate axis: `isSuperAdmin` on `User` is a
+platform-level flag, not a tenant role, and it is deliberately unreachable
+from the app — nothing in any form, action or route writes it, so it can only
+be set against the database (`npm run promote-admin -- <email>`). Both
+`requireSession()` and `requireSuperAdmin()` re-read the flag *and* the
+workspace status from the database on every request rather than trusting the
+JWT, so pausing a workspace or revoking an operator takes effect on sessions
+that are already open instead of whenever the token happens to expire.
 
 Public document links (`/q/<token>`, `/c/<token>`) are the one exception:
 they're unauthenticated by design, keyed on a 24-byte random token, and

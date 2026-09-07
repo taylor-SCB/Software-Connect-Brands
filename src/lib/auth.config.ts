@@ -10,8 +10,13 @@ export const authConfig = {
   callbacks: {
     authorized({ auth, request }) {
       const isLoggedIn = !!auth?.user;
-      const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
-      if (isDashboard) return isLoggedIn;
+      // /admin is gated again in requireSuperAdmin — this only turns away
+      // anonymous visitors early. The Edge runtime can't reach Prisma, so
+      // the operator check itself can't happen here.
+      const path = request.nextUrl.pathname;
+      if (path.startsWith("/dashboard") || path.startsWith("/admin")) {
+        return isLoggedIn;
+      }
       return true;
     },
   },

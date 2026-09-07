@@ -10,6 +10,17 @@ datasource db {
   provider = "postgresql"
 }
 
+// Where a workspace sits in the operator's approval flow. Signups land in
+// PENDING and cannot reach the app; only an approval moves them to ACTIVE.
+// PAUSED is the lever for a customer who stops paying — locked out, data
+// left completely intact, reversible with one click.
+enum OrganizationStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  REJECTED
+}
+
 // A tenant. Each small business/service provider using the white-labeled
 // CRM gets one Organization. Every other model is scoped to an
 // organizationId so tenants never see each other's data.
@@ -17,6 +28,9 @@ model Organization {
   id           String   @id @default(cuid())
   name         String
   slug         String   @unique
+  status       OrganizationStatus @default(PENDING)
+  // Set when the operator approves or rejects, for the admin list.
+  reviewedAt   DateTime?
   logoUrl      String?
   primaryColor String   @default("#6366f1")
   // Dates and times render in the business's own zone, everywhere —
@@ -40,6 +54,8 @@ model Organization {
   quotes            Quote[]
   contractTemplates ContractTemplate[]
   contracts         Contract[]
+
+  @@index([status])
 }
 
 enum Role {
@@ -52,8 +68,16 @@ model User {
   id             String       @id @default(cuid())
   name           String
   email          String       @unique
+  // No email is sent anywhere yet, so a phone number is the only way to
+  // tell an applicant they were approved.
+  phone          String?
   passwordHash   String
   role           Role         @default(OWNER)
+  // Operator-level access to every workspace. Deliberately has no path
+  // through the UI or any form — it is set with scripts/promote-admin.ts
+  // against the database, so no request can grant it to itself.
+  isSuperAdmin   Boolean      @default(false)
+  lastLoginAt    DateTime?
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())

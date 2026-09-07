@@ -17,7 +17,8 @@ export default function SignupPage() {
         <div className="card card-lit p-6">
           <h1 className="page-title !text-2xl">Create your workspace</h1>
           <p className="muted mt-1 text-sm">
-            Your business gets its own branded CRM.
+            Your business gets its own branded CRM. New workspaces are reviewed
+            before they open.
           </p>
 
           <form action={formAction} className="mt-6 space-y-4">
@@ -61,6 +62,20 @@ export default function SignupPage() {
               />
             </div>
             <div>
+              <label className="label" htmlFor="phone">
+                Phone
+              </label>
+              <input
+                id="phone"
+                name="phone"
+                type="tel"
+                placeholder="(402) 555-0148"
+                autoComplete="tel"
+                required
+                className="input"
+              />
+            </div>
+            <div>
               <label className="label" htmlFor="password">
                 Password
               </label>
@@ -78,7 +93,7 @@ export default function SignupPage() {
             <FormError message={state?.error} />
 
             <button type="submit" disabled={pending} className="btn btn-primary w-full">
-              {pending ? "Creating…" : "Create account"}
+              {pending ? "Sending…" : "Request access"}
             </button>
           </form>
         </div>

@@ -164,6 +164,10 @@ const STATUS_COLORS: Record<string, string> = {
   ACCEPTED: "#34d399",
   DECLINED: "#fb7185",
   SIGNED: "#34d399",
+  PENDING: "#fbbf24",
+  ACTIVE: "#34d399",
+  PAUSED: "#f97316",
+  REJECTED: "#fb7185",
 };
 
 export function StatusBadge({ status }: { status: string }) {
@@ -190,7 +194,12 @@ export function BackLink({ href, label }: { href: string; label: string }) {
 export function FormError({ message }: { message?: string }) {
   if (!message) return null;
   return (
-    <p className="rounded-lg border border-[rgb(251_113_133/0.3)] bg-[rgb(251_113_133/0.09)] px-3 py-2 text-xs text-[var(--danger)]">
+    // role=alert so the failure is announced rather than silently drawn
+    // below a form the user is still looking at the top of.
+    <p
+      role="alert"
+      className="rounded-lg border border-[rgb(251_113_133/0.3)] bg-[rgb(251_113_133/0.09)] px-3 py-2 text-xs text-[var(--danger)]"
+    >
       {message}
     </p>
   );
@@ -199,7 +208,10 @@ export function FormError({ message }: { message?: string }) {
 export function FormSuccess({ message }: { message?: string }) {
   if (!message) return null;
   return (
-    <p className="rounded-lg border border-[rgb(52_211_153/0.3)] bg-[rgb(52_211_153/0.09)] px-3 py-2 text-xs text-[var(--ok)]">
+    <p
+      role="status"
+      className="rounded-lg border border-[rgb(52_211_153/0.3)] bg-[rgb(52_211_153/0.09)] px-3 py-2 text-xs text-[var(--ok)]"
+    >
       {message}
     </p>
   );
