@@ -160,6 +160,32 @@ and changed nothing about the existing ones.
   deploys never wipe contacts or quotes.
 - **Check it on your phone.** It's built to work there.
 
+## Two websites: the real one and the workshop
+
+There are two copies of this app running, on purpose.
+
+**The real one — `softwareconnectbrands.com`.** This is what customers and
+clients use. It is open to the public: no Vercel login, no gate. It is
+built from the `claude/first-app-creation-cdtbrb` branch. Nothing reaches
+it unless that branch changes.
+
+**The workshop — the `.vercel.app` addresses.** Every other branch gets its
+own address automatically, of the form
+`software-connect-brands-git-<branch>-software-connect.vercel.app`. New
+work happens on the `dev` branch and lands there first. These addresses ask
+for a Vercel login before showing anything, so only the account owner can
+open them — a half-finished feature is never visible to a customer.
+
+Shipping a change means merging `dev` into
+`claude/first-app-creation-cdtbrb` and pushing. That rebuild is what
+updates the real website.
+
+**Both currently share one database.** Test data entered in the workshop
+shows up on the real site, because there is only one Neon database behind
+both. Before there are real customers in here, the workshop needs its own
+separate database — otherwise a test contact and a paying client's contact
+sit in the same table.
+
 ## Two things to know before you rely on this
 
 **Anyone who finds the URL can create their own workspace.** That's how a
