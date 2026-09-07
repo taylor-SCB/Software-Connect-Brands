@@ -109,3 +109,22 @@ up to exactly the quote total.
   workspace today. Fine while evaluating, not fine once the address is
   public.
 - **Custom domains per business**, and **billing** per organization.
+
+### Parked ideas
+
+Worth building, deliberately not built yet:
+
+- **PDF download** on quotes and contracts. A rendering job, generated on
+  demand from the database — deliberately not a stored file, which would
+  go stale the moment a line item changed.
+- **File uploads**: job-site photos, quote attachments, logo uploads, and
+  an archived copy of each contract as signed. These need object storage.
+- **AI: quote from a sentence.** "Replace 3-ton rooftop unit, one day, two
+  techs" → line items drawn from the product catalog, priced and tagged.
+- **AI: pre-call briefing.** Summarize a contact's history before you dial.
+- **AI: follow-up drafting.** Turn a logged call into a sent email.
+- **AI: inbound extraction.** Paste a customer email, get a contact and a
+  draft quote out of it.
+
+The AI items are direct Anthropic API calls from the app — no gateway or
+middleware layer, so each feature's cost stays legible on its own.
