@@ -106,6 +106,24 @@ a missing `DATABASE_URL` or `AUTH_SECRET` from Steps 3–4.
 
 ## Step 6 — Point your domain at it
 
+**This step is required, not cosmetic.** Vercel's Deployment Protection
+defaults to `all_except_custom_domains`, which puts a Vercel login wall in
+front of every `*.vercel.app` address. Your own team can get in; a customer
+opening a quote link cannot. Only a custom domain is publicly reachable.
+
+That default is worth keeping: your working URL stays private, and the
+customer-facing domain is the only way in.
+
+Two gotchas that cost real time here:
+
+- **Environment variable names are case-sensitive.** `Database_URL` and
+  `DATABASE_URL` are different variables, and Vercel will not let you
+  rename one after saving — you delete it and add a new one.
+- **Secret-type values are write-only.** You cannot read a saved
+  connection string back out, so re-copy it from Neon rather than hunting
+  for it in Vercel.
+
+
 **In Vercel:**
 
 1. **Settings → Domains → Add**.
