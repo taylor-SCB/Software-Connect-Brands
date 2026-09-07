@@ -10,7 +10,7 @@ import {
   BackLink,
   StatusBadge,
 } from "@/components/ui";
-import { IconTrash, IconSend, IconExternal } from "@/components/icons";
+import { IconTrash, IconSend, IconExternal, IconDownload } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { LineItemsEditor } from "./line-items-editor";
 import { QuoteMetaForm } from "./quote-meta-form";
@@ -73,6 +73,10 @@ export default async function QuoteBuilderPage({
               <IconExternal size={13} />
               Preview
             </Link>
+            <a href={`${publicPath}/pdf`} className="btn btn-ghost btn-sm">
+              <IconDownload size={13} />
+              PDF
+            </a>
             {quote.status === "DRAFT" ? (
               <form action={setQuoteStatus}>
                 <input type="hidden" name="quoteId" value={quote.id} />

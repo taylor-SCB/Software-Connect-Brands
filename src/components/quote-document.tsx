@@ -226,7 +226,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
       style={{ ["--brand" as string]: brand, background: "#0b0d13" }}
     >
       <header
-        className="relative overflow-hidden px-8 py-10 sm:px-12"
+        className="doc-hero relative overflow-hidden px-8 py-10 sm:px-12"
         style={{
           background: `radial-gradient(700px 260px at 12% 0%, color-mix(in srgb, ${brand} 40%, transparent), transparent 70%), linear-gradient(180deg, rgb(255 255 255 / 0.06), transparent)`,
         }}
@@ -302,7 +302,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
             return (
               <div
                 key={item.id}
-                className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.03] p-4"
+                className="doc-block flex flex-wrap items-start justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.03] p-4"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">

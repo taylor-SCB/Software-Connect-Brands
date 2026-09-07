@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { QuoteDocument } from "@/components/quote-document";
+import { IconDownload } from "@/components/icons";
 
 export const metadata: Metadata = {
   title: "Quote",
@@ -44,7 +45,7 @@ export default async function PublicQuotePage({
   }
 
   return (
-    <div className="relative z-10 px-4 py-10 sm:px-6">
+    <div className="doc-page relative z-10 px-4 py-10 sm:px-6">
       {isOwnerPreview && (
         <div className="no-print mx-auto mb-4 max-w-4xl rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-xs">
           <span className="font-semibold">Draft preview.</span>{" "}
@@ -54,7 +55,17 @@ export default async function PublicQuotePage({
         </div>
       )}
       <QuoteDocument quote={quote} />
-      <p className="faint mt-6 text-center text-xs">
+
+      {/* Contractors need a file to drop into a bid package, not just a
+          link — this is the primary action on a customer-facing quote. */}
+      <div className="no-print mx-auto mt-5 flex max-w-4xl justify-center">
+        <a href={`/q/${token}/pdf`} className="btn btn-primary">
+          <IconDownload size={14} />
+          Download PDF
+        </a>
+      </div>
+
+      <p className="no-print faint mt-4 text-center text-xs">
         Questions about this quote? Reply to {quote.organization.name} directly.
       </p>
     </div>

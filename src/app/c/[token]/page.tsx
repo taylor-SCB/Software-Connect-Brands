@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { ContractDocument } from "@/components/contract-document";
+import { IconDownload } from "@/components/icons";
 import { SignForm } from "./sign-form";
 
 export const metadata: Metadata = {
@@ -40,7 +41,7 @@ export default async function PublicContractPage({
   const canSign = contract.status === "SENT";
 
   return (
-    <div className="relative z-10 px-4 py-10 sm:px-6">
+    <div className="doc-page relative z-10 px-4 py-10 sm:px-6">
       {isOwnerPreview && (
         <div className="no-print mx-auto mb-4 max-w-3xl rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-xs">
           <span className="font-semibold">Draft preview.</span>{" "}
@@ -52,6 +53,13 @@ export default async function PublicContractPage({
 
       <ContractDocument contract={contract} />
 
+      <div className="no-print mx-auto mt-5 flex max-w-3xl justify-center">
+        <a href={`/c/${token}/pdf`} className="btn btn-ghost">
+          <IconDownload size={14} />
+          Download PDF
+        </a>
+      </div>
+
       {canSign && (
         <div className="no-print mx-auto mt-5 max-w-3xl">
           <SignForm token={token} contactName={contract.contact.name} />
@@ -59,7 +67,7 @@ export default async function PublicContractPage({
       )}
 
       {contract.status === "DECLINED" && (
-        <p className="muted mx-auto mt-5 max-w-3xl text-center text-xs">
+        <p className="no-print muted mx-auto mt-5 max-w-3xl text-center text-xs">
           This contract was marked declined. Contact {contract.organization.name} if
           that&apos;s a mistake.
         </p>

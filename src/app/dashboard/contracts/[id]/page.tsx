@@ -10,7 +10,7 @@ import {
   BackLink,
   StatusBadge,
 } from "@/components/ui";
-import { IconTrash, IconSend, IconExternal } from "@/components/icons";
+import { IconTrash, IconSend, IconExternal, IconDownload } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { ContractBodyForm } from "./body-form";
 import { setContractStatus, deleteContract } from "../actions";
@@ -51,6 +51,10 @@ export default async function ContractDetailPage({
               <IconExternal size={13} />
               Preview
             </Link>
+            <a href={`${publicPath}/pdf`} className="btn btn-ghost btn-sm">
+              <IconDownload size={13} />
+              PDF
+            </a>
             {contract.status === "DRAFT" && (
               <form action={setContractStatus}>
                 <input type="hidden" name="contractId" value={contract.id} />

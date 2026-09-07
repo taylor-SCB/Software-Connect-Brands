@@ -426,8 +426,8 @@
   }
 }
 
-/* Print — quotes and contracts get printed and PDF'd constantly, so the
-   public document views need to survive it. */
+/* Print — quotes and contracts get printed and PDF'd constantly, and the
+   PDF export renders these same pages, so print fidelity is the product. */
 @media print {
   body {
     background: #fff !important;
@@ -438,5 +438,29 @@
   }
   .no-print {
     display: none !important;
+  }
+
+  /* The screen wrapper's padding stacks on top of the PDF's own page
+     margins and pushes a nearly-empty extra page. The document supplies
+     its own internal padding, so drop the wrapper's entirely. */
+  .doc-page {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Avoid orphaning a line item's sub-notes from its product name. */
+  tr,
+  .doc-block {
+    break-inside: avoid;
+  }
+
+  /* The Modern template's hero is sized for a screen; on paper that
+     generosity costs a whole extra page. */
+  .doc-hero {
+    padding-top: 1.75rem !important;
+    padding-bottom: 1.75rem !important;
+  }
+  .doc-hero h1 {
+    margin-top: 1rem !important;
   }
 }
