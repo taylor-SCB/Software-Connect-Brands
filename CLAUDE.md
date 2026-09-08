@@ -91,6 +91,12 @@ console at `/admin` where signups are approved, paused or deleted.
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
+**Read `STRATEGY.md` before proposing or arguing about a feature.** It carries
+who the customer is, what they do daily in priority order, the revenue target
+and the arithmetic behind it, and the guardrails a feature has to clear. It
+was written with Taylor and it settles most "should we build X" questions
+without asking him again.
+
 ## Where this is in its life
 
 Pre-launch, roughly a month or two out from real customers (as of Sept 2026).
