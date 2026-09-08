@@ -1,7 +1,6 @@
 // Rules shared by the ratesheet tiles, the partner page and the respond
 // action, so "is this still open" has one answer everywhere.
 
-const HALF_DAY_MS = 12 * 60 * 60 * 1000;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
 // A date input gives "2026-09-30"; parse as UTC noon (the same convention
@@ -18,10 +17,12 @@ export function toDateInput(date: Date | null | undefined) {
   return date ? date.toISOString().slice(0, 10) : "";
 }
 
-// A ratesheet is usable through its expiry day: it expires once the clock
-// passes the end of that UTC day.
+// A ratesheet is usable through its expiry day everywhere in the US: it
+// expires at noon UTC on the following day, which is never earlier than
+// local midnight in any supported zone (Hawaii's midnight is 10:00Z) and
+// at worst gives a few hours of grace the morning after.
 export function ratesheetExpired(expiresOn: Date | null, now = new Date()) {
-  return !!expiresOn && now.getTime() > expiresOn.getTime() + HALF_DAY_MS;
+  return !!expiresOn && now.getTime() > expiresOn.getTime() + DAY_MS;
 }
 
 export type RatesheetState = "ACTIVE" | "INACTIVE" | "EXPIRED";

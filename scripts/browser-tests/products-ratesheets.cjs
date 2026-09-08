@@ -142,6 +142,25 @@ async function login(page) {
   assert.ok(await page.getByText("555-0199").isVisible(), "edited phone persisted");
   assert.ok(await page.getByLabel("Select Sam Rep").isChecked());
 
+  log("second save without a reload keeps one contact and its link");
+  await page.getByRole("button", { name: "Add contact" }).click();
+  await page.getByLabel("New contact 1 name").fill("Pat Desk");
+  await page.getByLabel("New contact 1 phone").fill("555-0200");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Product saved").waitFor();
+  await page.getByLabel("Select Pat Desk").waitFor();
+  assert.ok(await page.getByLabel("Select Pat Desk").isChecked(), "new contact ticked after save");
+  assert.equal(await page.getByLabel("New contact 1 name").count(), 0, "new-contact rows cleared after save");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Product saved").waitFor();
+  const contactCounts = await sql(`SELECT name, count(*)::int AS n FROM "DistributorContact" WHERE name IN ('Sam Rep','Pat Desk') GROUP BY name ORDER BY name`);
+  assert.deepEqual(contactCounts.rows, [{ name: "Pat Desk", n: 1 }, { name: "Sam Rep", n: 1 }], "no duplicate contacts after saving twice");
+  const linked = await sql(`SELECT count(*)::int AS n FROM "_DistributorContactToProduct"`);
+  assert.equal(linked.rows[0].n, 2, "both contacts still linked to the product");
+  await page.reload();
+  assert.ok(await page.getByLabel("Select Sam Rep").isChecked());
+  assert.ok(await page.getByLabel("Select Pat Desk").isChecked());
+
   log("create software product: pop-out and total");
   await page.goto(`${BASE}/dashboard/products/new`);
   await page.fill("#name", "Monitoring seat");
@@ -216,6 +235,19 @@ async function login(page) {
   assert.match(download.headers()["content-disposition"], /attachment; filename="ferguson-2026.csv"/);
   assert.equal(await download.text(), fs.readFileSync(csvPath, "utf8"));
 
+  log("upload again from the Ratesheets page: dialog closes on its own");
+  await page.getByRole("button", { name: "Link Ratesheet" }).click();
+  await page.getByRole("button", { name: "Upload File" }).click();
+  await page.setInputFiles("#ratesheet-file", csvPath);
+  await page.fill("#ratesheet-name", "Ferguson 2026 again");
+  await page.getByRole("button", { name: "Upload" }).click();
+  await page.getByText("Ferguson 2026 again").waitFor();
+  await page.waitForFunction(() => !document.querySelector("[role=dialog]"));
+  assert.equal(await page.getByRole("dialog").count(), 0, "upload dialog closed after redirect to the same page");
+  await page.getByRole("button", { name: "Delete Ferguson 2026 again" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.waitForFunction(() => !document.body.innerText.includes("Ferguson 2026 again"));
+
   log("create ratesheet (partner specific)");
   await page.goto(`${BASE}/dashboard/products/ratesheets/new`);
   assert.equal(await page.getByRole("button", { name: /Partner Specific/ }).getAttribute("aria-pressed"), "true");
@@ -246,7 +278,7 @@ async function login(page) {
   assert.ok(body.toLowerCase().includes(`ratesheet from ${COMPANY}`.toLowerCase()));
   assert.ok(body.includes("Journeyman labor") && body.includes("$125.00") && body.includes("Per Hour"));
   assert.ok(body.includes("Monitoring seat") && body.includes("12 months"));
-  for (const forbidden of ["COGS", "80.50", "LAB-1", "Acme Tools", "Ferguson", "Sam Rep", "555-0199"]) {
+  for (const forbidden of ["COGS", "80.50", "LAB-1", "Acme Tools", "Ferguson", "Sam Rep", "Pat Desk", "555-0199", "555-0200"]) {
     assert.ok(!body.includes(forbidden), `partner page leaked ${forbidden}`);
   }
   const html = await partner.content();

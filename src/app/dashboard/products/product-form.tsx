@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -107,6 +107,19 @@ export function ProductForm({
 
   const distributor = distributors.find((item) => item.id === distributorId) ?? null;
   const showContacts = distributorId !== "";
+
+  // A successful save re-renders this form with fresh props: the contacts
+  // just created are now ordinary rows in `distributors`, and
+  // `defaults.contactIds` includes them. Local state has to catch up, or
+  // a second Save would create the same people again and drop the links
+  // the first save made.
+  const savedContactKey = (defaults?.contactIds ?? []).join(",");
+  useEffect(() => {
+    if (!state?.success) return;
+    setNewContacts([]);
+    setContactEdits({});
+    setSelectedContacts(new Set(savedContactKey ? savedContactKey.split(",") : []));
+  }, [state, savedContactKey]);
 
   function changeDistributor(next: string) {
     setDistributorId(next);

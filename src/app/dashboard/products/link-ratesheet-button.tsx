@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { IconPlus, IconUpload, IconX, IconUsers } from "@/components/icons";
 import { FormError } from "@/components/ui";
 import type { ActionState } from "@/lib/forms";
@@ -28,6 +29,14 @@ export function LinkRatesheetButton({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
+
+  // A finished upload redirects to the Ratesheets page with ?uploaded=<id>.
+  // When the upload started *on* that page the component survives the
+  // navigation, so the dialog has to close itself when the id lands.
+  const uploaded = useSearchParams().get("uploaded");
+  useEffect(() => {
+    if (uploaded) setOpen(false);
+  }, [uploaded]);
 
   function show() {
     setChoice("menu");
