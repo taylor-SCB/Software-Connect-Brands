@@ -43,13 +43,15 @@ customer.
 value totals.
 
 **Products** — the catalog you quote from. Each product carries a
-description, SKU, default tag, OEM / manufacturer, COGS (cost, never shown
-to customers), unit price and a unit of measurement (Labor, Materials and
-Software lists; a software unit adds a rate and term with the total worked
-out on screen). A product can name its distributor and the people there —
-name, email and phone — picked from per-workspace lists that grow from the
-form itself. The list page can clone, delete, and flip a product between
-active and inactive in place.
+description, SKU, default tag, OEM / manufacturer, COGS (cost, shown on the
+owner's list but never to customers or partners), unit price and a unit of
+measurement. The unit list follows the default tag — a Labor product picks
+from the Labor list, Materials from Materials, Software from Software, and
+the other tags may use any — and a software unit adds a rate and term with
+the total worked out on screen. A product can name its distributor and the
+people there — name, email and phone — picked from per-workspace lists that
+grow from the form itself. The list page can clone, delete, and flip a
+product between active and inactive in place.
 
 **Ratesheets** — a sub-module under Products. A ratesheet is a named
 selection of your products published for partners: **Public**,

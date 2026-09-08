@@ -141,7 +141,7 @@ are all blocking before the first paying customer.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. A fourth, the 22-step products +
+suite, and the delete-confirmation suite. A fourth, the 26-step products +
 ratesheets suite, is checked in at `scripts/browser-tests/` with its run
 instructions at the top of the file. All four run against a local Postgres
 on port 5433 and must pass before anything is pushed. That local database

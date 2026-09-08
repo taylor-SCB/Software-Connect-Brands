@@ -103,6 +103,8 @@ async function login(page) {
   await page.fill("#description", "Licensed journeyman, business hours");
   await page.fill("#cost", "80.50");
   await page.fill("#unitPrice", "125");
+  assert.equal(await page.locator("#unitOfMeasure option").count(), 8, "Labor tag offers only the 7 Labor units plus None");
+  assert.equal(await page.locator("#unitOfMeasure option[value=PER_GALLON]").count(), 0, "Materials units hidden for a Labor product");
   await page.selectOption("#unitOfMeasure", "PER_HOUR");
   assert.equal(await page.locator("#softwareRate").count(), 0, "software pop-out hidden for labor unit");
   await page.selectOption("#distributorId", "__new__");
@@ -118,8 +120,40 @@ async function login(page) {
   await rowA.waitFor();
   assert.ok(await rowA.getByText("Acme Tools").isVisible());
   assert.ok(await rowA.getByText("$125.00").isVisible());
+  assert.ok(await rowA.getByText("$80.50").isVisible(), "COGS column on the list");
   assert.ok(await rowA.getByText("Per Hour").isVisible());
+  assert.ok(await page.locator("thead th", { hasText: "COGS" }).isVisible(), "COGS header on the list");
   await shot(page, "02-products-list");
+
+  log("unit list follows the tag: switching tags clears a unit that no longer fits, other tags get every list");
+  await page.goto(`${BASE}/dashboard/products/new`);
+  await page.selectOption("#defaultTag", "LABOR");
+  await page.selectOption("#unitOfMeasure", "PER_HOUR");
+  await page.selectOption("#defaultTag", "MATERIALS");
+  assert.equal(await page.locator("#unitOfMeasure").inputValue(), "", "unit cleared when the tag's list changes");
+  await page.getByText("Unit cleared").waitFor();
+  assert.equal(await page.locator("#unitOfMeasure option").count(), 9, "Materials tag offers its 8 units plus None");
+  await page.selectOption("#unitOfMeasure", "PER_GALLON");
+  assert.equal(await page.getByText("Unit cleared").count(), 0, "notice goes away once a unit is picked");
+  await page.selectOption("#defaultTag", "PROJECT_SERVICES");
+  assert.equal(await page.locator("#unitOfMeasure").inputValue(), "PER_GALLON", "a tag with no list of its own keeps the unit");
+  assert.equal(await page.locator("#unitOfMeasure option").count(), 20, "other tags offer all three lists");
+  // The server checks it too: force a Materials unit onto a Labor product from the DOM.
+  await page.selectOption("#defaultTag", "LABOR");
+  await page.fill("#name", "Bad unit");
+  await page.evaluate(() => {
+    const select = document.querySelector("#unitOfMeasure");
+    const option = document.createElement("option");
+    option.value = "PER_GALLON";
+    option.textContent = "Per Gallon";
+    select.appendChild(option);
+    select.value = "PER_GALLON";
+  });
+  await page.getByRole("button", { name: "Save product" }).click();
+  await page.getByText("That unit belongs to the Materials list, not Labor").waitFor();
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Product" WHERE name='Bad unit'`)).rows[0].n, 0, "server refused the mismatched unit");
+  await page.goto(`${BASE}/dashboard/products`);
+  await rowA.waitFor();
 
   log("edit product: lookups persisted, contact ticked, fix contact phone");
   await rowA.getByRole("link", { name: "Edit" }).click();

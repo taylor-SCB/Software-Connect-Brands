@@ -352,9 +352,9 @@ model Contract {
 // Product catalog lookups
 // ------------------------------------------------------------------
 
-// The Labor, Materials and Software lists from src/lib/constants.ts
-// (UNIT_GROUPS), kept as one enum so a product carries exactly one unit
-// whatever its tag.
+// Each list belongs to the tag it is named after (see UNIT_GROUPS in
+// src/lib/constants.ts); the form and the save action both enforce it.
+// Kept as one enum so a product carries exactly one unit whatever its tag.
 enum UnitOfMeasure {
   PER_HOUR
   PER_DAY

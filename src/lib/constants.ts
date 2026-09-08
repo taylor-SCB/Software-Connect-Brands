@@ -71,9 +71,11 @@ export const CONTRACT_TYPE_LABELS: Record<ContractTypeValue, string> = {
 
 export const CONTRACT_STATUSES = ["DRAFT", "SENT", "SIGNED", "DECLINED"] as const;
 
-// Unit of measurement on a product, in the three lists the owner gave.
-// The groups are headings in one dropdown, not a rule: any product can
-// carry any unit, and a Software unit is what reveals the rate/term box.
+// Unit of measurement on a product. Each list belongs to the tag it is
+// named after: a Labor product picks from the Labor list, and so on. Tags
+// without a list of their own (project services, shipping, taxes) can
+// pick from any of the three. A Software unit is what reveals the
+// rate/term box.
 export const UNIT_GROUPS = {
   LABOR: [
     "PER_HOUR",
@@ -139,6 +141,18 @@ export function unitGroupFor(unit: string | null | undefined): UnitGroup | null 
 
 export function isSoftwareUnit(unit: string | null | undefined) {
   return unitGroupFor(unit) === "SOFTWARE";
+}
+
+// Which unit lists a product with a given default tag may choose from.
+export function unitGroupsForTag(tag: string): UnitGroup[] {
+  if (tag === "LABOR" || tag === "MATERIALS" || tag === "SOFTWARE") return [tag];
+  return ["LABOR", "MATERIALS", "SOFTWARE"];
+}
+
+export function unitAllowedForTag(unit: string | null | undefined, tag: string) {
+  if (!unit) return true;
+  const group = unitGroupFor(unit);
+  return group !== null && unitGroupsForTag(tag).includes(group);
 }
 
 export const UNIT_GROUP_LABELS: Record<UnitGroup, string> = {

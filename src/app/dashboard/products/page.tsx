@@ -70,6 +70,7 @@ export default async function ProductsPage() {
                   <th>Product</th>
                   <th className="hidden md:table-cell">SKU</th>
                   <th>Default tag</th>
+                  <th className="hidden text-right md:table-cell">COGS</th>
                   <th className="text-right">Unit price</th>
                   <th>Status</th>
                   <th />
@@ -105,6 +106,11 @@ export default async function ProductsPage() {
                       <td className="faint num hidden text-xs md:table-cell">{product.sku || "—"}</td>
                       <td>
                         <TagBadge tag={product.defaultTag as LineItemTagValue} />
+                      </td>
+                      {/* Internal cost. This list is the owner's own; the
+                          partner page never selects the column. */}
+                      <td className="num muted hidden text-right md:table-cell">
+                        {formatCents(product.costCents)}
                       </td>
                       <td className="num text-right font-medium">
                         {formatCents(product.unitPriceCents)}

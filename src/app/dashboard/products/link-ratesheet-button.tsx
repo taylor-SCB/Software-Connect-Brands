@@ -32,11 +32,14 @@ export function LinkRatesheetButton({
 
   // A finished upload redirects to the Ratesheets page with ?uploaded=<id>.
   // When the upload started *on* that page the component survives the
-  // navigation, so the dialog has to close itself when the id lands.
+  // navigation, so the dialog closes itself the render the id lands
+  // (state adjusted during render, not in an effect).
   const uploaded = useSearchParams().get("uploaded");
-  useEffect(() => {
+  const [seenUploaded, setSeenUploaded] = useState(uploaded);
+  if (uploaded !== seenUploaded) {
+    setSeenUploaded(uploaded);
     if (uploaded) setOpen(false);
-  }, [uploaded]);
+  }
 
   function show() {
     setChoice("menu");

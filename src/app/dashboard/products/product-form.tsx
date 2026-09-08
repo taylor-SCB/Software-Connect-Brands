@@ -1,11 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import {
   Card,
   CardHeader,
   Field,
-  SelectField,
   TextareaField,
   FormError,
   FormSuccess,
@@ -17,6 +16,8 @@ import {
   UNIT_GROUP_LABELS,
   UNIT_LABELS,
   isSoftwareUnit,
+  unitAllowedForTag,
+  unitGroupsForTag,
   SOFTWARE_RATES,
   SOFTWARE_RATE_LABELS,
   SOFTWARE_TERM_NOUNS,
@@ -83,7 +84,25 @@ export function ProductForm({
   // Everything that reveals or hides another control is held in state;
   // plain text fields stay uncontrolled like the rest of the app's forms.
   const [manufacturerId, setManufacturerId] = useState(defaults?.manufacturerId ?? "");
+  const [tag, setTag] = useState(defaults?.defaultTag ?? "MATERIALS");
   const [unit, setUnit] = useState(defaults?.unitOfMeasure ?? "");
+  // Set when a tag change had to drop the unit, so the blank field is
+  // explained rather than silently emptied.
+  const [unitCleared, setUnitCleared] = useState(false);
+  const allowedGroups = unitGroupsForTag(tag);
+
+  function changeTag(next: string) {
+    setTag(next);
+    if (!unitAllowedForTag(unit, next)) {
+      setUnit("");
+      setUnitCleared(unit !== "");
+    }
+  }
+
+  function changeUnit(next: string) {
+    setUnit(next);
+    setUnitCleared(false);
+  }
   const [rate, setRate] = useState<SoftwareRateValue>(
     (defaults?.softwareRate as SoftwareRateValue | null) ?? "PER_MONTH",
   );
@@ -112,14 +131,18 @@ export function ProductForm({
   // just created are now ordinary rows in `distributors`, and
   // `defaults.contactIds` includes them. Local state has to catch up, or
   // a second Save would create the same people again and drop the links
-  // the first save made.
-  const savedContactKey = (defaults?.contactIds ?? []).join(",");
-  useEffect(() => {
-    if (!state?.success) return;
-    setNewContacts([]);
-    setContactEdits({});
-    setSelectedContacts(new Set(savedContactKey ? savedContactKey.split(",") : []));
-  }, [state, savedContactKey]);
+  // the first save made. Done during render (React's "adjusting state
+  // when a prop changes" pattern) rather than in an effect, so there is
+  // no frame where the stale rows are still on screen.
+  const [seenState, setSeenState] = useState(state);
+  if (state !== seenState) {
+    setSeenState(state);
+    if (state?.success) {
+      setNewContacts([]);
+      setContactEdits({});
+      setSelectedContacts(new Set(defaults?.contactIds ?? []));
+    }
+  }
 
   function changeDistributor(next: string) {
     setDistributorId(next);
@@ -203,13 +226,27 @@ export function ProductForm({
                 defaultValue={defaults?.name ?? ""}
                 required
               />
-              <SelectField
-                label="Default tag"
-                name="defaultTag"
-                options={TAG_OPTIONS}
-                defaultValue={defaults?.defaultTag ?? "MATERIALS"}
-                hint="Pre-selects the category on a quote line."
-              />
+              <div>
+                <label className="label" htmlFor="defaultTag">
+                  Default tag
+                </label>
+                <select
+                  id="defaultTag"
+                  name="defaultTag"
+                  value={tag}
+                  onChange={(event) => changeTag(event.target.value)}
+                  className="select"
+                >
+                  {TAG_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="faint mt-1 text-xs">
+                  Pre-selects the category on a quote line, and picks which unit list applies.
+                </p>
+              </div>
               <div>
                 <label className="label" htmlFor="manufacturerId">
                   OEM / Manufacturer
@@ -295,11 +332,13 @@ export function ProductForm({
                   id="unitOfMeasure"
                   name="unitOfMeasure"
                   value={unit}
-                  onChange={(event) => setUnit(event.target.value)}
+                  onChange={(event) => changeUnit(event.target.value)}
                   className="select"
                 >
                   <option value="">— None —</option>
-                  {(Object.keys(UNIT_GROUPS) as UnitGroup[]).map((group) => (
+                  {/* Only the list that belongs to the Default tag. Tags with no
+                      list of their own get all three. */}
+                  {allowedGroups.map((group: UnitGroup) => (
                     <optgroup key={group} label={UNIT_GROUP_LABELS[group]}>
                       {UNIT_GROUPS[group].map((value) => (
                         <option key={value} value={value}>
@@ -309,6 +348,17 @@ export function ProductForm({
                     </optgroup>
                   ))}
                 </select>
+                {unitCleared ? (
+                  <p className="mt-1 text-xs text-[var(--warn)]">
+                    Unit cleared — pick one from the {TAG_LABELS[tag as keyof typeof TAG_LABELS]} list.
+                  </p>
+                ) : (
+                  <p className="faint mt-1 text-xs">
+                    {allowedGroups.length === 1
+                      ? `${UNIT_GROUP_LABELS[allowedGroups[0]]} units.`
+                      : "Any unit."}
+                  </p>
+                )}
               </div>
             </div>
 

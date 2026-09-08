@@ -9,9 +9,13 @@ import { parseForm, optionalText, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
 import {
   LINE_ITEM_TAGS,
+  TAG_LABELS,
   UNITS_OF_MEASURE,
+  UNIT_GROUP_LABELS,
   SOFTWARE_RATES,
   isSoftwareUnit,
+  unitAllowedForTag,
+  unitGroupFor,
 } from "@/lib/constants";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -120,7 +124,17 @@ async function resolveProductInput(
   if (costCents < 0) return { ok: false, error: "COGS can't be negative" };
   const unitPriceCents = dollarsToCents(formData.get("unitPrice"));
 
+  // Each unit list belongs to a tag: a Labor product can't be "Per
+  // Gallon". The form only offers the right list; this is the check for
+  // a stale form or a hand-built post.
   const unitOfMeasure = input.unitOfMeasure || null;
+  if (!unitAllowedForTag(unitOfMeasure, input.defaultTag)) {
+    const group = unitGroupFor(unitOfMeasure);
+    return {
+      ok: false,
+      error: `That unit belongs to the ${group ? UNIT_GROUP_LABELS[group] : "other"} list, not ${TAG_LABELS[input.defaultTag]}`,
+    };
+  }
 
   // Rate and term only mean something for software units.
   let softwareRate: Resolved["scalars"]["softwareRate"] = null;
