@@ -25,35 +25,41 @@ enum OrganizationStatus {
 // CRM gets one Organization. Every other model is scoped to an
 // organizationId so tenants never see each other's data.
 model Organization {
-  id           String   @id @default(cuid())
-  name         String
-  slug         String   @unique
-  status       OrganizationStatus @default(PENDING)
+  id                 String             @id @default(cuid())
+  name               String
+  slug               String             @unique
+  status             OrganizationStatus @default(PENDING)
   // Set when the operator approves or rejects, for the admin list.
-  reviewedAt   DateTime?
-  logoUrl      String?
-  primaryColor String   @default("#6366f1")
+  reviewedAt         DateTime?
+  logoUrl            String?
+  primaryColor       String             @default("#6366f1")
   // Dates and times render in the business's own zone, everywhere —
   // dashboard, quotes and contracts alike. Storing it per organization
   // keeps server-rendered output deterministic (no hydration mismatch)
   // and means a document shows the sender's local time, not the reader's.
-  timeZone     String   @default("America/Chicago")
+  timeZone           String             @default("America/Chicago")
   // Money is stored in cents everywhere; these drive human-readable
   // sequential document numbers (QUO-1004, CON-1002...).
-  nextQuoteNumber    Int @default(1000)
-  nextContractNumber Int @default(1000)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  nextQuoteNumber    Int                @default(1000)
+  nextContractNumber Int                @default(1000)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
-  users             User[]
-  contacts          Contact[]
-  deals             Deal[]
-  notes             Note[]
-  activities        Activity[]
-  products          Product[]
-  quotes            Quote[]
-  contractTemplates ContractTemplate[]
-  contracts         Contract[]
+  users               User[]
+  contacts            Contact[]
+  deals               Deal[]
+  notes               Note[]
+  activities          Activity[]
+  products            Product[]
+  quotes              Quote[]
+  contractTemplates   ContractTemplate[]
+  contracts           Contract[]
+  manufacturers       Manufacturer[]
+  distributors        Distributor[]
+  distributorContacts DistributorContact[]
+  ratesheets          Ratesheet[]
+  ratesheetInvites    RatesheetInvite[]
+  linkedRatesheets    LinkedRatesheet[]
 
   @@index([status])
 }
@@ -193,21 +199,38 @@ enum LineItemTag {
 }
 
 model Product {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String
-  description    String       @default("")
-  sku            String?
-  unitPriceCents Int          @default(0)
-  defaultTag     LineItemTag  @default(MATERIALS)
-  active         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                  String               @id @default(cuid())
+  organizationId      String
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                String
+  description         String               @default("")
+  sku                 String?
+  unitPriceCents      Int                  @default(0)
+  // Cost of goods sold. Internal only — never rendered on anything a
+  // customer or partner can open.
+  costCents           Int                  @default(0)
+  defaultTag          LineItemTag          @default(MATERIALS)
+  unitOfMeasure       UnitOfMeasure?
+  // Software is priced per unit per period: the rate is the period and the
+  // term is how many of them. Both are null unless the unit is a software
+  // unit.
+  softwareRate        SoftwareRate?
+  softwareTerm        Int?
+  manufacturerId      String?
+  manufacturer        Manufacturer?        @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
+  distributorId       String?
+  distributor         Distributor?         @relation(fields: [distributorId], references: [id], onDelete: SetNull)
+  distributorContacts DistributorContact[]
+  active              Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
-  lineItems QuoteLineItem[]
+  lineItems      QuoteLineItem[]
+  ratesheetItems RatesheetItem[]
 
   @@index([organizationId])
+  @@index([manufacturerId])
+  @@index([distributorId])
 }
 
 enum QuoteTemplate {
@@ -249,20 +272,20 @@ model Quote {
 }
 
 model QuoteLineItem {
-  id        String  @id @default(cuid())
-  quoteId   String
-  quote     Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  productId String?
-  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  id             String      @id @default(cuid())
+  quoteId        String
+  quote          Quote       @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
   // Copied from the product at insert time so editing a product later
   // never rewrites history on a quote that was already sent.
-  name             String
-  description      String      @default("")
-  projectNotes     String      @default("")
-  quantity         Float       @default(1)
-  unitPriceCents   Int         @default(0)
-  tag              LineItemTag
-  position         Int         @default(0)
+  name           String
+  description    String      @default("")
+  projectNotes   String      @default("")
+  quantity       Float       @default(1)
+  unitPriceCents Int         @default(0)
+  tag            LineItemTag
+  position       Int         @default(0)
 
   @@index([quoteId])
 }
@@ -323,4 +346,191 @@ model Contract {
   @@unique([organizationId, number])
   @@index([organizationId])
   @@index([contactId])
+}
+
+// ------------------------------------------------------------------
+// Product catalog lookups
+// ------------------------------------------------------------------
+
+// Each list belongs to the tag it is named after (see UNIT_GROUPS in
+// src/lib/constants.ts). Kept as one enum so a product carries exactly one
+// unit whatever its tag.
+enum UnitOfMeasure {
+  PER_HOUR
+  PER_DAY
+  PER_PERSON_PER_HOUR
+  PER_PERSON_PER_DAY
+  PER_ROOM
+  PER_BUILDING
+  PER_PROPERTY
+  EACH
+  PER_PIECE
+  PER_SQFT
+  PER_LINEAR_FT
+  PER_CUBIC_YARD
+  PER_ITEM
+  PER_GALLON
+  PER_POUND
+  PER_UNIT
+  PER_BED
+  PER_LOCATION
+  PER_DEVICE
+}
+
+enum SoftwareRate {
+  PER_MONTH
+  PER_YEAR
+  PER_TERM
+}
+
+// OEM / manufacturer pick list. Per workspace, created inline from the
+// product form, so a new tenant is never staring at an empty dropdown.
+model Manufacturer {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  createdAt      DateTime     @default(now())
+
+  products Product[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model Distributor {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  contacts DistributorContact[]
+  products Product[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// A person at a distributor. A product can point at several of them (the
+// rep, the inside sales desk, the branch manager), hence the many-to-many
+// from Product.
+model DistributorContact {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  distributorId  String
+  distributor    Distributor  @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  name           String
+  email          String?
+  phone          String?
+  createdAt      DateTime     @default(now())
+
+  products Product[]
+
+  @@index([organizationId])
+  @@index([distributorId])
+}
+
+// ------------------------------------------------------------------
+// Ratesheets
+// ------------------------------------------------------------------
+
+// PUBLIC: anyone in the system can find and link it until it expires.
+// INVITE_APPROVE: findable, but linking sends the owner a request to
+// approve or decline. PARTNER_SPECIFIC: sent to one email address, which
+// approves or declines it.
+enum RatesheetVisibility {
+  PUBLIC
+  INVITE_APPROVE
+  PARTNER_SPECIFIC
+}
+
+enum RatesheetInviteStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+// A named, shareable selection of a workspace's own products. Items point
+// at live products rather than copying them: a ratesheet is a price list,
+// and a price list that silently goes stale is worse than none.
+model Ratesheet {
+  id                String              @id @default(cuid())
+  organizationId    String
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name              String
+  visibility        RatesheetVisibility @default(PUBLIC)
+  // After this date nobody can select or answer it.
+  expiresOn         DateTime?
+  // Days a partner has to approve or decline once sent. Null for PUBLIC,
+  // which is simply open until it expires.
+  respondWithinDays Int?
+  active            Boolean             @default(true)
+  publicToken       String              @unique
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  items   RatesheetItem[]
+  invites RatesheetInvite[]
+
+  @@index([organizationId])
+  @@index([visibility, active])
+}
+
+model RatesheetItem {
+  id          String    @id @default(cuid())
+  ratesheetId String
+  ratesheet   Ratesheet @relation(fields: [ratesheetId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position    Int       @default(0)
+
+  @@unique([ratesheetId, productId])
+  @@index([ratesheetId])
+  @@index([productId])
+}
+
+// One send of a ratesheet to one partner. The token is the only auth on
+// the partner's approve/decline page, so it carries real entropy.
+model RatesheetInvite {
+  id             String                @id @default(cuid())
+  organizationId String
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ratesheetId    String
+  ratesheet      Ratesheet             @relation(fields: [ratesheetId], references: [id], onDelete: Cascade)
+  partnerEmail   String
+  partnerName    String?
+  token          String                @unique
+  status         RatesheetInviteStatus @default(PENDING)
+  sentAt         DateTime              @default(now())
+  // sentAt + the ratesheet's respondWithinDays. Null means no deadline.
+  respondBy      DateTime?
+  respondedAt    DateTime?
+  createdAt      DateTime              @default(now())
+
+  @@index([organizationId, status])
+  @@index([ratesheetId])
+}
+
+// A ratesheet file the user uploaded (a distributor's price list). The
+// bytes live in Postgres because that is the one store this app has; the
+// action caps uploads at 4 MB so the table can't balloon.
+model LinkedRatesheet {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  // Excluded from every query by default (see src/lib/prisma.ts) so a
+  // list page never drags megabytes through the server; only the download
+  // route asks for it.
+  data           Bytes
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
 }

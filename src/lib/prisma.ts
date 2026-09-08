@@ -5,8 +5,10 @@ import { PrismaPg } from "@prisma/adapter-pg";
 // don't open a new connection pool on every file save. The adapter is
 // built inside the factory rather than at module scope, otherwise every
 // reload opens a pool that the cached client never uses.
+// Typed from the factory so the global omit config below is part of the
+// client's type everywhere it is used.
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  prisma: ReturnType<typeof createPrismaClient> | undefined;
 };
 
 // Hosting providers name this variable differently — Vercel's Postgres
@@ -30,6 +32,11 @@ function databaseUrl() {
 function createPrismaClient() {
   return new PrismaClient({
     adapter: new PrismaPg({ connectionString: databaseUrl() }),
+    // Uploaded ratesheet files live in a Bytes column. Prisma returns every
+    // scalar by default, which would pull each upload's whole file through
+    // the server just to list its name. Opt out globally; the download
+    // route selects `data` explicitly.
+    omit: { linkedRatesheet: { data: true } },
   });
 }
 

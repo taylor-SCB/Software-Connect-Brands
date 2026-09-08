@@ -43,7 +43,26 @@ customer.
 value totals.
 
 **Products** — the catalog you quote from. Each product carries a
-description, SKU, unit price and a default tag.
+description, SKU, default tag, OEM / manufacturer, COGS (cost, never shown
+to customers), unit price and a unit of measurement (Labor, Materials and
+Software lists; a software unit adds a rate and term with the total worked
+out on screen). A product can name its distributor and the people there —
+name, email and phone — picked from per-workspace lists that grow from the
+form itself. The list page can clone, delete, and flip a product between
+active and inactive in place.
+
+**Ratesheets** — a sub-module under Products. A ratesheet is a named
+selection of your products published for partners: **Public**,
+**Invite/Approve**, or **Partner Specific** (sent to one email address),
+with an *Expires On* date and an *Approved/Decline Within* window. Each
+send produces a link (`/r/<token>`) where the partner sees the prices —
+never the cost, SKU, manufacturer or distributor — and approves or
+declines. The landing page shows a summary of every send with its status
+on the left and the ratesheet tiles (approved/sent, expires on) on the
+right; clicking a tile filters the summary. **+ Link Ratesheet** uploads a
+distributor's own price list (any file up to 4 MB, stored in the
+database) so it can be downloaded from the same page; linking another
+workspace's published sheet is marked *Coming Soon*.
 
 **Quotes** — two templates, **Simple** (clean and printable) and **Modern**
 (branded dark layout). Every line item has the product name, a *product
@@ -102,8 +121,11 @@ src/components/                   UI kit, icons, quote + contract renderers
 src/proxy.ts                      protects everything under /dashboard
 src/app/dashboard/...             the app: contacts, deals, products,
                                   quotes, contracts, settings
+src/app/dashboard/products/ratesheets
+                                  the Ratesheets sub-module
 src/app/q/[token]                 public quote view
 src/app/c/[token]                 public contract view + e-signature
+src/app/r/[token]                 public ratesheet view + partner approve/decline
 ```
 
 `auth.ts` vs `auth.config.ts`: Next.js runs the `/dashboard` gatekeeping in
@@ -117,8 +139,9 @@ up to exactly the quote total.
 
 ## Where to go next
 
-- **Sending email.** "Mark as sent" and "Send for signature" change status
-  and give you a link to paste; there's no mail provider wired up yet.
+- **Sending email.** "Mark as sent", "Send for signature" and "Send to
+  partner" on a ratesheet change status and give you a link to paste;
+  there's no mail provider wired up yet.
 - **Team members.** The `Role` enum (OWNER/ADMIN/MEMBER) gates branding
   today, but there's no invite flow.
 - **Restricting signup.** Anyone who reaches the URL can create a

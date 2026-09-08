@@ -192,6 +192,54 @@ export const IconDownload = (p: IconProps) => (
   </Svg>
 );
 
+export const IconUpload = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M17 8l-5-5-5 5M12 3v12" />
+  </Svg>
+);
+
+export const IconLink = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" />
+    <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" />
+  </Svg>
+);
+
+export const IconPower = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+    <path d="M12 2v10" />
+  </Svg>
+);
+
+export const IconX = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M18 6 6 18M6 6l12 12" />
+  </Svg>
+);
+
+export const IconLayers = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 2 2 7l10 5 10-5z" />
+    <path d="M2 17l10 5 10-5" />
+    <path d="M2 12l10 5 10-5" />
+  </Svg>
+);
+
+export const IconEdit = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+  </Svg>
+);
+
+export const IconFilter = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M22 3H2l8 9.5V19l4 2v-8.5z" />
+  </Svg>
+);
+
 export const IconExternal = (p: IconProps) => (
   <Svg {...p}>
     <path d="M15 3h6v6M10 14 21 3" />

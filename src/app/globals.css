@@ -229,10 +229,65 @@
     background: rgb(251 113 133 / 0.16);
   }
 
+  /* Two deliberately off-brand buttons on the Products page. The owner
+     asked for these exact colors so they stand apart from the tenant's
+     brand color, which every other primary button follows. */
+  .btn-pink {
+    color: #fff;
+    background: linear-gradient(180deg, #ff4fae, #ff1f8f);
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.2) inset,
+      0 10px 30px -12px rgb(255 31 143 / 0.85);
+  }
+  .btn-pink:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  .btn-neon {
+    color: #06210c;
+    background: linear-gradient(180deg, #6bff4a, #39ff14);
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.3) inset,
+      0 10px 30px -12px rgb(57 255 20 / 0.8);
+  }
+  .btn-neon:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  /* Icon-only trash button on list rows: red, quiet until hovered. */
+  .btn-icon-danger {
+    color: var(--danger);
+    background: transparent;
+    border-color: rgb(251 113 133 / 0.28);
+    padding: 0.3rem 0.4rem;
+    border-radius: 8px;
+  }
+  .btn-icon-danger:hover:not(:disabled) {
+    background: rgb(251 113 133 / 0.14);
+  }
+
   .btn-sm {
     padding: 0.3rem 0.6rem;
     font-size: 0.75rem;
     border-radius: 8px;
+  }
+
+  /* "Filter Applied" chip on a selected ratesheet tile. */
+  .pulse-soft {
+    animation: pulseSoft 1.8s ease-in-out infinite;
+  }
+
+  /* Full-screen dialog scrim. */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgb(0 0 0 / 0.6);
+    backdrop-filter: blur(6px);
   }
 
   /* ---------- Forms ---------- */
@@ -417,8 +472,19 @@
   }
 }
 
+@keyframes pulseSoft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .fade-up {
+  .fade-up,
+  .pulse-soft {
     animation: none;
   }
   .card-hover:hover {

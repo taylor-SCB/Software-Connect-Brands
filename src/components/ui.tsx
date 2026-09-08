@@ -168,6 +168,9 @@ const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "#34d399",
   PAUSED: "#f97316",
   REJECTED: "#fb7185",
+  APPROVED: "#34d399",
+  EXPIRED: "#64748b",
+  INACTIVE: "#64748b",
 };
 
 export function StatusBadge({ status }: { status: string }) {
@@ -225,6 +228,7 @@ export function Field({
   defaultValue,
   required = false,
   hint,
+  step,
 }: {
   label: string;
   name: string;
@@ -233,6 +237,9 @@ export function Field({
   defaultValue?: string | number;
   required?: boolean;
   hint?: string;
+  // A number input rejects decimals unless told otherwise; money fields
+  // pass "0.01".
+  step?: string;
 }) {
   return (
     <div>
@@ -247,6 +254,7 @@ export function Field({
         placeholder={placeholder}
         defaultValue={defaultValue}
         required={required}
+        step={step}
         className="input"
       />
       {hint && <p className="faint mt-1 text-xs">{hint}</p>}

@@ -70,3 +70,109 @@ export const CONTRACT_TYPE_LABELS: Record<ContractTypeValue, string> = {
 };
 
 export const CONTRACT_STATUSES = ["DRAFT", "SENT", "SIGNED", "DECLINED"] as const;
+
+// Unit of measurement on a product. Each list belongs to the tag it is
+// named after: a Labor product picks from the Labor list, and so on. Tags
+// without a list of their own (project services, shipping, taxes) can
+// pick from any of the three.
+export const UNIT_GROUPS = {
+  LABOR: [
+    "PER_HOUR",
+    "PER_DAY",
+    "PER_PERSON_PER_HOUR",
+    "PER_PERSON_PER_DAY",
+    "PER_ROOM",
+    "PER_BUILDING",
+    "PER_PROPERTY",
+  ],
+  MATERIALS: [
+    "EACH",
+    "PER_PIECE",
+    "PER_SQFT",
+    "PER_LINEAR_FT",
+    "PER_CUBIC_YARD",
+    "PER_ITEM",
+    "PER_GALLON",
+    "PER_POUND",
+  ],
+  SOFTWARE: ["PER_UNIT", "PER_BED", "PER_LOCATION", "PER_DEVICE"],
+} as const;
+
+export type UnitGroup = keyof typeof UNIT_GROUPS;
+
+export const UNITS_OF_MEASURE = [
+  ...UNIT_GROUPS.LABOR,
+  ...UNIT_GROUPS.MATERIALS,
+  ...UNIT_GROUPS.SOFTWARE,
+] as const;
+
+export type UnitOfMeasureValue = (typeof UNITS_OF_MEASURE)[number];
+
+export const UNIT_LABELS: Record<UnitOfMeasureValue, string> = {
+  PER_HOUR: "Per Hour",
+  PER_DAY: "Per Day",
+  PER_PERSON_PER_HOUR: "Per Person Per Hour",
+  PER_PERSON_PER_DAY: "Per Person Per Day",
+  PER_ROOM: "Per Room",
+  PER_BUILDING: "Per Building",
+  PER_PROPERTY: "Per Property",
+  EACH: "Each",
+  PER_PIECE: "Per Piece",
+  PER_SQFT: "Per SqFt",
+  PER_LINEAR_FT: "Per LinearFt",
+  PER_CUBIC_YARD: "Per Cubic Yard",
+  PER_ITEM: "Per Item",
+  PER_GALLON: "Per Gallon",
+  PER_POUND: "Per Pound",
+  PER_UNIT: "Per Unit",
+  PER_BED: "Per Bed",
+  PER_LOCATION: "Per Location",
+  PER_DEVICE: "Per Device",
+};
+
+export function unitGroupFor(unit: string | null | undefined): UnitGroup | null {
+  if (!unit) return null;
+  for (const group of Object.keys(UNIT_GROUPS) as UnitGroup[]) {
+    if ((UNIT_GROUPS[group] as readonly string[]).includes(unit)) return group;
+  }
+  return null;
+}
+
+export function isSoftwareUnit(unit: string | null | undefined) {
+  return unitGroupFor(unit) === "SOFTWARE";
+}
+
+export const UNIT_GROUP_LABELS: Record<UnitGroup, string> = {
+  LABOR: "Labor",
+  MATERIALS: "Materials",
+  SOFTWARE: "Software",
+};
+
+// Software is priced per unit *per period*. The rate is the period; the
+// term is how many of them, so the product page can show the full total.
+export const SOFTWARE_RATES = ["PER_MONTH", "PER_YEAR", "PER_TERM"] as const;
+export type SoftwareRateValue = (typeof SOFTWARE_RATES)[number];
+
+export const SOFTWARE_RATE_LABELS: Record<SoftwareRateValue, string> = {
+  PER_MONTH: "Per Month",
+  PER_YEAR: "Per Year",
+  PER_TERM: "Per Term",
+};
+
+export const SOFTWARE_TERM_NOUNS: Record<SoftwareRateValue, string> = {
+  PER_MONTH: "month",
+  PER_YEAR: "year",
+  PER_TERM: "term",
+};
+
+export const RATESHEET_VISIBILITIES = ["PUBLIC", "INVITE_APPROVE", "PARTNER_SPECIFIC"] as const;
+export type RatesheetVisibilityValue = (typeof RATESHEET_VISIBILITIES)[number];
+
+export const RATESHEET_VISIBILITY_LABELS: Record<RatesheetVisibilityValue, string> = {
+  PUBLIC: "Public",
+  INVITE_APPROVE: "Invite/Approve",
+  PARTNER_SPECIFIC: "Partner Specific",
+};
+
+export const RATESHEET_INVITE_STATUSES = ["PENDING", "APPROVED", "DECLINED"] as const;
+export type RatesheetInviteStatusValue = (typeof RATESHEET_INVITE_STATUSES)[number];

@@ -10,13 +10,28 @@ import {
   IconSignature,
   IconTrending,
   IconSettings,
+  IconLayers,
 } from "@/components/icons";
 
-const NAV = [
+type NavChild = { href: string; label: string; Icon: (p: { size?: number; className?: string }) => React.ReactElement };
+
+const NAV: {
+  href: string;
+  label: string;
+  Icon: NavChild["Icon"];
+  // Sub-modules that live under a section. Shown indented beneath the
+  // parent while the section is active, so the sidebar stays short.
+  children?: NavChild[];
+}[] = [
   { href: "/dashboard", label: "Overview", Icon: IconGrid },
   { href: "/dashboard/contacts", label: "Contacts", Icon: IconUsers },
   { href: "/dashboard/deals", label: "Pipeline", Icon: IconTrending },
-  { href: "/dashboard/products", label: "Products", Icon: IconBox },
+  {
+    href: "/dashboard/products",
+    label: "Products",
+    Icon: IconBox,
+    children: [{ href: "/dashboard/products/ratesheets", label: "Ratesheets", Icon: IconLayers }],
+  },
   { href: "/dashboard/quotes", label: "Quotes", Icon: IconFileText },
   { href: "/dashboard/contracts", label: "Contracts", Icon: IconSignature },
   { href: "/dashboard/settings", label: "Settings", Icon: IconSettings },
@@ -34,18 +49,42 @@ export function SidebarNav() {
 
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.map(({ href, label, Icon }) => {
-        const active = isActive(pathname, href);
+      {NAV.map(({ href, label, Icon, children }) => {
+        const sectionActive = isActive(pathname, href);
+        const childActive = children?.find((child) => isActive(pathname, child.href));
+        // The parent lights up for its own page; on a sub-module page the
+        // child carries the highlight instead so only one row reads as
+        // "you are here".
+        const active = sectionActive && !childActive;
         return (
-          <Link
-            key={href}
-            href={href}
-            aria-current={active ? "page" : undefined}
-            className={`nav-item ${active ? "nav-item-active" : ""}`}
-          >
-            <Icon size={16} className={active ? "" : "opacity-70"} />
-            {label}
-          </Link>
+          <div key={href}>
+            <Link
+              href={href}
+              aria-current={active ? "page" : undefined}
+              className={`nav-item ${active ? "nav-item-active" : ""}`}
+            >
+              <Icon size={16} className={active ? "" : "opacity-70"} />
+              {label}
+            </Link>
+            {children && sectionActive && (
+              <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-[var(--border)] pl-2">
+                {children.map((child) => {
+                  const on = child === childActive;
+                  return (
+                    <Link
+                      key={child.href}
+                      href={child.href}
+                      aria-current={on ? "page" : undefined}
+                      className={`nav-item py-1.5 text-[0.8rem] ${on ? "nav-item-active" : ""}`}
+                    >
+                      <child.Icon size={14} className={on ? "" : "opacity-70"} />
+                      {child.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         );
       })}
     </nav>
@@ -54,11 +93,14 @@ export function SidebarNav() {
 
 export function MobileNav() {
   const pathname = usePathname();
+  // One flat strip on a phone: sub-modules sit right after their parent.
+  const items = NAV.flatMap((item) => [item, ...(item.children ?? [])]);
 
   return (
     <nav className="flex gap-1 overflow-x-auto pb-1">
-      {NAV.map(({ href, label, Icon }) => {
-        const active = isActive(pathname, href);
+      {items.map(({ href, label, Icon }) => {
+        const deeper = items.some((other) => other.href !== href && other.href.startsWith(`${href}/`) && isActive(pathname, other.href));
+        const active = isActive(pathname, href) && !deeper;
         return (
           <Link
             key={href}

@@ -83,10 +83,15 @@ when he is wrong, say so once with the reason, then do what he decides.
 
 ## What is already built
 
-Contacts, pipeline, products, quotes (Simple + Modern templates, tagged line
-items, tag totals grid), contracts (templates, merge fields, e-signature),
-PDF export for both, per-workspace branding and time zone, and an operator
-console at `/admin` where signups are approved, paused or deleted.
+Contacts, pipeline, products (with manufacturer, COGS, unit of measurement,
+distributor and contacts; clone / delete / active toggle on the list),
+ratesheets (a sub-module under Products: publish a selection of products to
+partners with an expiry and a respond-by window, partner approve/decline
+links at `/r/<token>`, uploaded distributor price lists), quotes (Simple +
+Modern templates, tagged line items, tag totals grid), contracts
+(templates, merge fields, e-signature), PDF export for both, per-workspace
+branding and time zone, and an operator console at `/admin` where signups
+are approved, paused or deleted.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
@@ -112,7 +117,14 @@ are all blocking before the first paying customer.
 
 - **No email is sent, ever.** No approval notice, no receipts, and **no
   password reset** — a forgotten password today means editing the database.
-  Everything else waiting on email is blocked behind this.
+  Everything else waiting on email is blocked behind this. That includes
+  ratesheets: "Send to partner" makes a link to copy and text or email by
+  hand, and the app says so on the screen.
+- **"Link Distributor / Partner" is Coming Soon.** Public and
+  Invite/Approve ratesheets are stored with their visibility but nobody in
+  another workspace can search for them yet; every send today is a link.
+- **Uploaded ratesheet files live in Postgres** (4 MB cap each). Fine at
+  this scale; object storage is the real answer when files get bigger.
 - **No billing.** Nothing charges anybody.
 - **`AUTH_SECRET` was exposed in chat and still needs rotating.**
 - **The GitHub repository is public.**
@@ -129,6 +141,8 @@ are all blocking before the first paying customer.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. All three run against a local
-Postgres on port 5433 and must pass before anything is pushed. That local
-database is the only safety net between a change and paying customers.
+suite, and the delete-confirmation suite. A fourth, the 22-step products +
+ratesheets suite, is checked in at `scripts/browser-tests/` with its run
+instructions at the top of the file. All four run against a local Postgres
+on port 5433 and must pass before anything is pushed. That local database
+is the only safety net between a change and paying customers.
