@@ -16,6 +16,7 @@ import {
   UNIT_GROUP_LABELS,
   UNIT_LABELS,
   isSoftwareUnit,
+  tagHasUnits,
   unitAllowedForTag,
   unitGroupsForTag,
   SOFTWARE_RATES,
@@ -90,10 +91,15 @@ export function ProductForm({
   // explained rather than silently emptied.
   const [unitCleared, setUnitCleared] = useState(false);
   const allowedGroups = unitGroupsForTag(tag);
+  const hasUnits = tagHasUnits(tag);
 
   function changeTag(next: string) {
     setTag(next);
-    if (!unitAllowedForTag(unit, next)) {
+    if (!tagHasUnits(next)) {
+      // No unit field at all for these tags, so nothing to explain.
+      setUnit("");
+      setUnitCleared(false);
+    } else if (!unitAllowedForTag(unit, next)) {
       setUnit("");
       setUnitCleared(unit !== "");
     }
@@ -324,42 +330,48 @@ export function ProductForm({
                 />
                 <p className="faint mt-1 text-xs">Used as the default value on quote line items.</p>
               </div>
-              <div>
-                <label className="label" htmlFor="unitOfMeasure">
-                  Unit of measurement
-                </label>
-                <select
-                  id="unitOfMeasure"
-                  name="unitOfMeasure"
-                  value={unit}
-                  onChange={(event) => changeUnit(event.target.value)}
-                  className="select"
-                >
-                  <option value="">— None —</option>
-                  {/* Only the list that belongs to the Default tag. Tags with no
-                      list of their own get all three. */}
-                  {allowedGroups.map((group: UnitGroup) => (
-                    <optgroup key={group} label={UNIT_GROUP_LABELS[group]}>
-                      {UNIT_GROUPS[group].map((value) => (
-                        <option key={value} value={value}>
-                          {UNIT_LABELS[value]}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                {unitCleared ? (
-                  <p className="mt-1 text-xs text-[var(--warn)]">
-                    Unit cleared — pick one from the {TAG_LABELS[tag as keyof typeof TAG_LABELS]} list.
+              {hasUnits ? (
+                <div>
+                  <label className="label" htmlFor="unitOfMeasure">
+                    Unit of measurement
+                  </label>
+                  <select
+                    id="unitOfMeasure"
+                    name="unitOfMeasure"
+                    value={unit}
+                    onChange={(event) => changeUnit(event.target.value)}
+                    className="select"
+                  >
+                    <option value="">— None —</option>
+                    {/* Only the list that belongs to the Default tag. */}
+                    {allowedGroups.map((group: UnitGroup) => (
+                      <optgroup key={group} label={UNIT_GROUP_LABELS[group]}>
+                        {UNIT_GROUPS[group].map((value) => (
+                          <option key={value} value={value}>
+                            {UNIT_LABELS[value]}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  {unitCleared ? (
+                    <p className="mt-1 text-xs text-[var(--warn)]">
+                      Unit cleared — pick one from the {TAG_LABELS[tag as keyof typeof TAG_LABELS]} list.
+                    </p>
+                  ) : (
+                    <p className="faint mt-1 text-xs">{UNIT_GROUP_LABELS[allowedGroups[0]]} units.</p>
+                  )}
+                </div>
+              ) : (
+                // Project services, shipping and taxes carry no unit; the
+                // cell stays so the row keeps its shape.
+                <div>
+                  <span className="label">Unit of measurement</span>
+                  <p className="faint text-xs" data-testid="no-unit-note">
+                    No unit for {TAG_LABELS[tag as keyof typeof TAG_LABELS]}.
                   </p>
-                ) : (
-                  <p className="faint mt-1 text-xs">
-                    {allowedGroups.length === 1
-                      ? `${UNIT_GROUP_LABELS[allowedGroups[0]]} units.`
-                      : "Any unit."}
-                  </p>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Software pop-out: rate and term, with the total worked out

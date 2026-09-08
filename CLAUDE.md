@@ -87,7 +87,8 @@ Contacts, pipeline, products (with manufacturer, COGS, unit of measurement,
 distributor and contacts; clone / delete / active toggle on the list),
 ratesheets (a sub-module under Products: publish a selection of products to
 partners with an expiry and a respond-by window, partner approve/decline
-links at `/r/<token>`, uploaded distributor price lists), quotes (Simple +
+links at `/r/<token>`, uploaded distributor price lists, CSV import of
+products with a preview and SKU-based updates), quotes (Simple +
 Modern templates, tagged line items, tag totals grid), contracts
 (templates, merge fields, e-signature), PDF export for both, per-workspace
 branding and time zone, and an operator console at `/admin` where signups
@@ -141,7 +142,7 @@ are all blocking before the first paying customer.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. A fourth, the 26-step products +
+suite, and the delete-confirmation suite. A fourth, the 27-step products +
 ratesheets suite, is checked in at `scripts/browser-tests/` with its run
 instructions at the top of the file. All four run against a local Postgres
 on port 5433 and must pass before anything is pushed. That local database

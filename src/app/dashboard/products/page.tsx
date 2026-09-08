@@ -14,7 +14,7 @@ import {
 import { ProductsSubnav } from "./products-subnav";
 import { ProductRowActions } from "./product-row-actions";
 import { LinkRatesheetButton } from "./link-ratesheet-button";
-import { toggleProductActive } from "./actions";
+import { toggleProductActive, importProductsCsv } from "./actions";
 import { uploadLinkedRatesheet } from "./ratesheets/actions";
 
 export default async function ProductsPage() {
@@ -34,7 +34,7 @@ export default async function ProductsPage() {
         subtitle="The items and services you pull into quotes."
         actions={
           <>
-            <LinkRatesheetButton action={uploadLinkedRatesheet} />
+            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} importAction={importProductsCsv} />
             <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
               <IconPlus size={14} />
               Create Ratesheet

@@ -10,6 +10,7 @@ import { ProductsSubnav } from "../products-subnav";
 import { LinkRatesheetButton } from "../link-ratesheet-button";
 import { RatesheetsBoard, type BoardSheet, type BoardInvite, type BoardFile } from "./ratesheets-board";
 import { uploadLinkedRatesheet } from "./actions";
+import { importProductsCsv } from "../actions";
 
 export default async function RatesheetsPage({
   searchParams,
@@ -96,7 +97,7 @@ export default async function RatesheetsPage({
         subtitle="Price lists you publish to partners, and the ones you've linked in."
         actions={
           <>
-            <LinkRatesheetButton action={uploadLinkedRatesheet} />
+            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} importAction={importProductsCsv} />
             <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
               <IconPlus size={14} />
               Create Ratesheet

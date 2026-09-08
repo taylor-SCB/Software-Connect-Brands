@@ -46,12 +46,16 @@ value totals.
 description, SKU, default tag, OEM / manufacturer, COGS (cost, shown on the
 owner's list but never to customers or partners), unit price and a unit of
 measurement. The unit list follows the default tag — a Labor product picks
-from the Labor list, Materials from Materials, Software from Software, and
-the other tags may use any — and a software unit adds a rate and term with
-the total worked out on screen. A product can name its distributor and the
-people there — name, email and phone — picked from per-workspace lists that
-grow from the form itself. The list page can clone, delete, and flip a
-product between active and inactive in place.
+from the Labor list, Materials from Materials, Software from Software;
+Project Services, Shipping and Taxes carry no unit — and a software unit
+adds a rate and term with the total worked out on screen. A product can
+name its distributor and the people there — name, email and phone — picked
+from per-workspace lists that grow from the form itself. The list page can
+clone, delete, and flip a product between active and inactive in place.
+**Link Ratesheet → Import CSV** turns a spreadsheet into products: it
+previews the rows and the columns it matched, then creates new products
+and updates existing ones by SKU (or name) so a refreshed price list never
+duplicates the catalog.
 
 **Ratesheets** — a sub-module under Products. A ratesheet is a named
 selection of your products published for partners: **Public**,
