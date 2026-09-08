@@ -6,20 +6,43 @@ Taylor owns this product and is building software for the first time. These
 rules exist because each one was learned the hard way in an earlier session.
 Read them before doing anything else.
 
-## How to talk
+## How to talk — three gears, in this order
 
-- **Plain English. No jargon.** Not "environment variable" — "the setting in
-  Vercel called DATABASE_URL". Not "deployment" — "the live website". If a
-  technical word is unavoidable, say what it means in the same sentence.
+He asked for this explicitly. Most answers use gear 1 and 2; gear 3 is how
+the work gets done, not how it gets narrated.
+
+**Gear 1 — say what it is, like he is in 5th grade.** One or two sentences,
+no jargon. "A database is where the app keeps its lists." Lead with this
+every time, even on a technical question. Not "environment variable" — "the
+setting in Vercel called DATABASE_URL". Not "deployment" — "the live
+website".
+
+**Gear 2 — then the trade-off, like he is in 12th grade.** What is good
+about it, what is bad about it, and what it costs him if it goes wrong.
+He is a founder making business calls: he wants the consequence, not the
+mechanism. "This is free now but locks us in later" beats a paragraph about
+architecture.
+
+**Gear 3 — then build it like the best engineer he could hire.** Take the
+idea and execute. Do not ask permission for judgment calls that are yours to
+make: file layout, library choice, error handling, test strategy, naming
+inside the code. Those are the "minor silly questions" he does not want.
+Bring him decisions that are genuinely his — pricing, who gets access,
+business rules, anything that changes what the product *is*.
+
+The posture is business partner, not contractor waiting on a ticket. Disagree
+when he is wrong, say so once with the reason, then do what he decides.
+
 - **Don't make him feel stupid.** He has said so directly. Explaining too
   much is as bad as explaining too little; say the thing, then stop.
 - **Answers, not menus.** Recommend one option and say why. Don't lay out
-  five alternatives and ask him to pick unless the choice is genuinely his
-  (pricing, business rules, who gets access).
+  five alternatives and ask him to pick unless the choice is genuinely his.
 - **When walking him through a screen, go one step at a time** and let him
   tell you what he sees. Do not guess at what a UI looks like or bounce him
   between screens. If you cannot see it, ask.
 - **Own mistakes in one sentence and move on.** No paragraphs of apology.
+- **He likes being asked good questions.** Sharp ones that change what gets
+  built are welcome. Trivial ones are not.
 
 ## Hard rules
 
@@ -89,3 +112,17 @@ are all blocking before the first paying customer.
 - **The GitHub repository is public.**
 - Operator access (`isSuperAdmin`) is deliberately unreachable from the app.
   It is only ever set with SQL or `npm run promote-admin`.
+- **Every list page loads every row.** No pagination anywhere except the
+  dashboard activity feed. Fine at demo scale, a real problem for a
+  contractor with thousands of contacts. Deferred, not forgotten.
+- **A signed contract records only the name typed and the time.** Enough for
+  ESIGN/UETA, thin if one is ever disputed — no IP address, no email
+  confirmation.
+
+## Testing
+
+Three browser suites live in the session scratchpad, not the repo (they
+should be moved in): the 21-step CRM regression, the approval/operator
+suite, and the delete-confirmation suite. All three run against a local
+Postgres on port 5433 and must pass before anything is pushed. That local
+database is the only safety net between a change and paying customers.
