@@ -47,17 +47,12 @@ export default async function RatesheetsPage({
   ]);
 
   const perSheet = new Map<string, { approved: number; sent: number }>();
-  const counts = { pending: 0, approved: 0, declined: 0, expired: 0, sent: invites.length };
   const boardInvites: BoardInvite[] = invites.map((invite) => {
     const state = inviteState(invite, invite.ratesheet, now);
     const tally = perSheet.get(invite.ratesheetId) ?? { approved: 0, sent: 0 };
     tally.sent += 1;
     if (state === "APPROVED") tally.approved += 1;
     perSheet.set(invite.ratesheetId, tally);
-    if (state === "PENDING") counts.pending += 1;
-    else if (state === "APPROVED") counts.approved += 1;
-    else if (state === "DECLINED") counts.declined += 1;
-    else counts.expired += 1;
     return {
       id: invite.id,
       ratesheetId: invite.ratesheetId,
@@ -117,7 +112,6 @@ export default async function RatesheetsPage({
         sheets={boardSheets}
         invites={boardInvites}
         files={boardFiles}
-        counts={counts}
       />
     </div>
   );

@@ -44,8 +44,6 @@ export type BoardFile = {
   highlighted: boolean;
 };
 
-type Counts = { pending: number; approved: number; declined: number; expired: number; sent: number };
-
 const VISIBILITY_COLORS: Record<string, string> = {
   PUBLIC: "#38bdf8",
   INVITE_APPROVE: "#fbbf24",
@@ -61,19 +59,26 @@ export function RatesheetsBoard({
   sheets,
   invites,
   files,
-  counts,
 }: {
   organizationName: string;
   sheets: BoardSheet[];
   invites: BoardInvite[];
   files: BoardFile[];
-  counts: Counts;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = sheets.find((sheet) => sheet.id === selectedId) ?? null;
   const visibleInvites = selected
     ? invites.filter((invite) => invite.ratesheetId === selected.id)
     : invites;
+
+  // The four boxes describe whatever the list below them is showing, so a
+  // selected tile narrows the numbers as well as the rows.
+  const counts = { pending: 0, approved: 0, declined: 0, sent: visibleInvites.length };
+  for (const invite of visibleInvites) {
+    if (invite.state === "PENDING") counts.pending += 1;
+    else if (invite.state === "APPROVED") counts.approved += 1;
+    else if (invite.state === "DECLINED") counts.declined += 1;
+  }
 
   function toggle(id: string) {
     setSelectedId((current) => (current === id ? null : id));

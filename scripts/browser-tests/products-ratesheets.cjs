@@ -345,6 +345,26 @@ async function login(page) {
   assert.equal(await reader.getByText("Monitoring seat").count(), 0, "inactive product hidden from partners");
   await sql(`UPDATE "Product" SET active=true WHERE name='Monitoring seat'`);
 
+  log("tile filter narrows the Summary counts, not just the rows");
+  // Send the Public sheet to someone too, so the two sheets have different tallies.
+  await page.fill("#partnerEmail", "third@example.com");
+  await page.getByRole("button", { name: "Send to partner" }).click();
+  await page.getByText("Link created").waitFor();
+  await page.goto(`${BASE}/dashboard/products/ratesheets`);
+  const statValue = (label) => page.locator("#summary").locator("div", { hasText: new RegExp(`^${label}`) }).locator("p.num").first();
+  assert.equal(await statValue("Ratesheets sent").textContent(), "3");
+  assert.equal(await statValue("Approved").textContent(), "1");
+  assert.equal(await statValue("Pending approvals").textContent(), "2");
+  const contractorTile = page.locator("[role=button]", { hasText: "Contractor pricing 2026" });
+  await contractorTile.click();
+  await contractorTile.getByText("Filter Applied").waitFor();
+  assert.equal(await statValue("Ratesheets sent").textContent(), "2", "sent count follows the filter");
+  assert.equal(await statValue("Approved").textContent(), "1");
+  assert.equal(await statValue("Pending approvals").textContent(), "1", "pending count follows the filter");
+  assert.equal(await page.locator("#summary li").count(), 2);
+  await contractorTile.click();
+  assert.equal(await statValue("Ratesheets sent").textContent(), "3", "clearing the filter restores the totals");
+
   log("inactive sheet hides from partners, owner still previews");
   await page.goto(`${BASE}/dashboard/products/ratesheets`);
   await page.locator("[role=button]", { hasText: "Contractor pricing 2026" }).getByRole("button", { name: "Inactive", exact: true }).click();
