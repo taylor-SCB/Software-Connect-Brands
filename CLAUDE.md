@@ -44,6 +44,23 @@ when he is wrong, say so once with the reason, then do what he decides.
 - **He likes being asked good questions.** Sharp ones that change what gets
   built are welcome. Trivial ones are not.
 
+## After every successful push
+
+Once a push has gone through, before the session winds down, ask Taylor
+exactly this and nothing more elaborate:
+
+> Would you like me to run your CTO Development Breakdown and Next Steps
+> Report? Yes or No.
+
+If yes, produce it as an artifact he can keep, with three parts: what was
+done this session, in plain words; the database tables and pick lists the
+work touched, before and after; and a "CTO Think Tank" of five AI-centric,
+forward-looking items that could still be built in the module just worked
+on, each judged by whether it helps a small service business fold another
+software package into their white-labeled workstation and save headcount,
+time or headaches. The first one (Sept 9, 2026, Products + Ratesheets) is
+the model to follow.
+
 ## Hard rules
 
 - **There is exactly ONE website: `softwareconnectbrands.com`.** No staging
