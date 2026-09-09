@@ -28,7 +28,10 @@ export default async function ContractDetailPage({
 
   const contract = await prisma.contract.findFirst({
     where: { id, organizationId },
-    include: { contact: { select: { id: true, name: true, company: true } } },
+    include: {
+      contact: { select: { id: true, name: true, company: { select: { name: true } } } },
+      deal: { select: { title: true } },
+    },
   });
   if (!contract) notFound();
 
@@ -37,10 +40,10 @@ export default async function ContractDetailPage({
 
   return (
     <div>
-      <BackLink href="/dashboard/contracts" label="Contracts" />
+      <BackLink href="/dashboard/contracts" label="Contracts" current={`CON-${contract.number} ${contract.title}`} />
 
       <PageHeader
-        eyebrow={`CON-${contract.number} · ${contract.contact.company || contract.contact.name}`}
+        eyebrow={`CON-${contract.number}${contract.deal ? ` · ${contract.deal.title}` : ""} · ${contract.contact.company?.name || contract.contact.name}`}
         title={contract.title}
         actions={
           <>

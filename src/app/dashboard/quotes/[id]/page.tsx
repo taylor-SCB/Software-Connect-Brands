@@ -36,7 +36,8 @@ export default async function QuoteBuilderPage({
     prisma.quote.findFirst({
       where: { id, organizationId },
       include: {
-        contact: { select: { id: true, name: true, company: true } },
+        contact: { select: { id: true, name: true, company: { select: { name: true } } } },
+        deal: { select: { id: true, title: true, stage: true } },
         lineItems: { orderBy: { position: "asc" } },
       },
     }),
@@ -59,10 +60,10 @@ export default async function QuoteBuilderPage({
 
   return (
     <div>
-      <BackLink href="/dashboard/quotes" label="Quotes" />
+      <BackLink href="/dashboard/quotes" label="Quotes" current={`QUO-${quote.number} ${quote.title}`} />
 
       <PageHeader
-        eyebrow={`QUO-${quote.number} · ${quote.contact.company || quote.contact.name}`}
+        eyebrow={`QUO-${quote.number} · ${quote.deal.title} · ${quote.contact.company?.name || quote.contact.name}`}
         title={quote.title}
         actions={
           <>

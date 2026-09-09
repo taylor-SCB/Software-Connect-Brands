@@ -100,7 +100,13 @@ the model to follow.
 
 ## What is already built
 
-Contacts, pipeline, products (with manufacturer, COGS, unit of measurement,
+Contacts (title, company, birthday, city/state, labeled notes with a
+Personal view, log one note or call on many contacts at once, an Activity
+overview box), companies (people, roll-ups of everything their people do),
+pipeline (Lead → Contacted → Quote Sent → Contract Sent → Won/Lost; every
+quote lives on a deal, a deal can hold many quotes, deal value comes from
+its quotes, sending paperwork moves the deal on its own), "how I got there
+is how I go back" back links, products (with manufacturer, COGS, unit of measurement,
 distributor and contacts; clone / delete / active toggle on the list),
 ratesheets (a sub-module under Products: publish a selection of products to
 partners with an expiry and a respond-by window, partner approve/decline
@@ -159,8 +165,15 @@ are all blocking before the first paying customer.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. A fourth, the 27-step products +
-ratesheets suite, is checked in at `scripts/browser-tests/` with its run
-instructions at the top of the file. All four run against a local Postgres
+suite, and the delete-confirmation suite. Two more are checked in at
+`scripts/browser-tests/` with run instructions at the top of each file:
+the 27-step products + ratesheets suite and the 21-step companies +
+contacts suite (Sept 9, 2026). All of them run against a local Postgres
 on port 5433 and must pass before anything is pushed. That local database
 is the only safety net between a change and paying customers.
+
+Standing up that Postgres in a fresh session: the binaries are at
+`/usr/lib/postgresql/16/bin`; `initdb` into a short path such as
+`/tmp/scbpg/data` as the `postgres` user, start it on port 5433, create
+`scb_test`, then put `DATABASE_URL=postgresql://postgres:postgres@localhost:5433/scb_test`
+and an `AUTH_SECRET` in `.env` (git-ignored) before `npm install`.

@@ -4,11 +4,9 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime, formatDate } from "@/lib/format";
-import {
-  ACTIVITY_LABELS,
-  ACTIVITY_TYPES,
-  type ActivityTypeValue,
-} from "@/lib/constants";
+import { ACTIVITY_TYPES, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
+import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
+import { batchOthers } from "@/lib/logging";
 import {
   PageHeader,
   Card,
@@ -18,24 +16,16 @@ import {
   EmptyState,
 } from "@/components/ui";
 import {
-  IconMessage,
-  IconMail,
-  IconPhone,
-  IconCalendar,
   IconGlobe,
-  IconNote,
   IconFileText,
   IconSignature,
   IconPlus,
+  IconBuilding,
 } from "@/components/icons";
+import { ActivityOverview } from "@/components/activity-overview";
+import { ActivityFeed } from "@/components/activity-feed";
+import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm, AddDealForm } from "./forms";
-
-const ACTIVITY_ICONS = {
-  TEXT: IconMessage,
-  EMAIL: IconMail,
-  PHONE_CALL: IconPhone,
-  MEETING: IconCalendar,
-} as const;
 
 export default async function ContactDetailPage({
   params,
@@ -47,24 +37,45 @@ export default async function ContactDetailPage({
 
   const timeZone = await getTimeZone();
 
-  const contact = await prisma.contact.findFirst({
-    where: { id, organizationId },
-    include: {
-      deals: { orderBy: { createdAt: "desc" } },
-      notes: {
-        orderBy: { createdAt: "desc" },
-        include: { author: { select: { name: true } } },
+  const [contact, allContacts] = await Promise.all([
+    prisma.contact.findFirst({
+      where: { id, organizationId },
+      include: {
+        company: { select: { id: true, name: true } },
+        deals: {
+          orderBy: { createdAt: "desc" },
+          include: { quotes: QUOTES_FOR_VALUE, _count: { select: { quotes: true } } },
+        },
+        notes: {
+          orderBy: { createdAt: "desc" },
+          include: { author: { select: { name: true } } },
+        },
+        activities: {
+          orderBy: { occurredAt: "desc" },
+          include: { user: { select: { name: true } } },
+        },
+        quotes: {
+          orderBy: { createdAt: "desc" },
+          include: { deal: { select: { title: true } } },
+        },
+        contracts: { orderBy: { createdAt: "desc" } },
       },
-      activities: {
-        orderBy: { occurredAt: "desc" },
-        include: { user: { select: { name: true } } },
-      },
-      quotes: { orderBy: { createdAt: "desc" } },
-      contracts: { orderBy: { createdAt: "desc" } },
-    },
-  });
+    }),
+    // For "+ Include multiple contacts". Every row, like every other list
+    // in the app today.
+    prisma.contact.findMany({
+      where: { organizationId, status: { not: "ARCHIVED" } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, company: { select: { name: true } } },
+    }),
+  ]);
 
   if (!contact) notFound();
+
+  const [noteOthers, activityOthers] = await Promise.all([
+    batchOthers("note", contact.notes.map((note) => note.batchId)),
+    batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
+  ]);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
@@ -74,17 +85,25 @@ export default async function ContactDetailPage({
     {} as Record<ActivityTypeValue, number>,
   );
 
-  const openDealValue = contact.deals
-    .filter((deal) => deal.stage === "NEW" || deal.stage === "CONTACTED")
-    .reduce((sum, deal) => sum + deal.valueCents, 0);
+  const openDeals = contact.deals.filter((deal) => isOpenStage(deal.stage));
+  const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
+  const quotesOut = contact.quotes.filter((quote) => quote.status === "SENT").length;
+  const lastTouchAt = contact.activities[0]?.occurredAt ?? null;
+
+  const pickable = allContacts.map((row) => ({
+    id: row.id,
+    name: row.name,
+    company: row.company?.name ?? null,
+  }));
 
   return (
     <div>
-      <BackLink href="/dashboard/contacts" label="Contacts" />
+      <BackLink href="/dashboard/contacts" label="Contacts" current={contact.name} />
 
       <PageHeader
-        eyebrow={contact.company ?? "Contact"}
+        eyebrow={contact.company?.name ?? "Contact"}
         title={contact.name}
+        subtitle={contact.title ?? undefined}
         actions={
           <>
             <StatusBadge status={contact.status} />
@@ -112,38 +131,6 @@ export default async function ContactDetailPage({
         }
       />
 
-      {/* Counters mirror the contacts list so the numbers reconcile. */}
-      <div className="mb-6 flex flex-wrap gap-2">
-        <a
-          href="#notes"
-          className="card card-hover flex items-center gap-2 px-3 py-2 text-xs"
-        >
-          <IconNote size={14} className="text-[var(--brand)]" />
-          <span className="num font-semibold">{contact.notes.length}</span>
-          <span className="faint">Notes</span>
-        </a>
-        {ACTIVITY_TYPES.map((type) => {
-          const Icon = ACTIVITY_ICONS[type];
-          return (
-            <a
-              key={type}
-              href="#activity"
-              className="card card-hover flex items-center gap-2 px-3 py-2 text-xs"
-            >
-              <Icon size={14} className="text-[var(--brand)]" />
-              <span className="num font-semibold">{activityCounts[type]}</span>
-              <span className="faint">{ACTIVITY_LABELS[type]}</span>
-            </a>
-          );
-        })}
-        {openDealValue > 0 && (
-          <div className="card flex items-center gap-2 px-3 py-2 text-xs">
-            <span className="num font-semibold">{formatCents(openDealValue)}</span>
-            <span className="faint">Open pipeline</span>
-          </div>
-        )}
-      </div>
-
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
           <Card lit id="activity">
@@ -151,57 +138,34 @@ export default async function ContactDetailPage({
               title="Log activity"
               subtitle="Every touchpoint is counted by type on this contact."
             />
-            <LogActivityForm contactId={contact.id} />
+            <LogActivityForm target={{ contactId: contact.id }} contacts={pickable} />
             <div className="divider" />
-            {contact.activities.length === 0 ? (
-              <EmptyState title="No activity yet" body="Log a call, text, email or meeting to build the history." />
-            ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
-                {contact.activities.map((activity) => {
-                  const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue];
-                  return (
-                    <li key={activity.id} className="flex gap-3 px-5 py-3">
-                      <div
-                        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-                        style={{
-                          background: "color-mix(in srgb, var(--brand) 14%, transparent)",
-                          color: "var(--brand)",
-                        }}
-                      >
-                        <Icon size={14} />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm leading-relaxed">{activity.body}</p>
-                        <p className="faint mt-1 text-[0.7rem]">
-                          {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} ·{" "}
-                          {activity.user.name} · {formatDateTime(activity.occurredAt, timeZone)}
-                        </p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            <ActivityFeed
+              items={contact.activities.map((activity) => ({
+                id: activity.id,
+                type: activity.type,
+                body: activity.body,
+                userName: activity.user.name,
+                when: formatDateTime(activity.occurredAt, timeZone),
+                others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
+              }))}
+            />
           </Card>
 
           <Card lit id="notes">
             <CardHeader title="Notes" subtitle={`${contact.notes.length} total`} />
-            <AddNoteForm contactId={contact.id} />
+            <AddNoteForm target={{ contactId: contact.id }} contacts={pickable} />
             <div className="divider" />
-            {contact.notes.length === 0 ? (
-              <EmptyState title="No notes yet" />
-            ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
-                {contact.notes.map((note) => (
-                  <li key={note.id} className="px-5 py-3">
-                    <p className="text-sm leading-relaxed">{note.body}</p>
-                    <p className="faint mt-1 text-[0.7rem]">
-                      {note.author.name} · {formatDateTime(note.createdAt, timeZone)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <NotesList
+              notes={contact.notes.map((note) => ({
+                id: note.id,
+                body: note.body,
+                label: note.label,
+                authorName: note.author.name,
+                when: formatDateTime(note.createdAt, timeZone),
+                others: note.batchId ? (noteOthers.get(note.batchId) ?? 0) : 0,
+              }))}
+            />
           </Card>
         </div>
 
@@ -209,7 +173,21 @@ export default async function ContactDetailPage({
           <Card lit>
             <CardHeader title="Details" />
             <dl className="space-y-3 p-5 text-sm">
-              <Detail label="Company" value={contact.company} />
+              <Detail
+                label="Company"
+                value={
+                  contact.company ? (
+                    <Link
+                      href={`/dashboard/companies/${contact.company.id}`}
+                      className="link inline-flex items-center gap-1"
+                    >
+                      <IconBuilding size={12} />
+                      {contact.company.name}
+                    </Link>
+                  ) : null
+                }
+              />
+              <Detail label="Title" value={contact.title} />
               <Detail
                 label="Email"
                 value={
@@ -246,16 +224,36 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              <Detail
+                label="Birthday"
+                value={contact.birthday ? formatDate(contact.birthday, "UTC") : null}
+              />
               <Detail label="Added" value={formatDate(contact.createdAt, timeZone)} />
+              <Detail label="City" value={contact.city} />
+              <Detail label="State" value={contact.state} />
             </dl>
           </Card>
 
+          <ActivityOverview
+            notes={contact.notes.length}
+            personalNotes={contact.notes.filter((note) => isPersonalLabel(note.label)).length}
+            activity={activityCounts}
+            lastTouchAt={lastTouchAt}
+            openDealCents={openDealValue}
+            openDealCount={openDeals.length}
+            quotesOut={quotesOut}
+            timeZone={timeZone}
+          />
+
           <Card lit>
-            <CardHeader title="Deals" subtitle={`${contact.deals.length} total`} />
+            <CardHeader
+              title="Deals"
+              subtitle={`${contact.deals.length} total · a deal is one job you're chasing`}
+            />
             <AddDealForm contactId={contact.id} />
             <div className="divider" />
             {contact.deals.length === 0 ? (
-              <EmptyState title="No deals yet" />
+              <EmptyState title="No deals yet" body="Creating a quote adds one automatically." />
             ) : (
               <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
                 {contact.deals.map((deal) => (
@@ -265,9 +263,23 @@ export default async function ContactDetailPage({
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{deal.title}</p>
-                      <p className="faint num text-xs">{formatCents(deal.valueCents)}</p>
+                      <p className="faint num text-xs">
+                        {formatCents(dealValueCents(deal))}
+                        {" · "}
+                        {deal._count.quotes} {deal._count.quotes === 1 ? "quote" : "quotes"}
+                      </p>
                     </div>
-                    <StatusBadge status={deal.stage} />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <StatusBadge status={deal.stage} />
+                      <Link
+                        href={`/dashboard/quotes/new?contactId=${contact.id}&dealId=${deal.id}`}
+                        className="btn btn-ghost btn-sm"
+                        title="New quote on this deal"
+                      >
+                        <IconPlus size={12} />
+                        Quote
+                      </Link>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -301,7 +313,9 @@ export default async function ContactDetailPage({
                         <p className="truncate text-sm font-medium hover:underline">
                           {quote.title}
                         </p>
-                        <p className="faint num text-xs">QUO-{quote.number}</p>
+                        <p className="faint num text-xs">
+                          QUO-{quote.number} · {quote.deal.title}
+                        </p>
                       </div>
                       <StatusBadge status={quote.status} />
                     </Link>

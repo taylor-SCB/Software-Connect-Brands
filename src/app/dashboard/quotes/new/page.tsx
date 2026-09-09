@@ -8,16 +8,23 @@ import { NewQuoteForm } from "./form";
 export default async function NewQuotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string }>;
+  searchParams: Promise<{ contactId?: string; dealId?: string }>;
 }) {
   const { organizationId } = await requireSession();
-  const { contactId } = await searchParams;
+  const { contactId, dealId } = await searchParams;
 
-  const contacts = await prisma.contact.findMany({
-    where: { organizationId, status: { not: "ARCHIVED" } },
-    orderBy: [{ company: "asc" }, { name: "asc" }],
-    select: { id: true, name: true, company: true },
-  });
+  const [contacts, deals] = await Promise.all([
+    prisma.contact.findMany({
+      where: { organizationId, status: { not: "ARCHIVED" } },
+      orderBy: [{ company: { name: "asc" } }, { name: "asc" }],
+      select: { id: true, name: true, company: { select: { name: true } } },
+    }),
+    prisma.deal.findMany({
+      where: { organizationId },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, title: true, contactId: true, stage: true },
+    }),
+  ]);
 
   return (
     <div className="max-w-2xl">
@@ -40,15 +47,19 @@ export default async function NewQuotePage({
           <>
             <CardHeader
               title="Quote setup"
-              subtitle="You can change the template and details at any time before sending."
+              subtitle="Every quote belongs to a deal — the job you're trying to win. One deal can carry several quotes."
             />
             <NewQuoteForm
-              contacts={contacts}
+              contacts={contacts.map((contact) => ({
+                id: contact.id,
+                name: contact.name,
+                company: contact.company?.name ?? null,
+              }))}
+              deals={deals}
               defaultContactId={
-                contacts.some((contact) => contact.id === contactId)
-                  ? contactId
-                  : undefined
+                contacts.some((contact) => contact.id === contactId) ? contactId : undefined
               }
+              defaultDealId={deals.some((deal) => deal.id === dealId) ? dealId : undefined}
             />
           </>
         )}

@@ -8,21 +8,26 @@ import { NewContractForm } from "./form";
 export default async function NewContractPage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string; templateId?: string }>;
+  searchParams: Promise<{ contactId?: string; templateId?: string; dealId?: string }>;
 }) {
   const { organizationId } = await requireSession();
-  const { contactId, templateId } = await searchParams;
+  const { contactId, templateId, dealId } = await searchParams;
 
-  const [contacts, templates] = await Promise.all([
+  const [contacts, templates, deals] = await Promise.all([
     prisma.contact.findMany({
       where: { organizationId, status: { not: "ARCHIVED" } },
-      orderBy: [{ company: "asc" }, { name: "asc" }],
-      select: { id: true, name: true, company: true },
+      orderBy: [{ company: { name: "asc" } }, { name: "asc" }],
+      select: { id: true, name: true, company: { select: { name: true } } },
     }),
     prisma.contractTemplate.findMany({
       where: { organizationId },
       orderBy: { createdAt: "asc" },
       select: { id: true, name: true, description: true, type: true },
+    }),
+    prisma.deal.findMany({
+      where: { organizationId },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, title: true, contactId: true, stage: true },
     }),
   ]);
 
@@ -64,7 +69,13 @@ export default async function NewContractPage({
               subtitle="Merge fields fill in with this customer's details, and you can edit the text before sending."
             />
             <NewContractForm
-              contacts={contacts}
+              contacts={contacts.map((contact) => ({
+                id: contact.id,
+                name: contact.name,
+                company: contact.company?.name ?? null,
+              }))}
+              deals={deals}
+              defaultDealId={deals.some((deal) => deal.id === dealId) ? dealId : undefined}
               templates={templates}
               defaultContactId={
                 contacts.some((contact) => contact.id === contactId)

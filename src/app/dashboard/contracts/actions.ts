@@ -9,6 +9,8 @@ import { parseForm, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
 import { buildMergeContext, renderMergeFields } from "@/lib/merge";
 import { CONTRACT_TYPES } from "@/lib/constants";
+import { resolveDeal } from "@/lib/deal-picker-server";
+import { advanceDealStage } from "@/lib/deals";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -103,11 +105,15 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
   const parsed = parseForm(
     z.object({
       contactId: idSchema,
+      dealId: z.string().trim().optional(),
+      dealTitle: z.string().trim().max(160).optional(),
       templateId: idSchema,
       title: z.string().trim().max(160).optional(),
     }),
     {
       contactId: formData.get("contactId"),
+      dealId: formData.get("dealId") ?? undefined,
+      dealTitle: formData.get("dealTitle") ?? undefined,
       templateId: formData.get("templateId"),
       title: formData.get("title") ?? undefined,
     },
@@ -121,6 +127,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
     }),
     prisma.contact.findFirst({
       where: { id: parsed.data.contactId, organizationId },
+      include: { company: { select: { name: true } } },
     }),
     prisma.contractTemplate.findFirst({
       where: { id: parsed.data.templateId, organizationId },
@@ -129,6 +136,19 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
 
   if (!contact) return { error: "Pick a contact for this contract" };
   if (!template) return { error: "Pick a template" };
+
+  // A deal is optional on a contract (a standalone service agreement has
+  // none), but if one was named it has to be this customer's.
+  const wantsDeal = Boolean(parsed.data.dealId || parsed.data.dealTitle);
+  const deal = wantsDeal
+    ? await resolveDeal({
+        dealId: parsed.data.dealId || null,
+        dealTitle: parsed.data.dealTitle || null,
+        contactId: contact.id,
+        organizationId,
+      })
+    : null;
+  if (wantsDeal && !deal) return { error: "That deal doesn't belong to this customer" };
 
   const number = await nextContractNumber(organizationId);
 
@@ -139,7 +159,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
     buildMergeContext({
       organizationName: organization.name,
       contactName: contact.name,
-      contactCompany: contact.company,
+      contactCompany: contact.company?.name ?? null,
       contactEmail: contact.email,
       contactPhone: contact.phone,
       contractNumber: `CON-${number}`,
@@ -150,6 +170,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
     data: {
       organizationId,
       contactId: contact.id,
+      dealId: deal?.id ?? null,
       templateId: template.id,
       number,
       title: parsed.data.title?.trim() || template.name,
@@ -219,7 +240,7 @@ export async function setContractStatus(formData: FormData) {
   // toggled from the dashboard.
   const contract = await prisma.contract.findFirst({
     where: { id: parsed.data.contractId, organizationId },
-    select: { status: true },
+    select: { status: true, dealId: true },
   });
   if (!contract || contract.status === "SIGNED") return;
 
@@ -232,8 +253,15 @@ export async function setContractStatus(formData: FormData) {
     },
   });
 
+  // Sending a contract moves its deal along the pipeline.
+  if (parsed.data.status === "SENT") {
+    await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT");
+  }
+
   revalidatePath(`/dashboard/contracts/${parsed.data.contractId}`);
   revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard");
 }
 
 export async function deleteContract(formData: FormData) {
@@ -265,7 +293,13 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
 
   const contract = await prisma.contract.findUnique({
     where: { publicToken: parsed.data.token },
-    select: { id: true, status: true, contact: { select: { email: true } } },
+    select: {
+      id: true,
+      status: true,
+      organizationId: true,
+      dealId: true,
+      contact: { select: { email: true } },
+    },
   });
 
   // Only a contract that was actually sent can be signed, and only once.
@@ -282,7 +316,11 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
     },
   });
 
+  // A signature is the customer saying yes: the deal is won.
+  await advanceDealStage(contract.dealId, contract.organizationId, "WON");
+
   revalidatePath(`/c/${parsed.data.token}`);
   revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/deals");
   return { success: "Signed" };
 }

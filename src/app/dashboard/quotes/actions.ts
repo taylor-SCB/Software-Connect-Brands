@@ -8,6 +8,8 @@ import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
 import { LINE_ITEM_TAGS, QUOTE_TEMPLATES } from "@/lib/constants";
+import { resolveDeal } from "@/lib/deal-picker-server";
+import { advanceDealStage } from "@/lib/deals";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -28,11 +30,15 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
   const parsed = parseForm(
     z.object({
       contactId: idSchema,
+      dealId: z.string().trim().optional(),
+      dealTitle: z.string().trim().max(160).optional(),
       title: z.string().trim().min(1, "Give the quote a title").max(160),
       template: z.enum(QUOTE_TEMPLATES),
     }),
     {
       contactId: formData.get("contactId"),
+      dealId: formData.get("dealId") ?? undefined,
+      dealTitle: formData.get("dealTitle") ?? undefined,
       title: formData.get("title"),
       template: formData.get("template"),
     },
@@ -45,10 +51,19 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
   });
   if (!contact) return { error: "Pick a contact for this quote" };
 
+  const deal = await resolveDeal({
+    dealId: parsed.data.dealId || null,
+    dealTitle: parsed.data.dealTitle || null,
+    contactId: contact.id,
+    organizationId,
+  });
+  if (!deal) return { error: "Pick a deal for this quote, or add a new one" };
+
   const quote = await prisma.quote.create({
     data: {
       organizationId,
       contactId: contact.id,
+      dealId: deal.id,
       title: parsed.data.title,
       template: parsed.data.template,
       number: await nextQuoteNumber(organizationId),
@@ -57,6 +72,8 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
   });
 
   revalidatePath("/dashboard/quotes");
+  revalidatePath("/dashboard/deals");
+  revalidatePath(`/dashboard/contacts/${contact.id}`);
   redirect(`/dashboard/quotes/${quote.id}`);
 }
 
@@ -196,6 +213,12 @@ export async function setQuoteStatus(formData: FormData) {
   if (!parsed.success) return;
 
   const { quoteId, status } = parsed.data;
+  const quote = await prisma.quote.findFirst({
+    where: { id: quoteId, organizationId },
+    select: { dealId: true, contactId: true },
+  });
+  if (!quote) return;
+
   await prisma.quote.updateMany({
     where: { id: quoteId, organizationId },
     data: {
@@ -206,8 +229,14 @@ export async function setQuoteStatus(formData: FormData) {
     },
   });
 
+  // Sending a quote moves its deal along the pipeline.
+  if (status === "SENT") await advanceDealStage(quote.dealId, organizationId, "QUOTE_SENT");
+
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/quotes");
+  revalidatePath("/dashboard/deals");
+  revalidatePath(`/dashboard/contacts/${quote.contactId}`);
+  revalidatePath("/dashboard");
 }
 
 export async function deleteQuote(formData: FormData) {

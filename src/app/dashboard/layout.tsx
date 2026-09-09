@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SidebarNav, MobileNav } from "@/components/sidebar-nav";
+import { PageTrail } from "@/components/back-link";
 import { IconLogout, IconSparkles } from "@/components/icons";
 import Link from "next/link";
 import { logout } from "./actions";
@@ -97,6 +98,7 @@ export default async function DashboardLayout({
       </div>
 
       <main className="min-w-0 flex-1 p-5 sm:p-8">
+        <PageTrail />
         <div className="fade-up mx-auto max-w-[1400px]">{children}</div>
       </main>
     </div>

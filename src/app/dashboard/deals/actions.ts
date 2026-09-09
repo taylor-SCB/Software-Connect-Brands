@@ -26,5 +26,7 @@ export async function updateDealStage(
 
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard");
+  revalidatePath("/dashboard/contacts");
+  revalidatePath("/dashboard/companies");
   return { success: "Stage updated" };
 }

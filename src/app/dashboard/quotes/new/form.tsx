@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { Field, FormError } from "@/components/ui";
+import { DealPicker, type PickableDeal } from "@/components/deal-picker";
 import { createQuote } from "../actions";
 import type { ActionState } from "@/lib/forms";
 
@@ -20,16 +21,21 @@ const TEMPLATES = [
 
 export function NewQuoteForm({
   contacts,
+  deals,
   defaultContactId,
+  defaultDealId,
 }: {
   contacts: { id: string; name: string; company: string | null }[];
+  deals: PickableDeal[];
   defaultContactId?: string;
+  defaultDealId?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     createQuote,
     {},
   );
   const [template, setTemplate] = useState<string>("SIMPLE");
+  const [contactId, setContactId] = useState(defaultContactId ?? "");
 
   return (
     <form action={formAction} className="space-y-5 p-5">
@@ -40,7 +46,8 @@ export function NewQuoteForm({
         <select
           id="contactId"
           name="contactId"
-          defaultValue={defaultContactId ?? ""}
+          value={contactId}
+          onChange={(event) => setContactId(event.target.value)}
           required
           className="select"
         >
@@ -55,10 +62,19 @@ export function NewQuoteForm({
         </select>
       </div>
 
+      {/* Re-keyed on the customer so a deal picked for one person can't
+          be carried over to another. */}
+      <DealPicker
+        key={contactId}
+        deals={deals}
+        contactId={contactId}
+        defaultDealId={defaultDealId}
+      />
+
       <Field
         label="Quote title"
         name="title"
-        placeholder="Kitchen remodel — phase 1"
+        placeholder="Kitchen remodel — premium labor option"
         required
       />
 

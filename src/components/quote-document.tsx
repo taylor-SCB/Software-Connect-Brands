@@ -24,7 +24,7 @@ export type QuoteDocumentData = {
   };
   contact: {
     name: string;
-    company: string | null;
+    company: { name: string } | null;
     email: string | null;
     phone: string | null;
   };
@@ -104,9 +104,9 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
             Prepared for
           </p>
           <p className="mt-1 font-medium">
-            {quote.contact.company || quote.contact.name}
+            {quote.contact.company?.name || quote.contact.name}
           </p>
-          {quote.contact.company && (
+          {quote.contact.company?.name && (
             <p className="text-sm text-[#4b5563]">{quote.contact.name}</p>
           )}
           {quote.contact.email && (
@@ -289,7 +289,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
           {quote.title}
         </h1>
         <p className="mt-2 text-sm text-white/55">
-          Prepared for {quote.contact.company || quote.contact.name}
+          Prepared for {quote.contact.company?.name || quote.contact.name}
           {quote.contact.company ? ` · ${quote.contact.name}` : ""}
         </p>
 

@@ -45,15 +45,66 @@ export const ACTIVITY_LABELS: Record<ActivityTypeValue, string> = {
 export const CONTACT_STATUSES = ["LEAD", "CUSTOMER", "ARCHIVED"] as const;
 export type ContactStatusValue = (typeof CONTACT_STATUSES)[number];
 
-export const DEAL_STAGES = ["NEW", "CONTACTED", "WON", "LOST"] as const;
+// Pipeline stages, in the order a deal moves through them. Sending a
+// quote or a contract advances a deal on its own; Won and Lost are the
+// two ways out.
+export const DEAL_STAGES = [
+  "LEAD",
+  "CONTACTED",
+  "QUOTE_SENT",
+  "CONTRACT_SENT",
+  "WON",
+  "LOST",
+] as const;
 export type DealStageValue = (typeof DEAL_STAGES)[number];
 
 export const DEAL_STAGE_LABELS: Record<DealStageValue, string> = {
-  NEW: "New",
+  LEAD: "Lead",
   CONTACTED: "Contacted",
+  QUOTE_SENT: "Quote Sent",
+  CONTRACT_SENT: "Contract Sent",
   WON: "Won",
   LOST: "Lost",
 };
+
+export const DEAL_STAGE_COLORS: Record<DealStageValue, string> = {
+  LEAD: "#38bdf8",
+  CONTACTED: "#fbbf24",
+  QUOTE_SENT: "#a78bfa",
+  CONTRACT_SENT: "#f97316",
+  WON: "#34d399",
+  LOST: "#fb7185",
+};
+
+// A deal still in play. Everything the dashboard calls "open pipeline".
+export const OPEN_DEAL_STAGES = ["LEAD", "CONTACTED", "QUOTE_SENT", "CONTRACT_SENT"] as const;
+
+// Labels a note can wear. Everything except General counts as personal
+// and is gathered into the contact's relationship view.
+export const NOTE_LABELS = ["GENERAL", "PERSONAL", "BIRTHDAY", "HOBBIES", "FAMILY"] as const;
+export type NoteLabelValue = (typeof NOTE_LABELS)[number];
+
+export const NOTE_LABEL_NAMES: Record<NoteLabelValue, string> = {
+  GENERAL: "General",
+  PERSONAL: "Personal",
+  BIRTHDAY: "Birthday",
+  HOBBIES: "Hobbies",
+  FAMILY: "Family",
+};
+
+export const NOTE_LABEL_COLORS: Record<NoteLabelValue, string> = {
+  GENERAL: "#94a3b8",
+  PERSONAL: "#f472b6",
+  BIRTHDAY: "#fbbf24",
+  HOBBIES: "#34d399",
+  FAMILY: "#a78bfa",
+};
+
+export const PERSONAL_NOTE_LABELS = ["PERSONAL", "BIRTHDAY", "HOBBIES", "FAMILY"] as const;
+
+export function isPersonalLabel(label: string | null | undefined) {
+  return (PERSONAL_NOTE_LABELS as readonly string[]).includes(label ?? "");
+}
 
 export const QUOTE_TEMPLATES = ["SIMPLE", "MODERN"] as const;
 export type QuoteTemplateValue = (typeof QUOTE_TEMPLATES)[number];

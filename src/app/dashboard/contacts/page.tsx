@@ -38,16 +38,16 @@ export default async function ContactsPage({
   const { q } = await searchParams;
   const query = q?.trim() ?? "";
 
-  // SQLite's LIKE is already case-insensitive for ASCII, so no `mode`.
   const where = {
     organizationId,
     ...(query
       ? {
           OR: [
-            { name: { contains: query } },
-            { company: { contains: query } },
-            { email: { contains: query } },
+            { name: { contains: query, mode: "insensitive" as const } },
+            { company: { name: { contains: query, mode: "insensitive" as const } } },
+            { email: { contains: query, mode: "insensitive" as const } },
             { phone: { contains: query } },
+            { city: { contains: query, mode: "insensitive" as const } },
           ],
         }
       : {}),
@@ -57,11 +57,14 @@ export default async function ContactsPage({
     prisma.contact.findMany({
       where,
       orderBy: { updatedAt: "desc" },
-      include: { _count: { select: { notes: true } } },
+      include: {
+        _count: { select: { notes: true } },
+        company: { select: { id: true, name: true } },
+      },
     }),
     prisma.activity.groupBy({
       by: ["contactId", "type"],
-      where: { organizationId },
+      where: { organizationId, contactId: { not: null } },
       _count: { _all: true },
     }),
   ]);
@@ -69,6 +72,7 @@ export default async function ContactsPage({
   // contactId -> { TEXT: 2, EMAIL: 1, ... }
   const counts = new Map<string, Partial<Record<ActivityTypeValue, number>>>();
   for (const row of activityCounts) {
+    if (!row.contactId) continue;
     const existing = counts.get(row.contactId) ?? {};
     existing[row.type as ActivityTypeValue] = row._count._all;
     counts.set(row.contactId, existing);
@@ -144,12 +148,16 @@ export default async function ContactsPage({
                   return (
                     <tr key={contact.id}>
                       <td className="font-medium">
-                        <Link
-                          href={`/dashboard/contacts/${contact.id}`}
-                          className="hover:underline"
-                        >
-                          {contact.company || <span className="faint">—</span>}
-                        </Link>
+                        {contact.company ? (
+                          <Link
+                            href={`/dashboard/companies/${contact.company.id}`}
+                            className="hover:underline"
+                          >
+                            {contact.company.name}
+                          </Link>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
                       </td>
                       <td>
                         <Link
@@ -158,6 +166,7 @@ export default async function ContactsPage({
                         >
                           {contact.name}
                         </Link>
+                        {contact.title && <p className="faint text-xs">{contact.title}</p>}
                       </td>
                       <td className="muted">
                         {contact.email ? (

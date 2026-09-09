@@ -30,7 +30,7 @@ export function StageSelect({ dealId, stage }: { dealId: string; stage: string }
           }
         });
       }}
-      className={`select input-sm w-32 ${failed ? "border-[var(--danger)]" : ""}`}
+      className={`select input-sm w-36 ${failed ? "border-[var(--danger)]" : ""}`}
     >
       {DEAL_STAGES.map((option) => (
         <option key={option} value={option}>

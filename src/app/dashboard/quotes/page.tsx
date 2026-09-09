@@ -16,7 +16,8 @@ export default async function QuotesPage() {
     where: { organizationId },
     orderBy: { createdAt: "desc" },
     include: {
-      contact: { select: { id: true, name: true, company: true } },
+      contact: { select: { id: true, name: true, company: { select: { name: true } } } },
+      deal: { select: { id: true, title: true } },
       lineItems: { select: { quantity: true, unitPriceCents: true, tag: true } },
     },
   });
@@ -63,6 +64,7 @@ export default async function QuotesPage() {
                 <tr>
                   <th>Number</th>
                   <th>Title</th>
+                  <th>Deal</th>
                   <th>Customer</th>
                   <th>Template</th>
                   <th>Status</th>
@@ -88,12 +90,13 @@ export default async function QuotesPage() {
                           {quote.lineItems.length === 1 ? "line" : "lines"}
                         </p>
                       </td>
+                      <td className="muted">{quote.deal.title}</td>
                       <td>
                         <Link
                           href={`/dashboard/contacts/${quote.contact.id}`}
                           className="link"
                         >
-                          {quote.contact.company || quote.contact.name}
+                          {quote.contact.company?.name || quote.contact.name}
                         </Link>
                       </td>
                       <td>

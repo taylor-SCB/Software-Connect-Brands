@@ -33,14 +33,40 @@ two starter contract templates.
 
 ## What's in it
 
-**Contacts** — company name, contact name, email, phone and website, with a
-notes counter and separate counters for each activity type (text, email,
-phone call, meeting) on every row. The contact page is the hub: log
-activity, add notes, open deals, and see every quote and contract for that
-customer.
+**Contacts** — a person: name, title, company (picked from or added to the
+Companies list as you type), email, phone, website, birthday, city and
+state. The list shows the company, a notes counter and a counter for each
+activity type (text, email, phone call, meeting). The contact page is the
+hub: log activity, add notes, open deals, and see every quote and contract
+for that customer. Notes take an optional label (General, Personal,
+Birthday, Hobbies, Family); the **Personal** switch on the notes feed
+gathers the personal ones. **+ Include multiple contacts** on the note and
+activity forms logs the same entry on several people at once. The
+**Activity overview** box on the right counts every touch, shows the last
+one, the open pipeline and the quotes out.
 
-**Pipeline** — deals by stage (New → Contacted → Won/Lost) with per-stage
-value totals.
+**Companies** — a business you sell to, with the people who work there.
+Name, phone, email, website, city, state and status. A company page rolls
+up notes, activity, deals, quotes and contracts from its people (each
+entry names the person) and takes notes and activity of its own. A
+residential customer is a contact with no company; nothing downstream
+requires one. Typing a company name on a contact creates the company.
+
+**Pipeline** — deals by stage (Lead → Contacted → Quote Sent → Contract
+Sent → Won / Lost) with per-stage value totals. A deal is one job you are
+trying to win. Every quote belongs to a deal (a deal can carry several,
+say a per-hour and a per-day labor option), a contract may. Sending a
+quote or a contract moves the deal forward on its own, a signed contract
+wins it, and a deal's value is read from its quotes — the accepted one,
+else the latest one the customer hasn't declined. The typed estimate only
+counts until a quote exists.
+
+**Back links** follow the rule *how I got there is how I go back*: the
+link at the top of a record points to the page you came from (a quote
+opened from a contact goes back to that contact; the same quote opened
+from the Quotes list goes back to the list). The trail lives in the
+browser tab (`src/lib/trail.ts`); form pages are skipped, so creating a
+quote from a contact still lands back on the contact.
 
 **Products** — the catalog you quote from. Each product carries a
 description, SKU, default tag, OEM / manufacturer, COGS (cost, shown on the
@@ -70,8 +96,9 @@ distributor's own price list (any file up to 4 MB, stored in the
 database) so it can be downloaded from the same page; linking another
 workspace's published sheet is marked *Coming Soon*.
 
-**Quotes** — two templates, **Simple** (clean and printable) and **Modern**
-(branded dark layout). Every line item has the product name, a *product
+**Quotes** — created against a customer *and* a deal (type to search the
+customer's deals, or **+ Add new deal**), with two templates, **Simple**
+(clean and printable) and **Modern** (branded dark layout). Every line item has the product name, a *product
 description* sub-note, a *project specific notes* sub-note, quantity, unit
 value, line total and a required tag. Under the table is the quote total,
 and under that a grid totalling every tag — labor, materials, software,
@@ -125,8 +152,8 @@ src/lib/                          prisma client, auth, session, formatting,
                                   quote math, merge fields, seed templates
 src/components/                   UI kit, icons, quote + contract renderers
 src/proxy.ts                      protects everything under /dashboard
-src/app/dashboard/...             the app: contacts, deals, products,
-                                  quotes, contracts, settings
+src/app/dashboard/...             the app: contacts, companies, deals,
+                                  products, quotes, contracts, settings
 src/app/dashboard/products/ratesheets
                                   the Ratesheets sub-module
 src/app/q/[token]                 public quote view

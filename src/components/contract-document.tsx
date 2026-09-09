@@ -16,7 +16,7 @@ export type ContractDocumentData = {
     primaryColor: string;
     timeZone: string;
   };
-  contact: { name: string; company: string | null; email: string | null };
+  contact: { name: string; company: { name: string } | null; email: string | null };
 };
 
 // Contract bodies are plain text by design — rendering them as HTML would
@@ -60,7 +60,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
       <h1 className="mt-6 text-xl font-semibold">{contract.title}</h1>
       <p className="mt-1 text-sm text-[#6b7280]">
         Between {contract.organization.name} and{" "}
-        {contract.contact.company || contract.contact.name}
+        {contract.contact.company?.name || contract.contact.name}
       </p>
 
       <div className="mt-6 whitespace-pre-wrap text-[0.86rem] leading-relaxed text-[#1f2937]">
@@ -90,7 +90,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
             <div>
               <div className="h-10 border-b border-[#9ca3af]" />
               <p className="mt-1 text-xs text-[#6b7280]">
-                {contract.contact.company || contract.contact.name}
+                {contract.contact.company?.name || contract.contact.name}
               </p>
             </div>
             <div>

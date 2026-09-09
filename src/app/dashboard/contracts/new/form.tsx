@@ -1,26 +1,32 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Field, FormError } from "@/components/ui";
+import { DealPicker, type PickableDeal } from "@/components/deal-picker";
 import { createContract } from "../actions";
 import { CONTRACT_TYPE_LABELS, type ContractTypeValue } from "@/lib/constants";
 import type { ActionState } from "@/lib/forms";
 
 export function NewContractForm({
   contacts,
+  deals,
   templates,
   defaultContactId,
+  defaultDealId,
   defaultTemplateId,
 }: {
   contacts: { id: string; name: string; company: string | null }[];
+  deals: PickableDeal[];
   templates: { id: string; name: string; description: string; type: string }[];
   defaultContactId?: string;
+  defaultDealId?: string;
   defaultTemplateId?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     createContract,
     {},
   );
+  const [contactId, setContactId] = useState(defaultContactId ?? "");
 
   return (
     <form action={formAction} className="space-y-5 p-5">
@@ -31,7 +37,8 @@ export function NewContractForm({
         <select
           id="contactId"
           name="contactId"
-          defaultValue={defaultContactId ?? ""}
+          value={contactId}
+          onChange={(event) => setContactId(event.target.value)}
           required
           className="select"
         >
@@ -45,6 +52,14 @@ export function NewContractForm({
           ))}
         </select>
       </div>
+
+      <DealPicker
+        key={contactId}
+        deals={deals}
+        contactId={contactId}
+        required={false}
+        defaultDealId={defaultDealId}
+      />
 
       <div>
         <label className="label" htmlFor="templateId">

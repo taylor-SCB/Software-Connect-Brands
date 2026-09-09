@@ -46,6 +46,7 @@ model Organization {
   updatedAt          DateTime           @updatedAt
 
   users               User[]
+  companies           Company[]
   contacts            Contact[]
   deals               Deal[]
   notes               Note[]
@@ -94,21 +95,56 @@ model User {
   @@index([organizationId])
 }
 
+// Shared by contacts and companies: a lead is someone you are chasing, a
+// customer is someone who has bought, archived is out of the way but kept.
 enum ContactStatus {
   LEAD
   CUSTOMER
   ARCHIVED
 }
 
+// A business the workspace sells to. Contacts are the people at it; a
+// residential customer is a contact with no company at all, which is why
+// nothing downstream (deals, quotes, contracts) ever requires one.
+model Company {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  phone          String?
+  email          String?
+  website        String?
+  city           String?
+  state          String?
+  status         ContactStatus @default(LEAD)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  contacts   Contact[]
+  notes      Note[]
+  activities Activity[]
+
+  @@index([organizationId])
+  @@index([organizationId, name])
+}
+
 model Contact {
   id             String        @id @default(cuid())
   organizationId String
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  company        String?
+  companyId      String?
+  company        Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
   name           String
+  // Their job title at the company: Owner, Office Manager, Foreman.
+  title          String?
   email          String?
   phone          String?
   website        String?
+  city           String?
+  state          String?
+  // The one personal fact stored as a real date rather than a note, so a
+  // reminder can be built on it later.
+  birthday       DateTime?     @db.Date
   status         ContactStatus @default(LEAD)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -120,11 +156,17 @@ model Contact {
   contracts  Contract[]
 
   @@index([organizationId])
+  @@index([companyId])
 }
 
+// A deal is one job you are trying to win. It moves through the pipeline
+// as the paperwork goes out: sending a quote or a contract advances it,
+// and a signed contract wins it. It never moves backwards on its own.
 enum DealStage {
-  NEW
+  LEAD
   CONTACTED
+  QUOTE_SENT
+  CONTRACT_SENT
   WON
   LOST
 }
@@ -136,32 +178,56 @@ model Deal {
   contactId      String
   contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   title          String
+  // The typed estimate. Only counts until a quote exists; from then on
+  // the deal's value is read from its quotes (see src/lib/deals.ts).
   valueCents     Int          @default(0)
-  stage          DealStage    @default(NEW)
+  stage          DealStage    @default(LEAD)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+
+  quotes    Quote[]
+  contracts Contract[]
 
   @@index([organizationId])
   @@index([contactId])
 }
 
+// Labels a note can wear. The personal ones (everything but GENERAL) are
+// what the contact page gathers into its relationship view.
+enum NoteLabel {
+  GENERAL
+  PERSONAL
+  BIRTHDAY
+  HOBBIES
+  FAMILY
+}
+
+// A note sits on a contact or on a company, never both and never neither.
+// batchId ties together the copies made when one note is logged against
+// several contacts at once.
 model Note {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contactId      String
-  contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   authorId       String
   author         User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
   body           String
+  label          NoteLabel?
+  batchId        String?
   createdAt      DateTime     @default(now())
 
   @@index([organizationId])
   @@index([contactId])
+  @@index([companyId])
+  @@index([batchId])
 }
 
-// Touchpoints with a contact. Each type is counted separately in the
-// contacts list so reps can see engagement at a glance.
+// Touchpoints with a contact or a company. Each type is counted
+// separately in the contacts list so reps can see engagement at a glance.
 enum ActivityType {
   TEXT
   EMAIL
@@ -173,18 +239,23 @@ model Activity {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contactId      String
-  contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   type           ActivityType
   body           String
+  batchId        String?
   occurredAt     DateTime     @default(now())
   createdAt      DateTime     @default(now())
 
   @@index([organizationId])
   @@index([contactId])
   @@index([contactId, type])
+  @@index([companyId])
+  @@index([batchId])
 }
 
 // Every quote line must carry one of these so the tag totals grid at the
@@ -251,6 +322,9 @@ model Quote {
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   contactId      String
   contact        Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  // Every quote is an offer on a deal; a deal can carry several.
+  dealId         String
+  deal           Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
   number         Int
   title          String
   template       QuoteTemplate @default(SIMPLE)
@@ -269,6 +343,7 @@ model Quote {
   @@unique([organizationId, number])
   @@index([organizationId])
   @@index([contactId])
+  @@index([dealId])
 }
 
 model QuoteLineItem {
@@ -325,6 +400,9 @@ model Contract {
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   contactId      String
   contact        Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  // Optional: a standalone service agreement has no deal behind it.
+  dealId         String?
+  deal           Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
   templateId     String?
   template       ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   number         Int
@@ -346,6 +424,7 @@ model Contract {
   @@unique([organizationId, number])
   @@index([organizationId])
   @@index([contactId])
+  @@index([dealId])
 }
 
 // ------------------------------------------------------------------

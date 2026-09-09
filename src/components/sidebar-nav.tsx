@@ -11,6 +11,7 @@ import {
   IconTrending,
   IconSettings,
   IconLayers,
+  IconBuilding,
 } from "@/components/icons";
 
 type NavChild = { href: string; label: string; Icon: (p: { size?: number; className?: string }) => React.ReactElement };
@@ -25,6 +26,7 @@ const NAV: {
 }[] = [
   { href: "/dashboard", label: "Overview", Icon: IconGrid },
   { href: "/dashboard/contacts", label: "Contacts", Icon: IconUsers },
+  { href: "/dashboard/companies", label: "Companies", Icon: IconBuilding },
   { href: "/dashboard/deals", label: "Pipeline", Icon: IconTrending },
   {
     href: "/dashboard/products",

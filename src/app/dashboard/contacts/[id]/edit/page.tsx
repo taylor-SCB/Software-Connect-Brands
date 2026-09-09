@@ -14,7 +14,17 @@ export default async function EditContactPage({
   const { id } = await params;
   const { organizationId } = await requireSession();
 
-  const contact = await prisma.contact.findFirst({ where: { id, organizationId } });
+  const [contact, companies] = await Promise.all([
+    prisma.contact.findFirst({
+      where: { id, organizationId },
+      include: { company: { select: { name: true } } },
+    }),
+    prisma.company.findMany({
+      where: { organizationId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+  ]);
   if (!contact) notFound();
 
   return (
@@ -26,14 +36,19 @@ export default async function EditContactPage({
         <CardHeader title="Contact details" />
         <ContactForm
           action={updateContact}
+          companies={companies}
           submitLabel="Save changes"
           defaults={{
             id: contact.id,
-            company: contact.company,
+            companyName: contact.company?.name ?? "",
             name: contact.name,
+            title: contact.title,
             email: contact.email,
             phone: contact.phone,
             website: contact.website,
+            city: contact.city,
+            state: contact.state,
+            birthday: contact.birthday ? contact.birthday.toISOString().slice(0, 10) : "",
             status: contact.status,
           }}
         />

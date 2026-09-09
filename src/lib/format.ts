@@ -99,3 +99,8 @@ export const TIME_ZONES = [
   { value: "America/Puerto_Rico", label: "Atlantic (Puerto Rico)" },
   { value: "UTC", label: "UTC" },
 ] as const;
+
+// Whole days between a moment and now, for "last touch 3 days ago".
+export function daysSince(date: Date) {
+  return Math.floor((Date.now() - date.getTime()) / 86_400_000);
+}

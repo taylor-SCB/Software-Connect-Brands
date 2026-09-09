@@ -509,6 +509,9 @@ async function login(page) {
   await page.waitForURL(/\/dashboard\/contacts\/(?!new)[^/]+$/);
   await page.getByRole("link", { name: "New quote" }).click();
   await page.waitForURL(/\/dashboard\/quotes\/new/);
+  // Every quote lives on a deal now; type a new one.
+  await page.fill("#dealTitle", "Regression deal");
+  await page.getByRole("button", { name: "Add new deal" }).click();
   await page.fill("#title", "Regression quote");
   await page.getByRole("button", { name: "Create quote" }).click();
   await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/]+$/);

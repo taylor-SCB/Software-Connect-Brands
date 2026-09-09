@@ -20,7 +20,7 @@ export async function GET(
       title: true,
       status: true,
       organizationId: true,
-      contact: { select: { company: true, name: true } },
+      contact: { select: { company: { select: { name: true } }, name: true } },
     },
   });
 
@@ -42,7 +42,7 @@ export async function GET(
       cookieHeader: request.headers.get("cookie"),
     });
 
-    const who = safeFilename(quote.contact.company || quote.contact.name);
+    const who = safeFilename(quote.contact.company?.name || quote.contact.name);
     const filename = `QUO-${quote.number}-${who || "quote"}.pdf`;
 
     return new Response(pdf as BodyInit, {

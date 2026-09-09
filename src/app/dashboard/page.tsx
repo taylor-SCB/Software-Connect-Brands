@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime } from "@/lib/format";
 import { computeQuoteTotals } from "@/lib/quote-math";
-import { ACTIVITY_LABELS, type ActivityTypeValue } from "@/lib/constants";
+import { ACTIVITY_LABELS, OPEN_DEAL_STAGES, type ActivityTypeValue } from "@/lib/constants";
+import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PageHeader, Card, CardHeader, StatTile, EmptyState } from "@/components/ui";
 import {
   IconPlus,
@@ -40,8 +41,8 @@ export default async function DashboardPage() {
     prisma.contact.count({ where: { organizationId } }),
     prisma.contact.count({ where: { organizationId, status: "LEAD" } }),
     prisma.deal.findMany({
-      where: { organizationId, stage: { in: ["NEW", "CONTACTED"] } },
-      select: { valueCents: true },
+      where: { organizationId, stage: { in: [...OPEN_DEAL_STAGES] } },
+      select: { valueCents: true, quotes: QUOTES_FOR_VALUE },
     }),
     prisma.quote.findMany({
       where: { organizationId, status: "SENT" },
@@ -54,13 +55,14 @@ export default async function DashboardPage() {
       orderBy: { occurredAt: "desc" },
       take: 8,
       include: {
-        contact: { select: { id: true, name: true, company: true } },
+        contact: { select: { id: true, name: true, company: { select: { name: true } } } },
+        company: { select: { id: true, name: true } },
         user: { select: { name: true } },
       },
     }),
   ]);
 
-  const openDealValue = openDeals.reduce((sum, deal) => sum + deal.valueCents, 0);
+  const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
   const quotedValue = sentQuotes.reduce(
     (sum, quote) => sum + computeQuoteTotals(quote.lineItems).totalCents,
     0,
@@ -142,12 +144,15 @@ export default async function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm">{activity.body}</p>
                       <p className="faint mt-0.5 text-[0.7rem]">
-                        <Link
-                          href={`/dashboard/contacts/${activity.contact.id}`}
-                          className="link"
-                        >
-                          {activity.contact.company || activity.contact.name}
-                        </Link>{" "}
+                        {activity.contact ? (
+                          <Link href={`/dashboard/contacts/${activity.contact.id}`} className="link">
+                            {activity.contact.company?.name || activity.contact.name}
+                          </Link>
+                        ) : activity.company ? (
+                          <Link href={`/dashboard/companies/${activity.company.id}`} className="link">
+                            {activity.company.name}
+                          </Link>
+                        ) : null}{" "}
                         · {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} ·{" "}
                         {formatDateTime(activity.occurredAt, timeZone)}
                       </p>

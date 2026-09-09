@@ -2,68 +2,55 @@
 
 import { useActionState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
-import { CompanyPicker } from "@/components/company-picker";
 import type { ActionState } from "@/lib/forms";
 
-type ContactDefaults = {
+type CompanyDefaults = {
   id?: string;
-  companyName?: string | null;
   name?: string;
-  title?: string | null;
-  email?: string | null;
   phone?: string | null;
+  email?: string | null;
   website?: string | null;
   city?: string | null;
   state?: string | null;
-  birthday?: string | null;
   status?: string;
 };
 
-export function ContactForm({
+export function CompanyForm({
   action,
-  companies,
   defaults = {},
   submitLabel,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
-  companies: { id: string; name: string }[];
-  defaults?: ContactDefaults;
+  defaults?: CompanyDefaults;
   submitLabel: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
 
   return (
     <form action={formAction} className="space-y-4 p-5">
-      {defaults.id && <input type="hidden" name="contactId" value={defaults.id} />}
+      {defaults.id && <input type="hidden" name="companyId" value={defaults.id} />}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <CompanyPicker companies={companies} defaultName={defaults.companyName ?? ""} />
         <Field
-          label="Contact name"
+          label="Company name"
           name="name"
-          placeholder="Sam Rivera"
+          placeholder="Sam's Diner"
           defaultValue={defaults.name ?? ""}
           required
         />
         <Field
-          label="Title"
-          name="title"
-          placeholder="Owner, Office Manager, Foreman"
-          defaultValue={defaults.title ?? ""}
-        />
-        <Field
-          label="Contact email"
-          name="email"
-          type="email"
-          placeholder="sam@samsdiner.com"
-          defaultValue={defaults.email ?? ""}
-        />
-        <Field
-          label="Contact phone"
+          label="Main phone"
           name="phone"
           type="tel"
           placeholder="(555) 018-2200"
           defaultValue={defaults.phone ?? ""}
+        />
+        <Field
+          label="Main email"
+          name="email"
+          type="email"
+          placeholder="office@samsdiner.com"
+          defaultValue={defaults.email ?? ""}
         />
         <Field
           label="Website"
@@ -82,13 +69,7 @@ export function ContactForm({
             { value: "ARCHIVED", label: "Archived" },
           ]}
         />
-        <Field
-          label="Birthday"
-          name="birthday"
-          type="date"
-          defaultValue={defaults.birthday ?? ""}
-          hint="Worth knowing. A reminder can be built on it later."
-        />
+        <div className="hidden sm:block" />
         <Field label="City" name="city" placeholder="Austin" defaultValue={defaults.city ?? ""} />
         <Field label="State" name="state" placeholder="TX" defaultValue={defaults.state ?? ""} />
       </div>

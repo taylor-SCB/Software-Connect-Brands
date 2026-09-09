@@ -30,7 +30,7 @@ export default async function PublicContractPage({
           timeZone: true,
         },
       },
-      contact: { select: { name: true, company: true, email: true } },
+      contact: { select: { name: true, company: { select: { name: true } }, email: true } },
     },
   });
 

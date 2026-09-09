@@ -33,7 +33,7 @@ export default async function PublicQuotePage({
         },
       },
       contact: {
-        select: { name: true, company: true, email: true, phone: true },
+        select: { name: true, company: { select: { name: true } }, email: true, phone: true },
       },
       lineItems: { orderBy: { position: "asc" } },
     },

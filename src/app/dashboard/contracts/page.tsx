@@ -16,7 +16,7 @@ export default async function ContractsPage() {
     prisma.contract.findMany({
       where: { organizationId },
       orderBy: { createdAt: "desc" },
-      include: { contact: { select: { id: true, name: true, company: true } } },
+      include: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } },
     }),
     prisma.contractTemplate.count({ where: { organizationId } }),
   ]);
@@ -87,7 +87,7 @@ export default async function ContractsPage() {
                         href={`/dashboard/contacts/${contract.contact.id}`}
                         className="link"
                       >
-                        {contract.contact.company || contract.contact.name}
+                        {contract.contact.company?.name || contract.contact.name}
                       </Link>
                     </td>
                     <td>

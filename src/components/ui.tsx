@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { TAG_COLORS, TAG_LABELS, type LineItemTagValue } from "@/lib/constants";
 
 // Presentational primitives with no hooks, so they can be rendered from
@@ -157,6 +156,8 @@ const STATUS_COLORS: Record<string, string> = {
   ARCHIVED: "#64748b",
   NEW: "#38bdf8",
   CONTACTED: "#fbbf24",
+  QUOTE_SENT: "#a78bfa",
+  CONTRACT_SENT: "#f97316",
   WON: "#34d399",
   LOST: "#fb7185",
   DRAFT: "#94a3b8",
@@ -183,16 +184,9 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export function BackLink({ href, label }: { href: string; label: string }) {
-  return (
-    <Link href={href} className="faint mb-3 inline-flex items-center gap-1.5 text-xs hover:text-[var(--text)]">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M19 12H5M12 19l-7-7 7-7" />
-      </svg>
-      {label}
-    </Link>
-  );
-}
+// Lives in its own client file because it reads the navigation trail;
+// re-exported here so every page keeps importing it from the UI kit.
+export { BackLink } from "./back-link";
 
 export function FormError({ message }: { message?: string }) {
   if (!message) return null;
