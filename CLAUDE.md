@@ -98,9 +98,15 @@ the model to follow.
 | Code | GitHub `taylor-SCB/Software-Connect-Brands` |
 | Owner account | taylor@softwareconnectbrands.com |
 
-- Deploys run `prisma migrate deploy` automatically, so **a push can change
-  the live database**. Any migration must be safe for rows that already
-  exist.
+- **Every branch builds against the one live database.** Vercel builds a
+  preview for any branch pushed, with the same `DATABASE_URL` as the live
+  site. Until Sept 10, 2026 the build script ran migrations on every
+  branch, so pushing a working branch changed the live database a day
+  before the code went live and broke the live site in between. The build
+  now runs `prisma migrate deploy` only when `VERCEL_ENV` is `production`
+  (`scripts/migrate-if-production.cjs`), so **only a push to the live
+  branch changes the live database**. Any migration must still be safe for
+  rows that already exist.
 - Vercel keeps every past deployment. A bad release is undone with **Instant
   Rollback** in the Deployments tab — ten seconds, doesn't touch data.
 - **You cannot change Vercel settings from here.** No tool exists for
