@@ -5,7 +5,7 @@ import { formatCents } from "@/lib/format";
 import { DEAL_STAGES, DEAL_STAGE_LABELS, DEAL_STAGE_COLORS } from "@/lib/constants";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PageHeader, Card, EmptyState } from "@/components/ui";
-import { IconTrending, IconFileText, IconPlus } from "@/components/icons";
+import { IconTrending, IconFileText, IconPlus, IconClock } from "@/components/icons";
 import { StageSelect } from "./stage-select";
 
 export default async function DealsPage() {
@@ -34,10 +34,16 @@ export default async function DealsPage() {
         title="Pipeline"
         subtitle={`${formatCents(openValue)} in open deals · a deal's value comes from its quotes`}
         actions={
-          <Link href="/dashboard/quotes/new" className="btn btn-primary btn-sm">
-            <IconPlus size={14} />
-            New quote
-          </Link>
+          <>
+            <Link href="/dashboard/deals/tracker" className="btn btn-ghost btn-sm">
+              <IconClock size={13} />
+              Deal Tracker
+            </Link>
+            <Link href="/dashboard/quotes/new" className="btn btn-primary btn-sm">
+              <IconPlus size={14} />
+              New quote
+            </Link>
+          </>
         }
       />
 
@@ -120,6 +126,13 @@ export default async function DealsPage() {
                           </span>
                           <StageSelect dealId={deal.id} stage={deal.stage} />
                         </div>
+                        <Link
+                          href={`/dashboard/deals/tracker?dealId=${deal.id}`}
+                          className="faint mt-2 flex items-center gap-1 text-[0.7rem] hover:text-[var(--text)]"
+                        >
+                          <IconClock size={11} />
+                          Deal Tracker
+                        </Link>
                       </div>
                     ))}
                   </div>

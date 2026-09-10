@@ -8,6 +8,7 @@ import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { CONTACT_STATUSES } from "@/lib/constants";
 import { normalizeWebsite } from "@/lib/companies";
+import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -65,6 +66,9 @@ export async function createCompany(_prev: ActionState, formData: FormData): Pro
 
   const parsed = parseForm(companySchema, readCompanyForm(formData));
   if (!parsed.ok) return { error: parsed.error };
+  const logoFile = formData.get("logoFile");
+  const problem = imageProblem(logoFile);
+  if (problem) return { error: problem };
 
   const data = companyData(parsed.data);
   if (await nameTaken(data.name, organizationId)) {
@@ -72,6 +76,10 @@ export async function createCompany(_prev: ActionState, formData: FormData): Pro
   }
 
   const company = await prisma.company.create({ data: { organizationId, ...data } });
+  if (hasFile(logoFile)) {
+    const logoUrl = await replaceImage({ organizationId, kind: "COMPANY_LOGO", file: logoFile, companyId: company.id });
+    await prisma.company.update({ where: { id: company.id }, data: { logoUrl } });
+  }
 
   revalidatePath("/dashboard/companies");
   redirect(`/dashboard/companies/${company.id}`);
@@ -85,15 +93,29 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
 
   const parsed = parseForm(companySchema, readCompanyForm(formData));
   if (!parsed.ok) return { error: parsed.error };
+  const logoFile = formData.get("logoFile");
+  const problem = imageProblem(logoFile);
+  if (problem) return { error: problem };
 
   const data = companyData(parsed.data);
   if (await nameTaken(data.name, organizationId, id.data)) {
     return { error: "A company with that name already exists" };
   }
 
+  const existing = await prisma.company.findFirst({ where: { id: id.data, organizationId }, select: { id: true } });
+  if (!existing) return { error: "Company not found" };
+
+  const logo: { logoUrl?: string | null } = {};
+  if (hasFile(logoFile)) {
+    logo.logoUrl = await replaceImage({ organizationId, kind: "COMPANY_LOGO", file: logoFile, companyId: id.data });
+  } else if (formData.get("removeLogo") === "true") {
+    await removeImage({ organizationId, kind: "COMPANY_LOGO", companyId: id.data });
+    logo.logoUrl = null;
+  }
+
   const result = await prisma.company.updateMany({
     where: { id: id.data, organizationId },
-    data,
+    data: { ...data, ...logo },
   });
   if (result.count === 0) return { error: "Company not found" };
 

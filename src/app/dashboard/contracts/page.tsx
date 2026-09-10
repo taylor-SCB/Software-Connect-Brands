@@ -2,9 +2,11 @@ import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatCents } from "@/lib/format";
+import { contractTotalCents } from "@/lib/contracts";
 import { PageHeader, Card, EmptyState, StatusBadge, Badge } from "@/components/ui";
-import { IconPlus, IconSignature, IconFileText } from "@/components/icons";
+import { Avatar } from "@/components/avatar";
+import { IconPlus, IconSignature, IconFileText, IconClock } from "@/components/icons";
 
 export default async function ContractsPage() {
   const { organizationId } = await requireSession();
@@ -15,7 +17,11 @@ export default async function ContractsPage() {
     prisma.contract.findMany({
       where: { organizationId },
       orderBy: { createdAt: "desc" },
-      include: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } },
+      include: {
+        contact: { select: { id: true, name: true, company: { select: { name: true, logoUrl: true } } } },
+        company: { select: { id: true, name: true, logoUrl: true } },
+        lineItems: { select: { quantity: true, unitPriceCents: true } },
+      },
     }),
     prisma.contractTemplate.count({ where: { organizationId } }),
   ]);
@@ -34,6 +40,10 @@ export default async function ContractsPage() {
             >
               <IconFileText size={13} />
               Templates
+            </Link>
+            <Link href="/dashboard/contracts/tracker" className="btn btn-ghost btn-sm">
+              <IconClock size={13} />
+              Deal Tracker
             </Link>
             <Link href="/dashboard/contracts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
@@ -63,9 +73,10 @@ export default async function ContractsPage() {
                 <tr>
                   <th>Number</th>
                   <th>Title</th>
-                  <th>Customer</th>
+                  <th>To</th>
                   <th>Type</th>
                   <th>Status</th>
+                  <th className="text-right">Total</th>
                   <th>Created</th>
                 </tr>
               </thead>
@@ -82,18 +93,28 @@ export default async function ContractsPage() {
                       </Link>
                     </td>
                     <td>
-                      <Link
-                        href={`/dashboard/contacts/${contract.contact.id}`}
-                        className="link"
-                      >
-                        {contract.contact.company?.name || contract.contact.name}
-                      </Link>
+                      <span className="flex items-center gap-2">
+                        <Avatar
+                          url={(contract.company ?? contract.contact.company)?.logoUrl}
+                          name={(contract.company ?? contract.contact.company)?.name ?? contract.contact.name}
+                          size={22}
+                        />
+                        <Link
+                          href={`/dashboard/contacts/${contract.contact.id}`}
+                          className="link"
+                        >
+                          {(contract.company ?? contract.contact.company)?.name || contract.contact.name}
+                        </Link>
+                      </span>
                     </td>
                     <td>
                       <Badge>{contract.type}</Badge>
                     </td>
                     <td>
                       <StatusBadge status={contract.status} />
+                    </td>
+                    <td className="num text-right">
+                      {contract.lineItems.length ? formatCents(contractTotalCents(contract.lineItems)) : <span className="faint">—</span>}
                     </td>
                     <td className="faint text-xs">{formatDate(contract.createdAt, timeZone)}</td>
                   </tr>

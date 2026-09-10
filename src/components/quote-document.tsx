@@ -24,7 +24,7 @@ export type QuoteDocumentData = {
   };
   contact: {
     name: string;
-    company: { name: string } | null;
+    company: { name: string; logoUrl?: string | null } | null;
     email: string | null;
     phone: string | null;
   };
@@ -103,7 +103,11 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Prepared for
           </p>
-          <p className="mt-1 font-medium">
+          <p className="mt-1 flex items-center gap-2 font-medium">
+            {quote.contact.company?.logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={quote.contact.company.logoUrl} alt="" className="h-7 w-7 rounded object-cover" />
+            )}
             {quote.contact.company?.name || quote.contact.name}
           </p>
           {quote.contact.company?.name && (

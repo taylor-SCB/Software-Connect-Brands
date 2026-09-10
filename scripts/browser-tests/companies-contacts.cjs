@@ -83,6 +83,9 @@ function backLink(page) {
   await page.waitForURL(/\/signup\/submitted/);
   await sql(`UPDATE "Organization" SET status='ACTIVE', "reviewedAt"=now() WHERE slug LIKE 'test-companies-co%'`);
   await login(page);
+  // Every SQL lookup below is scoped to this workspace so other suites'
+  // leftovers (another Danny Ortiz, another CON-1000) can't collide.
+  const org = (await sql(`SELECT id FROM "Organization" WHERE slug LIKE 'test-companies-co%'`)).rows[0].id;
 
   log("Companies is in the sidebar and starts empty");
   await page.locator("aside").getByRole("link", { name: "Companies" }).click();
@@ -197,7 +200,7 @@ function backLink(page) {
   await page.getByRole("button", { name: "Create quote" }).click();
   await page.waitForURL(/\/dashboard\/quotes\/(?!new$)[a-z0-9]+$/);
   const quoteBUrl = page.url();
-  const dealCount = await sql(`SELECT count(*)::int AS n FROM "Deal" WHERE title='Fiber install'`);
+  const dealCount = await sql(`SELECT count(*)::int AS n FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
   assert.equal(dealCount.rows[0].n, 1, "two quotes, one deal");
 
   log("typing an existing deal name without clicking it still lands on that deal");
@@ -220,7 +223,7 @@ function backLink(page) {
   await page.waitForURL(/\/dashboard\/quotes$/);
 
   log("deal value comes from its quotes; marking sent moves the deal to Quote Sent");
-  const quoteA = await sql(`SELECT id FROM "Quote" WHERE title='Fiber install — option A'`);
+  const quoteA = await sql(`SELECT id FROM "Quote" WHERE title='Fiber install — option A' AND "organizationId"=$1`, [org]);
   await sql(
     `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position) VALUES ('li-a',$1,'Fiber run',10,12500,'LABOR',0)`,
     [quoteA.rows[0].id],
@@ -318,16 +321,16 @@ function backLink(page) {
   // Contracts v1 shows Send in the header and in the Sending card.
   await page.getByRole("button", { name: "Send for signature" }).first().click();
   await page.getByText("Signature link").waitFor();
-  let stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install'`);
+  let stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
   assert.equal(stage.rows[0].stage, "CONTRACT_SENT");
-  const token = await sql(`SELECT "publicToken" FROM "Contract" WHERE number=1000`);
+  const token = await sql(`SELECT "publicToken" FROM "Contract" WHERE number=1000 AND "organizationId"=$1`, [org]);
   await page.goto(`${BASE}/c/${token.rows[0].publicToken}`);
   await page.fill("[name=signerName]", "Danny Ortiz");
   await page.check("[name=agree]");
   await page.getByRole("button", { name: "Sign contract" }).click();
   await page.getByRole("button", { name: "Sign contract" }).waitFor({ state: "detached" });
   await page.waitForLoadState("networkidle");
-  stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install'`);
+  stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
   assert.equal(stage.rows[0].stage, "WON", "a signature wins the deal");
 
   log("a residential quote works with no company anywhere");
@@ -354,7 +357,7 @@ function backLink(page) {
   await page.goto(dannyUrl);
   await page.getByRole("heading", { name: "Danny Ortiz" }).waitFor();
   assert.equal(await page.locator("dl").first().getByRole("link", { name: "Spirit Communications" }).count(), 0);
-  const remaining = await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE name IN ('Danny Ortiz','Sara Lee')`);
+  const remaining = await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE name IN ('Danny Ortiz','Sara Lee') AND "organizationId"=$1`, [org]);
   assert.equal(remaining.rows[0].n, 2, "deleting a company keeps its people");
 
   void quoteBUrl;

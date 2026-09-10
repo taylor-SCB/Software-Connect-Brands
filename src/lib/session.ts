@@ -17,6 +17,8 @@ const currentUser = cache(async (userId: string) =>
       name: true,
       email: true,
       role: true,
+      title: true,
+      avatarUrl: true,
       isSuperAdmin: true,
       organizationId: true,
       organization: { select: { status: true } },
@@ -46,6 +48,8 @@ export async function requireSession() {
     role: user.role,
     name: user.name,
     email: user.email,
+    title: user.title,
+    avatarUrl: user.avatarUrl,
     isSuperAdmin: user.isSuperAdmin,
   };
 }

@@ -28,6 +28,7 @@ export default async function EditCompanyPage({
           action={updateCompany}
           submitLabel="Save changes"
           defaults={{
+            logoUrl: company.logoUrl,
             id: company.id,
             name: company.name,
             phone: company.phone,

@@ -11,7 +11,7 @@ import {
   BackLink,
   StatusBadge,
 } from "@/components/ui";
-import { IconTrash, IconSend, IconExternal, IconDownload } from "@/components/icons";
+import { IconTrash, IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { LineItemsEditor } from "./line-items-editor";
 import { QuoteMetaForm } from "./quote-meta-form";
@@ -81,6 +81,14 @@ export default async function QuoteBuilderPage({
               <IconDownload size={13} />
               PDF
             </a>
+            <Link
+              href={`/dashboard/contracts/tracker?dealId=${quote.deal.id}&quoteId=${quote.id}`}
+              className="btn btn-ghost btn-sm"
+              data-testid="split-into-contracts"
+            >
+              <IconClock size={13} />
+              Split into contracts
+            </Link>
             {quote.status === "DRAFT" ? (
               <form action={setQuoteStatus}>
                 <input type="hidden" name="quoteId" value={quote.id} />
@@ -140,6 +148,7 @@ export default async function QuoteBuilderPage({
             quoteId={quote.id}
             products={products}
             initialLines={quote.lineItems.map((item) => ({
+              id: item.id,
               productId: item.productId,
               name: item.name,
               description: item.description,

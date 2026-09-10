@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, CardHeader } from "@/components/ui";
+import { CompanyTiles } from "./company-tiles";
 import { BrandingForm } from "./form";
 
 export default async function SettingsPage() {
@@ -12,12 +13,14 @@ export default async function SettingsPage() {
   const canEdit = session.role === "OWNER" || session.role === "ADMIN";
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-3xl">
       <PageHeader
-        eyebrow="Workspace"
+        eyebrow="Settings · Company Information"
         title="Branding"
-        subtitle="Your name and colors across the dashboard, quotes and contracts."
+        subtitle="Your name, logo and colors across the dashboard, quotes and contracts."
       />
+
+      <CompanyTiles current="branding" />
 
       <Card lit>
         <CardHeader

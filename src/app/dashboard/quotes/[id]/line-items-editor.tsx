@@ -22,6 +22,9 @@ export type EditorProduct = {
 };
 
 export type EditorLine = {
+  // The stored row's id, so a save keeps it (and the contract rows and
+  // cancelled mark that point at it) instead of replacing it.
+  id?: string | null;
   productId: string | null;
   name: string;
   description: string;
@@ -35,6 +38,7 @@ export type EditorLine = {
 // typed "1." or "" doesn't get coerced to 0 mid-keystroke.
 type Row = {
   uid: string;
+  id: string | null;
   productId: string | null;
   name: string;
   description: string;
@@ -50,6 +54,7 @@ const nextUid = () => `row-${(uidCounter += 1)}`;
 function toRow(line: EditorLine): Row {
   return {
     uid: nextUid(),
+    id: line.id ?? null,
     productId: line.productId,
     name: line.name,
     description: line.description,
@@ -112,6 +117,7 @@ export function LineItemsEditor({
       ...rows,
       {
         uid: nextUid(),
+        id: null,
         productId: null,
         name: "",
         description: "",
@@ -130,6 +136,7 @@ export function LineItemsEditor({
       ...rows,
       {
         uid: nextUid(),
+        id: null,
         productId: product.id,
         name: product.name,
         description: product.description,
@@ -147,6 +154,7 @@ export function LineItemsEditor({
 
   function save() {
     const payload: LineItemInput[] = rows.map((row) => ({
+      id: row.id,
       productId: row.productId,
       name: row.name.trim(),
       description: row.description.trim(),

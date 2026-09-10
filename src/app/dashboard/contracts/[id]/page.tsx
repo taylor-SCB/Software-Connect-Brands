@@ -3,8 +3,11 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
-import { formatDate, formatDateTime } from "@/lib/format";
-import { canUserSend } from "@/lib/contracts";
+import { formatDate, formatDateTime, formatCents } from "@/lib/format";
+import { canUserSend, contractTotalCents } from "@/lib/contracts";
+import { dateToIso, todayIso } from "@/lib/payments";
+import { computeQuoteTotals } from "@/lib/quote-math";
+import { LINE_ITEM_TAGS } from "@/lib/constants";
 import {
   PageHeader,
   Card,
@@ -12,11 +15,17 @@ import {
   BackLink,
   StatusBadge,
   Badge,
+  TagBadge,
 } from "@/components/ui";
-import { IconTrash, IconSend, IconExternal, IconDownload } from "@/components/icons";
+import { IconTrash, IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
+import { Avatar } from "@/components/avatar";
+import { ReminderButton } from "@/components/reminder-button";
 import { ContractBodyForm } from "./body-form";
+import { PaymentScheduleEditor } from "./payment-schedule-editor";
+import { SignerForm } from "./signer-form";
 import { setContractStatus, deleteContract } from "../actions";
+import { cancelContract, reopenContract } from "@/app/dashboard/deals/tracker/actions";
 
 export default async function ContractDetailPage({
   params,
@@ -38,9 +47,12 @@ export default async function ContractDetailPage({
           title: true,
           email: true,
           phone: true,
-          company: { select: { id: true, name: true } },
+          company: { select: { id: true, name: true, logoUrl: true } },
         },
       },
+      company: { select: { id: true, name: true, logoUrl: true } },
+      lineItems: { orderBy: { position: "asc" } },
+      payments: { orderBy: { position: "asc" } },
       deal: { select: { id: true, title: true, stage: true } },
       quote: { select: { id: true, number: true, title: true, status: true } },
       template: {
@@ -52,6 +64,14 @@ export default async function ContractDetailPage({
 
   const publicPath = `/c/${contract.publicToken}`;
   const signed = contract.status === "SIGNED";
+  const cancelled = contract.status === "CANCELLED";
+  // The business the document is addressed to: the one picked on the
+  // tracker, else the contact's own.
+  const recipient = contract.company ?? contract.contact.company ?? null;
+  const totals = computeQuoteTotals(contract.lineItems);
+  const totalCents = contractTotalCents(contract.lineItems);
+  const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
+  const reminderMessage = `Hi ${contract.contact.name}, a quick reminder that ${contract.title} (CON-${contract.number}) is waiting for your signature. You can read and sign it here: {{link}}`;
 
   // "Who can send" from the template, enforced again in the action.
   const canSend = canUserSend(contract.template, userId);
@@ -70,8 +90,9 @@ export default async function ContractDetailPage({
       <BackLink href="/dashboard/contracts" label="Contracts" current={`CON-${contract.number} ${contract.title}`} />
 
       <PageHeader
-        eyebrow={`CON-${contract.number}${contract.deal ? ` · ${contract.deal.title}` : ""} · ${contract.contact.company?.name || contract.contact.name}`}
+        eyebrow={`CON-${contract.number}${contract.deal ? ` · ${contract.deal.title}` : ""} · ${recipient?.name || contract.contact.name}`}
         title={contract.title}
+        leading={<Avatar url={recipient?.logoUrl} name={recipient?.name ?? contract.contact.name} size={48} />}
         actions={
           <>
             <Badge>{contract.type}</Badge>
@@ -134,16 +155,111 @@ export default async function ContractDetailPage({
             />
           </Card>
 
+          {contract.lineItems.length > 0 && (
+            <Card lit>
+              <CardHeader
+                title="Line items"
+                subtitle="The rows split onto this contract from the quote. They print under the agreement."
+              />
+              <div className="overflow-x-auto">
+                <table className="table" data-testid="contract-line-items">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Tag</th>
+                      <th className="text-right">Qty</th>
+                      <th className="text-right">Unit</th>
+                      <th className="text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contract.lineItems.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <p className="font-medium">{item.name}</p>
+                          {item.description && <p className="faint text-xs">{item.description}</p>}
+                        </td>
+                        <td><TagBadge tag={item.tag} /></td>
+                        <td className="num text-right">{item.quantity}</td>
+                        <td className="num text-right">{formatCents(item.unitPriceCents)}</td>
+                        <td className="num text-right font-medium">{formatCents(Math.round(item.quantity * item.unitPriceCents))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan={4} className="text-right text-xs">
+                        {activeTags.map((tag) => (
+                          <span key={tag} className="ml-3 faint">{tag.charAt(0) + tag.slice(1).toLowerCase().replace("_", " ")} {formatCents(totals.byTag[tag])}</span>
+                        ))}
+                        <span className="ml-4 font-semibold text-[var(--text)]">Total</span>
+                      </td>
+                      <td className="num text-right text-base font-semibold" data-testid="contract-total">{formatCents(totalCents)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {(contract.lineItems.length > 0 || contract.payments.length > 0) && (
+            <Card lit>
+              <CardHeader
+                title="Payment schedule"
+                subtitle={
+                  signed
+                    ? "Amounts and dates are locked after signature. Tick payments as they come in."
+                    : "Percent of the total, a fixed amount, or the balance. Amounts recalculate as you go."
+                }
+              />
+              <PaymentScheduleEditor
+                contractId={contract.id}
+                totalCents={totalCents}
+                paymentTerms={contract.paymentTerms ?? ""}
+                today={todayIso(timeZone)}
+                locked={signed}
+                initialRows={contract.payments.map((payment) => ({
+                  label: payment.label,
+                  kind: payment.kind,
+                  percent: payment.percent,
+                  amountCents: payment.amountCents,
+                  dueOn: dateToIso(payment.dueOn),
+                  paid: Boolean(payment.paidAt),
+                }))}
+              />
+            </Card>
+          )}
+
           {!signed && (
             <Card className="border-[rgb(251_113_133/0.25)]">
               <CardHeader title="Danger zone" />
-              <form action={deleteContract} className="p-5">
-                <input type="hidden" name="contractId" value={contract.id} />
-                <button type="submit" className="btn btn-danger btn-sm">
-                  <IconTrash size={13} />
-                  Delete contract
-                </button>
-              </form>
+              <div className="flex flex-wrap gap-2 p-5">
+                {cancelled ? (
+                  <form action={reopenContract}>
+                    <input type="hidden" name="contractId" value={contract.id} />
+                    <button type="submit" className="btn btn-ghost btn-sm">
+                      Reopen as draft
+                    </button>
+                  </form>
+                ) : (
+                  <form action={cancelContract}>
+                    <input type="hidden" name="contractId" value={contract.id} />
+                    <button type="submit" className="btn btn-ghost btn-sm" data-testid="cancel-contract">
+                      Cancel contract
+                    </button>
+                  </form>
+                )}
+                <form action={deleteContract}>
+                  <input type="hidden" name="contractId" value={contract.id} />
+                  <button type="submit" className="btn btn-danger btn-sm">
+                    <IconTrash size={13} />
+                    Delete contract
+                  </button>
+                </form>
+              </div>
+              <p className="faint px-5 pb-4 text-xs">
+                Cancelling keeps the record and frees its rows on the Deal Tracker. Deleting removes it.
+              </p>
             </Card>
           )}
         </div>
@@ -176,13 +292,22 @@ export default async function ContractDetailPage({
               <div>
                 <dt className="eyebrow">Company</dt>
                 <dd className="mt-0.5">
-                  {contract.contact.company ? (
-                    <Link href={`/dashboard/companies/${contract.contact.company.id}`} className="link">
-                      {contract.contact.company.name}
-                    </Link>
+                  {recipient ? (
+                    <span className="flex items-center gap-2">
+                      <Avatar url={recipient.logoUrl} name={recipient.name} size={22} />
+                      <Link href={`/dashboard/companies/${recipient.id}`} className="link">
+                        {recipient.name}
+                      </Link>
+                    </span>
                   ) : (
                     <span className="faint">None · residential</span>
                   )}
+                </dd>
+              </div>
+              <div>
+                <dt className="eyebrow">Your signer</dt>
+                <dd className="mt-1">
+                  <SignerForm contractId={contract.id} signerName={contract.senderSignerName ?? ""} locked={signed} />
                 </dd>
               </div>
               <div>
@@ -190,10 +315,13 @@ export default async function ContractDetailPage({
                 <dd className="mt-0.5">
                   {contract.deal ? (
                     <>
-                      <Link href={`/dashboard/deals/${contract.deal.id}`} className="link">
+                      <Link href={`/dashboard/contracts/tracker?dealId=${contract.deal.id}`} className="link">
                         {contract.deal.title}
                       </Link>{" "}
                       <StatusBadge status={contract.deal.stage} />
+                      <Link href={`/dashboard/contracts/tracker?dealId=${contract.deal.id}`} className="faint ml-2 inline-flex items-center gap-1 text-xs hover:text-[var(--text)]">
+                        <IconClock size={11} /> Deal Tracker
+                      </Link>
                     </>
                   ) : (
                     <span className="faint">None</span>
@@ -233,7 +361,12 @@ export default async function ContractDetailPage({
           <Card lit>
             <CardHeader title="Sending" subtitle="Where the customer reads and signs." />
             <div className="space-y-3 p-5">
-              {contract.status === "DRAFT" ? (
+              {cancelled ? (
+                <p className="muted text-sm">
+                  Cancelled{contract.cancelledAt ? ` ${formatDate(contract.cancelledAt, timeZone)}` : ""}. Its rows are open again on the
+                  Deal Tracker. Reopen it below to send it after all.
+                </p>
+              ) : contract.status === "DRAFT" ? (
                 canSend ? (
                   <>
                     <p className="muted text-sm">
@@ -266,6 +399,16 @@ export default async function ContractDetailPage({
                     Text or email this to your customer — they can read and sign it in the browser.
                     {contract.sentAt && ` Sent ${formatDate(contract.sentAt, timeZone)}.`}
                   </p>
+                  {contract.status === "SENT" && (
+                    <div className="pt-1">
+                      <ReminderButton contractId={contract.id} message={reminderMessage} path={publicPath} />
+                      <p className="faint mt-1 text-xs">
+                        {contract.reminderCount === 0
+                          ? "No reminders yet."
+                          : `${contract.reminderCount} ${contract.reminderCount === 1 ? "reminder" : "reminders"} sent${contract.lastReminderAt ? `, last ${formatDate(contract.lastReminderAt, timeZone)}` : ""}.`}
+                      </p>
+                    </div>
+                  )}
                   {!signed && (
                     <div className="flex flex-wrap gap-2 pt-1">
                       <form action={setContractStatus}>

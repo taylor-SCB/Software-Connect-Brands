@@ -116,9 +116,17 @@ export const QUOTE_STATUSES = ["DRAFT", "SENT", "ACCEPTED", "DECLINED"] as const
 // extends — a Commission Agreement or an mNDA is one click away, not a
 // code change. A template stores the type's name, so "Custom" is a label,
 // not an enum.
-export const DEFAULT_CONTRACT_TYPES = ["Service Agreement", "Change Order", "Custom"] as const;
+export const DEFAULT_CONTRACT_TYPES = [
+  "Service Agreement",
+  "Change Order",
+  "Purchase Order",
+  "Sales Order",
+  "Invoice",
+  "Compliance",
+  "Custom",
+] as const;
 
-export const CONTRACT_STATUSES = ["DRAFT", "SENT", "SIGNED", "DECLINED"] as const;
+export const CONTRACT_STATUSES = ["DRAFT", "SENT", "SIGNED", "DECLINED", "CANCELLED"] as const;
 
 // Unit of measurement on a product. Each list belongs to the tag it is
 // named after: a Labor product picks from the Labor list, and so on.
@@ -242,3 +250,8 @@ export const RATESHEET_VISIBILITY_LABELS: Record<RatesheetVisibilityValue, strin
 
 export const RATESHEET_INVITE_STATUSES = ["PENDING", "APPROVED", "DECLINED"] as const;
 export type RatesheetInviteStatusValue = (typeof RATESHEET_INVITE_STATUSES)[number];
+
+// What a compliance file is. W-9, certificate of insurance and licenses
+// are what a general contractor asks a sub for before the first check.
+export const COMPLIANCE_CATEGORIES = ["W-9", "COI", "License", "Other"] as const;
+export type ComplianceCategory = (typeof COMPLIANCE_CATEGORIES)[number];

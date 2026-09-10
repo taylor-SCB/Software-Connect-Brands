@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
 import { CompanyPicker } from "@/components/company-picker";
+import { ImageUploadField } from "@/components/image-upload-field";
 import type { ActionState } from "@/lib/forms";
 
 type ContactDefaults = {
@@ -16,6 +17,7 @@ type ContactDefaults = {
   city?: string | null;
   state?: string | null;
   birthday?: string | null;
+  imageUrl?: string | null;
   status?: string;
 };
 
@@ -35,6 +37,15 @@ export function ContactForm({
   return (
     <form action={formAction} className="space-y-4 p-5">
       {defaults.id && <input type="hidden" name="contactId" value={defaults.id} />}
+
+      <ImageUploadField
+        label="Photo or icon"
+        name="image"
+        currentUrl={defaults.imageUrl ?? null}
+        fallback={(defaults.name ?? "?").charAt(0).toUpperCase()}
+        shape="round"
+        hint="Shown on their page and on the deal tracker."
+      />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <CompanyPicker companies={companies} defaultName={defaults.companyName ?? ""} />

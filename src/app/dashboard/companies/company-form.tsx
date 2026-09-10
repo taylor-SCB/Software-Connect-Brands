@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
+import { ImageUploadField } from "@/components/image-upload-field";
 import type { ActionState } from "@/lib/forms";
 
 type CompanyDefaults = {
@@ -12,6 +13,7 @@ type CompanyDefaults = {
   website?: string | null;
   city?: string | null;
   state?: string | null;
+  logoUrl?: string | null;
   status?: string;
 };
 
@@ -29,6 +31,14 @@ export function CompanyForm({
   return (
     <form action={formAction} className="space-y-4 p-5">
       {defaults.id && <input type="hidden" name="companyId" value={defaults.id} />}
+
+      <ImageUploadField
+        label="Logo"
+        name="logo"
+        currentUrl={defaults.logoUrl ?? null}
+        fallback={(defaults.name ?? "?").charAt(0).toUpperCase()}
+        hint="Shown on the deal tracker and on documents addressed to this company."
+      />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field

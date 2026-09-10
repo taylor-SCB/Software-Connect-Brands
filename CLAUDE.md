@@ -131,8 +131,18 @@ Modern templates, tagged line items, tag totals grid), contracts
 (templates with a per-workspace type pick list and "+ Add new type",
 "Who can send?", merge-field chips grouped by screen, a two-column
 Agreement | Customer Information layout with Preview, e-signature;
-Sept 10, 2026), PDF export for both, per-workspace
-branding and time zone, and an operator console at `/admin` where signups
+Sept 10, 2026; six preloaded templates: Service Agreement, Change Order,
+Purchase Order, Sales Order, Invoice, Compliance Agreement), the **Deal
+Tracker** (Pipeline → Deal Tracker and Contracts → Deal Tracker, same page:
+split a quote's rows into up to five contracts, each to its own company
+and contact with a template, payment terms and a payment preset; rows read
+Open / Sent / Signed / Cancelled; contracts get line items, a payment
+schedule that autocalculates, a "Your Company Signer", cancel/reopen and
+copy-and-log reminders; Sept 10, 2026), PDF export for both, per-workspace
+branding and time zone, Settings → My Account (title, mobile, avatar,
+change password) and Company Information (General, Branding with logo
+upload, Company Users, Compliance and Marketing file uploads), company
+logos and contact photos, and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
@@ -158,15 +168,22 @@ are all blocking before the first paying customer.
 ## Known gaps — say so rather than implying otherwise
 
 - **No email is sent, ever.** No approval notice, no receipts, and **no
-  password reset** — a forgotten password today means editing the database.
-  Everything else waiting on email is blocked behind this. That includes
-  ratesheets: "Send to partner" makes a link to copy and text or email by
-  hand, and the app says so on the screen.
+  password reset** — a forgotten password today means editing the database
+  (a logged-in user can change their own under My Account). Everything else
+  waiting on email is blocked behind this. That includes ratesheets:
+  "Send to partner" makes a link to copy and text or email by hand, and
+  the Deal Tracker's "Copy reminder", which copies a nudge with the signing
+  link and logs it; the app says so on the screen.
 - **"Link Distributor / Partner" is Coming Soon.** Public and
   Invite/Approve ratesheets are stored with their visibility but nobody in
   another workspace can search for them yet; every send today is a link.
-- **Uploaded ratesheet files live in Postgres** (4 MB cap each). Fine at
-  this scale; object storage is the real answer when files get bigger.
+- **Uploaded files live in Postgres** — ratesheets, compliance and
+  marketing documents (4 MB cap), logos and photos (2 MB). Fine at this
+  scale; object storage is the real answer when files get bigger. Logo and
+  photo links (`/files/<token>`) are public by design so they render on the
+  customer's copy of a document; documents need a login.
+- **"Receive in-app messages" is a stored switch only.** There is no
+  in-app messaging yet.
 - **No billing.** Nothing charges anybody.
 - **`AUTH_SECRET` was exposed in chat and still needs rotating.**
 - **The GitHub repository is public.**
@@ -186,13 +203,13 @@ are all blocking before the first paying customer.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. Three more are checked in at
+suite, and the delete-confirmation suite. Four more are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
-contacts suite (Sept 9, 2026) and the 21-step contracts suite (Sept 10,
-2026). The two older suites look rows up by number and name without
-scoping to their own workspace, so run them one at a time against a
-database no other suite has left data in. All of them run against a local Postgres
+contacts suite (Sept 9, 2026), the 21-step contracts suite and the
+27-step deal tracker + settings + uploads suite (both Sept 10, 2026).
+Each signs up its own workspace and scopes its lookups to it, so they can
+run back to back; still run them one at a time. All of them run against a local Postgres
 on port 5433 and must pass before anything is pushed. That local database
 is the only safety net between a change and paying customers.
 

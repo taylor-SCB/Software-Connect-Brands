@@ -106,12 +106,15 @@ project services, shipping and taxes. Marking a quote sent produces a
 public link the customer can open without an account.
 
 **Contracts** — reusable templates, each with a name, a type from a
-per-workspace pick list (Service Agreement, Change Order, Custom to start;
-"+ Add new type" adds an mNDA or a Commission Agreement in place), a
-description, and "Who can send?" (everyone, or a searchable pick of
-users). Merge fields are chips named in plain words — Contact Name,
-Company Name, Deal Name, Quote Total — grouped by the screen they come
-from (ALL, Contacts, Companies, Pipeline, Products, Quotes, Contracts);
+per-workspace pick list (Service Agreement, Change Order, Purchase Order,
+Sales Order, Invoice, Compliance, Custom to start; "+ Add new type" adds an
+mNDA or a Commission Agreement in place), a description, and "Who can
+send?" (everyone, or a searchable pick of users). Six templates come
+preloaded: Service Agreement, Change Order, Purchase Order, Sales Order,
+Invoice and Compliance Agreement. Merge fields are chips named in plain
+words — Contact Name, Company Name, Deal Name, Quote Total, Contract Total,
+Payment Schedule, Your Address — grouped by the screen they come from (ALL,
+Contacts, Companies, Pipeline, Products, Quotes, Contracts, Settings);
 clicking one drops it into the body. Every template page and contract
 page is two columns: the agreement on the left, a silver line, and
 **Customer Information** on the right, where you pick the customer, deal
@@ -121,8 +124,41 @@ there is nothing to fill it with. Generating resolves the fields once, so
 the customer reads and e-signs a frozen copy; the send button honours the
 template's sender list; signed contracts are locked from editing.
 
-**Branding** — company name, logo and primary color, applied across the
-dashboard *and* customer-facing quotes and contracts.
+**Deal Tracker** (under Pipeline and under Contracts — one page, two
+addresses) — turns a deal's quote into the contracts it actually needs.
+Pick a deal and the quote's rows appear down the side with a column for
+each contract (up to five): who it goes to (company and contact, existing
+or typed in new — Contract A is prefilled from the deal), which template,
+payment terms and a payment preset (one payment, deposit + balance, or
+installments by month or year). Tick a row under every contract it belongs
+on — the same materials line can sit on the customer's Sales Order *and*
+the supplier's Purchase Order — and an unticked row stays **Open** on the
+deal; rows can be cancelled and restored. "Your Company Signer" is
+prefilled with the owner. Creating writes one contract per column with its
+own line items, total and dated payment schedule, and the rows then read
+CON-1004 · Sent / Signed. Below the grid every contract on the deal shows
+sent and signed dates, total, paid-of-total and next due, reminders sent
+(a reminder is copied to the clipboard with the signing link and logged —
+no email is sent yet), with Edit, Cancel (frees the rows) and Reopen.
+A contract's page shows its line items, a payment table that recalculates
+(percent, fixed or balance rows; presets; final payment date; tick as
+paid), and the signer; the customer's copy prints the Items and Payment
+Schedule tables under the agreement, with the recipient's logo.
+
+**Settings** — two sub-panes. **My Account**: name, job title, email,
+mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
+profile picture, and change password. **Company Information** with five
+tiles: **General** (address, phone, email, website, About us, Company
+history — all available as merge fields under the Settings tab), **Branding**
+(the original settings page: name, logo — now uploaded as a file or pasted
+as a URL, one logo shared with General — color and time zone),
+**Company Users** (everyone with a login, with title and last login),
+**Compliance** (upload W-9, COI, licenses with a type and an expiry that is
+flagged when it runs out) and **Marketing** (brochures and materials).
+Companies and contacts take a logo or photo too, shown on their pages, the
+tracker, and the documents addressed to them. Uploads live in Postgres
+(2 MB images, 4 MB documents); images are served by an unguessable link so
+they load on a customer's copy, documents only to the workspace.
 
 **Operator console** (`/admin`) — the view across every workspace, for
 whoever runs the product. Signups land in a `PENDING` state and cannot log

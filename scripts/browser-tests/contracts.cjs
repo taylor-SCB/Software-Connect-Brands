@@ -95,14 +95,13 @@ async function previewChips(page) {
   const org = (await sql(`SELECT id FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE])).rows[0].id;
   const user = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
 
-  log("a new workspace starts with the three built-in types and two templates");
+  log("a new workspace starts with the built-in types and templates (six templates since Sept 10, 2026)");
   const types = await sql(`SELECT name FROM "ContractTypeOption" WHERE "organizationId"=$1 ORDER BY name`, [org]);
-  assert.deepEqual(types.rows.map((r) => r.name), ["Change Order", "Custom", "Service Agreement"]);
+  assert.deepEqual(types.rows.map((r) => r.name), ["Change Order", "Compliance", "Custom", "Invoice", "Purchase Order", "Sales Order", "Service Agreement"]);
   const seeded = await sql(`SELECT name, type FROM "ContractTemplate" WHERE "organizationId"=$1 ORDER BY name`, [org]);
-  assert.deepEqual(seeded.rows, [
-    { name: "Change Order", type: "Change Order" },
-    { name: "Service Agreement", type: "Service Agreement" },
-  ]);
+  assert.equal(seeded.rows.length, 6);
+  assert.ok(seeded.rows.some((r) => r.name === "Service Agreement" && r.type === "Service Agreement"));
+  assert.ok(seeded.rows.some((r) => r.name === "Change Order" && r.type === "Change Order"));
 
   log("seed a customer with a company, a deal and a quote with two lines, plus a residential contact");
   await sql(
@@ -127,10 +126,10 @@ async function previewChips(page) {
      VALUES ('qli_1','quo_ct','Demo labor',2,10000,'LABOR',0),('qli_2','quo_ct','Tile',1,5000,'MATERIALS',1)`,
   );
 
-  log("templates list: two cards, each 'Anyone can send'");
+  log("templates list: six cards, each 'Anyone can send'");
   await page.goto(`${BASE}/dashboard/contracts/templates`);
   await page.getByRole("heading", { name: "Contract templates" }).waitFor();
-  assert.equal(await page.getByText("Anyone can send").count(), 2);
+  assert.equal(await page.getByText("Anyone can send").count(), 6);
   await shot(page, "01-templates-list");
 
   log("open Service Agreement: Agreement on the left, silver line, Customer Information on the right");
@@ -147,7 +146,7 @@ async function previewChips(page) {
 
   log("merge fields are chips with labels, grouped by tab");
   const tabs = await page.getByRole("tab").allTextContents();
-  assert.deepEqual(tabs, ["ALL", "Contacts", "Companies", "Pipeline", "Products", "Quotes", "Contracts"]);
+  assert.deepEqual(tabs, ["ALL", "Contacts", "Companies", "Pipeline", "Products", "Quotes", "Contracts", "Settings"]);
   const palette = page.getByRole("tabpanel");
   assert.ok(await palette.getByRole("button", { name: "Company Name", exact: true }).isVisible());
   assert.equal(await palette.getByText("{{", { exact: false }).count(), 0, "no raw {{tokens}} in the palette");
@@ -238,7 +237,7 @@ async function previewChips(page) {
   const saved = await sql(`SELECT type, "allUsersCanSend", "senderUserIds" FROM "ContractTemplate" WHERE name='Service Agreement' AND "organizationId"=$1`, [org]);
   assert.deepEqual(saved.rows[0], { type: "Commission Agreement", allUsersCanSend: false, senderUserIds: [user] });
   const typeCount = await sql(`SELECT count(*)::int AS n FROM "ContractTypeOption" WHERE "organizationId"=$1`, [org]);
-  assert.equal(typeCount.rows[0].n, 4, "the new type joined the pick list");
+  assert.equal(typeCount.rows[0].n, 8, "the new type joined the pick list (seven built-in + one)");
 
   log("the new type is in the dropdown next time, and typing it again doesn't duplicate it");
   const options = await page.locator("#type option").allTextContents();

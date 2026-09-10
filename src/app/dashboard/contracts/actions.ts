@@ -217,13 +217,18 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
   );
   if (!parsed.ok) return { error: parsed.error };
 
-  const [contact, template] = await Promise.all([
+  const [contact, template, owner] = await Promise.all([
     prisma.contact.findFirst({
       where: { id: parsed.data.contactId, organizationId },
-      select: { id: true },
+      select: { id: true, companyId: true },
     }),
     prisma.contractTemplate.findFirst({
       where: { id: parsed.data.templateId, organizationId },
+    }),
+    prisma.user.findFirst({
+      where: { organizationId },
+      orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+      select: { name: true },
     }),
   ]);
 
@@ -265,6 +270,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       dealId: deal?.id ?? null,
       quoteId: quote?.id ?? null,
       contractNumber: `CON-${number}`,
+      signerName: owner?.name ?? null,
     }),
   );
 
@@ -272,6 +278,8 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
     data: {
       organizationId,
       contactId: contact.id,
+      companyId: contact.companyId,
+      senderSignerName: owner?.name ?? null,
       dealId: deal?.id ?? null,
       quoteId: quote?.id ?? null,
       templateId: template.id,
@@ -349,7 +357,7 @@ export async function setContractStatus(formData: FormData) {
       template: { select: { allUsersCanSend: true, senderUserIds: true } },
     },
   });
-  if (!contract || contract.status === "SIGNED") return;
+  if (!contract || contract.status === "SIGNED" || contract.status === "CANCELLED") return;
 
   // The template's "Who can send" list is enforced here, not just hidden
   // on the page.

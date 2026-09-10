@@ -33,6 +33,21 @@ model Organization {
   reviewedAt         DateTime?
   logoUrl            String?
   primaryColor       String             @default("#6366f1")
+  // Company Information (Settings → Company Information → General). All
+  // optional: a workspace works fine with just a name, and every one of
+  // these is a merge field a contract can pull in.
+  addressLine1       String?
+  addressLine2       String?
+  city               String?
+  state              String?
+  postalCode         String?
+  phone              String?
+  email              String?
+  website            String?
+  // "About us" and "Company history": plain text, for the website-style
+  // blurb a contract or proposal can open with.
+  description        String             @default("")
+  history            String             @default("")
   // Dates and times render in the business's own zone, everywhere —
   // dashboard, quotes and contracts alike. Storing it per organization
   // keeps server-rendered output deterministic (no hydration mismatch)
@@ -62,6 +77,7 @@ model Organization {
   ratesheets          Ratesheet[]
   ratesheetInvites    RatesheetInvite[]
   linkedRatesheets    LinkedRatesheet[]
+  uploads             Upload[]
 
   @@index([status])
 }
@@ -79,6 +95,15 @@ model User {
   // No email is sent anywhere yet, so a phone number is the only way to
   // tell an applicant they were approved.
   phone          String?
+  // My Account: job title on the company's user list and on documents
+  // this person signs.
+  title          String?
+  // Shown next to the name in the sidebar and on the Company Users tile.
+  // A path under /files/ when uploaded here.
+  avatarUrl      String?
+  // No in-app messaging exists yet; the switch is stored so the preference
+  // is already set when it does.
+  receiveInAppMessages Boolean @default(true)
   passwordHash   String
   role           Role         @default(OWNER)
   // Operator-level access to every workspace. Deliberately has no path
@@ -92,6 +117,7 @@ model User {
 
   notes      Note[]
   activities Activity[]
+  uploads    Upload[]
 
   @@index([organizationId])
 }
@@ -117,6 +143,9 @@ model Company {
   website        String?
   city           String?
   state          String?
+  // Their logo, shown on the deal tracker and on the documents sent to
+  // them. A path under /files/ when uploaded here.
+  logoUrl        String?
   status         ContactStatus @default(LEAD)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -124,6 +153,8 @@ model Company {
   contacts   Contact[]
   notes      Note[]
   activities Activity[]
+  uploads    Upload[]
+  contracts  Contract[]
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -146,6 +177,8 @@ model Contact {
   // The one personal fact stored as a real date rather than a note, so a
   // reminder can be built on it later.
   birthday       DateTime?     @db.Date
+  // A photo or icon for the person. A path under /files/ when uploaded.
+  imageUrl       String?
   status         ContactStatus @default(LEAD)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -155,6 +188,7 @@ model Contact {
   activities Activity[]
   quotes     Quote[]
   contracts  Contract[]
+  uploads    Upload[]
 
   @@index([organizationId])
   @@index([companyId])
@@ -363,6 +397,12 @@ model QuoteLineItem {
   unitPriceCents Int         @default(0)
   tag            LineItemTag
   position       Int         @default(0)
+  // Set from the deal tracker when a row is taken off the table without
+  // deleting it from the quote: it stays on the quote, priced, but can
+  // no longer be put on a contract. Cleared by "Restore".
+  cancelledAt    DateTime?
+
+  contractLines ContractLineItem[]
 
   @@index([quoteId])
 }
@@ -411,6 +451,18 @@ enum ContractStatus {
   SENT
   SIGNED
   DECLINED
+  // Withdrawn by the workspace, from the deal tracker. Its line items go
+  // back to "open" on the deal so they can be sent again.
+  CANCELLED
+}
+
+// How one row of a payment schedule is sized. PERCENT and FIXED are what
+// they say; BALANCE is "whatever is left", so the schedule always adds up
+// to the contract total even after rounding.
+enum PaymentKind {
+  PERCENT
+  FIXED
+  BALANCE
 }
 
 model Contract {
@@ -419,6 +471,11 @@ model Contract {
   organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   contactId      String
   contact        Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  // The business this document is addressed to. Usually the contact's
+  // company; a purchase order split off a deal goes to the supplier's
+  // company instead, which is why it is stored here and not derived.
+  companyId      String?
+  company        Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
   // Optional: a standalone service agreement has no deal behind it.
   dealId         String?
   deal           Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
@@ -440,14 +497,71 @@ model Contract {
   signerName     String?
   signerEmail    String?
   declinedAt     DateTime?
+  cancelledAt    DateTime?
+  // "Your Company Signer": who signs for the workspace. Prefilled with the
+  // owner's name on the deal tracker; printed under the provider's
+  // signature line.
+  senderSignerName String?
+  // "Net 30", "Due on receipt"... free text so a workspace can write its
+  // own. The dated rows live in `payments`.
+  paymentTerms   String?
+  // Reminders are copied out by hand today (no email is sent). Counting
+  // them is what lets the tracker say "reminded twice, last on Sep 12".
+  reminderCount  Int               @default(0)
+  lastReminderAt DateTime?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+
+  lineItems ContractLineItem[]
+  payments  ContractPayment[]
 
   @@unique([organizationId, number])
   @@index([organizationId])
   @@index([contactId])
+  @@index([companyId])
   @@index([dealId])
   @@index([quoteId])
+}
+
+// A quote row that was put on this contract by the deal tracker. Copied,
+// like a quote line copies its product, so the contract keeps reading the
+// same after the quote is edited; quoteLineItemId is what lets the
+// tracker label the quote's row "Sent" or "Signed".
+model ContractLineItem {
+  id              String         @id @default(cuid())
+  contractId      String
+  contract        Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  quoteLineItemId String?
+  quoteLineItem   QuoteLineItem? @relation(fields: [quoteLineItemId], references: [id], onDelete: SetNull)
+  name            String
+  description     String         @default("")
+  quantity        Float          @default(1)
+  unitPriceCents  Int            @default(0)
+  tag             LineItemTag
+  position        Int            @default(0)
+
+  @@index([contractId])
+  @@index([quoteLineItemId])
+}
+
+// One row of a contract's payment schedule: "50% deposit, due Sep 15".
+// amountCents is recomputed from the contract total whenever the schedule
+// is saved, so the stored number is always what the row was worth when
+// the customer last saw it.
+model ContractPayment {
+  id          String      @id @default(cuid())
+  contractId  String
+  contract    Contract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  label       String
+  kind        PaymentKind @default(PERCENT)
+  // Whole percent for PERCENT rows (50 = 50%); unused otherwise.
+  percent     Float?
+  amountCents Int         @default(0)
+  dueOn       DateTime?   @db.Date
+  paidAt      DateTime?
+  position    Int         @default(0)
+
+  @@index([contractId])
 }
 
 // ------------------------------------------------------------------
@@ -635,4 +749,57 @@ model LinkedRatesheet {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId])
+}
+
+// ------------------------------------------------------------------
+// Uploads
+// ------------------------------------------------------------------
+
+// What an uploaded file is for. The image kinds are served without a
+// login (a logo has to load on the customer's copy of a contract); the
+// document kinds are only ever streamed back to the workspace that owns
+// them.
+enum UploadKind {
+  ORG_LOGO
+  USER_AVATAR
+  COMPANY_LOGO
+  CONTACT_IMAGE
+  COMPLIANCE
+  MARKETING
+}
+
+// Any file a workspace uploads: logos, avatars, W-9s, brochures. Bytes
+// live in Postgres like LinkedRatesheet (4 MB cap in the action) and the
+// column is omitted from every query by default (src/lib/prisma.ts).
+// `publicToken` is the file's address under /files/, so a logo's URL is
+// unguessable and changes every time the logo is replaced.
+model Upload {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           UploadKind
+  // "W-9", "COI", "License" on a compliance file; free on marketing.
+  category       String?
+  name           String
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  data           Bytes
+  publicToken    String       @unique
+  // When a COI or license runs out, so the compliance tile can flag it.
+  expiresOn      DateTime?    @db.Date
+  // Which record an image belongs to; null for workspace-level files.
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, kind])
+  @@index([userId])
+  @@index([companyId])
+  @@index([contactId])
 }

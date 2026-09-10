@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { IconGlobe, IconUserPlus, IconPlus } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
+import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm } from "../../contacts/[id]/forms";
@@ -106,6 +107,7 @@ export default async function CompanyDetailPage({
         eyebrow="Company"
         title={company.name}
         subtitle={[company.city, company.state].filter(Boolean).join(", ") || undefined}
+        leading={<Avatar url={company.logoUrl} name={company.name} size={56} />}
         actions={
           <>
             <StatusBadge status={company.status} />

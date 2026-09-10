@@ -23,6 +23,7 @@ import {
   IconBuilding,
 } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
+import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm, AddDealForm } from "./forms";
@@ -104,6 +105,7 @@ export default async function ContactDetailPage({
         eyebrow={contact.company?.name ?? "Contact"}
         title={contact.name}
         subtitle={contact.title ?? undefined}
+        leading={<Avatar url={contact.imageUrl} name={contact.name} size={56} round />}
         actions={
           <>
             <StatusBadge status={contact.status} />

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { SidebarNav, MobileNav } from "@/components/sidebar-nav";
 import { PageTrail } from "@/components/back-link";
 import { IconLogout, IconSparkles } from "@/components/icons";
+import { Avatar } from "@/components/avatar";
 import Link from "next/link";
 import { logout } from "./actions";
 
@@ -71,10 +72,13 @@ export default async function DashboardLayout({
               Operator console
             </Link>
           )}
-          <div className="px-1">
-            <p className="truncate text-xs font-medium">{session.name}</p>
-            <p className="faint truncate text-[0.68rem]">{session.email}</p>
-          </div>
+          <Link href="/dashboard/settings/account" className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-[rgb(255_255_255/0.04)]">
+            <Avatar url={session.avatarUrl} name={session.name} size={28} round />
+            <div className="min-w-0">
+              <p className="truncate text-xs font-medium">{session.name}</p>
+              <p className="faint truncate text-[0.68rem]">{session.title || session.email}</p>
+            </div>
+          </Link>
           <form action={logout}>
             <button type="submit" className="nav-item w-full text-left">
               <IconLogout size={15} className="opacity-70" />

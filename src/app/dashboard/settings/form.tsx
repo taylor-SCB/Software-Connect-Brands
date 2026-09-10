@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
 import { TIME_ZONES } from "@/lib/format";
+import { ImageUploadField } from "@/components/image-upload-field";
 import { updateBranding } from "./actions";
 import type { ActionState } from "@/lib/forms";
 
@@ -27,6 +28,9 @@ export function BrandingForm({
   // Local state drives the live preview so the swatch and button update
   // as the color changes, before anything is saved.
   const [color, setColor] = useState(organization.primaryColor);
+  // An uploaded logo lives at /files/…; the URL box is only for a logo
+  // hosted elsewhere.
+  const isUploaded = Boolean(organization.logoUrl?.startsWith("/files/"));
 
   return (
     <form action={formAction} className="space-y-5 p-5">
@@ -37,13 +41,24 @@ export function BrandingForm({
         required
       />
 
-      <Field
-        label="Logo URL"
-        name="logoUrl"
-        placeholder="https://yourcompany.com/logo.png"
-        defaultValue={organization.logoUrl ?? ""}
-        hint="Shown in the sidebar and on quotes and contracts."
+      <ImageUploadField
+        label="Logo"
+        name="logo"
+        currentUrl={organization.logoUrl}
+        fallback={organization.name.charAt(0).toUpperCase()}
+        disabled={!canEdit}
+        hint="Shown in the sidebar and on quotes and contracts. The same logo appears under Company Information → General."
       />
+
+      {!isUploaded && (
+        <Field
+          label="Or paste a logo URL"
+          name="logoUrl"
+          placeholder="https://yourcompany.com/logo.png"
+          defaultValue={organization.logoUrl ?? ""}
+          hint="Uploading a file above replaces this."
+        />
+      )}
 
       <SelectField
         label="Time zone"

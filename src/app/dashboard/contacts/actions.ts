@@ -19,6 +19,8 @@ import {
   activityBodySchema,
 } from "@/lib/logging";
 
+import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
+
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
 const contactSchema = z.object({
@@ -91,10 +93,17 @@ export async function createContact(_prev: ActionState, formData: FormData): Pro
 
   const parsed = parseForm(contactSchema, readContactForm(formData));
   if (!parsed.ok) return { error: parsed.error };
+  const imageFile = formData.get("imageFile");
+  const problem = imageProblem(imageFile);
+  if (problem) return { error: problem };
 
   const contact = await prisma.contact.create({
     data: { organizationId, ...(await contactData(parsed.data, organizationId)) },
   });
+  if (hasFile(imageFile)) {
+    const imageUrl = await replaceImage({ organizationId, kind: "CONTACT_IMAGE", file: imageFile, contactId: contact.id });
+    await prisma.contact.update({ where: { id: contact.id }, data: { imageUrl } });
+  }
 
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/companies");
@@ -109,12 +118,25 @@ export async function updateContact(_prev: ActionState, formData: FormData): Pro
 
   const parsed = parseForm(contactSchema, readContactForm(formData));
   if (!parsed.ok) return { error: parsed.error };
+  const imageFile = formData.get("imageFile");
+  const problem = imageProblem(imageFile);
+  if (problem) return { error: problem };
+
+  if (!(await assertContact(id.data, organizationId))) return { error: "Contact not found" };
+
+  const image: { imageUrl?: string | null } = {};
+  if (hasFile(imageFile)) {
+    image.imageUrl = await replaceImage({ organizationId, kind: "CONTACT_IMAGE", file: imageFile, contactId: id.data });
+  } else if (formData.get("removeImage") === "true") {
+    await removeImage({ organizationId, kind: "CONTACT_IMAGE", contactId: id.data });
+    image.imageUrl = null;
+  }
 
   // updateMany (not update) so the organizationId scope is part of the
   // WHERE clause — a guessed id from another tenant matches zero rows.
   const result = await prisma.contact.updateMany({
     where: { id: id.data, organizationId },
-    data: await contactData(parsed.data, organizationId),
+    data: { ...(await contactData(parsed.data, organizationId)), ...image },
   });
   if (result.count === 0) return { error: "Contact not found" };
 

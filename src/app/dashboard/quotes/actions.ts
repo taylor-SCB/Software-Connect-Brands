@@ -127,6 +127,9 @@ export async function updateQuoteMeta(_prev: ActionState, formData: FormData): P
 }
 
 const lineItemSchema = z.object({
+  // Present for a row that already exists; the save keeps that row so a
+  // contract split off it stays linked and its cancelled mark survives.
+  id: z.string().trim().nullable().optional(),
   productId: z.string().trim().nullable().optional(),
   name: z.string().trim().min(1, "Every line needs a product name").max(200),
   description: z.string().max(2000).optional(),
@@ -173,13 +176,24 @@ export async function saveLineItems(
     : [];
   const ownedIds = new Set(ownedProducts.map((product) => product.id));
 
-  // Replace-all keeps the editor's ordering authoritative and avoids
-  // diffing rows the user reordered or deleted client-side.
+  // The editor's order is authoritative. Rows it still has are updated
+  // in place (their ids matter: the deal tracker's contracts point at
+  // them), rows it dropped are deleted, new ones are created.
+  const existing = await prisma.quoteLineItem.findMany({
+    where: { quoteId: quote.id },
+    select: { id: true },
+  });
+  const existingIds = new Set(existing.map((item) => item.id));
+  const keptIds = new Set(
+    parsed.data.map((item) => item.id).filter((id): id is string => Boolean(id) && existingIds.has(id as string)),
+  );
+
   await prisma.$transaction([
-    prisma.quoteLineItem.deleteMany({ where: { quoteId: quote.id } }),
-    prisma.quoteLineItem.createMany({
-      data: parsed.data.map((item, index) => ({
-        quoteId: quote.id,
+    prisma.quoteLineItem.deleteMany({
+      where: { quoteId: quote.id, id: { notIn: [...keptIds] } },
+    }),
+    ...parsed.data.map((item, index) => {
+      const data = {
         productId: item.productId && ownedIds.has(item.productId) ? item.productId : null,
         name: item.name,
         description: item.description ?? "",
@@ -188,7 +202,10 @@ export async function saveLineItems(
         unitPriceCents: item.unitPriceCents,
         tag: item.tag,
         position: index,
-      })),
+      };
+      return item.id && keptIds.has(item.id)
+        ? prisma.quoteLineItem.update({ where: { id: item.id }, data })
+        : prisma.quoteLineItem.create({ data: { quoteId: quote.id, ...data } });
     }),
     prisma.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } }),
   ]);

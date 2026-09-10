@@ -30,7 +30,10 @@ export default async function PublicContractPage({
           timeZone: true,
         },
       },
-      contact: { select: { name: true, company: { select: { name: true } }, email: true } },
+      contact: { select: { name: true, company: { select: { name: true, logoUrl: true } }, email: true } },
+      company: { select: { name: true, logoUrl: true } },
+      lineItems: { orderBy: { position: "asc" } },
+      payments: { orderBy: { position: "asc" } },
     },
   });
 
@@ -45,6 +48,11 @@ export default async function PublicContractPage({
   }
 
   const canSign = contract.status === "SENT";
+  // A cancelled contract's link stops working for the customer.
+  if (contract.status === "CANCELLED" && !isOwnerPreview) {
+    const session = await auth();
+    if (session?.user?.organizationId !== contract.organization.id) notFound();
+  }
 
   return (
     <div className="doc-page relative z-10 px-4 py-10 sm:px-6">

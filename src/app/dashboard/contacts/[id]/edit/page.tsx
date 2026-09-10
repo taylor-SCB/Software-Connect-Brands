@@ -39,6 +39,7 @@ export default async function EditContactPage({
           companies={companies}
           submitLabel="Save changes"
           defaults={{
+            imageUrl: contact.imageUrl,
             id: contact.id,
             companyName: contact.company?.name ?? "",
             name: contact.name,

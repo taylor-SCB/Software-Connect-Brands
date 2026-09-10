@@ -12,6 +12,8 @@ import {
   IconSettings,
   IconLayers,
   IconBuilding,
+  IconClock,
+  IconUsers as IconAccount,
 } from "@/components/icons";
 
 type NavChild = { href: string; label: string; Icon: (p: { size?: number; className?: string }) => React.ReactElement };
@@ -27,7 +29,12 @@ const NAV: {
   { href: "/dashboard", label: "Overview", Icon: IconGrid },
   { href: "/dashboard/contacts", label: "Contacts", Icon: IconUsers },
   { href: "/dashboard/companies", label: "Companies", Icon: IconBuilding },
-  { href: "/dashboard/deals", label: "Pipeline", Icon: IconTrending },
+  {
+    href: "/dashboard/deals",
+    label: "Pipeline",
+    Icon: IconTrending,
+    children: [{ href: "/dashboard/deals/tracker", label: "Deal Tracker", Icon: IconClock }],
+  },
   {
     href: "/dashboard/products",
     label: "Products",
@@ -35,8 +42,23 @@ const NAV: {
     children: [{ href: "/dashboard/products/ratesheets", label: "Ratesheets", Icon: IconLayers }],
   },
   { href: "/dashboard/quotes", label: "Quotes", Icon: IconFileText },
-  { href: "/dashboard/contracts", label: "Contracts", Icon: IconSignature },
-  { href: "/dashboard/settings", label: "Settings", Icon: IconSettings },
+  {
+    href: "/dashboard/contracts",
+    label: "Contracts",
+    Icon: IconSignature,
+    children: [{ href: "/dashboard/contracts/tracker", label: "Deal Tracker", Icon: IconClock }],
+  },
+  {
+    href: "/dashboard/settings",
+    label: "Settings",
+    Icon: IconSettings,
+    // My Account is listed first on purpose: Company Information keeps
+    // the section's own address, so it would otherwise match every page.
+    children: [
+      { href: "/dashboard/settings/account", label: "My Account", Icon: IconAccount },
+      { href: "/dashboard/settings", label: "Company Information", Icon: IconBuilding },
+    ],
+  },
 ];
 
 // `/dashboard` would otherwise light up on every child route, so the
@@ -96,7 +118,11 @@ export function SidebarNav() {
 export function MobileNav() {
   const pathname = usePathname();
   // One flat strip on a phone: sub-modules sit right after their parent.
-  const items = NAV.flatMap((item) => [item, ...(item.children ?? [])]);
+  // A child that shares its parent's address (Company Information) is
+  // the parent on a phone, so the strip never lists one link twice.
+  const items = NAV.flatMap((item) => [item, ...(item.children ?? [])]).filter(
+    (item, index, all) => all.findIndex((other) => other.href === item.href) === index,
+  );
 
   return (
     <nav className="flex gap-1 overflow-x-auto pb-1">
