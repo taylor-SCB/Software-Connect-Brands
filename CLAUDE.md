@@ -128,7 +128,10 @@ partners with an expiry and a respond-by window, partner approve/decline
 links at `/r/<token>`, uploaded distributor price lists, CSV import of
 products with a preview and SKU-based updates), quotes (Simple +
 Modern templates, tagged line items, tag totals grid), contracts
-(templates, merge fields, e-signature), PDF export for both, per-workspace
+(templates with a per-workspace type pick list and "+ Add new type",
+"Who can send?", merge-field chips grouped by screen, a two-column
+Agreement | Customer Information layout with Preview, e-signature;
+Sept 10, 2026), PDF export for both, per-workspace
 branding and time zone, and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
@@ -175,15 +178,21 @@ are all blocking before the first paying customer.
 - **A signed contract records only the name typed and the time.** Enough for
   ESIGN/UETA, thin if one is ever disputed — no IP address, no email
   confirmation.
+- **"Who can send?" on a template can only list the workspace's one user.**
+  There is no way to invite a teammate yet, so the list is one name long
+  until team logins exist. The setting and its enforcement are built.
 
 ## Testing
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. Two more are checked in at
+suite, and the delete-confirmation suite. Three more are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
-the 27-step products + ratesheets suite and the 21-step companies +
-contacts suite (Sept 9, 2026). All of them run against a local Postgres
+the 27-step products + ratesheets suite, the 21-step companies +
+contacts suite (Sept 9, 2026) and the 21-step contracts suite (Sept 10,
+2026). The two older suites look rows up by number and name without
+scoping to their own workspace, so run them one at a time against a
+database no other suite has left data in. All of them run against a local Postgres
 on port 5433 and must pass before anything is pushed. That local database
 is the only safety net between a change and paying customers.
 

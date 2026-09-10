@@ -1,5 +1,4 @@
 import { formatDate, formatDateTime } from "@/lib/format";
-import { CONTRACT_TYPE_LABELS, type ContractTypeValue } from "@/lib/constants";
 
 export type ContractDocumentData = {
   number: number;
@@ -45,7 +44,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
           <div>
             <p className="text-lg font-semibold">{contract.organization.name}</p>
             <p className="text-xs text-[#6b7280]">
-              {CONTRACT_TYPE_LABELS[contract.type as ContractTypeValue] ?? "Agreement"}
+              {contract.type || "Agreement"}
             </p>
           </div>
         </div>

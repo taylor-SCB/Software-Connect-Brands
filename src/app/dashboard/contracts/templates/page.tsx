@@ -5,7 +5,6 @@ import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
 import { PageHeader, Card, EmptyState, Badge, BackLink } from "@/components/ui";
 import { IconPlus, IconFileText } from "@/components/icons";
-import { CONTRACT_TYPE_LABELS, type ContractTypeValue } from "@/lib/constants";
 
 export default async function TemplatesPage() {
   const { organizationId } = await requireSession();
@@ -18,13 +17,23 @@ export default async function TemplatesPage() {
     include: { _count: { select: { contracts: true } } },
   });
 
+  // Names for "Only Alice can send" on a restricted template's card.
+  const senderIds = [...new Set(templates.flatMap((template) => template.senderUserIds))];
+  const senders = senderIds.length
+    ? await prisma.user.findMany({
+        where: { organizationId, id: { in: senderIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const senderName = new Map(senders.map((user) => [user.id, user.name]));
+
   return (
     <div>
       <BackLink href="/dashboard/contracts" label="Contracts" />
       <PageHeader
         eyebrow="Agreements"
         title="Contract templates"
-        subtitle="Reusable wording with merge fields that fill in customer details."
+        subtitle="Reusable wording with fields that fill in each customer's details. Open one to edit it or generate a contract from it."
         actions={
           <Link
             href="/dashboard/contracts/templates/new"
@@ -67,9 +76,7 @@ export default async function TemplatesPage() {
                     {template.description || "No description"}
                   </p>
                 </div>
-                <Badge>
-                  {CONTRACT_TYPE_LABELS[template.type as ContractTypeValue]}
-                </Badge>
+                <Badge>{template.type}</Badge>
               </div>
               <div className="faint mt-4 flex items-center gap-3 text-xs">
                 <span>
@@ -78,6 +85,15 @@ export default async function TemplatesPage() {
                 </span>
                 <span>·</span>
                 <span>Updated {formatDate(template.updatedAt, timeZone)}</span>
+                <span>·</span>
+                <span>
+                  {template.allUsersCanSend
+                    ? "Anyone can send"
+                    : `Only ${template.senderUserIds
+                        .map((id) => senderName.get(id))
+                        .filter(Boolean)
+                        .join(", ") || "nobody"} can send`}
+                </span>
               </div>
             </Link>
           ))}

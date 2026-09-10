@@ -105,11 +105,21 @@ and under that a grid totalling every tag — labor, materials, software,
 project services, shipping and taxes. Marking a quote sent produces a
 public link the customer can open without an account.
 
-**Contracts** — reusable templates with merge fields (`{{client_name}}`,
-`{{company_name}}`, `{{contract_number}}`…), seeded with a **Service
-Agreement** and a **Change Order**. Generating a contract resolves the merge
-fields into a frozen copy, and sending it produces a link where the
-customer reads and e-signs it. Signed contracts are locked from editing.
+**Contracts** — reusable templates, each with a name, a type from a
+per-workspace pick list (Service Agreement, Change Order, Custom to start;
+"+ Add new type" adds an mNDA or a Commission Agreement in place), a
+description, and "Who can send?" (everyone, or a searchable pick of
+users). Merge fields are chips named in plain words — Contact Name,
+Company Name, Deal Name, Quote Total — grouped by the screen they come
+from (ALL, Contacts, Companies, Pipeline, Products, Quotes, Contracts);
+clicking one drops it into the body. Every template page and contract
+page is two columns: the agreement on the left, a silver line, and
+**Customer Information** on the right, where you pick the customer, deal
+and quote and generate the contract. **Preview** flips each chip to the
+real value for that customer, or a flashing "Missing Information" when
+there is nothing to fill it with. Generating resolves the fields once, so
+the customer reads and e-signs a frozen copy; the send button honours the
+template's sender list; signed contracts are locked from editing.
 
 **Branding** — company name, logo and primary color, applied across the
 dashboard *and* customer-facing quotes and contracts.

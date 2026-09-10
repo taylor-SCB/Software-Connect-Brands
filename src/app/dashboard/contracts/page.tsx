@@ -5,7 +5,6 @@ import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
 import { PageHeader, Card, EmptyState, StatusBadge, Badge } from "@/components/ui";
 import { IconPlus, IconSignature, IconFileText } from "@/components/icons";
-import { CONTRACT_TYPE_LABELS, type ContractTypeValue } from "@/lib/constants";
 
 export default async function ContractsPage() {
   const { organizationId } = await requireSession();
@@ -91,9 +90,7 @@ export default async function ContractsPage() {
                       </Link>
                     </td>
                     <td>
-                      <Badge>
-                        {CONTRACT_TYPE_LABELS[contract.type as ContractTypeValue]}
-                      </Badge>
+                      <Badge>{contract.type}</Badge>
                     </td>
                     <td>
                       <StatusBadge status={contract.status} />

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_CONTRACT_TEMPLATES } from "@/lib/default-templates";
+import { DEFAULT_CONTRACT_TYPES } from "@/lib/constants";
 
 const signupSchema = z.object({
   companyName: z.string().trim().min(2, "Company name is too short"),
@@ -58,6 +59,9 @@ export async function signup(_prevState: { error?: string }, formData: FormData)
           status: "PENDING",
           users: {
             create: { name, email, phone, passwordHash, role: "OWNER" },
+          },
+          contractTypeOptions: {
+            create: DEFAULT_CONTRACT_TYPES.map((name) => ({ name })),
           },
           contractTemplates: {
             create: DEFAULT_CONTRACT_TEMPLATES.map((template) => ({

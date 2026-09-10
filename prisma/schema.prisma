@@ -53,6 +53,7 @@ model Organization {
   activities          Activity[]
   products            Product[]
   quotes              Quote[]
+  contractTypeOptions ContractTypeOption[]
   contractTemplates   ContractTemplate[]
   contracts           Contract[]
   manufacturers       Manufacturer[]
@@ -339,6 +340,7 @@ model Quote {
   updatedAt      DateTime      @updatedAt
 
   lineItems QuoteLineItem[]
+  contracts Contract[]
 
   @@unique([organizationId, number])
   @@index([organizationId])
@@ -365,10 +367,19 @@ model QuoteLineItem {
   @@index([quoteId])
 }
 
-enum ContractType {
-  SERVICE_AGREEMENT
-  CHANGE_ORDER
-  CUSTOM
+// The pick list behind a template's "Type" (Service Agreement, Change
+// Order, mNDA, Commission Agreement...). Per workspace, extended inline
+// from the template form with "+ Add new type", so nobody is stuck with
+// the three a new workspace starts with.
+model ContractTypeOption {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
 }
 
 model ContractTemplate {
@@ -376,9 +387,17 @@ model ContractTemplate {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
-  type           ContractType @default(CUSTOM)
+  // The type's name as picked from ContractTypeOption. Stored as text, not
+  // a foreign key: it is a label on the document, and a template must keep
+  // reading the same after its type is renamed or removed from the list.
+  type           String       @default("Custom")
   description    String       @default("")
   body           String
+  // Who can send a contract made from this template. Everyone by default;
+  // switching allUsersCanSend off limits it to senderUserIds. The list is
+  // kept when the switch is turned back on, so it survives a toggle.
+  allUsersCanSend Boolean     @default(true)
+  senderUserIds   String[]    @default([])
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -405,9 +424,12 @@ model Contract {
   deal           Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
   templateId     String?
   template       ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  // The quote whose numbers filled the merge fields, when the deal had one.
+  quoteId        String?
+  quote          Quote?            @relation(fields: [quoteId], references: [id], onDelete: SetNull)
   number         Int
   title          String
-  type           ContractType      @default(CUSTOM)
+  type           String            @default("Custom")
   // Merge fields are resolved when the contract is created, so the
   // signed copy is a frozen snapshot of what the customer agreed to.
   body           String
@@ -425,6 +447,7 @@ model Contract {
   @@index([organizationId])
   @@index([contactId])
   @@index([dealId])
+  @@index([quoteId])
 }
 
 // ------------------------------------------------------------------

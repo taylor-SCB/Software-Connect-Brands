@@ -13,18 +13,29 @@ export type DealWithQuotes = {
   quotes: QuoteForValue[];
 };
 
-// What a deal is worth. Once a quote exists the typed estimate stops
-// counting: an accepted quote wins, otherwise the one most recently
-// worked on that the customer hasn't declined, otherwise the newest.
-export function dealValueCents(deal: DealWithQuotes): number {
-  if (deal.quotes.length === 0) return deal.valueCents;
-  const byRecency = [...deal.quotes].sort(
+// Which of a deal's quotes speaks for it: an accepted quote wins,
+// otherwise the one most recently worked on that the customer hasn't
+// declined, otherwise the newest. The pipeline reads the deal's value
+// from it and a contract's merge fields read their numbers from it.
+export function pickPrimaryQuote<T extends { status: string; updatedAt: Date }>(
+  quotes: T[],
+): T | undefined {
+  if (quotes.length === 0) return undefined;
+  const byRecency = [...quotes].sort(
     (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
   );
-  const pick =
+  return (
     byRecency.find((quote) => quote.status === "ACCEPTED") ??
     byRecency.find((quote) => quote.status !== "DECLINED") ??
-    byRecency[0];
+    byRecency[0]
+  );
+}
+
+// What a deal is worth. Once a quote exists the typed estimate stops
+// counting and the primary quote's total is the value.
+export function dealValueCents(deal: DealWithQuotes): number {
+  const pick = pickPrimaryQuote(deal.quotes);
+  if (!pick) return deal.valueCents;
   return computeQuoteTotals(pick.lineItems).totalCents;
 }
 

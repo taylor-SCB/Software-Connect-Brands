@@ -5,7 +5,7 @@
 export const DEFAULT_CONTRACT_TEMPLATES = [
   {
     name: "Service Agreement",
-    type: "SERVICE_AGREEMENT" as const,
+    type: "Service Agreement",
     description:
       "Master agreement covering scope, payment terms and liability for a new engagement.",
     body: `SERVICE AGREEMENT
@@ -68,7 +68,7 @@ By signing below, the parties agree to the terms above.`,
   },
   {
     name: "Change Order",
-    type: "CHANGE_ORDER" as const,
+    type: "Change Order",
     description:
       "Amends an existing agreement when scope, price or schedule changes mid-project.",
     body: `CHANGE ORDER

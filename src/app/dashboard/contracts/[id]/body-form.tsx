@@ -42,7 +42,7 @@ export function ContractBodyForm({
       <FormSuccess message={state?.success} />
 
       <button type="submit" disabled={pending} className="btn btn-primary">
-        {pending ? "Saving…" : "Save contract"}
+        {pending ? "Saving…" : "Save changes"}
       </button>
     </form>
   );

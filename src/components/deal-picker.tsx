@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IconPlus, IconCheck, IconSearch } from "@/components/icons";
 import { DEAL_STAGE_LABELS, type DealStageValue } from "@/lib/constants";
 
@@ -20,11 +20,15 @@ export function DealPicker({
   contactId,
   required = true,
   defaultDealId,
+  onPick,
 }: {
   deals: PickableDeal[];
   contactId: string;
   required?: boolean;
   defaultDealId?: string;
+  // Fires with the existing deal's id when one is picked, or "" when the
+  // box is empty or names a deal that doesn't exist yet.
+  onPick?: (dealId: string) => void;
 }) {
   const own = useMemo(
     () => deals.filter((deal) => deal.contactId === contactId),
@@ -51,6 +55,11 @@ export function DealPicker({
   const picked = pickedId ? own.find((deal) => deal.id === pickedId) : undefined;
   const pickedStillMatches = picked && picked.title === value;
   const canAddNew = query.length > 0 && !pickedStillMatches;
+
+  const pickedExistingId = pickedStillMatches ? picked.id : "";
+  useEffect(() => {
+    onPick?.(pickedExistingId);
+  }, [pickedExistingId, onPick]);
 
   return (
     <div className="relative">

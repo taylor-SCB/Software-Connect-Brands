@@ -111,14 +111,12 @@ export type QuoteTemplateValue = (typeof QUOTE_TEMPLATES)[number];
 
 export const QUOTE_STATUSES = ["DRAFT", "SENT", "ACCEPTED", "DECLINED"] as const;
 
-export const CONTRACT_TYPES = ["SERVICE_AGREEMENT", "CHANGE_ORDER", "CUSTOM"] as const;
-export type ContractTypeValue = (typeof CONTRACT_TYPES)[number];
-
-export const CONTRACT_TYPE_LABELS: Record<ContractTypeValue, string> = {
-  SERVICE_AGREEMENT: "Service Agreement",
-  CHANGE_ORDER: "Change Order",
-  CUSTOM: "Custom",
-};
+// The three types every new workspace starts with. Types are a per-workspace
+// pick list (ContractTypeOption) that "+ Add new type" on the template form
+// extends — a Commission Agreement or an mNDA is one click away, not a
+// code change. A template stores the type's name, so "Custom" is a label,
+// not an enum.
+export const DEFAULT_CONTRACT_TYPES = ["Service Agreement", "Change Order", "Custom"] as const;
 
 export const CONTRACT_STATUSES = ["DRAFT", "SENT", "SIGNED", "DECLINED"] as const;
 

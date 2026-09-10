@@ -7,10 +7,11 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
-import { buildMergeContext, renderMergeFields } from "@/lib/merge";
-import { CONTRACT_TYPES } from "@/lib/constants";
+import { renderMergeFields, type MergeContext } from "@/lib/merge";
+import { loadMergeContext } from "@/lib/merge-data";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
+import { NEW_TYPE_VALUE, canUserSend } from "@/lib/contracts";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -27,29 +28,87 @@ async function nextContractNumber(organizationId: string) {
 
 const templateSchema = z.object({
   name: z.string().trim().min(1, "Template name is required").max(160),
-  type: z.enum(CONTRACT_TYPES),
+  type: z.string().trim().min(1, "Pick a type").max(60, "Keep the type under 60 characters"),
+  newType: z.string().trim().max(60, "Keep the type under 60 characters").optional(),
   description: z.string().trim().max(500).optional(),
   body: z.string().trim().min(20, "The template body looks too short").max(60000),
+  allUsersCanSend: z.enum(["true", "false"]),
+  senderUserIds: z.array(z.string().trim().min(1)).max(500),
 });
+
+type TemplateInput = z.infer<typeof templateSchema>;
+
+function readTemplateForm(formData: FormData) {
+  return parseForm(templateSchema, {
+    name: formData.get("name"),
+    type: formData.get("type"),
+    newType: formData.get("newType") ?? undefined,
+    description: formData.get("description") ?? undefined,
+    body: formData.get("body"),
+    allUsersCanSend: formData.get("allUsersCanSend") ?? "true",
+    senderUserIds: formData.getAll("senderUserIds").filter((v) => typeof v === "string"),
+  });
+}
+
+// Resolves the Type field to a name that exists in the workspace's pick
+// list, adding it when it's new. Returns the sender settings checked
+// against real users, or an error message.
+async function settleTemplateInput(
+  organizationId: string,
+  input: TemplateInput,
+): Promise<{ ok: true; type: string; allUsersCanSend: boolean; senderUserIds: string[] } | { ok: false; error: string }> {
+  let type = input.type;
+  if (type === NEW_TYPE_VALUE) {
+    if (!input.newType) return { ok: false, error: "Name the new type, e.g. Commission Agreement" };
+    type = input.newType;
+  }
+  // Same name, different capitalisation, is the same type.
+  const existing = await prisma.contractTypeOption.findFirst({
+    where: { organizationId, name: { equals: type, mode: "insensitive" } },
+    select: { name: true },
+  });
+  if (existing) {
+    type = existing.name;
+  } else {
+    await prisma.contractTypeOption.create({ data: { organizationId, name: type } });
+  }
+
+  const allUsersCanSend = input.allUsersCanSend === "true";
+  // Only people in this workspace can be named as senders.
+  const users = input.senderUserIds.length
+    ? await prisma.user.findMany({
+        where: { organizationId, id: { in: input.senderUserIds } },
+        select: { id: true },
+      })
+    : [];
+  const senderUserIds = users.map((user) => user.id);
+  if (!allUsersCanSend && senderUserIds.length === 0) {
+    return {
+      ok: false,
+      error: "Pick at least one person who can send, or switch All company users back on",
+    };
+  }
+
+  return { ok: true, type, allUsersCanSend, senderUserIds };
+}
 
 export async function createTemplate(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
 
-  const parsed = parseForm(templateSchema, {
-    name: formData.get("name"),
-    type: formData.get("type"),
-    description: formData.get("description") ?? undefined,
-    body: formData.get("body"),
-  });
+  const parsed = readTemplateForm(formData);
   if (!parsed.ok) return { error: parsed.error };
+  const settled = await settleTemplateInput(organizationId, parsed.data);
+  if (!settled.ok) return { error: settled.error };
 
   const template = await prisma.contractTemplate.create({
     data: {
       organizationId,
       name: parsed.data.name,
-      type: parsed.data.type,
+      type: settled.type,
       description: parsed.data.description ?? "",
       body: parsed.data.body,
+      allUsersCanSend: settled.allUsersCanSend,
+      senderUserIds: settled.senderUserIds,
     },
   });
 
@@ -63,21 +122,20 @@ export async function updateTemplate(_prev: ActionState, formData: FormData): Pr
   const id = idSchema.safeParse(formData.get("templateId"));
   if (!id.success) return { error: "Missing template reference" };
 
-  const parsed = parseForm(templateSchema, {
-    name: formData.get("name"),
-    type: formData.get("type"),
-    description: formData.get("description") ?? undefined,
-    body: formData.get("body"),
-  });
+  const parsed = readTemplateForm(formData);
   if (!parsed.ok) return { error: parsed.error };
+  const settled = await settleTemplateInput(organizationId, parsed.data);
+  if (!settled.ok) return { error: settled.error };
 
   const result = await prisma.contractTemplate.updateMany({
     where: { id: id.data, organizationId },
     data: {
       name: parsed.data.name,
-      type: parsed.data.type,
+      type: settled.type,
       description: parsed.data.description ?? "",
       body: parsed.data.body,
+      allUsersCanSend: settled.allUsersCanSend,
+      senderUserIds: settled.senderUserIds,
     },
   });
   if (result.count === 0) return { error: "Template not found" };
@@ -97,6 +155,43 @@ export async function deleteTemplate(formData: FormData) {
   redirect("/dashboard/contracts/templates");
 }
 
+/* ------------------------------ Preview ------------------------------ */
+
+// What the chips resolve to for the customer picked in the Customer
+// Information column. Same loader the generator uses, so the preview and
+// the finished contract can't disagree. Nothing is written.
+export async function previewMergeContext(input: {
+  contactId?: string | null;
+  dealId?: string | null;
+  quoteId?: string | null;
+}): Promise<MergeContext> {
+  const { organizationId } = await requireSession();
+
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { nextContractNumber: true },
+  });
+
+  // A deal only counts for the customer it belongs to; an id from another
+  // customer (a stale pick) is ignored rather than trusted.
+  const contactId = input.contactId || null;
+  const deal =
+    input.dealId && contactId
+      ? await prisma.deal.findFirst({
+          where: { id: input.dealId, organizationId, contactId },
+          select: { id: true },
+        })
+      : null;
+
+  return loadMergeContext({
+    organizationId,
+    contactId,
+    dealId: deal?.id ?? null,
+    quoteId: deal ? input.quoteId || null : null,
+    contractNumber: `CON-${organization.nextContractNumber}`,
+  });
+}
+
 /* ----------------------------- Contracts ----------------------------- */
 
 export async function createContract(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -107,6 +202,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       contactId: idSchema,
       dealId: z.string().trim().optional(),
       dealTitle: z.string().trim().max(160).optional(),
+      quoteId: z.string().trim().optional(),
       templateId: idSchema,
       title: z.string().trim().max(160).optional(),
     }),
@@ -114,27 +210,24 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       contactId: formData.get("contactId"),
       dealId: formData.get("dealId") ?? undefined,
       dealTitle: formData.get("dealTitle") ?? undefined,
+      quoteId: formData.get("quoteId") ?? undefined,
       templateId: formData.get("templateId"),
       title: formData.get("title") ?? undefined,
     },
   );
   if (!parsed.ok) return { error: parsed.error };
 
-  const [organization, contact, template] = await Promise.all([
-    prisma.organization.findUniqueOrThrow({
-      where: { id: organizationId },
-      select: { name: true },
-    }),
+  const [contact, template] = await Promise.all([
     prisma.contact.findFirst({
       where: { id: parsed.data.contactId, organizationId },
-      include: { company: { select: { name: true } } },
+      select: { id: true },
     }),
     prisma.contractTemplate.findFirst({
       where: { id: parsed.data.templateId, organizationId },
     }),
   ]);
 
-  if (!contact) return { error: "Pick a contact for this contract" };
+  if (!contact) return { error: "Pick a customer for this contract" };
   if (!template) return { error: "Pick a template" };
 
   // A deal is optional on a contract (a standalone service agreement has
@@ -150,18 +243,27 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
     : null;
   if (wantsDeal && !deal) return { error: "That deal doesn't belong to this customer" };
 
+  // Likewise a quote has to sit on that deal.
+  const quote =
+    deal && parsed.data.quoteId
+      ? await prisma.quote.findFirst({
+          where: { id: parsed.data.quoteId, organizationId, dealId: deal.id },
+          select: { id: true },
+        })
+      : null;
+  if (parsed.data.quoteId && deal && !quote) return { error: "That quote isn't on this deal" };
+
   const number = await nextContractNumber(organizationId);
 
   // Merge fields resolve once, here — the stored body is the exact text
   // the customer will read and sign.
   const body = renderMergeFields(
     template.body,
-    buildMergeContext({
-      organizationName: organization.name,
-      contactName: contact.name,
-      contactCompany: contact.company?.name ?? null,
-      contactEmail: contact.email,
-      contactPhone: contact.phone,
+    await loadMergeContext({
+      organizationId,
+      contactId: contact.id,
+      dealId: deal?.id ?? null,
+      quoteId: quote?.id ?? null,
       contractNumber: `CON-${number}`,
     }),
   );
@@ -171,6 +273,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       organizationId,
       contactId: contact.id,
       dealId: deal?.id ?? null,
+      quoteId: quote?.id ?? null,
       templateId: template.id,
       number,
       title: parsed.data.title?.trim() || template.name,
@@ -223,7 +326,7 @@ export async function updateContractBody(_prev: ActionState, formData: FormData)
 }
 
 export async function setContractStatus(formData: FormData) {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = z
     .object({
@@ -240,9 +343,17 @@ export async function setContractStatus(formData: FormData) {
   // toggled from the dashboard.
   const contract = await prisma.contract.findFirst({
     where: { id: parsed.data.contractId, organizationId },
-    select: { status: true, dealId: true },
+    select: {
+      status: true,
+      dealId: true,
+      template: { select: { allUsersCanSend: true, senderUserIds: true } },
+    },
   });
   if (!contract || contract.status === "SIGNED") return;
+
+  // The template's "Who can send" list is enforced here, not just hidden
+  // on the page.
+  if (parsed.data.status === "SENT" && !canUserSend(contract.template, userId)) return;
 
   await prisma.contract.updateMany({
     where: { id: parsed.data.contractId, organizationId },

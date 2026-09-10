@@ -315,7 +315,8 @@ function backLink(page) {
   await page.getByRole("button", { name: "Generate contract" }).click();
   await page.waitForURL(/\/dashboard\/contracts\/(?!new$)[a-z0-9]+$/);
   assert.ok(await page.getByText(/CON-1000 · Fiber install · Spirit Communications/).isVisible());
-  await page.getByRole("button", { name: "Send for signature" }).click();
+  // Contracts v1 shows Send in the header and in the Sending card.
+  await page.getByRole("button", { name: "Send for signature" }).first().click();
   await page.getByText("Signature link").waitFor();
   let stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install'`);
   assert.equal(stage.rows[0].stage, "CONTRACT_SENT");
