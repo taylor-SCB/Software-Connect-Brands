@@ -44,13 +44,22 @@ when he is wrong, say so once with the reason, then do what he decides.
 - **He likes being asked good questions.** Sharp ones that change what gets
   built are welcome. Trivial ones are not.
 
-## After every successful push
+## The release workflow, in order
 
-Once a push has gone through, before the session winds down, ask Taylor
-exactly this and nothing more elaborate:
+Taylor set this and it is not to be reordered:
+
+1. Build and hammer out the issues on the working branch, tested against
+   the local Postgres in a real browser.
+2. When it is ready, ask him: **"Ready to go live. Push to production? Yes
+   or No."** Nothing goes to the live branch until he says yes.
+3. He says yes. Push to the live branch (`claude/first-app-creation-cdtbrb`).
+4. Only then ask, exactly this and nothing more elaborate:
 
 > Would you like me to run your CTO Development Breakdown and Next Steps
 > Report? Yes or No.
+
+Never ask for the report before the work is live. That happened once
+(Sept 9, 2026) and it confused everything.
 
 If yes, produce it as an artifact he can keep, with three parts: what was
 done this session, in plain words; the database tables and pick lists the
