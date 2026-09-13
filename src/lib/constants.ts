@@ -255,3 +255,30 @@ export type RatesheetInviteStatusValue = (typeof RATESHEET_INVITE_STATUSES)[numb
 // are what a general contractor asks a sub for before the first check.
 export const COMPLIANCE_CATEGORIES = ["W-9", "COI", "License", "Other"] as const;
 export type ComplianceCategory = (typeof COMPLIANCE_CATEGORIES)[number];
+
+// Industry and Company Type: the two pick lists a company (and its people)
+// are tagged with. Seeded per workspace on first use and grown with "+ Add
+// new…" on the company and contact forms; a workspace can rename or add
+// anything, so these are starting points, not rules. "General" is the
+// type every industry gets when it has nothing more specific yet.
+export const GENERAL_COMPANY_TYPE = "General";
+export const DEFAULT_INDUSTRIES: { name: string; types: string[] }[] = [
+  { name: "MDU", types: ["Owner", "Capital Group", "Developer", "Property Management"] },
+  { name: "Student", types: ["Owner", "Capital Group", "Developer", "Property Management"] },
+  { name: "Commercial", types: [GENERAL_COMPANY_TYPE] },
+  { name: "Construction", types: [GENERAL_COMPANY_TYPE] },
+  { name: "Small Business", types: [GENERAL_COMPANY_TYPE] },
+  {
+    name: "Service Provider",
+    types: ["Integrator", "Electrician", "Networks/ISP", "Access Control", "Door Hardware", "Gates"],
+  },
+];
+
+// A contact with no company at all — a homeowner wanting a window quote —
+// reads as this company type on the list and in the filter. It is not a
+// pick-list row: it means "no company", so it can't be picked on a form.
+export const INDIVIDUAL_COMPANY_TYPE = "Individual / Personal";
+
+// The three list pages' page sizes; 50 is the one you get without asking.
+export const PAGE_SIZES = [10, 50, 100] as const;
+export const DEFAULT_PAGE_SIZE = 50;

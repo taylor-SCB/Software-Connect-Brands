@@ -26,3 +26,5 @@ export function normalizeWebsite(value: string | null) {
 export function locationLabel(record: { city: string | null; state: string | null }) {
   return [record.city, record.state].filter(Boolean).join(", ");
 }
+
+export { normalizeState } from "@/lib/states";

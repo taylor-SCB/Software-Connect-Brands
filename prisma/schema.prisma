@@ -69,6 +69,8 @@ model Organization {
   products            Product[]
   quotes              Quote[]
   contractTypeOptions ContractTypeOption[]
+  industryOptions     IndustryOption[]
+  companyTypeOptions  CompanyTypeOption[]
   contractTemplates   ContractTemplate[]
   contracts           Contract[]
   manufacturers       Manufacturer[]
@@ -89,31 +91,31 @@ enum Role {
 }
 
 model User {
-  id             String       @id @default(cuid())
-  name           String
-  email          String       @unique
+  id                   String       @id @default(cuid())
+  name                 String
+  email                String       @unique
   // No email is sent anywhere yet, so a phone number is the only way to
   // tell an applicant they were approved.
-  phone          String?
+  phone                String?
   // My Account: job title on the company's user list and on documents
   // this person signs.
-  title          String?
+  title                String?
   // Shown next to the name in the sidebar and on the Company Users tile.
   // A path under /files/ when uploaded here.
-  avatarUrl      String?
+  avatarUrl            String?
   // No in-app messaging exists yet; the switch is stored so the preference
   // is already set when it does.
-  receiveInAppMessages Boolean @default(true)
-  passwordHash   String
-  role           Role         @default(OWNER)
+  receiveInAppMessages Boolean      @default(true)
+  passwordHash         String
+  role                 Role         @default(OWNER)
   // Operator-level access to every workspace. Deliberately has no path
   // through the UI or any form — it is set with scripts/promote-admin.ts
   // against the database, so no request can grant it to itself.
-  isSuperAdmin   Boolean      @default(false)
-  lastLoginAt    DateTime?
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
+  isSuperAdmin         Boolean      @default(false)
+  lastLoginAt          DateTime?
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt            DateTime     @default(now())
 
   notes      Note[]
   activities Activity[]
@@ -146,6 +148,15 @@ model Company {
   // Their logo, shown on the deal tracker and on the documents sent to
   // them. A path under /files/ when uploaded here.
   logoUrl        String?
+  // What kind of business it is, and what role it plays in that world:
+  // both multi-select, both stored as the pick-list names (like a
+  // contract's type) so a renamed option is a label change, not a
+  // migration. The lists live in IndustryOption / CompanyTypeOption.
+  industries     String[]      @default([])
+  companyTypes   String[]      @default([])
+  // The yellow star. One flag per workspace, since a workspace has one
+  // user today; "Favorite Companies" in the sidebar is this filter.
+  favorite       Boolean       @default(false)
   status         ContactStatus @default(LEAD)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -158,6 +169,11 @@ model Company {
 
   @@index([organizationId])
   @@index([organizationId, name])
+  @@index([organizationId, updatedAt])
+  @@index([organizationId, state])
+  @@index([organizationId, favorite])
+  @@index([industries], type: Gin)
+  @@index([companyTypes], type: Gin)
 }
 
 model Contact {
@@ -179,6 +195,8 @@ model Contact {
   birthday       DateTime?     @db.Date
   // A photo or icon for the person. A path under /files/ when uploaded.
   imageUrl       String?
+  // The yellow star; see Company.favorite.
+  favorite       Boolean       @default(false)
   status         ContactStatus @default(LEAD)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -192,6 +210,10 @@ model Contact {
 
   @@index([organizationId])
   @@index([companyId])
+  @@index([organizationId, updatedAt])
+  @@index([organizationId, state])
+  @@index([organizationId, favorite])
+  @@index([organizationId, email])
 }
 
 // A deal is one job you are trying to win. It moves through the pipeline
@@ -422,24 +444,58 @@ model ContractTypeOption {
   @@index([organizationId])
 }
 
-model ContractTemplate {
+// The Industry pick list a company (and, through its company, a contact)
+// is tagged with: MDU, Student, Commercial... seeded per workspace from
+// DEFAULT_INDUSTRIES and extended by "+ Add new industry" on the forms.
+model IndustryOption {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  companyTypes CompanyTypeOption[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// The Company Type choices under one industry: Owner, Developer and
+// Property Management under MDU; Integrator or Electrician under Service
+// Provider; "General" wherever nothing more specific exists yet.
+model CompanyTypeOption {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  industryId     String
+  industry       IndustryOption @relation(fields: [industryId], references: [id], onDelete: Cascade)
+  name           String
+  sortOrder      Int            @default(0)
+  createdAt      DateTime       @default(now())
+
+  @@unique([industryId, name])
+  @@index([organizationId])
+}
+
+model ContractTemplate {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
   // The type's name as picked from ContractTypeOption. Stored as text, not
   // a foreign key: it is a label on the document, and a template must keep
   // reading the same after its type is renamed or removed from the list.
-  type           String       @default("Custom")
-  description    String       @default("")
-  body           String
+  type            String       @default("Custom")
+  description     String       @default("")
+  body            String
   // Who can send a contract made from this template. Everyone by default;
   // switching allUsersCanSend off limits it to senderUserIds. The list is
   // kept when the switch is turned back on, so it survives a toggle.
-  allUsersCanSend Boolean     @default(true)
-  senderUserIds   String[]    @default([])
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  allUsersCanSend Boolean      @default(true)
+  senderUserIds   String[]     @default([])
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   contracts Contract[]
 
@@ -466,51 +522,51 @@ enum PaymentKind {
 }
 
 model Contract {
-  id             String            @id @default(cuid())
-  organizationId String
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contactId      String
-  contact        Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  id               String            @id @default(cuid())
+  organizationId   String
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId        String
+  contact          Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
   // The business this document is addressed to. Usually the contact's
   // company; a purchase order split off a deal goes to the supplier's
   // company instead, which is why it is stored here and not derived.
-  companyId      String?
-  company        Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyId        String?
+  company          Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
   // Optional: a standalone service agreement has no deal behind it.
-  dealId         String?
-  deal           Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  templateId     String?
-  template       ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  dealId           String?
+  deal             Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  templateId       String?
+  template         ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   // The quote whose numbers filled the merge fields, when the deal had one.
-  quoteId        String?
-  quote          Quote?            @relation(fields: [quoteId], references: [id], onDelete: SetNull)
-  number         Int
-  title          String
-  type           String            @default("Custom")
+  quoteId          String?
+  quote            Quote?            @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  number           Int
+  title            String
+  type             String            @default("Custom")
   // Merge fields are resolved when the contract is created, so the
   // signed copy is a frozen snapshot of what the customer agreed to.
-  body           String
-  status         ContractStatus    @default(DRAFT)
-  publicToken    String            @unique
-  sentAt         DateTime?
-  signedAt       DateTime?
-  signerName     String?
-  signerEmail    String?
-  declinedAt     DateTime?
-  cancelledAt    DateTime?
+  body             String
+  status           ContractStatus    @default(DRAFT)
+  publicToken      String            @unique
+  sentAt           DateTime?
+  signedAt         DateTime?
+  signerName       String?
+  signerEmail      String?
+  declinedAt       DateTime?
+  cancelledAt      DateTime?
   // "Your Company Signer": who signs for the workspace. Prefilled with the
   // owner's name on the deal tracker; printed under the provider's
   // signature line.
   senderSignerName String?
   // "Net 30", "Due on receipt"... free text so a workspace can write its
   // own. The dated rows live in `payments`.
-  paymentTerms   String?
+  paymentTerms     String?
   // Reminders are copied out by hand today (no email is sent). Counting
   // them is what lets the tracker say "reminded twice, last on Sep 12".
-  reminderCount  Int               @default(0)
-  lastReminderAt DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  reminderCount    Int               @default(0)
+  lastReminderAt   DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   lineItems ContractLineItem[]
   payments  ContractPayment[]

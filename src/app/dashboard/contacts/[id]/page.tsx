@@ -4,7 +4,10 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime, formatDate } from "@/lib/format";
-import { ACTIVITY_TYPES, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
+import { ACTIVITY_TYPES, INDIVIDUAL_COMPANY_TYPE, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
+import { StarButton } from "@/components/star-button";
+import { TagCell } from "../contacts-list";
+import { setContactFavorite } from "../actions";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
 import {
@@ -38,38 +41,29 @@ export default async function ContactDetailPage({
 
   const timeZone = await getTimeZone();
 
-  const [contact, allContacts] = await Promise.all([
-    prisma.contact.findFirst({
-      where: { id, organizationId },
-      include: {
-        company: { select: { id: true, name: true } },
-        deals: {
-          orderBy: { createdAt: "desc" },
-          include: { quotes: QUOTES_FOR_VALUE, _count: { select: { quotes: true } } },
-        },
-        notes: {
-          orderBy: { createdAt: "desc" },
-          include: { author: { select: { name: true } } },
-        },
-        activities: {
-          orderBy: { occurredAt: "desc" },
-          include: { user: { select: { name: true } } },
-        },
-        quotes: {
-          orderBy: { createdAt: "desc" },
-          include: { deal: { select: { title: true } } },
-        },
-        contracts: { orderBy: { createdAt: "desc" } },
+  const contact = await prisma.contact.findFirst({
+    where: { id, organizationId },
+    include: {
+      company: { select: { id: true, name: true, industries: true, companyTypes: true } },
+      deals: {
+        orderBy: { createdAt: "desc" },
+        include: { quotes: QUOTES_FOR_VALUE, _count: { select: { quotes: true } } },
       },
-    }),
-    // For "+ Include multiple contacts". Every row, like every other list
-    // in the app today.
-    prisma.contact.findMany({
-      where: { organizationId, status: { not: "ARCHIVED" } },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, company: { select: { name: true } } },
-    }),
-  ]);
+      notes: {
+        orderBy: { createdAt: "desc" },
+        include: { author: { select: { name: true } } },
+      },
+      activities: {
+        orderBy: { occurredAt: "desc" },
+        include: { user: { select: { name: true } } },
+      },
+      quotes: {
+        orderBy: { createdAt: "desc" },
+        include: { deal: { select: { title: true } } },
+      },
+      contracts: { orderBy: { createdAt: "desc" } },
+    },
+    });
 
   if (!contact) notFound();
 
@@ -91,11 +85,7 @@ export default async function ContactDetailPage({
   const quotesOut = contact.quotes.filter((quote) => quote.status === "SENT").length;
   const lastTouchAt = contact.activities[0]?.occurredAt ?? null;
 
-  const pickable = allContacts.map((row) => ({
-    id: row.id,
-    name: row.name,
-    company: row.company?.name ?? null,
-  }));
+  const pickable = { id: contact.id, name: contact.name, company: contact.company?.name ?? null };
 
   return (
     <div>
@@ -108,6 +98,7 @@ export default async function ContactDetailPage({
         leading={<Avatar url={contact.imageUrl} name={contact.name} size={56} round />}
         actions={
           <>
+            <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} size={18} />
             <StatusBadge status={contact.status} />
             <Link
               href={`/dashboard/quotes/new?contactId=${contact.id}`}
@@ -140,7 +131,7 @@ export default async function ContactDetailPage({
               title="Log activity"
               subtitle="Every touchpoint is counted by type on this contact."
             />
-            <LogActivityForm target={{ contactId: contact.id }} contacts={pickable} />
+            <LogActivityForm target={{ contactId: contact.id }} current={pickable} />
             <div className="divider" />
             <ActivityFeed
               items={contact.activities.map((activity) => ({
@@ -156,7 +147,7 @@ export default async function ContactDetailPage({
 
           <Card lit id="notes">
             <CardHeader title="Notes" subtitle={`${contact.notes.length} total`} />
-            <AddNoteForm target={{ contactId: contact.id }} contacts={pickable} />
+            <AddNoteForm target={{ contactId: contact.id }} current={pickable} />
             <div className="divider" />
             <NotesList
               notes={contact.notes.map((note) => ({
@@ -187,6 +178,15 @@ export default async function ContactDetailPage({
                       {contact.company.name}
                     </Link>
                   ) : null
+                }
+              />
+              <Detail
+                label="Industry · Type"
+                value={
+                  <TagCell
+                    industries={contact.company?.industries ?? []}
+                    types={contact.company ? contact.company.companyTypes : [INDIVIDUAL_COMPANY_TYPE]}
+                  />
                 }
               />
               <Detail label="Title" value={contact.title} />

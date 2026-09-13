@@ -15,33 +15,50 @@ import {
   StatusBadge,
   EmptyState,
 } from "@/components/ui";
-import { IconGlobe, IconUserPlus, IconPlus } from "@/components/icons";
+import { IconGlobe, IconUserPlus, IconPlus, IconChevronLeft, IconChevronRight } from "@/components/icons";
+import { StarButton } from "@/components/star-button";
+import { TagCell } from "../../contacts/contacts-list";
+import { setCompanyFavorite } from "../actions";
 import { ActivityOverview } from "@/components/activity-overview";
 import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm } from "../../contacts/[id]/forms";
 
+// A company can have thousands of people and years of activity, so the
+// page shows the people fifty at a time and the latest slice of every
+// feed, with counts for the rest.
+const PEOPLE_PER_PAGE = 50;
+const FEED_LIMIT = 200;
+
 export default async function CompanyDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ people?: string }>;
 }) {
   const { id } = await params;
+  const { people: peopleParam } = await searchParams;
   const { organizationId } = await requireSession();
 
   const timeZone = await getTimeZone();
 
   const company = await prisma.company.findFirst({
     where: { id, organizationId },
-    include: {
-      contacts: {
-        orderBy: { name: "asc" },
-        select: { id: true, name: true, title: true, email: true, phone: true, status: true },
-      },
-    },
+    include: { _count: { select: { contacts: true } } },
   });
   if (!company) notFound();
+
+  const peoplePages = Math.max(1, Math.ceil(company._count.contacts / PEOPLE_PER_PAGE));
+  const peoplePage = Math.min(peoplePages, Math.max(1, Number(peopleParam) || 1));
+  const people = await prisma.contact.findMany({
+    where: { organizationId, companyId: company.id },
+    orderBy: [{ favorite: "desc" }, { name: "asc" }],
+    skip: (peoplePage - 1) * PEOPLE_PER_PAGE,
+    take: PEOPLE_PER_PAGE,
+    select: { id: true, name: true, title: true, email: true, phone: true, status: true, favorite: true },
+  });
 
   // Everything logged on the company itself, plus everything logged on
   // its people, in one feed. `via` says which person an entry came from.
@@ -50,6 +67,7 @@ export default async function CompanyDetailPage({
     prisma.note.findMany({
       where: { organizationId, OR: [{ companyId: company.id }, viaPeople] },
       orderBy: { createdAt: "desc" },
+      take: FEED_LIMIT,
       include: {
         author: { select: { name: true } },
         contact: { select: { id: true, name: true } },
@@ -58,6 +76,7 @@ export default async function CompanyDetailPage({
     prisma.activity.findMany({
       where: { organizationId, OR: [{ companyId: company.id }, viaPeople] },
       orderBy: { occurredAt: "desc" },
+      take: FEED_LIMIT,
       include: {
         user: { select: { name: true } },
         contact: { select: { id: true, name: true } },
@@ -66,6 +85,7 @@ export default async function CompanyDetailPage({
     prisma.deal.findMany({
       where: { organizationId, ...viaPeople },
       orderBy: { createdAt: "desc" },
+      take: FEED_LIMIT,
       include: {
         contact: { select: { id: true, name: true } },
         quotes: QUOTES_FOR_VALUE,
@@ -75,11 +95,13 @@ export default async function CompanyDetailPage({
     prisma.quote.findMany({
       where: { organizationId, ...viaPeople },
       orderBy: { createdAt: "desc" },
+      take: FEED_LIMIT,
       include: { contact: { select: { name: true } }, deal: { select: { title: true } } },
     }),
     prisma.contract.findMany({
       where: { organizationId, ...viaPeople },
       orderBy: { createdAt: "desc" },
+      take: FEED_LIMIT,
       include: { contact: { select: { name: true } } },
     }),
   ]);
@@ -110,6 +132,7 @@ export default async function CompanyDetailPage({
         leading={<Avatar url={company.logoUrl} name={company.name} size={56} />}
         actions={
           <>
+            <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} size={18} />
             <StatusBadge status={company.status} />
             <Link
               href={`/dashboard/contacts/new?companyId=${company.id}`}
@@ -151,7 +174,10 @@ export default async function CompanyDetailPage({
           </Card>
 
           <Card lit id="notes">
-            <CardHeader title="Notes" subtitle={`${notes.length} total, including everyone here`} />
+            <CardHeader
+              title="Notes"
+              subtitle={`${notes.length === FEED_LIMIT ? `latest ${FEED_LIMIT}` : `${notes.length} total`}, including everyone here`}
+            />
             <AddNoteForm target={{ companyId: company.id }} />
             <div className="divider" />
             <NotesList
@@ -172,6 +198,14 @@ export default async function CompanyDetailPage({
           <Card lit>
             <CardHeader title="Details" />
             <dl className="space-y-3 p-5 text-sm">
+              <Detail
+                label="Industry · Type"
+                value={
+                  company.industries.length || company.companyTypes.length ? (
+                    <TagCell industries={company.industries} types={company.companyTypes} />
+                  ) : null
+                }
+              />
               <Detail
                 label="Phone"
                 value={
@@ -228,7 +262,7 @@ export default async function CompanyDetailPage({
           <Card lit id="people">
             <CardHeader
               title="People"
-              subtitle={`${company.contacts.length} at this company`}
+              subtitle={`${company._count.contacts.toLocaleString()} at this company`}
               actions={
                 <Link
                   href={`/dashboard/contacts/new?companyId=${company.id}`}
@@ -239,14 +273,14 @@ export default async function CompanyDetailPage({
                 </Link>
               }
             />
-            {company.contacts.length === 0 ? (
+            {people.length === 0 ? (
               <EmptyState
                 title="Nobody here yet"
                 body="Add the person you actually talk to, and their quotes and deals show up on this page."
               />
             ) : (
               <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
-                {company.contacts.map((person) => (
+                {people.map((person) => (
                   <li key={person.id} className="px-5 py-3">
                     <Link
                       href={`/dashboard/contacts/${person.id}`}
@@ -254,6 +288,7 @@ export default async function CompanyDetailPage({
                     >
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium hover:underline">
+                          {person.favorite && <span className="mr-1 text-[var(--warn)]">★</span>}
                           {person.name}
                         </p>
                         <p className="faint truncate text-xs">
@@ -266,10 +301,33 @@ export default async function CompanyDetailPage({
                 ))}
               </ul>
             )}
+            {peoplePages > 1 && (
+              <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-2.5 text-xs">
+                <span className="faint">
+                  Page {peoplePage} of {peoplePages}
+                </span>
+                <span className="flex gap-1">
+                  {peoplePage > 1 ? (
+                    <Link href={`/dashboard/companies/${company.id}?people=${peoplePage - 1}#people`} className="btn btn-ghost btn-sm" aria-label="Previous people">
+                      <IconChevronLeft size={13} />
+                    </Link>
+                  ) : (
+                    <span className="btn btn-ghost btn-sm pointer-events-none opacity-40"><IconChevronLeft size={13} /></span>
+                  )}
+                  {peoplePage < peoplePages ? (
+                    <Link href={`/dashboard/companies/${company.id}?people=${peoplePage + 1}#people`} className="btn btn-ghost btn-sm" aria-label="Next people">
+                      <IconChevronRight size={13} />
+                    </Link>
+                  ) : (
+                    <span className="btn btn-ghost btn-sm pointer-events-none opacity-40"><IconChevronRight size={13} /></span>
+                  )}
+                </span>
+              </div>
+            )}
           </Card>
 
           <Card lit>
-            <CardHeader title="Deals" subtitle={`${deals.length} across everyone here`} />
+            <CardHeader title="Deals" subtitle={`${deals.length === FEED_LIMIT ? `latest ${FEED_LIMIT}` : deals.length} across everyone here`} />
             {deals.length === 0 ? (
               <EmptyState title="No deals yet" body="Deals and quotes are started from a person's page." />
             ) : (

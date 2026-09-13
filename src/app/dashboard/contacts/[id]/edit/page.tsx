@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getIndustryPickList } from "@/lib/industries";
 import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
 import { IconTrash } from "@/components/icons";
 import { ContactForm } from "../../contact-form";
@@ -14,16 +15,12 @@ export default async function EditContactPage({
   const { id } = await params;
   const { organizationId } = await requireSession();
 
-  const [contact, companies] = await Promise.all([
+  const [contact, pickList] = await Promise.all([
     prisma.contact.findFirst({
       where: { id, organizationId },
-      include: { company: { select: { name: true } } },
+      include: { company: { select: { id: true, name: true, industries: true, companyTypes: true } } },
     }),
-    prisma.company.findMany({
-      where: { organizationId },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
+    getIndustryPickList(organizationId),
   ]);
   if (!contact) notFound();
 
@@ -36,12 +33,13 @@ export default async function EditContactPage({
         <CardHeader title="Contact details" />
         <ContactForm
           action={updateContact}
-          companies={companies}
+          pickList={pickList}
           submitLabel="Save changes"
           defaults={{
             imageUrl: contact.imageUrl,
             id: contact.id,
             companyName: contact.company?.name ?? "",
+            company: contact.company,
             name: contact.name,
             title: contact.title,
             email: contact.email,

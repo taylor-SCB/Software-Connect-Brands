@@ -68,10 +68,11 @@ function TargetFields({ target }: { target: LogTargetProps }) {
 
 export function AddNoteForm({
   target,
-  contacts,
+  current,
 }: {
   target: LogTargetProps;
-  contacts?: PickableContact[];
+  // The contact whose page this is, for "+ Include multiple contacts".
+  current?: PickableContact;
 }) {
   const { ref, resetKey, state, formAction, pending } = useResettingAction(addNote);
 
@@ -94,12 +95,8 @@ export function AddNoteForm({
         <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
           {pending ? "Saving…" : "Add note"}
         </button>
-        {target.contactId && contacts && (
-          <ContactMultiSelect
-            key={`multi-${resetKey}`}
-            contacts={contacts}
-            currentId={target.contactId}
-          />
+        {target.contactId && current && (
+          <ContactMultiSelect key={`multi-${resetKey}`} current={current} />
         )}
       </div>
     </form>
@@ -141,10 +138,11 @@ function NoteLabelChips() {
 
 export function LogActivityForm({
   target,
-  contacts,
+  current,
 }: {
   target: LogTargetProps;
-  contacts?: PickableContact[];
+  // The contact whose page this is, for "+ Include multiple contacts".
+  current?: PickableContact;
 }) {
   const { ref, resetKey, state, formAction, pending } = useResettingAction(logActivity);
   const [type, setType] = useState<ActivityTypeValue>("PHONE_CALL");
@@ -184,12 +182,8 @@ export function LogActivityForm({
         <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
           {pending ? "Logging…" : `Log ${ACTIVITY_LABELS[type].toLowerCase()}`}
         </button>
-        {target.contactId && contacts && (
-          <ContactMultiSelect
-            key={`multi-${resetKey}`}
-            contacts={contacts}
-            currentId={target.contactId}
-          />
+        {target.contactId && current && (
+          <ContactMultiSelect key={`multi-${resetKey}`} current={current} />
         )}
       </div>
     </form>

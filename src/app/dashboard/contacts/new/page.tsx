@@ -1,5 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getIndustryPickList } from "@/lib/industries";
 import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
 import { ContactForm } from "../contact-form";
 import { createContact } from "../actions";
@@ -12,13 +13,16 @@ export default async function NewContactPage({
   const { organizationId } = await requireSession();
   const { companyId } = await searchParams;
 
-  const companies = await prisma.company.findMany({
-    where: { organizationId },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
-  });
   // "+ Add person" on a company page lands here with the company filled in.
-  const preset = companies.find((company) => company.id === companyId);
+  const [preset, pickList] = await Promise.all([
+    companyId
+      ? prisma.company.findFirst({
+          where: { id: companyId, organizationId },
+          select: { id: true, name: true, industries: true, companyTypes: true },
+        })
+      : null,
+    getIndustryPickList(organizationId),
+  ]);
 
   return (
     <div className="max-w-3xl">
@@ -31,8 +35,8 @@ export default async function NewContactPage({
         />
         <ContactForm
           action={createContact}
-          companies={companies}
-          defaults={{ companyName: preset?.name ?? "" }}
+          pickList={pickList}
+          defaults={{ companyName: preset?.name ?? "", company: preset }}
           submitLabel="Save contact"
         />
       </Card>
