@@ -223,6 +223,13 @@ are all blocking before the first paying customer.
 
 ## Testing
 
+**Bug audit of a session:** `/session-auditor`
+(`.claude/skills/session-auditor/SKILL.md`). Finders per area, dedupe,
+one quick skeptic per distinct defect, then fix everything confirmed with
+a regression step each, tie it out, and only then the release question.
+Built after the Sept 13, 2026 audit took an hour; the short form finds
+the same bugs in about ten minutes.
+
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
 suite, and the delete-confirmation suite. Four more are checked in at
