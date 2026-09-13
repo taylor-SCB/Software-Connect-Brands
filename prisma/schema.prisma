@@ -2,12 +2,14 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  previewFeatures = ["postgresqlExtensions"]
+  output          = "../src/generated/prisma"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [pg_trgm]
 }
 
 // Where a workspace sits in the operator's approval flow. Signups land in
@@ -174,6 +176,11 @@ model Company {
   @@index([organizationId, favorite])
   @@index([industries], type: Gin)
   @@index([companyTypes], type: Gin)
+  // Trigram indexes behind the list search (ILIKE '%text%'); pg_trgm is
+  // declared on the datasource above so migrate dev keeps them.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_name_trgm_idx")
+  @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_phone_trgm_idx")
+  @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_city_trgm_idx")
 }
 
 model Contact {
@@ -214,6 +221,10 @@ model Contact {
   @@index([organizationId, state])
   @@index([organizationId, favorite])
   @@index([organizationId, email])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_name_trgm_idx")
+  @@index([email(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_email_trgm_idx")
+  @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_phone_trgm_idx")
+  @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_city_trgm_idx")
 }
 
 // A deal is one job you are trying to win. It moves through the pipeline

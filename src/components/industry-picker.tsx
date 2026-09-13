@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { IconPlus, IconX } from "@/components/icons";
 import { GENERAL_COMPANY_TYPE, INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
+import { TAG_SEPARATOR } from "@/lib/tag-separator";
 
 export type IndustryPickList = { name: string; types: string[] }[];
 
@@ -12,10 +13,11 @@ export type IndustryPickList = { name: string; types: string[] }[];
 // Electrician under Service Provider, "General" where nothing more
 // specific exists yet. "+ Add new…" grows either list for the workspace.
 //
-// Posted fields: `industries` (one per pick) and `companyTypes` as
-// "Industry::Type" (so a new type knows its industry), plus
-// `industryFieldsPresent=1` so the server can tell "left blank" from
-// "not on this form".
+// Posted fields: `industries` (one per pick), `companyTypes` as
+// "Industry<SEP>Type" (so a new type knows its industry), `keepTypes` for
+// types the company already carries under no picked industry, and
+// `industryFieldsPresent=1` only once the user has changed something, so
+// an untouched form never rewrites a company's tags.
 export function IndustryPicker({
   pickList,
   defaultIndustries = [],
@@ -38,19 +40,23 @@ export function IndustryPicker({
   const [newIndustry, setNewIndustry] = useState("");
   const [addingTypeFor, setAddingTypeFor] = useState<string | null>(null);
   const [newType, setNewType] = useState("");
+  const [dirty, setDirty] = useState(false);
 
   const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   const picked = lists.filter((industry) => industries.some((name) => same(name, industry.name)));
 
   function toggleIndustry(name: string) {
+    setDirty(true);
     setIndustries((prev) => (prev.some((n) => same(n, name)) ? prev.filter((n) => !same(n, name)) : [...prev, name]));
   }
   function toggleType(name: string) {
+    setDirty(true);
     setTypes((prev) => (prev.some((n) => same(n, name)) ? prev.filter((n) => !same(n, name)) : [...prev, name]));
   }
   function addIndustry() {
     const name = newIndustry.trim().replace(/\s+/g, " ").slice(0, 60);
     if (!name) return;
+    setDirty(true);
     const existing = lists.find((industry) => same(industry.name, name));
     if (!existing) setLists((prev) => [...prev, { name, types: [GENERAL_COMPANY_TYPE] }]);
     if (!industries.some((n) => same(n, name))) setIndustries((prev) => [...prev, existing?.name ?? name]);
@@ -60,6 +66,7 @@ export function IndustryPicker({
   function addType(industryName: string) {
     const name = newType.trim().replace(/\s+/g, " ").slice(0, 60);
     if (!name) return;
+    setDirty(true);
     setLists((prev) =>
       prev.map((industry) =>
         same(industry.name, industryName) && !industry.types.some((t) => same(t, name))
@@ -87,18 +94,25 @@ export function IndustryPicker({
   // The types on offer: every type of every ticked industry, tagged with
   // its industry so the server can file a new one under the right list.
   const offered = picked.flatMap((industry) => industry.types.map((type) => ({ industry: industry.name, type })));
+  // Types the company carries that sit under no ticked industry (a CSV
+  // gave a type with no industry, or the industry was unticked). Shown
+  // under "Other" so they are never silently dropped by a save.
+  const orphans = types.filter((type) => !offered.some((o) => same(o.type, type)));
 
   return (
     <div className="space-y-4 sm:col-span-2">
-      <input type="hidden" name="industryFieldsPresent" value="1" />
+      {dirty && <input type="hidden" name="industryFieldsPresent" value="1" />}
       {industries.map((name) => (
         <input key={name} type="hidden" name="industries" value={name} />
       ))}
       {offered
         .filter(({ type }) => types.some((n) => same(n, type)))
         .map(({ industry, type }) => (
-          <input key={`${industry}::${type}`} type="hidden" name="companyTypes" value={`${industry}::${type}`} />
+          <input key={`${industry}${TAG_SEPARATOR}${type}`} type="hidden" name="companyTypes" value={`${industry}${TAG_SEPARATOR}${type}`} />
         ))}
+      {orphans.map((type) => (
+        <input key={`keep-${type}`} type="hidden" name="keepTypes" value={type} />
+      ))}
 
       <div>
         <p className="label">
@@ -151,10 +165,20 @@ export function IndustryPicker({
         <p className="label">
           Company type<span className="faint font-normal"> · pick any that apply</span>
         </p>
-        {picked.length === 0 ? (
+        {picked.length === 0 && orphans.length === 0 ? (
           <p className="faint text-xs">Pick an industry first and its company types appear here.</p>
         ) : (
           <div className="space-y-2">
+            {orphans.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Other company types">
+                <span className="faint w-full text-[0.68rem] sm:w-auto sm:min-w-[7rem]">Other</span>
+                {orphans.map((type) => (
+                  <Chip key={type} on onClick={() => toggleType(type)}>
+                    {type}
+                  </Chip>
+                ))}
+              </div>
+            )}
             {picked.map((industry) => (
               <div key={industry.name} className="flex flex-wrap items-center gap-1.5" role="group" aria-label={`${industry.name} company types`}>
                 {picked.length > 1 && <span className="faint w-full text-[0.68rem] sm:w-auto sm:min-w-[7rem]">{industry.name}</span>}

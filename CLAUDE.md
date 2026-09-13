@@ -127,7 +127,9 @@ Favorites / With deals / Needs attention toggles, a favorite star, and
 Favorite Contacts / Companies and Contacts / Companies with Deals sub-panes
 in the sidebar, plus **Import CSV** on both lists (one file of any size,
 batched with a progress bar, companies auto-created from a bare name,
-re-import updates instead of doubling, template download; Sept 13, 2026),
+re-import updates instead of doubling, template download; Sept 13, 2026;
+a 26-finding bug audit the same day was fixed in full and its cases are in
+the browser suite),
 pipeline (Lead → Contacted → Quote Sent → Contract Sent → Won/Lost; every
 quote lives on a deal, a deal can hold many quotes, deal value comes from
 its quotes, sending paperwork moves the deal on its own), "how I got there
@@ -228,7 +230,7 @@ suite, and the delete-confirmation suite. Four more are checked in at
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
 27-step deal tracker + settings + uploads suite (both Sept 10, 2026),
-the 14-step contacts import + filters + favorites suite and the
+the 17-step contacts import + filters + favorites suite and the
 200,000-row load test (both Sept 13, 2026; the load test seeds in SQL,
 takes several minutes, and must stay under its 2-second page budget).
 Each signs up its own workspace and scopes its lookups to it, so they can

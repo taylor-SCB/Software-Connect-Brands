@@ -14,7 +14,7 @@ import {
 } from "@/components/icons";
 import { ACTIVITY_TYPES, INDIVIDUAL_COMPANY_TYPE, type ActivityTypeValue } from "@/lib/constants";
 import { parseListParams, listHref, pageWindow, type ListLock } from "@/lib/list-params";
-import { contactWhere, getFilterOptions, namesForCompanies } from "@/lib/list-query";
+import { contactWhere, companyIdsMatching, getFilterOptions, namesForCompanies } from "@/lib/list-query";
 import { ListFilters } from "@/components/list-filters";
 import { Pagination } from "@/components/pagination";
 import { StarButton } from "@/components/star-button";
@@ -54,12 +54,13 @@ export async function ContactsList({
 }) {
   const { organizationId } = await requireSession();
   const params = parseListParams(searchParams, lock);
-  const where = contactWhere(organizationId, params);
+  const where = contactWhere(organizationId, params, await companyIdsMatching(organizationId, params.q));
 
-  const [total, options, selectedCompanies] = await Promise.all([
+  const [total, options, selectedCompanies, unfiltered] = await Promise.all([
     prisma.contact.count({ where }),
     getFilterOptions(organizationId),
     namesForCompanies(organizationId, params.companies),
+    totalInWorkspace(organizationId, lock),
   ]);
   const window = pageWindow(total, params.per, params.page);
 
@@ -90,7 +91,7 @@ export async function ContactsList({
     counts.set(row.contactId, existing);
   }
 
-  const filtered = Boolean(params.q) || total !== (await totalInWorkspace(organizationId, lock));
+  const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
     <div>

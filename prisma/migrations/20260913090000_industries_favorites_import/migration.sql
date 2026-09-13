@@ -99,3 +99,5 @@ CREATE INDEX "Contact_email_trgm_idx" ON "Contact" USING GIN ("email" gin_trgm_o
 CREATE INDEX "Contact_phone_trgm_idx" ON "Contact" USING GIN ("phone" gin_trgm_ops);
 CREATE INDEX "Company_name_trgm_idx" ON "Company" USING GIN ("name" gin_trgm_ops);
 CREATE INDEX "Company_phone_trgm_idx" ON "Company" USING GIN ("phone" gin_trgm_ops);
+CREATE INDEX "Contact_city_trgm_idx" ON "Contact" USING GIN ("city" gin_trgm_ops);
+CREATE INDEX "Company_city_trgm_idx" ON "Company" USING GIN ("city" gin_trgm_ops);

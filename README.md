@@ -78,7 +78,8 @@ plus **Company** on contacts (type to search), and the toggles
 **Favorites**, **With deals** and **Needs attention** (contacts with no
 email and no phone, or a company nobody has tagged; companies with no
 industry, or no phone and no email). Active filters show as chips with
-**Clear all**. Every type-to-search picker (company on a contact,
+**Clear all**. The search box treats % and _ as plain text, and a filter
+value may contain a comma. Every type-to-search picker (company on a contact,
 + Include multiple contacts, the Company filter) asks the server for the
 ten best matches instead of loading the table. Trigram indexes
 (`pg_trgm`) on names, emails and phones and GIN indexes on the tag lists
@@ -100,9 +101,14 @@ the company's phone / email / website / city / state / status, Industry
 and Company Type are picked up when present, with loose header matching
 ("E-mail", "Cell", "DOB", "Job Title", "Account"). A company that already
 exists (name, ignoring case) is reused and only its blank details are
-filled; a bare company name is enough to create one. A contact whose
-email already exists is updated, else matched on name + company, else
-created. Re-uploading the same file updates instead of doubling. **Stop
+filled; a bare company name is enough to create one, and a row with no
+person applies its Phone, Email, Website, City, State and Status to the
+company. A company type with no industry on the row is filed under the
+industry it already lives in ("Integrator" lands on Service Provider) or
+under "Uncategorized". A contact whose email already exists is updated
+(name included), else matched on name + company, else created.
+Re-uploading the same file updates instead of doubling. Windows Excel's
+non-UTF-8 CSVs are decoded correctly. **Stop
 after this batch** halts it; a skipped-rows CSV lists anything that did
 not import and why. **Download the template** gives the exact headers,
 contact fields first, then the company's

@@ -23,16 +23,25 @@ export type ListLock = { fav?: boolean; deals?: boolean };
 
 type RawParams = Record<string, string | string[] | undefined>;
 
+// One value per repeated parameter (?state=TX&state=CO). Never split on
+// commas: "Food, Beverage" is one industry.
 function list(value: string | string[] | undefined): string[] {
   const values = Array.isArray(value) ? value : value ? [value] : [];
-  return Array.from(new Set(values.flatMap((v) => v.split(",")).map((v) => v.trim()).filter(Boolean))).slice(0, 50);
+  return Array.from(new Set(values.map((v) => v.trim().slice(0, 120)).filter(Boolean))).slice(0, 50);
+}
+
+// The search box's text. % and _ are SQL wildcards inside a "contains"
+// match and Prisma passes them through, so they become spaces here: a
+// search for "%" then finds nothing instead of everything.
+export function cleanSearch(value: string | undefined) {
+  return (value ?? "").replace(/[%_]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams {
   const per = Number(Array.isArray(raw.per) ? raw.per[0] : raw.per);
   const page = Number(Array.isArray(raw.page) ? raw.page[0] : raw.page);
   return {
-    q: (Array.isArray(raw.q) ? raw.q[0] : raw.q)?.trim().slice(0, 120) ?? "",
+    q: cleanSearch(Array.isArray(raw.q) ? raw.q[0] : raw.q),
     page: Number.isInteger(page) && page > 0 ? page : 1,
     per: (PAGE_SIZES as readonly number[]).includes(per) ? per : DEFAULT_PAGE_SIZE,
     states: list(raw.state),

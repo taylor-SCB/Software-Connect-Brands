@@ -39,10 +39,14 @@ export function ListFilters({
   // until the server has answered with the matching rows.
   const [, startTransition] = useTransition();
   const [params, setShown] = useOptimistic(current);
+  // Built from the optimistic state, so a second click while the first
+  // navigation is still loading keeps the first change instead of
+  // overwriting it with the last server-rendered view.
   const go = (overrides: Partial<ListParams>) =>
     startTransition(() => {
-      setShown({ ...params, ...overrides, page: 1 });
-      router.push(listHref(basePath, current, overrides, lock));
+      const next = { ...params, ...overrides, page: 1 };
+      setShown(next);
+      router.push(listHref(basePath, next, {}, lock));
     });
 
   const industryNames = options.industries.map((industry) => industry.name);

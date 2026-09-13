@@ -9,7 +9,7 @@ import { parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
 import { CONTACT_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
-import { ensureIndustryOptions, readIndustryFields } from "@/lib/industries";
+import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import {
   targetSchema,
   readTarget,
@@ -86,7 +86,7 @@ async function contactData(
     const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
     await prisma.company.updateMany({
       where: { id: companyId, organizationId },
-      data: { industries: canonical.industries, companyTypes: canonical.companyTypes },
+      data: { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) },
     });
   }
   return {

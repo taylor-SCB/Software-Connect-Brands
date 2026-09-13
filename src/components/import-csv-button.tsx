@@ -35,6 +35,18 @@ export function ImportCsvButton({ kind }: { kind: "contacts" | "companies" }) {
   );
 }
 
+// Excel on Windows saves "CSV (Comma delimited)" in the machine's legacy
+// encoding, not UTF-8, so José becomes Jos� if read as UTF-8. Try strict
+// UTF-8 first and fall back to Windows-1252 when that fails.
+async function readCsvText(file: File) {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
 type Phase =
   | { step: "pick" }
   | { step: "reading" }
@@ -65,7 +77,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
     // Let the "Reading…" state paint before the parse takes the thread.
     await new Promise((resolve) => window.setTimeout(resolve, 30));
     try {
-      const planned = planContactImport(await file.text());
+      const planned = planContactImport(await readCsvText(file));
       if (planned.ok) setPhase({ step: "preview", plan: planned.plan });
       else {
         setPlanError(planned.error);

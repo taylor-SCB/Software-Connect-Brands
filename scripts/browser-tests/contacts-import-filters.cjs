@@ -349,6 +349,91 @@ async function rowCount(page, testId) {
   assert.equal(await page.locator("#people li").count(), 10);
   await shot(page, "08-company-people-paged");
 
+  log("audit fixes: Enter-key save with a typed company name keeps the company's tags; an untouched edit keeps them too");
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(`${BASE}/dashboard/contacts/new`);
+  await page.fill("#name", "Enter Key");
+  await page.fill("#companyName", "Acme Towers");
+  await page.keyboard.press("Enter");
+  await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
+  let acmeTags = (await sql(`SELECT industries, "companyTypes" FROM "Company" WHERE name='Acme Towers' AND "organizationId"=$1`, [org])).rows[0];
+  assert.ok(acmeTags.industries.includes("MDU") && acmeTags.companyTypes.includes("Owner"), `Enter-save wiped tags: ${JSON.stringify(acmeTags)}`);
+  await page.goto(`${acmeUrl}/edit`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Company saved").waitFor();
+  acmeTags = (await sql(`SELECT industries, "companyTypes" FROM "Company" WHERE name='Acme Towers' AND "organizationId"=$1`, [org])).rows[0];
+  assert.ok(acmeTags.industries.includes("MDU") && acmeTags.companyTypes.includes("Owner"), `untouched save wiped tags: ${JSON.stringify(acmeTags)}`);
+
+  log("audit fixes: messy exports import correctly (owner column, Google-style labels, Inactive, company-only rows, orphan type, name update, phone list, bad birthday, stray quote)");
+  const messy = [
+    "First Name,Last Name,Contact owner,E-mail 1 - Label,E-mail 1 - Value,Phone 1 - Label,Phone 1 - Value,Status,Company,Type,Birthday,Title",
+    'Hub,Spot,Taylor Owner,Work,hub@spot.test,Mobile,555-7001,Inactive,Spot Co,Integrator,March 9,12" pipe guy',
+    "Dana,Renamed,Taylor Owner,,dana@acme.test,,,,Acme Towers,,,",
+    "Sam,Rivera,Taylor Owner,,,,555-7002,,Bluebird ISP,,,",
+    ",,,,office@plain.test,,555-7003,Customer,Plain Company Row,,,",
+    "After,Quote,Taylor Owner,,after@quote.test,,,,,,,",
+  ];
+  const messyPath = path.join(OUT, "messy.csv");
+  fs.writeFileSync(messyPath, messy.join("\r\n") + "\r\n");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await page.getByTestId("import-csv").click();
+  await page.getByTestId("import-file").setInputFiles(messyPath);
+  const messySummary = await page.getByTestId("import-summary").textContent();
+  assert.match(messySummary, /4 contacts and 4 companies found/, messySummary);
+  assert.ok(await page.getByText(/Couldn't read birthday "March 9"/).isVisible(), "year-less birthday flagged");
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 5 rows").waitFor({ timeout: 60000 });
+  await page.getByTestId("import-done").click();
+  const hub = (await sql(`SELECT name, email, phone, status, title, birthday FROM "Contact" WHERE email='hub@spot.test' AND "organizationId"=$1`, [org])).rows[0];
+  assert.ok(hub, "Hub Spot imported");
+  assert.equal(hub.name, "Hub Spot", "First + Last used, not the owner column");
+  assert.equal(hub.phone, "555-7001", "Phone 1 - Value, not the label");
+  assert.equal(hub.status, "ARCHIVED", "Inactive is archived, not customer");
+  assert.equal(hub.title, '12" pipe guy', "stray quote is a character");
+  assert.equal(hub.birthday, null, "year-less birthday left blank");
+  const spot = (await sql(`SELECT industries, "companyTypes" FROM "Company" WHERE name='Spot Co' AND "organizationId"=$1`, [org])).rows[0];
+  assert.deepEqual(spot.industries, ["Service Provider"], "Integrator with no industry lands on Service Provider");
+  assert.deepEqual(spot.companyTypes, ["Integrator"]);
+  const danaNow = (await sql(`SELECT name FROM "Contact" WHERE email='dana@acme.test' AND "organizationId"=$1`, [org])).rows;
+  assert.equal(danaNow.length, 1);
+  assert.equal(danaNow[0].name, "Dana Renamed", "email match updates the name");
+  const sams = (await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE name='Sam Rivera' AND "organizationId"=$1`, [org])).rows[0].n;
+  assert.equal(sams, 1, "phone-list row without email matched Sam by name + company");
+  const plain = (await sql(`SELECT phone, email, status FROM "Company" WHERE name='Plain Company Row' AND "organizationId"=$1`, [org])).rows[0];
+  assert.equal(plain.phone, "555-7003", "company-only row keeps bare phone");
+  assert.equal(plain.email, "office@plain.test", "company-only row keeps bare email");
+  assert.equal(plain.status, "CUSTOMER");
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE email='after@quote.test' AND "organizationId"=$1`, [org])).rows[0].n, 1, "row after the stray quote still imported");
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "IndustryOption" WHERE name='Imported' AND "organizationId"=$1`, [org])).rows[0].n, 0, "no hidden Imported industry");
+  // Spot Co's orphan type stays through an untouched edit save.
+  await page.goto(`${BASE}/dashboard/companies?q=spot`);
+  await page.locator("tr", { hasText: "Spot Co" }).getByRole("link", { name: "Spot Co" }).click();
+  await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
+  await page.goto(`${page.url()}/edit`);
+  assert.equal(await chip(page, "Integrator").getAttribute("aria-checked"), "true", "orphan-free: type shows ticked under its inferred industry");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Company saved").waitFor();
+  const spotAfter = (await sql(`SELECT "companyTypes" FROM "Company" WHERE name='Spot Co' AND "organizationId"=$1`, [org])).rows[0];
+  assert.deepEqual(spotAfter.companyTypes, ["Integrator"], "untouched save keeps the imported type");
+
+  log("audit fixes: a comma in an industry name still filters; % in search is not a wildcard; two quick filter clicks both stick");
+  await page.goto(`${BASE}/dashboard/companies/new`);
+  await page.fill("#name", "Comma Industries");
+  await page.getByRole("button", { name: "Add new industry" }).click();
+  await page.getByLabel("New industry name").fill("Food, Beverage");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Save company" }).click();
+  await page.waitForURL(/\/dashboard\/companies\/(?!new$)[a-z0-9]+$/);
+  await page.goto(`${BASE}/dashboard/companies?industry=${encodeURIComponent("Food, Beverage")}`);
+  assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies", "comma industry filters as one value");
+  // As a wildcard "r%a" would match "Rivera"; as text it matches nobody.
+  await page.goto(`${BASE}/dashboard/contacts?q=r%25a`);
+  assert.equal(await pageSummary(page), "No contacts", "% is not a wildcard");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await page.getByTestId("filter-fav").click();
+  await page.getByTestId("filter-attn").click();
+  await page.waitForURL(/fav=1.*attn=1|attn=1.*fav=1/);
+
   log("mobile width: filter bar wraps, table scrolls, nothing overflows the page");
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(`${BASE}/dashboard/contacts`);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconPlus, IconCheck, IconBuilding } from "@/components/icons";
 import { useSearch } from "@/lib/use-search";
 
@@ -43,6 +43,19 @@ export function CompanyPicker({
     onChange?.(picked, next);
   }
 
+  // Typing an existing company's name in full counts as picking it, as
+  // soon as the search confirms it exists — not only on blur, which an
+  // Enter-key save never triggers.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  const exactId = exact?.id ?? null;
+  useEffect(() => {
+    if (exact && exactId) onChangeRef.current?.(exact, exact.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- exactId stands in for the exact object
+  }, [exactId]);
+
   return (
     <div className="relative">
       <label className="label" htmlFor={name}>
@@ -66,11 +79,7 @@ export function CompanyPicker({
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
-            onBlur={() => {
-              window.setTimeout(() => setOpen(false), 120);
-              // Typing an existing name in full counts as picking it.
-              if (exact) onChange?.(exact, value);
-            }}
+            onBlur={() => window.setTimeout(() => setOpen(false), 120)}
             className="input pl-8"
           />
         </div>

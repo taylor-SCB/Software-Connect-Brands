@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { cleanSearch } from "@/lib/list-params";
+import { companyIdsMatching } from "@/lib/list-query";
 
 // Type-to-search behind "+ Include multiple contacts". Twenty-five best
 // matches by name, company or email, never the whole table.
 export async function GET(request: Request) {
   const { organizationId } = await requireSession();
   const url = new URL(request.url);
-  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 80);
+  const q = cleanSearch(url.searchParams.get("q") ?? "").slice(0, 80);
   const exclude = url.searchParams.get("exclude") ?? undefined;
+  const companyIds = await companyIdsMatching(organizationId, q);
 
   const contacts = await prisma.contact.findMany({
     where: {
@@ -20,7 +23,7 @@ export async function GET(request: Request) {
             OR: [
               { name: { contains: q, mode: "insensitive" } },
               { email: { contains: q, mode: "insensitive" } },
-              { company: { name: { contains: q, mode: "insensitive" } } },
+              ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
             ],
           }
         : {}),

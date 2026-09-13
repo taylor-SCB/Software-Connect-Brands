@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { cleanSearch } from "@/lib/list-params";
 
 // Type-to-search behind the Company box on a contact form and the Company
 // filter on the Contacts list. Ten best matches, never the whole table:
@@ -8,7 +9,7 @@ import { prisma } from "@/lib/prisma";
 export async function GET(request: Request) {
   const { organizationId } = await requireSession();
   const url = new URL(request.url);
-  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 80);
+  const q = cleanSearch(url.searchParams.get("q") ?? "").slice(0, 80);
   const ids = url.searchParams.getAll("id").slice(0, 50);
 
   const companies = await prisma.company.findMany({

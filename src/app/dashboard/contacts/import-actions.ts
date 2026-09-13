@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { CONTACT_STATUSES } from "@/lib/constants";
-import { ensureIndustryOptions } from "@/lib/industries";
+import { ensureIndustryOptions, inferIndustriesForTypes, mergeTags } from "@/lib/industries";
 import { IMPORT_BATCH_SIZE, emptyBatchResult, type ImportBatchResult } from "@/lib/contacts-csv";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -65,15 +65,34 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
     wantedCompanies.set(key, existing ? mergeCompany(existing, row.company) : { ...row.company });
   }
 
+  // A company type with no industry on its row (a sheet with a Type column
+  // and no Industry column) is filed under the industry it already lives
+  // in here — "Integrator" lands on Service Provider — and that industry
+  // is added to the company so the type stays visible on the forms. A
+  // type nobody has seen before goes under "Uncategorized".
+  const orphanTypes = Array.from(
+    new Set(
+      Array.from(wantedCompanies.values())
+        .filter((company) => company.industries.length === 0)
+        .flatMap((company) => company.companyTypes),
+    ),
+  );
+  const homes = await inferIndustriesForTypes(organizationId, orphanTypes);
+  for (const company of wantedCompanies.values()) {
+    if (company.industries.length > 0 || company.companyTypes.length === 0) continue;
+    company.industries = mergeTags([], company.companyTypes.map((type) => homes.get(lower(type)) ?? "Uncategorized"));
+  }
+
   // Every industry / type this batch mentions, canonicalised once.
   const industryNames = new Set<string>();
   const typesByIndustry: Record<string, string[]> = {};
   for (const company of wantedCompanies.values()) {
     for (const industry of company.industries) industryNames.add(industry);
-    // A type with no industry named on the row files under the first
-    // industry given, or "Imported" when there is none.
-    const home = company.industries[0] ?? (company.companyTypes.length ? "Imported" : null);
-    if (home) (typesByIndustry[home] ??= []).push(...company.companyTypes);
+    for (const type of company.companyTypes) {
+      const home = homes.get(lower(type));
+      const under = home && company.industries.some((i) => lower(i) === lower(home)) ? home : company.industries[0];
+      if (under) (typesByIndustry[under] ??= []).push(type);
+    }
   }
   const canonical =
     industryNames.size || Object.keys(typesByIndustry).length
@@ -122,8 +141,8 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
           city: company.city,
           state: company.state,
           status: company.status ?? "LEAD",
-          industries: company.industries.map(canonIndustry),
-          companyTypes: company.companyTypes.map(canonType),
+          industries: mergeTags([], company.industries.map(canonIndustry)),
+          companyTypes: mergeTags([], company.companyTypes.map(canonType)),
         })),
       });
       result.companiesCreated += missing.length;
@@ -151,13 +170,20 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
           select: { id: true, email: true },
         })
       : [],
+    // Name + company matching covers contacts with an email too: a phone
+    // list without emails must still find the people already here.
     prisma.contact.findMany({
-      where: { organizationId, email: null, name: { in: names, mode: "insensitive" } },
-      select: { id: true, name: true, companyId: true },
+      where: { organizationId, name: { in: names, mode: "insensitive" } },
+      select: { id: true, name: true, companyId: true, email: true },
+      orderBy: { createdAt: "asc" },
     }),
   ]);
   const emailIds = new Map(byEmail.map((contact) => [lower(contact.email!), contact.id]));
-  const nameIds = new Map(byName.map((contact) => [`${lower(contact.name)}|${contact.companyId ?? ""}`, contact.id]));
+  const nameIds = new Map<string, string>();
+  for (const contact of byName) {
+    const k = `${lower(contact.name)}|${contact.companyId ?? ""}`;
+    if (!nameIds.has(k)) nameIds.set(k, contact.id);
+  }
 
   const creates: Prisma.ContactCreateManyInput[] = [];
   const seenNew = new Set<string>();
@@ -171,7 +197,8 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
       (row.email ? emailIds.get(row.email) : undefined) ?? nameIds.get(`${lower(row.name!)}|${companyId ?? ""}`);
 
     if (existingId) {
-      const data: Prisma.ContactUncheckedUpdateManyInput = {};
+      // The row is the newer truth for every cell it fills, the name included.
+      const data: Prisma.ContactUncheckedUpdateManyInput = { name: row.name! };
       if (row.title) data.title = row.title;
       if (row.phone) data.phone = row.phone;
       if (row.website) data.website = row.website;
@@ -235,8 +262,4 @@ function mergeCompany(a: CompanyInput, b: CompanyInput): CompanyInput {
   };
 }
 
-function union(a: string[], b: string[]) {
-  const out = [...a];
-  for (const value of b) if (!out.some((v) => v.toLowerCase() === value.toLowerCase())) out.push(value);
-  return out;
-}
+const union = mergeTags;

@@ -21,14 +21,23 @@ export const MAX_IMPORT_BYTES = 4 * 1024 * 1024;
 // ends, and the byte-order mark Excel likes to prepend. Also accepts
 // semicolon- or tab-separated files, which some spreadsheet exports use.
 export function parseCsv(text: string): string[][] {
+  return parseCsvLines(text).map((row) => row.cells);
+}
+
+// Same parse, with the 1-based line each row starts on in the file, so an
+// importer can say "Line 41" and mean the line the user sees in Excel even
+// after blank lines and multi-line quoted cells.
+export function parseCsvLines(text: string): { line: number; cells: string[] }[] {
   const input = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const firstLine = input.split(/\r?\n/, 1)[0] ?? "";
   const delimiter = pickDelimiter(firstLine);
 
-  const rows: string[][] = [];
+  const rows: { line: number; cells: string[] }[] = [];
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
+  let lineNo = 1;
+  let rowLine = 1;
 
   for (let i = 0; i < input.length; i += 1) {
     const ch = input[i];
@@ -41,30 +50,36 @@ export function parseCsv(text: string): string[][] {
           inQuotes = false;
         }
       } else {
+        if (ch === "\n") lineNo += 1;
         field += ch;
       }
       continue;
     }
-    if (ch === '"') {
+    // Only a quote that opens a field starts quoting. A stray one in the
+    // middle of a value (12" pipe) is just a character, so it can never
+    // swallow the rest of the file.
+    if (ch === '"' && field === "") {
       inQuotes = true;
     } else if (ch === delimiter) {
       row.push(field);
       field = "";
     } else if (ch === "\n") {
       row.push(field);
-      rows.push(row);
+      rows.push({ line: rowLine, cells: row });
       row = [];
       field = "";
+      lineNo += 1;
+      rowLine = lineNo;
     } else if (ch !== "\r") {
       field += ch;
     }
   }
   if (field !== "" || row.length > 0) {
     row.push(field);
-    rows.push(row);
+    rows.push({ line: rowLine, cells: row });
   }
 
-  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ""));
+  return rows.filter((entry) => entry.cells.some((cell) => cell.trim() !== ""));
 }
 
 function pickDelimiter(line: string) {

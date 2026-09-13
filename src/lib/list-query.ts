@@ -35,16 +35,31 @@ export function companyWhere(organizationId: string, p: ListParams): Prisma.Comp
   return { AND: and };
 }
 
-export function contactWhere(organizationId: string, p: ListParams): Prisma.ContactWhereInput {
+// The search box on contacts also matches the company's name. Companies
+// are looked up first (their own trigram index, capped) so the contact
+// query stays a plain OR over indexed columns instead of a join that
+// forces a scan of every contact.
+const COMPANY_MATCH_CAP = 500;
+export async function companyIdsMatching(organizationId: string, q: string): Promise<string[]> {
+  if (!q) return [];
+  const rows = await prisma.company.findMany({
+    where: { organizationId, name: { contains: q, mode: insensitive } },
+    select: { id: true },
+    take: COMPANY_MATCH_CAP,
+  });
+  return rows.map((row) => row.id);
+}
+
+export function contactWhere(organizationId: string, p: ListParams, companyIds: string[] = []): Prisma.ContactWhereInput {
   const and: Prisma.ContactWhereInput[] = [{ organizationId }];
   if (p.q) {
     and.push({
       OR: [
         { name: { contains: p.q, mode: insensitive } },
-        { company: { name: { contains: p.q, mode: insensitive } } },
         { email: { contains: p.q, mode: insensitive } },
         { phone: { contains: p.q } },
         { city: { contains: p.q, mode: insensitive } },
+        ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
       ],
     });
   }
@@ -86,19 +101,12 @@ export type FilterOptions = {
 // The choices each dropdown offers: every state anyone in the workspace
 // is in (contacts and companies together) and the workspace's pick lists.
 export async function getFilterOptions(organizationId: string): Promise<FilterOptions> {
+  // groupBy is a real GROUP BY in SQL; Prisma's `distinct` would pull every
+  // row into memory first, which at 200,000 contacts is the whole table on
+  // every page view.
   const [contactStates, companyStates, industries] = await Promise.all([
-    prisma.contact.findMany({
-      where: { organizationId, state: { not: null } },
-      distinct: ["state"],
-      select: { state: true },
-      orderBy: { state: "asc" },
-    }),
-    prisma.company.findMany({
-      where: { organizationId, state: { not: null } },
-      distinct: ["state"],
-      select: { state: true },
-      orderBy: { state: "asc" },
-    }),
+    prisma.contact.groupBy({ by: ["state"], where: { organizationId, state: { not: null } } }),
+    prisma.company.groupBy({ by: ["state"], where: { organizationId, state: { not: null } } }),
     getIndustryPickList(organizationId),
   ]);
   const states = Array.from(

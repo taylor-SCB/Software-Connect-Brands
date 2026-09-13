@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime, formatDate } from "@/lib/format";
-import { ACTIVITY_TYPES, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
+import { ACTIVITY_TYPES, OPEN_DEAL_STAGES, PERSONAL_NOTE_LABELS, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
 import {
@@ -106,19 +106,35 @@ export default async function CompanyDetailPage({
     }),
   ]);
 
-  const [noteOthers, activityOthers] = await Promise.all([
-    batchOthers("note", notes.map((note) => note.batchId)),
-    batchOthers("activity", activities.map((activity) => activity.batchId)),
-  ]);
+  // Totals come from their own count queries, so a company with more
+  // history than the feeds show still reads the right numbers.
+  const [noteOthers, activityOthers, noteTotal, personalNoteTotal, activityByType, dealTotal, quotesOutTotal, openDealRows] =
+    await Promise.all([
+      batchOthers("note", notes.map((note) => note.batchId)),
+      batchOthers("activity", activities.map((activity) => activity.batchId)),
+      prisma.note.count({ where: { organizationId, OR: [{ companyId: company.id }, viaPeople] } }),
+      prisma.note.count({ where: { organizationId, label: { in: [...PERSONAL_NOTE_LABELS] }, OR: [{ companyId: company.id }, viaPeople] } }),
+      prisma.activity.groupBy({
+        by: ["type"],
+        where: { organizationId, OR: [{ companyId: company.id }, viaPeople] },
+        _count: { _all: true },
+      }),
+      prisma.deal.count({ where: { organizationId, ...viaPeople } }),
+      prisma.quote.count({ where: { organizationId, ...viaPeople, status: "SENT" } }),
+      prisma.deal.findMany({
+        where: { organizationId, ...viaPeople, stage: { in: [...OPEN_DEAL_STAGES] } },
+        select: { valueCents: true, stage: true, quotes: QUOTES_FOR_VALUE },
+      }),
+    ]);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
-      acc[type] = activities.filter((a) => a.type === type).length;
+      acc[type] = activityByType.find((row) => row.type === type)?._count._all ?? 0;
       return acc;
     },
     {} as Record<ActivityTypeValue, number>,
   );
-  const openDeals = deals.filter((deal) => isOpenStage(deal.stage));
+  const openDeals = openDealRows.filter((deal) => isOpenStage(deal.stage));
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
 
   return (
@@ -176,7 +192,7 @@ export default async function CompanyDetailPage({
           <Card lit id="notes">
             <CardHeader
               title="Notes"
-              subtitle={`${notes.length === FEED_LIMIT ? `latest ${FEED_LIMIT}` : `${notes.length} total`}, including everyone here`}
+              subtitle={`${noteTotal > notes.length ? `latest ${notes.length} of ${noteTotal.toLocaleString()}` : `${noteTotal} total`}, including everyone here`}
             />
             <AddNoteForm target={{ companyId: company.id }} />
             <div className="divider" />
@@ -249,13 +265,13 @@ export default async function CompanyDetailPage({
           </Card>
 
           <ActivityOverview
-            notes={notes.length}
-            personalNotes={notes.filter((note) => isPersonalLabel(note.label)).length}
+            notes={noteTotal}
+            personalNotes={personalNoteTotal}
             activity={activityCounts}
             lastTouchAt={activities[0]?.occurredAt ?? null}
             openDealCents={openDealValue}
             openDealCount={openDeals.length}
-            quotesOut={quotes.filter((quote) => quote.status === "SENT").length}
+            quotesOut={quotesOutTotal}
             timeZone={timeZone}
           />
 
@@ -327,7 +343,7 @@ export default async function CompanyDetailPage({
           </Card>
 
           <Card lit>
-            <CardHeader title="Deals" subtitle={`${deals.length === FEED_LIMIT ? `latest ${FEED_LIMIT}` : deals.length} across everyone here`} />
+            <CardHeader title="Deals" subtitle={`${dealTotal > deals.length ? `latest ${deals.length} of ${dealTotal.toLocaleString()}` : dealTotal} across everyone here`} />
             {deals.length === 0 ? (
               <EmptyState title="No deals yet" body="Deals and quotes are started from a person's page." />
             ) : (

@@ -8,7 +8,7 @@ import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { CONTACT_STATUSES } from "@/lib/constants";
 import { normalizeWebsite, normalizeState } from "@/lib/companies";
-import { ensureIndustryOptions, readIndustryFields } from "@/lib/industries";
+import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -53,7 +53,8 @@ function companyData(parsed: z.infer<typeof companySchema>) {
 async function tagData(formData: FormData, organizationId: string) {
   const tags = readIndustryFields(formData);
   if (!tags.touched) return {};
-  return ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+  const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+  return { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) };
 }
 
 // Two companies with the same name is almost always a typo, and the
