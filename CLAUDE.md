@@ -107,6 +107,14 @@ the model to follow.
   (`scripts/migrate-if-production.cjs`), so **only a push to the live
   branch changes the live database**. Any migration must still be safe for
   rows that already exist.
+- **Pushing to the live branch from a session trips the "production
+  deploy" safety check** even after Taylor says yes, and a session cannot
+  grant itself the permission (that is blocked as self-modification, Sept
+  13, 2026). Two ways through: Taylor adds
+  `Bash(git push origin HEAD:claude/first-app-creation-cdtbrb)` to the
+  allow list in `.claude/settings.json` himself, or the session opens a
+  pull request from the working branch into the live branch and Taylor
+  clicks Merge on GitHub, which deploys the same way.
 - Vercel keeps every past deployment. A bad release is undone with **Instant
   Rollback** in the Deployments tab — ten seconds, doesn't touch data.
 - **You cannot change Vercel settings from here.** No tool exists for
