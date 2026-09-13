@@ -8,7 +8,8 @@ import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
 import { CONTACT_STATUSES } from "@/lib/constants";
-import { findOrCreateCompany } from "@/lib/companies";
+import { findOrCreateCompany, normalizeState } from "@/lib/companies";
+import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import {
   targetSchema,
   readTarget,
@@ -70,10 +71,24 @@ async function assertContact(contactId: string, organizationId: string) {
   });
 }
 
-async function contactData(parsed: z.infer<typeof contactSchema>, organizationId: string) {
+async function contactData(
+  parsed: z.infer<typeof contactSchema>,
+  organizationId: string,
+  formData: FormData,
+) {
   const companyId = parsed.companyName
     ? (await findOrCreateCompany(parsed.companyName, organizationId)).id
     : null;
+  // Industry and Company Type belong to the company; the contact form
+  // edits them in place so one business is never tagged three ways.
+  const tags = readIndustryFields(formData);
+  if (companyId && tags.touched) {
+    const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+    await prisma.company.updateMany({
+      where: { id: companyId, organizationId },
+      data: { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) },
+    });
+  }
   return {
     name: parsed.name,
     title: parsed.title || null,
@@ -82,7 +97,7 @@ async function contactData(parsed: z.infer<typeof contactSchema>, organizationId
     phone: parsed.phone || null,
     website: normalizeWebsite(parsed.website || null),
     city: parsed.city || null,
-    state: parsed.state || null,
+    state: normalizeState(parsed.state || null),
     birthday: toBirthday(parsed.birthday),
     status: parsed.status,
   };
@@ -98,7 +113,7 @@ export async function createContact(_prev: ActionState, formData: FormData): Pro
   if (problem) return { error: problem };
 
   const contact = await prisma.contact.create({
-    data: { organizationId, ...(await contactData(parsed.data, organizationId)) },
+    data: { organizationId, ...(await contactData(parsed.data, organizationId, formData)) },
   });
   if (hasFile(imageFile)) {
     const imageUrl = await replaceImage({ organizationId, kind: "CONTACT_IMAGE", file: imageFile, contactId: contact.id });
@@ -136,7 +151,7 @@ export async function updateContact(_prev: ActionState, formData: FormData): Pro
   // WHERE clause — a guessed id from another tenant matches zero rows.
   const result = await prisma.contact.updateMany({
     where: { id: id.data, organizationId },
-    data: { ...(await contactData(parsed.data, organizationId)), ...image },
+    data: { ...(await contactData(parsed.data, organizationId, formData)), ...image },
   });
   if (result.count === 0) return { error: "Contact not found" };
 
@@ -144,6 +159,24 @@ export async function updateContact(_prev: ActionState, formData: FormData): Pro
   revalidatePath("/dashboard/companies");
   revalidatePath(`/dashboard/contacts/${id.data}`);
   return { success: "Contact saved" };
+}
+
+// The star. Returns the new state so the button can settle on it.
+export async function setContactFavorite(
+  contactId: string,
+  favorite: boolean,
+): Promise<{ favorite: boolean } | { error: string }> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(contactId);
+  if (!id.success) return { error: "Missing contact reference" };
+  const result = await prisma.contact.updateMany({
+    where: { id: id.data, organizationId },
+    data: { favorite: Boolean(favorite) },
+  });
+  if (result.count === 0) return { error: "Contact not found" };
+  revalidatePath("/dashboard/contacts");
+  revalidatePath(`/dashboard/contacts/${id.data}`);
+  return { favorite: Boolean(favorite) };
 }
 
 export async function deleteContact(formData: FormData) {

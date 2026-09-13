@@ -35,22 +35,84 @@ two starter contract templates.
 
 **Contacts** — a person: name, title, company (picked from or added to the
 Companies list as you type), email, phone, website, birthday, city and
-state. The list shows the company, a notes counter and a counter for each
-activity type (text, email, phone call, meeting). The contact page is the
-hub: log activity, add notes, open deals, and see every quote and contract
-for that customer. Notes take an optional label (General, Personal,
-Birthday, Hobbies, Family); the **Personal** switch on the notes feed
-gathers the personal ones. **+ Include multiple contacts** on the note and
-activity forms logs the same entry on several people at once. The
+state. The list shows the company, the company's Industry and Company
+Type, a notes counter and a counter for each activity type (text, email,
+phone call, meeting). The contact page is the hub: log activity, add
+notes, open deals, and see every quote and contract for that customer.
+Notes take an optional label (General, Personal, Birthday, Hobbies,
+Family); the **Personal** switch on the notes feed gathers the personal
+ones. **+ Include multiple contacts** on the note and activity forms logs
+the same entry on several people at once (it searches as you type). The
 **Activity overview** box on the right counts every touch, shows the last
 one, the open pipeline and the quotes out.
 
 **Companies** — a business you sell to, with the people who work there.
-Name, phone, email, website, city, state and status. A company page rolls
-up notes, activity, deals, quotes and contracts from its people (each
-entry names the person) and takes notes and activity of its own. A
-residential customer is a contact with no company; nothing downstream
-requires one. Typing a company name on a contact creates the company.
+Name, phone, email, website, city, state, status, **Industry** and
+**Company Type**. A company page rolls up notes, activity, deals, quotes
+and contracts from its people (each entry names the person; the People
+list pages at fifty and every feed shows its latest 200) and takes notes
+and activity of its own. A residential customer is a contact with no
+company and reads as **Individual / Personal**; nothing downstream
+requires a company. Typing a company name on a contact creates the
+company.
+
+**Industry and Company Type** (Sept 13, 2026) — two multi-select pick
+lists on the company, shown and edited on the contact form too (they
+belong to the company, so a change on a contact changes the company for
+everyone there). Every workspace starts with six industries: MDU and
+Student (Owner, Capital Group, Developer, Property Management),
+Commercial, Construction and Small Business (General), and Service
+Provider (Integrator, Electrician, Networks/ISP, Access Control, Door
+Hardware, Gates). **+ Add new industry** and **+ Add new company type**
+on either form grow the lists for that workspace; a new industry starts
+with General. The lists live in `IndustryOption` / `CompanyTypeOption`,
+seeded the first time a workspace opens a form (`src/lib/industries.ts`),
+and a company stores the names, like a contract stores its type.
+
+**Lists at scale** (Sept 13, 2026) — Contacts and Companies show 50 rows
+a page (10 / 50 / 100 to pick from) with **Showing 51–100 of 12,340**
+and page links; the search bar and every filter run in the database and
+live in the address bar, so Back and bookmarks keep the view. Filters:
+**State**, **Industry**, **Company Type** (all multi-select, they stack),
+plus **Company** on contacts (type to search), and the toggles
+**Favorites**, **With deals** and **Needs attention** (contacts with no
+email and no phone, or a company nobody has tagged; companies with no
+industry, or no phone and no email). Active filters show as chips with
+**Clear all**. The search box treats % and _ as plain text, and a filter
+value may contain a comma. Every type-to-search picker (company on a contact,
++ Include multiple contacts, the Company filter) asks the server for the
+ten best matches instead of loading the table. Trigram indexes
+(`pg_trgm`) on names, emails and phones and GIN indexes on the tag lists
+keep search and filters fast at 200,000 rows;
+`scripts/browser-tests/load-test.cjs` proves it.
+
+**Favorites** (Sept 13, 2026) — the star on a contact or company row and
+page. **Favorite Contacts** and **Favorite Companies** in the sidebar are
+the list with the star held on; **Contacts with Deals** and **Companies
+with Deals** are the same for anyone a deal or quote carries.
+
+**Import CSV** (Sept 13, 2026) — on both lists. One spreadsheet of any
+size: the browser reads it, shows what it found (rows, companies, columns
+matched, warnings), then sends 500 rows at a time with a progress bar
+and a running count of contacts and companies added or updated. Only
+Name or Company Name is required; First name + Last name are joined;
+Title, Email, Phone, Website, City, State (Texas → TX), Birthday, Status,
+the company's phone / email / website / city / state / status, Industry
+and Company Type are picked up when present, with loose header matching
+("E-mail", "Cell", "DOB", "Job Title", "Account"). A company that already
+exists (name, ignoring case) is reused and only its blank details are
+filled; a bare company name is enough to create one, and a row with no
+person applies its Phone, Email, Website, City, State and Status to the
+company. A company type with no industry on the row is filed under the
+industry it already lives in ("Integrator" lands on Service Provider) or
+under "Uncategorized". A contact whose email already exists is updated
+(name included), else matched on name + company, else created.
+Re-uploading the same file updates instead of doubling. Windows Excel's
+non-UTF-8 CSVs are decoded correctly. **Stop
+after this batch** halts it; a skipped-rows CSV lists anything that did
+not import and why. **Download the template** gives the exact headers,
+contact fields first, then the company's
+(`/dashboard/contacts/import-template`).
 
 **Pipeline** — deals by stage (Lead → Contacted → Quote Sent → Contract
 Sent → Won / Lost) with per-stage value totals. A deal is one job you are

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getIndustryPickList } from "@/lib/industries";
 import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
 import { IconTrash } from "@/components/icons";
 import { CompanyForm } from "../../company-form";
@@ -14,7 +15,10 @@ export default async function EditCompanyPage({
   const { id } = await params;
   const { organizationId } = await requireSession();
 
-  const company = await prisma.company.findFirst({ where: { id, organizationId } });
+  const [company, pickList] = await Promise.all([
+    prisma.company.findFirst({ where: { id, organizationId } }),
+    getIndustryPickList(organizationId),
+  ]);
   if (!company) notFound();
 
   return (
@@ -26,8 +30,11 @@ export default async function EditCompanyPage({
         <CardHeader title="Company details" />
         <CompanyForm
           action={updateCompany}
+          pickList={pickList}
           submitLabel="Save changes"
           defaults={{
+            industries: company.industries,
+            companyTypes: company.companyTypes,
             logoUrl: company.logoUrl,
             id: company.id,
             name: company.name,

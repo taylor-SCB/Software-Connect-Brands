@@ -1,24 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { IconSearch, IconUsers, IconX, IconCheck } from "@/components/icons";
+import { useSearch } from "@/lib/use-search";
 
 export type PickableContact = { id: string; name: string; company: string | null };
 
 // "+ Include multiple contacts" on the note and activity forms. Opens a
-// picker over every contact in the workspace; the contact whose page you
-// are on is locked in. Each extra pick becomes a hidden `extraContactIds`
-// field, so the server writes one copy per person.
-export function ContactMultiSelect({
-  contacts,
-  currentId,
-}: {
-  contacts: PickableContact[];
-  currentId: string;
-}) {
+// picker that searches the workspace's contacts as you type; the contact
+// whose page you are on is locked in. Each extra pick becomes a hidden
+// `extraContactIds` field, so the server writes one copy per person.
+export function ContactMultiSelect({ current }: { current: PickableContact }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Map<string, PickableContact>>(new Map());
 
   useEffect(() => {
     if (!open) return;
@@ -29,23 +24,16 @@ export function ContactMultiSelect({
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const current = contacts.find((contact) => contact.id === currentId);
-  const others = useMemo(() => contacts.filter((contact) => contact.id !== currentId), [contacts, currentId]);
-  const q = query.trim().toLowerCase();
-  const visible = q
-    ? others.filter(
-        (contact) =>
-          contact.name.toLowerCase().includes(q) ||
-          (contact.company ?? "").toLowerCase().includes(q),
-      )
-    : others;
-  const picked = others.filter((contact) => selected.has(contact.id));
+  const { results, loading } = useSearch<PickableContact>(
+    open ? `/dashboard/contacts/search?q=${encodeURIComponent(query.trim())}&exclude=${current.id}` : null,
+  );
+  const picked = Array.from(selected.values());
 
-  function toggle(id: string) {
+  function toggle(contact: PickableContact) {
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const next = new Map(prev);
+      if (next.has(contact.id)) next.delete(contact.id);
+      else next.set(contact.id, contact);
       return next;
     });
   }
@@ -64,16 +52,14 @@ export function ContactMultiSelect({
           className={`btn btn-sm ${picked.length ? "btn-primary" : "btn-ghost"}`}
         >
           <IconUsers size={13} />
-          {picked.length
-            ? `Includes ${picked.length + 1} contacts`
-            : "+ Include multiple contacts"}
+          {picked.length ? `Includes ${picked.length + 1} contacts` : "+ Include multiple contacts"}
         </button>
         {picked.map((contact) => (
           <span key={contact.id} className="badge gap-1">
             {contact.name}
             <button
               type="button"
-              onClick={() => toggle(contact.id)}
+              onClick={() => toggle(contact)}
               aria-label={`Remove ${contact.name}`}
               className="opacity-70 hover:opacity-100"
             >
@@ -95,16 +81,9 @@ export function ContactMultiSelect({
             <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
               <div>
                 <h2 className="text-sm font-semibold">Include multiple contacts</h2>
-                <p className="faint mt-0.5 text-xs">
-                  The same entry is logged on everyone you tick.
-                </p>
+                <p className="faint mt-0.5 text-xs">The same entry is logged on everyone you tick.</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Close"
-                className="btn btn-ghost btn-sm"
-              >
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="btn btn-ghost btn-sm">
                 <IconX size={13} />
               </button>
             </div>
@@ -128,46 +107,34 @@ export function ContactMultiSelect({
             </div>
 
             <ul className="min-h-0 flex-1 overflow-y-auto py-1">
-              {current && (
-                <li className="flex items-center gap-3 px-5 py-2 text-sm opacity-70">
-                  <span className="flex h-4 w-4 items-center justify-center rounded border border-[var(--brand)] bg-[var(--brand)] text-white">
-                    <IconCheck size={10} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {current.name}
-                    {current.company && <span className="faint"> · {current.company}</span>}
-                  </span>
-                  <span className="faint text-[0.66rem]">this contact</span>
+              <li className="flex items-center gap-3 px-5 py-2 text-sm opacity-70">
+                <span className="flex h-4 w-4 items-center justify-center rounded border border-[var(--brand)] bg-[var(--brand)] text-white">
+                  <IconCheck size={10} />
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {current.name}
+                  {current.company && <span className="faint"> · {current.company}</span>}
+                </span>
+                <span className="faint text-[0.66rem]">this contact</span>
+              </li>
+              {/* Picks stay listed even when the search moves on, so a tick is never lost from view. */}
+              {picked
+                .filter((contact) => !results.some((row) => row.id === contact.id))
+                .map((contact) => (
+                  <ContactRow key={contact.id} contact={contact} on onToggle={() => toggle(contact)} />
+                ))}
+              {results.map((contact) => (
+                <ContactRow key={contact.id} contact={contact} on={selected.has(contact.id)} onToggle={() => toggle(contact)} />
+              ))}
+              {!loading && results.length === 0 && (
+                <li className="faint px-5 py-6 text-center text-xs">
+                  {query.trim() ? "No other contacts match." : "Type a name, company or email."}
                 </li>
               )}
-              {visible.length === 0 && (
-                <li className="faint px-5 py-6 text-center text-xs">No other contacts match.</li>
-              )}
-              {visible.map((contact) => {
-                const on = selected.has(contact.id);
-                return (
-                  <li key={contact.id}>
-                    <label className="flex cursor-pointer items-center gap-3 px-5 py-2 text-sm hover:bg-[rgb(255_255_255/0.04)]">
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={() => toggle(contact.id)}
-                        className="h-4 w-4 accent-[var(--brand)]"
-                      />
-                      <span className="min-w-0 flex-1 truncate">
-                        {contact.name}
-                        {contact.company && <span className="faint"> · {contact.company}</span>}
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
             </ul>
 
             <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-3">
-              <span className="faint text-xs">
-                {picked.length + 1} selected
-              </span>
+              <span className="faint text-xs">{picked.length + 1} selected</span>
               <button type="button" onClick={() => setOpen(false)} className="btn btn-primary btn-sm">
                 Done
               </button>
@@ -176,5 +143,19 @@ export function ContactMultiSelect({
         </div>
       )}
     </>
+  );
+}
+
+function ContactRow({ contact, on, onToggle }: { contact: PickableContact; on: boolean; onToggle: () => void }) {
+  return (
+    <li>
+      <label className="flex cursor-pointer items-center gap-3 px-5 py-2 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+        <input type="checkbox" checked={on} onChange={onToggle} className="h-4 w-4 accent-[var(--brand)]" />
+        <span className="min-w-0 flex-1 truncate">
+          {contact.name}
+          {contact.company && <span className="faint"> · {contact.company}</span>}
+        </span>
+      </label>
+    </li>
   );
 }

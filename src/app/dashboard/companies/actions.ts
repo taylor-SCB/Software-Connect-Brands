@@ -7,7 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { CONTACT_STATUSES } from "@/lib/constants";
-import { normalizeWebsite } from "@/lib/companies";
+import { normalizeWebsite, normalizeState } from "@/lib/companies";
+import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -41,9 +42,19 @@ function companyData(parsed: z.infer<typeof companySchema>) {
     email: parsed.email ? parsed.email.toLowerCase() : null,
     website: normalizeWebsite(parsed.website || null),
     city: parsed.city || null,
-    state: parsed.state || null,
+    state: normalizeState(parsed.state || null),
     status: parsed.status,
   };
+}
+
+// Industry / Company Type from the picker, with anything new added to the
+// workspace's lists. Absent from the form (an older client, a test) means
+// leave the company's tags alone.
+async function tagData(formData: FormData, organizationId: string) {
+  const tags = readIndustryFields(formData);
+  if (!tags.touched) return {};
+  const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+  return { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) };
 }
 
 // Two companies with the same name is almost always a typo, and the
@@ -75,7 +86,9 @@ export async function createCompany(_prev: ActionState, formData: FormData): Pro
     return { error: "A company with that name already exists" };
   }
 
-  const company = await prisma.company.create({ data: { organizationId, ...data } });
+  const company = await prisma.company.create({
+    data: { organizationId, ...data, ...(await tagData(formData, organizationId)) },
+  });
   if (hasFile(logoFile)) {
     const logoUrl = await replaceImage({ organizationId, kind: "COMPANY_LOGO", file: logoFile, companyId: company.id });
     await prisma.company.update({ where: { id: company.id }, data: { logoUrl } });
@@ -115,7 +128,7 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
 
   const result = await prisma.company.updateMany({
     where: { id: id.data, organizationId },
-    data: { ...data, ...logo },
+    data: { ...data, ...logo, ...(await tagData(formData, organizationId)) },
   });
   if (result.count === 0) return { error: "Company not found" };
 
@@ -123,6 +136,24 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
   revalidatePath(`/dashboard/companies/${id.data}`);
   revalidatePath("/dashboard/contacts");
   return { success: "Company saved" };
+}
+
+// The star. Returns the new state so the button can settle on it.
+export async function setCompanyFavorite(
+  companyId: string,
+  favorite: boolean,
+): Promise<{ favorite: boolean } | { error: string }> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(companyId);
+  if (!id.success) return { error: "Missing company reference" };
+  const result = await prisma.company.updateMany({
+    where: { id: id.data, organizationId },
+    data: { favorite: Boolean(favorite) },
+  });
+  if (result.count === 0) return { error: "Company not found" };
+  revalidatePath("/dashboard/companies");
+  revalidatePath(`/dashboard/companies/${id.data}`);
+  return { favorite: Boolean(favorite) };
 }
 
 // The people stay; they just lose their company link (the database sets

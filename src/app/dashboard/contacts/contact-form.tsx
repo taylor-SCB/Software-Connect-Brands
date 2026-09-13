@@ -1,14 +1,17 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
-import { CompanyPicker } from "@/components/company-picker";
+import { CompanyPicker, type PickedCompany } from "@/components/company-picker";
+import { IndustryPicker, type IndustryPickList } from "@/components/industry-picker";
 import { ImageUploadField } from "@/components/image-upload-field";
 import type { ActionState } from "@/lib/forms";
 
 type ContactDefaults = {
   id?: string;
   companyName?: string | null;
+  // The company's current tags, when the contact already has one.
+  company?: PickedCompany | null;
   name?: string;
   title?: string | null;
   email?: string | null;
@@ -23,16 +26,22 @@ type ContactDefaults = {
 
 export function ContactForm({
   action,
-  companies,
+  pickList,
   defaults = {},
   submitLabel,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
-  companies: { id: string; name: string }[];
+  pickList: IndustryPickList;
   defaults?: ContactDefaults;
   submitLabel: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
+  // Which company the Company box currently names: an existing one (its
+  // tags load into the picker), a new name (blank picker), or nothing
+  // (Individual / Personal, nothing to pick).
+  const [company, setCompany] = useState<PickedCompany | null>(defaults.company ?? null);
+  const [typed, setTyped] = useState(defaults.companyName ?? "");
+  const pickerKey = company ? company.id : typed.trim() ? "new" : "none";
 
   return (
     <form action={formAction} className="space-y-4 p-5">
@@ -48,13 +57,27 @@ export function ContactForm({
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <CompanyPicker companies={companies} defaultName={defaults.companyName ?? ""} />
+        <CompanyPicker
+          defaultName={defaults.companyName ?? ""}
+          onChange={(picked, text) => {
+            setCompany(picked);
+            setTyped(text);
+          }}
+        />
         <Field
           label="Contact name"
           name="name"
           placeholder="Sam Rivera"
           defaultValue={defaults.name ?? ""}
           required
+        />
+        <IndustryPicker
+          key={pickerKey}
+          pickList={pickList}
+          defaultIndustries={company?.industries ?? []}
+          defaultTypes={company?.companyTypes ?? []}
+          disabled={!typed.trim()}
+          disabledReason="No company on this contact, so they count as a person, not a business. Type a company above to tag one."
         />
         <Field
           label="Title"

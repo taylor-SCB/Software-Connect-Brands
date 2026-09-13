@@ -13,6 +13,7 @@ import {
   IconLayers,
   IconBuilding,
   IconClock,
+  IconStar,
   IconUsers as IconAccount,
 } from "@/components/icons";
 
@@ -27,8 +28,24 @@ const NAV: {
   children?: NavChild[];
 }[] = [
   { href: "/dashboard", label: "Overview", Icon: IconGrid },
-  { href: "/dashboard/contacts", label: "Contacts", Icon: IconUsers },
-  { href: "/dashboard/companies", label: "Companies", Icon: IconBuilding },
+  {
+    href: "/dashboard/contacts",
+    label: "Contacts",
+    Icon: IconUsers,
+    children: [
+      { href: "/dashboard/contacts/favorites", label: "Favorite Contacts", Icon: IconStar },
+      { href: "/dashboard/contacts/with-deals", label: "Contacts with Deals", Icon: IconTrending },
+    ],
+  },
+  {
+    href: "/dashboard/companies",
+    label: "Companies",
+    Icon: IconBuilding,
+    children: [
+      { href: "/dashboard/companies/favorites", label: "Favorite Companies", Icon: IconStar },
+      { href: "/dashboard/companies/with-deals", label: "Companies with Deals", Icon: IconTrending },
+    ],
+  },
   {
     href: "/dashboard/deals",
     label: "Pipeline",

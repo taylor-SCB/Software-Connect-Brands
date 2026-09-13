@@ -107,6 +107,14 @@ the model to follow.
   (`scripts/migrate-if-production.cjs`), so **only a push to the live
   branch changes the live database**. Any migration must still be safe for
   rows that already exist.
+- **Pushing to the live branch from a session trips the "production
+  deploy" safety check** even after Taylor says yes, and a session cannot
+  grant itself the permission (that is blocked as self-modification, Sept
+  13, 2026). Two ways through: Taylor adds
+  `Bash(git push origin HEAD:claude/first-app-creation-cdtbrb)` to the
+  allow list in `.claude/settings.json` himself, or the session opens a
+  pull request from the working branch into the live branch and Taylor
+  clicks Merge on GitHub, which deploys the same way.
 - Vercel keeps every past deployment. A bad release is undone with **Instant
   Rollback** in the Deployments tab — ten seconds, doesn't touch data.
 - **You cannot change Vercel settings from here.** No tool exists for
@@ -118,6 +126,18 @@ the model to follow.
 Contacts (title, company, birthday, city/state, labeled notes with a
 Personal view, log one note or call on many contacts at once, an Activity
 overview box), companies (people, roll-ups of everything their people do),
+**Industry + Company Type** pick lists on companies, shown and edited from
+the contact form too, with "+ Add new industry / company type" and
+Individual / Personal for a contact with no company (Sept 13, 2026),
+**Contacts and Companies lists** that page at 10 / 50 / 100 with a search
+bar, stacking multi-select filters (State, Industry, Company Type, Company),
+Favorites / With deals / Needs attention toggles, a favorite star, and
+Favorite Contacts / Companies and Contacts / Companies with Deals sub-panes
+in the sidebar, plus **Import CSV** on both lists (one file of any size,
+batched with a progress bar, companies auto-created from a bare name,
+re-import updates instead of doubling, template download; Sept 13, 2026;
+a 26-finding bug audit the same day was fixed in full and its cases are in
+the browser suite),
 pipeline (Lead → Contacted → Quote Sent → Contract Sent → Won/Lost; every
 quote lives on a deal, a deal can hold many quotes, deal value comes from
 its quotes, sending paperwork moves the deal on its own), "how I got there
@@ -189,9 +209,19 @@ are all blocking before the first paying customer.
 - **The GitHub repository is public.**
 - Operator access (`isSuperAdmin`) is deliberately unreachable from the app.
   It is only ever set with SQL or `npm run promote-admin`.
-- **Every list page loads every row.** No pagination anywhere except the
-  dashboard activity feed. Fine at demo scale, a real problem for a
-  contractor with thousands of contacts. Deferred, not forgotten.
+- **Contacts and Companies page; the other lists still load every row.**
+  Contacts, Companies, their pickers and the company page's People list
+  are paged and searched in the database (Sept 13, 2026, proven at
+  200,000 contacts by `scripts/browser-tests/load-test.cjs`). Pipeline,
+  Quotes, Contracts, Products and the dashboard still load everything,
+  and the **New quote, New contract and Deal Tracker pages still ship the
+  whole contact list to the browser** for their pickers. Fine at demo
+  scale; the next thing to fix for a workspace that has imported a big
+  CRM.
+- **The import runs in the browser tab.** Any size works, but the tab
+  has to stay open (about 5 to 10 minutes for 200,000 rows). A
+  background job is the answer when a customer needs to walk away or
+  schedule syncs; it needs file storage (Vercel Blob) and a queue.
 - **A signed contract records only the name typed and the time.** Enough for
   ESIGN/UETA, thin if one is ever disputed — no IP address, no email
   confirmation.
@@ -201,13 +231,23 @@ are all blocking before the first paying customer.
 
 ## Testing
 
+**Bug audit of a session:** `/session-auditor`
+(`.claude/skills/session-auditor/SKILL.md`). Finders per area, dedupe,
+one quick skeptic per distinct defect, then fix everything confirmed with
+a regression step each, tie it out, and only then the release question.
+Built after the Sept 13, 2026 audit took an hour; the short form finds
+the same bugs in about ten minutes.
+
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
 suite, and the delete-confirmation suite. Four more are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
-27-step deal tracker + settings + uploads suite (both Sept 10, 2026).
+27-step deal tracker + settings + uploads suite (both Sept 10, 2026),
+the 17-step contacts import + filters + favorites suite and the
+200,000-row load test (both Sept 13, 2026; the load test seeds in SQL,
+takes several minutes, and must stay under its 2-second page budget).
 Each signs up its own workspace and scopes its lookups to it, so they can
 run back to back; still run them one at a time. All of them run against a local Postgres
 on port 5433 and must pass before anything is pushed. That local database

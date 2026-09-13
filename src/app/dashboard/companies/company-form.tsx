@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
 import { ImageUploadField } from "@/components/image-upload-field";
+import { IndustryPicker, type IndustryPickList } from "@/components/industry-picker";
 import type { ActionState } from "@/lib/forms";
 
 type CompanyDefaults = {
@@ -15,14 +16,18 @@ type CompanyDefaults = {
   state?: string | null;
   logoUrl?: string | null;
   status?: string;
+  industries?: string[];
+  companyTypes?: string[];
 };
 
 export function CompanyForm({
   action,
+  pickList,
   defaults = {},
   submitLabel,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
+  pickList: IndustryPickList;
   defaults?: CompanyDefaults;
   submitLabel: string;
 }) {
@@ -48,6 +53,21 @@ export function CompanyForm({
           defaultValue={defaults.name ?? ""}
           required
         />
+        <SelectField
+          label="Status"
+          name="status"
+          defaultValue={defaults.status ?? "LEAD"}
+          options={[
+            { value: "LEAD", label: "Lead" },
+            { value: "CUSTOMER", label: "Customer" },
+            { value: "ARCHIVED", label: "Archived" },
+          ]}
+        />
+        <IndustryPicker
+          pickList={pickList}
+          defaultIndustries={defaults.industries ?? []}
+          defaultTypes={defaults.companyTypes ?? []}
+        />
         <Field
           label="Main phone"
           name="phone"
@@ -68,16 +88,6 @@ export function CompanyForm({
           placeholder="samsdiner.com"
           defaultValue={defaults.website ?? ""}
           hint="https:// is added automatically."
-        />
-        <SelectField
-          label="Status"
-          name="status"
-          defaultValue={defaults.status ?? "LEAD"}
-          options={[
-            { value: "LEAD", label: "Lead" },
-            { value: "CUSTOMER", label: "Customer" },
-            { value: "ARCHIVED", label: "Archived" },
-          ]}
         />
         <div className="hidden sm:block" />
         <Field label="City" name="city" placeholder="Austin" defaultValue={defaults.city ?? ""} />

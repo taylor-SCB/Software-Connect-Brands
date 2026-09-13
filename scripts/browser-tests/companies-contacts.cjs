@@ -257,6 +257,8 @@ function backLink(page) {
   await dialog.waitFor();
   assert.ok(await dialog.getByText("this contact").isVisible(), "current contact locked in");
   await dialog.getByPlaceholder("Search contacts…").fill("sara");
+  // The picker asks the server as you type (Sept 13, 2026), so wait for the answer.
+  await dialog.locator("label", { hasText: "Sara Lee" }).waitFor();
   assert.equal(await dialog.locator("input[type=checkbox]").count(), 1, "search narrows the list");
   await dialog.locator("input[type=checkbox]").check();
   await shot(page, "07-include-multiple");
