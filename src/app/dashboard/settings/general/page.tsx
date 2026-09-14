@@ -48,6 +48,7 @@ export default async function CompanyGeneralPage() {
             defaultPaymentPreset: organization.defaultPaymentPreset,
             defaultDepositPercent: organization.defaultDepositPercent,
             defaultInstallmentCount: organization.defaultInstallmentCount,
+            paymentInstructions: organization.paymentInstructions,
           }}
           canEdit={canEdit}
         />

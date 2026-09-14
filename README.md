@@ -301,6 +301,34 @@ the dashboard opens with **Active jobs**. `npm run recompute-projects`
 re-derives every stored number from the paperwork and reports any drift;
 it should always say there is none.
 
+**The Money tab on a job** (Sept 14, 2026) — three strips across a job:
+Budget, Money, Files. Money answers the two questions a contractor asks
+daily.
+
+*Who owes me.* Every payment row on the agreements the customer signed,
+with what is left on each. **Send as invoice** stamps it **INV-1000** and
+mints a link the customer opens at `/i/<token>`: the amount due, when it
+is due, what it covers, the payments already received, and how to pay you
+from **Settings → General → How customers pay you**. It downloads as a
+PDF. Sending the same row twice hands back the same invoice number rather
+than a second one. Recording what came in is done right on the job —
+amount, date, method, a reference — and the customer's copy of the
+invoice updates with it. The app never emails the invoice; there is a link
+to copy, and the screen says so.
+
+*Who I owe.* Materials on the job whose product carries a distributor can
+be turned into that supplier's **purchase order at what they cost you**,
+in one tap, and the supplier gets a company record tagged *Distributor*
+so it shows up in the CRM like anybody else. Bills are grouped by
+supplier with what is paid of what was ordered. A draft order counts as
+Committed, never Spent.
+
+**Change orders** are raised on the job and land on one scope: more work
+pushes that bar up, and a credit pulls it down and comes off what the
+customer owes rather than showing as something to chase. **Files** on a
+job hold the other party's own signed contract and anything else the job
+needs; a job's file needs a login, unlike a logo.
+
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five

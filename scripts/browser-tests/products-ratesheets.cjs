@@ -192,9 +192,17 @@ async function login(page) {
   assert.equal(await page.getByLabel("New contact 1 name").count(), 0, "new-contact rows cleared after save");
   await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByText("Product saved").waitFor();
-  const contactCounts = await sql(`SELECT name, count(*)::int AS n FROM "DistributorContact" WHERE name IN ('Sam Rep','Pat Desk') GROUP BY name ORDER BY name`);
+  // Scoped to this run's workspace: other suites seed reps of their own,
+  // and a global count would read their rows as duplicates of these.
+  const contactCounts = await sql(`SELECT dc.name, count(*)::int AS n FROM "DistributorContact" dc
+     JOIN "Organization" o ON o.id = dc."organizationId"
+     WHERE o.slug LIKE 'test-ratesheets-co%' AND dc.name IN ('Sam Rep','Pat Desk')
+     GROUP BY dc.name ORDER BY dc.name`);
   assert.deepEqual(contactCounts.rows, [{ name: "Pat Desk", n: 1 }, { name: "Sam Rep", n: 1 }], "no duplicate contacts after saving twice");
-  const linked = await sql(`SELECT count(*)::int AS n FROM "_DistributorContactToProduct"`);
+  const linked = await sql(`SELECT count(*)::int AS n FROM "_DistributorContactToProduct" l
+     JOIN "DistributorContact" dc ON dc.id = l."A"
+     JOIN "Organization" o ON o.id = dc."organizationId"
+     WHERE o.slug LIKE 'test-ratesheets-co%'`);
   assert.equal(linked.rows[0].n, 2, "both contacts still linked to the product");
   await page.reload();
   assert.ok(await page.getByLabel("Select Sam Rep").isChecked());

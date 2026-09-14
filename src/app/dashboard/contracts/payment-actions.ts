@@ -8,6 +8,7 @@ import { getTimeZone } from "@/lib/organization";
 import { formatCents } from "@/lib/format";
 import { dateToIso, isoToDate, todayIso } from "@/lib/payments";
 import { paidCentsOf, settleRow, type PaymentView } from "@/lib/money";
+import { publicToken } from "@/lib/tokens";
 import { refreshProjectTotals } from "@/lib/projects";
 
 // Recording money against one row of a contract's payment table. Each
@@ -20,6 +21,10 @@ export type RowState = {
   settled: boolean;
   receivedCents: number;
   payments: PaymentView[];
+  // Set once the row has been sent as an invoice.
+  invoiceNumber: number | null;
+  invoiceToken: string | null;
+  reference: string | null;
 };
 
 export type PaymentActionResult = { success?: string; error?: string; row?: RowState };
@@ -50,6 +55,10 @@ async function loadRow(contractPaymentId: string, organizationId: string) {
       label: true,
       amountCents: true,
       paidAt: true,
+      invoiceNumber: true,
+      invoiceToken: true,
+      issuedAt: true,
+      reference: true,
       contract: { select: { id: true, dealId: true, publicToken: true, projectId: true } },
       payments: {
         orderBy: [{ paidOn: "asc" }, { createdAt: "asc" }],
@@ -65,6 +74,9 @@ function rowState(row: LoadedRow): RowState {
   return {
     settled: Boolean(row.paidAt),
     receivedCents: paidCentsOf(row),
+    invoiceNumber: row.invoiceNumber,
+    invoiceToken: row.invoiceToken,
+    reference: row.reference,
     payments: row.payments.map((payment) => ({
       id: payment.id,
       amountCents: payment.amountCents,
@@ -196,4 +208,79 @@ export async function removeRowPayments(contractPaymentId: string): Promise<Paym
   });
 
   return reply(row.id, organizationId, "Payments removed");
+}
+
+/* ------------------------------- Invoices ------------------------------- */
+
+// Sending a row as an invoice: it gets INV-n and a link the customer can
+// open without a login. The money was already owed the moment they
+// signed; this is the piece of paper that goes out to chase it.
+export async function sendInvoice(contractPaymentId: string): Promise<PaymentActionResult & { token?: string }> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(contractPaymentId);
+  if (!id.success) return { error: "Missing payment row reference" };
+
+  const row = await prisma.contractPayment.findFirst({
+    where: { id: id.data, contract: { organizationId } },
+    select: {
+      id: true,
+      label: true,
+      amountCents: true,
+      invoiceNumber: true,
+      invoiceToken: true,
+      contract: { select: { id: true, status: true, payable: true, dealId: true, publicToken: true, projectId: true } },
+    },
+  });
+  if (!row) return { error: "Payment row not found" };
+  if (row.contract.payable) return { error: "This is money going out — a supplier invoices you, not the other way round." };
+  if (row.contract.status !== "SIGNED") return { error: "The customer has to sign before you invoice them." };
+  if (row.amountCents <= 0) return { error: "There is nothing to invoice on this row." };
+  // Already sent: hand back the same link rather than minting a second
+  // number for the same money.
+  if (row.invoiceToken) {
+    return { success: `INV-${row.invoiceNumber} is already out`, token: row.invoiceToken };
+  }
+
+  const token = publicToken();
+  const numbered = await prisma.$transaction(async (tx) => {
+    const organization = await tx.organization.update({
+      where: { id: organizationId },
+      data: { nextInvoiceNumber: { increment: 1 } },
+      select: { nextInvoiceNumber: true },
+    });
+    const number = organization.nextInvoiceNumber - 1;
+    await tx.contractPayment.update({
+      where: { id: row.id },
+      data: { invoiceNumber: number, invoiceToken: token, issuedAt: new Date(), organizationId },
+    });
+    return number;
+  });
+
+  revalidateMoney(row.contract);
+  const reply = await loadRow(row.id, organizationId);
+  return {
+    success: `INV-${numbered} ready to send`,
+    token,
+    row: reply ? rowState(reply) : undefined,
+  };
+}
+
+// What the supplier's own invoice number is on a bill, so it can be
+// matched against their paperwork.
+export async function setRowReference(contractPaymentId: string, reference: string): Promise<PaymentActionResult> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(contractPaymentId);
+  if (!id.success) return { error: "Missing payment row reference" };
+
+  const row = await prisma.contractPayment.findFirst({
+    where: { id: id.data, contract: { organizationId } },
+    select: { id: true },
+  });
+  if (!row) return { error: "Payment row not found" };
+
+  await prisma.contractPayment.update({
+    where: { id: row.id },
+    data: { reference: reference.trim().slice(0, 120) || null },
+  });
+  return reply(row.id, organizationId, "Saved");
 }

@@ -11,6 +11,7 @@ import { lineTotalCents } from "@/lib/quote-math";
 import { PageHeader, Card, CardHeader, StatTile, StatusBadge, Meter, Badge } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
 import { IconClock } from "@/components/icons";
+import { ProjectTabs } from "./project-tabs";
 import { ProjectHeaderForm } from "./project-header-form";
 import { ScopeCard } from "./scope-card";
 import { AddScopeForm } from "./add-scope-form";
@@ -136,6 +137,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           {project.awardedOffline && " · recorded by hand"}
         </span>
       </div>
+
+      <ProjectTabs projectId={project.id} current="budget" />
 
       <ProjectHeaderForm
         projectId={project.id}

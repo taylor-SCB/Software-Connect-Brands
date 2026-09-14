@@ -167,7 +167,7 @@ async function signAs(browser, token, name) {
   await page.locator("#col-2-contact").selectOption("ctc_sup_pj");
   await page.getByRole("checkbox", { name: "Put Smart locks on Contract B" }).check();
   await page.locator("[data-testid=create-contracts]").click();
-  await page.getByText(/contracts created/).waitFor();
+  await page.waitForURL(/created=\d+/);
 
   const contracts = (await sql(
     `SELECT id, number, payable, "publicToken" FROM "Contract" WHERE "organizationId"=$1 ORDER BY number`,

@@ -326,6 +326,18 @@ export const PROJECT_STAGE_LABELS: Record<ProjectStageValue, string> = {
 // The stages a job is still live in, which is what the list shows first.
 export const OPEN_PROJECT_STAGES = ["AWARDED", "ACTIVE", "ON_HOLD"] as const;
 
+// What a file on a job is for. "Signed contract" is the one that matters
+// beyond record-keeping: when the other party's paper was the paper that
+// got signed, this is where their copy lives.
+export const PROJECT_FILE_CATEGORIES = [
+  "Signed contract",
+  "Photo",
+  "Receipt",
+  "Permit",
+  "Plan or drawing",
+  "Other",
+] as const;
+
 // A contact with no company at all — a homeowner wanting a window quote —
 // reads as this company type on the list and in the filter. It is not a
 // pick-list row: it means "no company", so it can't be picked on a form.

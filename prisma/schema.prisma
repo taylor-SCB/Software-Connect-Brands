@@ -71,6 +71,11 @@ model Organization {
   // PRJ-n on an awarded project, allocated like the quote and contract
   // numbers above.
   nextProjectNumber       Int           @default(1000)
+  // INV-n, stamped on a payment row when it is sent as an invoice.
+  nextInvoiceNumber       Int           @default(1000)
+  // "Checks to Acme LLC, 12 Main St. Zelle: pay@acme.com" — printed on
+  // the invoice a customer opens, since nothing here takes card payments.
+  paymentInstructions     String        @default("")
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -185,12 +190,13 @@ model Company {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  contacts   Contact[]
-  notes      Note[]
-  activities Activity[]
-  uploads    Upload[]
-  contracts  Contract[]
-  projects   Project[]
+  contacts    Contact[]
+  notes       Note[]
+  activities  Activity[]
+  uploads     Upload[]
+  contracts   Contract[]
+  projects    Project[]
+  distributor Distributor?
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -606,6 +612,12 @@ model Contract {
   // created it, and every purchase order and change order since.
   projectId        String?
   project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  // A change order says which agreement it changes. Shown on both, so
+  // neither reads as a stray document; the budget math works off the
+  // rows, not this link.
+  amendsContractId String?
+  amends           Contract?         @relation("Amends", fields: [amendsContractId], references: [id], onDelete: SetNull)
+  amendedBy        Contract[]        @relation("Amends")
   publicToken      String            @unique
   sentAt           DateTime?
   signedAt         DateTime?
@@ -703,9 +715,19 @@ model ContractPayment {
   // Written only by settleRow in src/lib/money.ts, never by hand.
   paidAt         DateTime?
   position       Int         @default(0)
+  // Sending a row as an invoice stamps it: INV-n, a link the customer can
+  // open without a login, and when it went out. A row with no number is
+  // still owed — it is just on the signed agreement rather than on an
+  // invoice of its own.
+  invoiceNumber  Int?
+  invoiceToken   String?     @unique
+  issuedAt       DateTime?
+  // Their invoice or check number on a bill from a supplier.
+  reference      String?
 
   payments Payment[]
 
+  @@unique([organizationId, invoiceNumber])
   @@index([contractId])
   @@index([organizationId])
 }
@@ -790,6 +812,11 @@ model Distributor {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
+  // The company a purchase order to this distributor is addressed to.
+  // Made the first time materials are ordered from them, so the money
+  // owed to them lands on one record rather than two.
+  companyId      String?      @unique
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -937,6 +964,9 @@ enum UploadKind {
   CONTACT_IMAGE
   COMPLIANCE
   MARKETING
+  // Anything that belongs to a job: a photo from site, a receipt, or the
+  // other party's own contract when theirs was the paper that got signed.
+  PROJECT_FILE
 }
 
 // Any file a workspace uploads: logos, avatars, W-9s, brochures. Bytes
@@ -966,10 +996,13 @@ model Upload {
   company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   contactId      String?
   contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  projectId      String?
+  project        Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, kind])
+  @@index([projectId])
   @@index([userId])
   @@index([companyId])
   @@index([contactId])
@@ -1054,6 +1087,7 @@ model Project {
 
   scopes    ProjectScope[]
   contracts Contract[]
+  uploads   Upload[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])

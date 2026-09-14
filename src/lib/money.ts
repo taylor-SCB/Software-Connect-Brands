@@ -158,7 +158,10 @@ function toBalances(rows: BalanceRow[]): Map<string, Balance> {
 }
 
 // What each of these customers still owes: their signed Money-in
-// paperwork, less what has been recorded against it. Money-out purchase
+// paperwork, less what has been recorded against it. A credit from a
+// change order is a negative row, so it comes off the total the same way
+// a payment does; only a positive row can be chased, which is why the
+// overdue count and the next due date ignore credits. Money-out purchase
 // orders are what we owe a supplier, so they are never in here — a
 // company that is both shows "Owes you" on its row and "You owe them" on
 // its page, never one netted number.
@@ -198,7 +201,6 @@ export async function owedBy(
      WHERE c."organizationId" = ${organizationId}
        AND c.payable = false
        AND c.status = 'SIGNED'
-       AND cp."amountCents" > 0
        AND ${scope}
      GROUP BY 1
   `;
@@ -229,7 +231,6 @@ export async function payableBy(
      WHERE c."organizationId" = ${organizationId}
        AND c.payable = true
        AND c.status IN ('SENT', 'SIGNED')
-       AND cp."amountCents" > 0
        AND c."companyId" = ANY(${companyIds})
      GROUP BY 1
   `;
@@ -243,10 +244,10 @@ export async function owedTotals(organizationId: string, today: string) {
   >`
     SELECT COALESCE(SUM(cp."amountCents" - COALESCE(paid.total, 0)), 0)::int AS owed,
            COUNT(*) FILTER (
-             WHERE cp."paidAt" IS NULL AND cp."dueOn" < ${today}::date
+             WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
            )::int AS overdue,
            COUNT(DISTINCT COALESCE(c."companyId", c."contactId")) FILTER (
-             WHERE cp."paidAt" IS NULL
+             WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0
            )::int AS customers
       FROM "Contract" c
       JOIN "ContractPayment" cp ON cp."contractId" = c.id
@@ -256,8 +257,6 @@ export async function owedTotals(organizationId: string, today: string) {
      WHERE c."organizationId" = ${organizationId}
        AND c.payable = false
        AND c.status = 'SIGNED'
-       AND cp."amountCents" > 0
-       AND cp."paidAt" IS NULL
   `;
   const row = rows[0];
   return {

@@ -18,6 +18,7 @@ function PaymentTablePreset({
     defaultPaymentPreset: string;
     defaultDepositPercent: number;
     defaultInstallmentCount: number;
+    paymentInstructions: string;
   };
 }) {
   const [preset, setPreset] = useState(organization.defaultPaymentPreset);
@@ -90,6 +91,24 @@ function PaymentTablePreset({
           </div>
         )}
       </div>
+      <div>
+        <label className="label" htmlFor="paymentInstructions">
+          How to pay you
+          <span className="faint font-normal"> · optional</span>
+        </label>
+        <textarea
+          id="paymentInstructions"
+          name="paymentInstructions"
+          rows={3}
+          defaultValue={organization.paymentInstructions}
+          placeholder={"Checks to Acme LLC, 12 Main St, Austin TX 78701\nZelle: pay@acmeservices.com"}
+          className="input w-full"
+          data-testid="payment-instructions"
+        />
+        <p className="faint mt-1 text-xs">
+          Printed on every invoice a customer opens. Nothing here takes card payments yet.
+        </p>
+      </div>
     </div>
   );
 }
@@ -115,6 +134,7 @@ export function CompanyInfoForm({
     defaultPaymentPreset: string;
     defaultDepositPercent: number;
     defaultInstallmentCount: number;
+    paymentInstructions: string;
   };
   canEdit: boolean;
 }) {

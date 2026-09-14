@@ -1,4 +1,4 @@
-import { formatDate, formatDateTime, formatCents } from "@/lib/format";
+import { formatDate, formatDateTime, formatDay, formatCents } from "@/lib/format";
 import { TAG_LABELS, type LineItemTagValue } from "@/lib/constants";
 import { contractTotalCents } from "@/lib/contracts";
 
@@ -144,7 +144,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                     {payment.label}
                     {payment.paidAt && <span className="ml-2 text-xs text-[#047857]">Paid {formatDate(payment.paidAt, zone)}</span>}
                   </td>
-                  <td className="py-1.5 pr-2 text-[#6b7280]">{payment.dueOn ? formatDate(payment.dueOn, "UTC") : "—"}</td>
+                  <td className="py-1.5 pr-2 text-[#6b7280]">{payment.dueOn ? formatDay(payment.dueOn) : "—"}</td>
                   <td className="py-1.5 text-right tabular-nums">{formatCents(payment.amountCents)}</td>
                 </tr>
               ))}

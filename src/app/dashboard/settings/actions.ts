@@ -137,6 +137,9 @@ const companyInfoSchema = z.object({
   defaultPaymentPreset: z.enum(SCHEDULE_PRESETS).optional(),
   defaultDepositPercent: z.coerce.number().int().min(1, "A deposit is at least 1%").max(99, "A deposit is under 100%").optional(),
   defaultInstallmentCount: z.coerce.number().int().min(2, "Installments start at 2").max(60, "Keep installments under 60").optional(),
+  // Printed on every invoice a customer opens, since nothing here takes
+  // a card payment yet.
+  paymentInstructions: z.string().trim().max(1000, "Keep this under 1,000 characters").optional(),
 });
 
 export async function updateCompanyInfo(
@@ -167,6 +170,7 @@ export async function updateCompanyInfo(
     defaultPaymentPreset: formData.get("defaultPaymentPreset") ?? undefined,
     defaultDepositPercent: formData.get("defaultDepositPercent") ?? undefined,
     defaultInstallmentCount: formData.get("defaultInstallmentCount") ?? undefined,
+    paymentInstructions: formData.get("paymentInstructions") ?? undefined,
   });
   if (!parsed.ok) return { error: parsed.error };
 
@@ -200,6 +204,7 @@ export async function updateCompanyInfo(
       ...(parsed.data.defaultPaymentPreset ? { defaultPaymentPreset: parsed.data.defaultPaymentPreset } : {}),
       ...(parsed.data.defaultDepositPercent ? { defaultDepositPercent: parsed.data.defaultDepositPercent } : {}),
       ...(parsed.data.defaultInstallmentCount ? { defaultInstallmentCount: parsed.data.defaultInstallmentCount } : {}),
+      paymentInstructions: parsed.data.paymentInstructions ?? "",
       ...logo,
     },
   });

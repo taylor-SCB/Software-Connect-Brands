@@ -68,6 +68,14 @@ export function formatDate(date: Date | string, timeZone?: string | null) {
   return dateFormatter(safeZone(timeZone)).format(new Date(date));
 }
 
+// A calendar date with no time on it — a due date, the day a payment was
+// made, a birthday. Postgres hands these back as midnight UTC, so showing
+// them in a zone behind UTC would read as the day before. They are the
+// same day everywhere, so they are always formatted in UTC.
+export function formatDay(date: Date | string) {
+  return dateFormatter("UTC").format(new Date(date));
+}
+
 export function formatDateTime(date: Date | string, timeZone?: string | null) {
   return dateTimeFormatter(safeZone(timeZone)).format(new Date(date));
 }

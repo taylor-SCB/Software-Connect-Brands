@@ -6,8 +6,9 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { getTimeZone } from "@/lib/organization";
 import { parseForm, type ActionState } from "@/lib/forms";
-import { PROJECT_STAGES } from "@/lib/constants";
+import { PROJECT_STAGES, PROJECT_FILE_CATEGORIES } from "@/lib/constants";
 import { zonedNoon } from "@/lib/money";
+import { dollarsToCents, formatCents } from "@/lib/format";
 import { refreshTotals, refreshProjectTotals, awardFromContract, DEFAULT_SCOPE_NAME } from "@/lib/projects";
 import { ensureServiceType } from "@/lib/service-types";
 import { advanceDealStage } from "@/lib/deals";
@@ -16,6 +17,7 @@ import { contractTotalCents } from "@/lib/contracts";
 import { loadMergeContext } from "@/lib/merge-data";
 import { renderMergeFields } from "@/lib/merge";
 import { publicToken } from "@/lib/tokens";
+import { hasFile, readUpload, MAX_DOCUMENT_BYTES } from "@/lib/uploads";
 import { pickPrimaryQuote } from "@/lib/deals";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -442,4 +444,502 @@ export async function createProjectFromContract(contractId: string): Promise<Act
 
 export async function todayInZone() {
   return todayIso(await getTimeZone());
+}
+
+/* --------------------------- Ordering materials --------------------------- */
+
+// The suppliers behind the materials on a job, from the distributor on
+// each product, with what has not been ordered from them yet.
+export async function materialsToOrder(projectId: string) {
+  const { organizationId } = await requireSession();
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, organizationId },
+    select: { id: true, dealId: true },
+  });
+  if (!project) return [];
+
+  // Rows on the customer's own signed paperwork are the work sold; the
+  // ones with a product that has a distributor are what has to be bought.
+  const lines = await prisma.contractLineItem.findMany({
+    where: {
+      contract: { organizationId, projectId: project.id, payable: false, status: "SIGNED" },
+      quoteLineItem: { product: { distributorId: { not: null } } },
+    },
+    select: {
+      id: true,
+      name: true,
+      quantity: true,
+      unitCostCents: true,
+      quoteLineItemId: true,
+      quoteLineItem: {
+        select: {
+          id: true,
+          product: {
+            select: { id: true, name: true, distributor: { select: { id: true, name: true, companyId: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  // Which rows are already on a purchase order for this job.
+  const ordered = await prisma.contractLineItem.findMany({
+    where: { contract: { organizationId, projectId: project.id, payable: true }, quoteLineItemId: { not: null } },
+    select: { quoteLineItemId: true },
+  });
+  const alreadyOrdered = new Set(ordered.map((row) => row.quoteLineItemId));
+
+  const bySupplier = new Map<
+    string,
+    { distributorId: string; name: string; companyId: string | null; lines: { id: string; name: string; quantity: number; costCents: number }[] }
+  >();
+  for (const line of lines) {
+    const distributor = line.quoteLineItem?.product?.distributor;
+    if (!distributor) continue;
+    if (alreadyOrdered.has(line.quoteLineItemId)) continue;
+    const entry = bySupplier.get(distributor.id) ?? {
+      distributorId: distributor.id,
+      name: distributor.name,
+      companyId: distributor.companyId,
+      lines: [],
+    };
+    entry.lines.push({
+      id: line.id,
+      name: line.name,
+      quantity: line.quantity,
+      costCents: Math.round((line.unitCostCents ?? 0) * line.quantity),
+    });
+    bySupplier.set(distributor.id, entry);
+  }
+  return Array.from(bySupplier.values());
+}
+
+// "Order materials": makes the purchase order to a supplier from the job's
+// own rows, at what the products cost, ready to review and send. The
+// distributor gets a company record the first time, so what is owed to
+// them lands on one place rather than two.
+export async function orderFromSupplier(
+  projectId: string,
+  distributorId: string,
+): Promise<ActionState & { contractId?: string }> {
+  const { organizationId, userId } = await requireSession();
+
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, organizationId },
+    select: { id: true, name: true, dealId: true, contactId: true },
+  });
+  if (!project) return { error: "Project not found" };
+
+  const distributor = await prisma.distributor.findFirst({
+    where: { id: distributorId, organizationId },
+    select: {
+      id: true,
+      name: true,
+      companyId: true,
+      contacts: { orderBy: { createdAt: "asc" }, take: 1, select: { id: true, name: true, email: true, phone: true } },
+    },
+  });
+  if (!distributor) return { error: "Supplier not found" };
+
+  const suppliers = await materialsToOrder(projectId);
+  const mine = suppliers.find((entry) => entry.distributorId === distributorId);
+  if (!mine || mine.lines.length === 0) {
+    return { error: `Nothing left to order from ${distributor.name}.` };
+  }
+
+  const template =
+    (await prisma.contractTemplate.findFirst({
+      where: { organizationId, type: "Purchase Order" },
+      select: { id: true, name: true, type: true, body: true },
+    })) ??
+    (await prisma.contractTemplate.findFirst({
+      where: { organizationId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true, type: true, body: true },
+    }));
+  if (!template) return { error: "Add a contract template first." };
+
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { defaultPaymentTerms: true },
+  });
+  const owner = await prisma.user.findFirst({ where: { id: userId }, select: { name: true } });
+
+  const lines = await prisma.contractLineItem.findMany({
+    where: { id: { in: mine.lines.map((line) => line.id) } },
+    select: {
+      name: true,
+      description: true,
+      quantity: true,
+      unitCostCents: true,
+      unitPriceCents: true,
+      tag: true,
+      serviceType: true,
+      scopeId: true,
+      quoteLineItemId: true,
+    },
+  });
+
+  const contractId = await prisma.$transaction(async (tx) => {
+    // The supplier as a company, made once and reused after that.
+    let companyId = distributor.companyId;
+    if (!companyId) {
+      const existing = await tx.company.findFirst({
+        where: { organizationId, name: { equals: distributor.name, mode: "insensitive" } },
+        select: { id: true },
+      });
+      companyId =
+        existing?.id ??
+        (
+          await tx.company.create({
+            data: {
+              organizationId,
+              name: distributor.name,
+              industries: ["Service Provider"],
+              companyTypes: ["Distributor"],
+              status: "CUSTOMER",
+            },
+            select: { id: true },
+          })
+        ).id;
+      await tx.distributor.update({ where: { id: distributor.id }, data: { companyId } });
+    }
+
+    // Someone to address it to. The distributor's own contact if there is
+    // one, else a placeholder on their company that can be renamed.
+    let contactId: string;
+    const rep = distributor.contacts[0];
+    const known = rep
+      ? await tx.contact.findFirst({
+          where: { organizationId, companyId, name: { equals: rep.name, mode: "insensitive" } },
+          select: { id: true },
+        })
+      : await tx.contact.findFirst({ where: { organizationId, companyId }, select: { id: true } });
+    if (known) {
+      contactId = known.id;
+    } else {
+      const created = await tx.contact.create({
+        data: {
+          organizationId,
+          companyId,
+          name: rep?.name ?? `${distributor.name} orders`,
+          email: rep?.email ?? null,
+          phone: rep?.phone ?? null,
+          status: "CUSTOMER",
+        },
+        select: { id: true },
+      });
+      contactId = created.id;
+    }
+
+    const numbered = await tx.organization.update({
+      where: { id: organizationId },
+      data: { nextContractNumber: { increment: 1 } },
+      select: { nextContractNumber: true },
+    });
+    const number = numbered.nextContractNumber - 1;
+
+    const context = await loadMergeContext({
+      organizationId,
+      contactId,
+      companyId,
+      dealId: project.dealId,
+      quoteId: null,
+      contractNumber: `CON-${number}`,
+      paymentTerms: organization.defaultPaymentTerms,
+      signerName: owner?.name ?? null,
+    });
+
+    // Priced at what the material costs, which is what a purchase order
+    // is: the sell price is the customer's business, not the supplier's.
+    const lineItems = lines.map((line, position) => ({
+      name: line.name,
+      description: line.description,
+      quantity: line.quantity,
+      unitPriceCents: line.unitCostCents ?? 0,
+      tag: line.tag,
+      serviceType: line.serviceType,
+      unitCostCents: line.unitCostCents,
+      scopeId: line.scopeId,
+      quoteLineItemId: line.quoteLineItemId,
+      position,
+    }));
+    const totalCents = contractTotalCents(lineItems);
+
+    const contract = await tx.contract.create({
+      data: {
+        organizationId,
+        contactId,
+        companyId,
+        dealId: project.dealId,
+        projectId: project.id,
+        templateId: template.id,
+        number,
+        title: `${distributor.name} — ${project.name}`,
+        type: template.type,
+        payable: true,
+        body: renderMergeFields(template.body, context),
+        publicToken: publicToken(),
+        senderSignerName: owner?.name ?? null,
+        paymentTerms: organization.defaultPaymentTerms,
+        lineItems: { create: lineItems },
+        payments: {
+          create: [
+            {
+              organizationId,
+              label: "Due on invoice",
+              kind: "BALANCE",
+              amountCents: totalCents,
+              position: 0,
+            },
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    await refreshTotals(tx, organizationId, project.id);
+    return contract.id;
+  });
+
+  revalidateProject(project.id);
+  revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/companies");
+  return { success: `Purchase order drafted for ${distributor.name}`, contractId };
+}
+
+/* ------------------------------ Change orders ------------------------------ */
+
+const changeOrderSchema = z.object({
+  projectId: idSchema,
+  scopeId: idSchema,
+  description: z.string().trim().min(1, "Say what is changing").max(160),
+  amount: z.string().trim().min(1, "Enter an amount"),
+  signerName: z.string().trim().max(120).optional(),
+  signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date").optional(),
+  dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+// More work, or less. A change order is an agreement of its own that
+// names the one it changes; signing it moves that scope's awarded amount
+// up or down. A credit reads as a credit and lowers what is owed.
+export async function createChangeOrder(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = parseForm(changeOrderSchema, {
+    projectId: formData.get("projectId"),
+    scopeId: formData.get("scopeId"),
+    description: formData.get("description"),
+    amount: formData.get("amount"),
+    signerName: formData.get("signerName") ?? undefined,
+    signedOn: formData.get("signedOn") ?? undefined,
+    dueOn: formData.get("dueOn") ?? undefined,
+  });
+  if (!parsed.ok) return { error: parsed.error };
+
+  const amountCents = dollarsToCents(parsed.data.amount);
+  if (amountCents === 0) return { error: "Enter how much more, or how much less with a minus." };
+
+  const project = await prisma.project.findFirst({
+    where: { id: parsed.data.projectId, organizationId },
+    select: {
+      id: true,
+      name: true,
+      dealId: true,
+      contactId: true,
+      companyId: true,
+      contracts: {
+        where: { payable: false, status: "SIGNED" },
+        orderBy: { number: "asc" },
+        take: 1,
+        select: { id: true, number: true, templateId: true, paymentTerms: true },
+      },
+    },
+  });
+  if (!project) return { error: "Project not found" };
+  if (!project.contactId) return { error: "This job has no customer on it." };
+
+  const scope = await prisma.projectScope.findFirst({
+    where: { id: parsed.data.scopeId, projectId: project.id },
+    select: { id: true, name: true },
+  });
+  if (!scope) return { error: "Scope not found" };
+
+  const template =
+    (await prisma.contractTemplate.findFirst({
+      where: { organizationId, type: "Change Order" },
+      select: { id: true, name: true, type: true, body: true },
+    })) ??
+    (await prisma.contractTemplate.findFirst({
+      where: { organizationId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true, type: true, body: true },
+    }));
+  if (!template) return { error: "Add a contract template first." };
+
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { defaultPaymentTerms: true },
+  });
+  const owner = await prisma.user.findFirst({ where: { id: userId }, select: { name: true } });
+  const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  const signedOn = parsed.data.signedOn || today;
+  const amends = project.contracts[0] ?? null;
+  const credit = amountCents < 0;
+
+  await prisma.$transaction(async (tx) => {
+    const numbered = await tx.organization.update({
+      where: { id: organizationId },
+      data: { nextContractNumber: { increment: 1 } },
+      select: { nextContractNumber: true },
+    });
+    const number = numbered.nextContractNumber - 1;
+
+    const context = await loadMergeContext({
+      organizationId,
+      contactId: project.contactId!,
+      companyId: project.companyId,
+      dealId: project.dealId,
+      quoteId: null,
+      contractNumber: `CON-${number}`,
+      paymentTerms: amends?.paymentTerms ?? organization.defaultPaymentTerms,
+      signerName: owner?.name ?? null,
+    });
+
+    const contract = await tx.contract.create({
+      data: {
+        organizationId,
+        contactId: project.contactId!,
+        companyId: project.companyId,
+        dealId: project.dealId,
+        projectId: project.id,
+        amendsContractId: amends?.id ?? null,
+        templateId: template.id,
+        number,
+        title: parsed.data.description,
+        type: template.type,
+        payable: false,
+        body: renderMergeFields(template.body, context),
+        // Recorded as agreed: a change order is usually a conversation on
+        // site, so it is signed the same way "Mark signed" records one.
+        status: "SIGNED",
+        signedAt: zonedNoon(signedOn, timeZone),
+        signerName: parsed.data.signerName || null,
+        signedOffline: true,
+        signedNote: `Change order on ${project.name}`,
+        publicToken: publicToken(),
+        senderSignerName: owner?.name ?? null,
+        paymentTerms: amends?.paymentTerms ?? organization.defaultPaymentTerms,
+        lineItems: {
+          create: [
+            {
+              name: parsed.data.description,
+              description: credit ? `Credit on ${scope.name}` : `Added to ${scope.name}`,
+              quantity: 1,
+              unitPriceCents: amountCents,
+              tag: "PROJECT_SERVICES",
+              scopeId: scope.id,
+              position: 0,
+            },
+          ],
+        },
+        payments: {
+          create: [
+            {
+              organizationId,
+              // A credit is not something to chase, so it says so.
+              label: credit ? "Credit" : parsed.data.description.slice(0, 120),
+              kind: "BALANCE",
+              amountCents,
+              dueOn: credit ? null : isoToDate(parsed.data.dueOn || signedOn),
+              // Nothing to collect on a credit, so it is settled already.
+              paidAt: credit ? new Date() : null,
+              position: 0,
+            },
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    return contract.id;
+  });
+
+  // The rows are in place, so the award history and the bars follow.
+  const latest = await prisma.contract.findFirst({
+    where: { organizationId, projectId: project.id, type: template.type },
+    orderBy: { number: "desc" },
+    select: { id: true },
+  });
+  if (latest) await awardFromContract(organizationId, latest.id);
+
+  revalidateProject(project.id);
+  revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/companies");
+  revalidatePath("/dashboard/contacts");
+  return {
+    success: credit
+      ? `Credit of ${formatCents(-amountCents)} recorded on ${scope.name}`
+      : `${formatCents(amountCents)} added to ${scope.name}`,
+  };
+}
+
+/* ------------------------------ Files on a job ------------------------------ */
+
+export async function uploadProjectFile(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const { organizationId } = await requireSession();
+  const file = formData.get("file");
+  if (!hasFile(file)) return { error: "Choose a file to upload" };
+  if (file.size > MAX_DOCUMENT_BYTES) {
+    return { error: "That file is over 4 MB. Export a smaller version and try again." };
+  }
+
+  const parsed = parseForm(
+    z.object({
+      projectId: idSchema,
+      name: z.string().trim().min(1).max(160),
+      category: z.enum(PROJECT_FILE_CATEGORIES).optional(),
+    }),
+    {
+      projectId: formData.get("projectId"),
+      name: formData.get("name") || file.name.replace(/\.[^.]+$/, ""),
+      category: formData.get("category") ?? undefined,
+    },
+  );
+  if (!parsed.ok) return { error: parsed.error };
+
+  const project = await prisma.project.findFirst({
+    where: { id: parsed.data.projectId, organizationId },
+    select: { id: true },
+  });
+  if (!project) return { error: "Project not found" };
+
+  await prisma.upload.create({
+    data: {
+      organizationId,
+      projectId: project.id,
+      kind: "PROJECT_FILE",
+      category: parsed.data.category ?? "Other",
+      name: parsed.data.name,
+      ...(await readUpload(file)),
+    },
+  });
+  revalidatePath(`/dashboard/projects/${project.id}/files`);
+  return { success: `${parsed.data.name} uploaded` };
+}
+
+export async function deleteProjectFile(formData: FormData) {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(formData.get("uploadId"));
+  if (!id.success) return;
+
+  const upload = await prisma.upload.findFirst({
+    where: { id: id.data, organizationId, kind: "PROJECT_FILE" },
+    select: { projectId: true },
+  });
+  if (!upload) return;
+
+  await prisma.upload.deleteMany({ where: { id: id.data, organizationId, kind: "PROJECT_FILE" } });
+  if (upload.projectId) revalidatePath(`/dashboard/projects/${upload.projectId}/files`);
 }
