@@ -105,6 +105,9 @@ model Organization {
   crews               Crew[]
   workers             Worker[]
   timeEntries         TimeEntry[]
+  eventTypeOptions    EventTypeOption[]
+  calendarEvents      CalendarEvent[]
+  projectTasks        ProjectTask[]
 
   @@index([status])
 }
@@ -201,6 +204,7 @@ model Company {
   projects    Project[]
   distributor Distributor?
   crews       Crew[]
+  events      CalendarEvent[]
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -252,6 +256,10 @@ model Contact {
   uploads    Upload[]
   projects   Project[]
   crews      Crew[]
+  events     CalendarEvent[]
+  // Events this person is expected at, as distinct from the one they are
+  // the point of contact for above.
+  attending  CalendarEvent[] @relation("EventAttendees")
 
   @@index([organizationId])
   @@index([companyId])
@@ -294,6 +302,7 @@ model Deal {
   quotes    Quote[]
   contracts Contract[]
   project   Project?
+  events    CalendarEvent[]
 
   @@index([organizationId])
   @@index([contactId])
@@ -1097,6 +1106,8 @@ model Project {
   contracts   Contract[]
   uploads     Upload[]
   timeEntries TimeEntry[]
+  events      CalendarEvent[]
+  tasks       ProjectTask[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])
@@ -1144,6 +1155,7 @@ model ProjectScope {
   awards      ScopeAward[]
   lineItems   ContractLineItem[]
   timeEntries TimeEntry[]
+  events      CalendarEvent[]
 
   @@index([projectId])
   @@index([crewId])
@@ -1223,6 +1235,7 @@ model Crew {
   workers     Worker[]
   timeEntries TimeEntry[]
   scopes      ProjectScope[]
+  events      CalendarEvent[]
 
   @@index([organizationId, active])
   @@index([companyId])
@@ -1298,4 +1311,95 @@ model TimeEntry {
   @@index([scopeId])
   @@index([crewId, workedOn])
   @@index([workerId])
+}
+
+// The workspace's event-type list, same shape as its service types and
+// contract types: stored by name on the event, so renaming an option is
+// a label change and never a migration.
+model EventTypeOption {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// A day on the calendar: an install day, a site walk, a construction
+// meeting with the owner's team, a delivery, an inspection.
+//
+// Dates are days, not moments. A day of work is a day wherever you read
+// it from, so startOn/endOn are date-only and the times beside them are
+// optional strings — "07:30" — kept in the workspace's own clock. That
+// keeps a 7:30am install reading 7:30am and avoids a whole class of
+// time-zone bugs on the thing people look at most.
+model CalendarEvent {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  // One of the workspace's EventTypeOption names.
+  type           String
+  startOn        DateTime      @db.Date
+  // The last day of a multi-day event, inclusive. Null means one day.
+  endOn          DateTime?     @db.Date
+  // "07:30" and "16:00", or null for a day with no clock on it.
+  startTime      String?
+  endTime        String?
+  // Where it happens. Defaults to the job's site address when there is
+  // one, and stays editable — the walk-through is sometimes at their
+  // office, not the site.
+  location       String?
+  notes          String        @default("")
+  // What it belongs to. All optional: a site walk can exist before there
+  // is a job, and a lunch with a contact belongs to nothing at all.
+  projectId      String?
+  project        Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scopeId        String?
+  scope          ProjectScope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  dealId         String?
+  deal           Deal?         @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  companyId      String?
+  company        Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contactId      String?
+  contact        Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  // Who is going. The crew doing the work, plus anyone else expected —
+  // the property manager, the homeowner, the owner's superintendent.
+  crewId         String?
+  crew           Crew?         @relation(fields: [crewId], references: [id], onDelete: SetNull)
+  attendees      Contact[]     @relation("EventAttendees")
+  // Ticked off when the day is done, so a week reads at a glance.
+  doneAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId, startOn])
+  @@index([projectId])
+  @@index([crewId, startOn])
+  @@index([contactId])
+  @@index([companyId])
+  @@index([scopeId])
+  @@index([dealId])
+}
+
+// A thing to do on a job, with an optional day it is wanted by. Kept
+// deliberately thin: a checklist, not a project-management tool.
+model ProjectTask {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title          String
+  dueOn          DateTime?    @db.Date
+  doneAt         DateTime?
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([projectId, doneAt])
+  @@index([organizationId, dueOn])
 }

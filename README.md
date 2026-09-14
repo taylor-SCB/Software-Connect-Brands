@@ -355,6 +355,43 @@ the bar is honest before payroll runs; **Mark paid through** settles
 everything up to the day payroll went out, for everyone or for one crew.
 `npm run recompute-projects` checks it all still ties out.
 
+**The calendar** (Sept 14, 2026) — everything scheduled, in one place.
+Dates here are **days, not moments**: an install day is that day wherever
+you read it from, so times are optional and a day with no clock on it is
+normal. **Month** is the six-week grid (always six, so nothing jumps as
+you page); **Week** is seven columns you can work from the night before.
+Filter by crew or by kind of day; both live in the address bar, so the
+week you are looking at can be sent to somebody. A day can be moved to
+another date, ticked done, or edited in place.
+
+Event types are a per-workspace pick list — Install, Site walk, Project
+meeting, Service call, Delivery, Inspection, Punch list — with "+ Add new
+event type" on the form, and each type gets its own colour so a month
+reads at a glance. An event carries a crew, a job and which scope of it,
+a location, notes, and **who else is expected**: the property manager,
+the homeowner, the owner's superintendent. Nothing is required — a site
+walk happens before there is a job, and a coffee with a contact belongs
+to nothing at all. A contact's and a company's page each carry a **Coming
+up** card with **+ Event**, because a walk-through gets booked while you
+are looking at whoever asked for it; a contact sees days they are only an
+attendee on, not just their own.
+
+**A job's Schedule tab** is the one that matters on site. Each scope of
+work gets **Schedule install** — two dates and it is booked, on the crew
+already assigned to that scope, so nobody fills in a form about what kind
+of day it is. Booking the first install **flips the job from Awarded to
+Active and sets its start date**, and deleting days moves the start back
+to whatever is now first. The tab counts the install days booked, names
+what is next, and carries **Things to do**: a thin checklist with an
+optional day that goes red once the day has gone.
+
+**Copy this week into next** repeats a crew's week a week on, keeping the
+weekdays, the times and what each day belongs to — a crew on the same
+site Monday to Friday for a month is one press a week rather than twenty
+entries. And when a crew ends up in two places on one day with times that
+actually collide, the calendar says so. It is a note, not a refusal:
+sending half a crew to a service call in the morning is a normal day.
+
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five

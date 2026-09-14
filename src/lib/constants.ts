@@ -346,3 +346,22 @@ export const INDIVIDUAL_COMPANY_TYPE = "Individual / Personal";
 // The three list pages' page sizes; 50 is the one you get without asking.
 export const PAGE_SIZES = [10, 50, 100] as const;
 export const DEFAULT_PAGE_SIZE = 50;
+
+// The event types a workspace starts with. Install and Site walk are the
+// two a service business books every week; the rest cover the meetings
+// and deliveries around them. A workspace adds its own with
+// "+ Add new event type", and none of these is special to the code.
+export const EVENT_TYPE_DEFAULTS = [
+  "Install",
+  "Site walk",
+  "Project meeting",
+  "Service call",
+  "Delivery",
+  "Inspection",
+  "Punch list",
+  "Other",
+] as const;
+
+// The type that gets created when a scope's install days are scheduled
+// from a job, and the one the calendar colours as work on site.
+export const INSTALL_EVENT_TYPE = "Install";

@@ -28,6 +28,8 @@ import {
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
 import { ProjectsCard } from "@/components/projects-card";
+import { UpcomingCard } from "@/components/upcoming-card";
+import { loadEventChoices, upcomingFor } from "@/lib/calendar-data";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
@@ -71,7 +73,8 @@ export default async function ContactDetailPage({
 
   if (!contact) notFound();
 
-  const [noteOthers, activityOthers, balance, projects] = await Promise.all([
+  const today = todayIso(timeZone);
+  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
     // A homeowner's own balance. Someone at a company is billed through
@@ -91,6 +94,10 @@ export default async function ContactDetailPage({
         committedCents: true,
       },
     }),
+    // What is coming up with them, including days they are only an
+    // attendee on — a property manager is often not the main contact.
+    upcomingFor(organizationId, { contactId: contact.id }, today),
+    loadEventChoices(organizationId),
   ]);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
@@ -269,6 +276,13 @@ export default async function ContactDetailPage({
           />
 
           <ProjectsCard projects={projects} />
+
+          <UpcomingCard
+            events={upcoming}
+            choices={eventChoices}
+            defaults={{ contactId: contact.id, companyId: contact.companyId ?? undefined, startOn: today }}
+            label={contact.name}
+          />
 
           <ActivityOverview
             notes={contact.notes.length}

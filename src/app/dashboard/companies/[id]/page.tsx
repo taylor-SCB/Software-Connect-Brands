@@ -24,6 +24,8 @@ import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
 import { ProjectsCard } from "@/components/projects-card";
+import { UpcomingCard } from "@/components/upcoming-card";
+import { loadEventChoices, upcomingFor } from "@/lib/calendar-data";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
@@ -133,8 +135,14 @@ export default async function CompanyDetailPage({
       }),
     ]);
 
+  const today = todayIso(timeZone);
   // What this company owes and what we owe them, for the Balance card.
-  const balance = await loadBalance(organizationId, { companyId: company.id }, todayIso(timeZone));
+  const balance = await loadBalance(organizationId, { companyId: company.id }, today);
+
+  const [upcoming, eventChoices] = await Promise.all([
+    upcomingFor(organizationId, { companyId: company.id }, today),
+    loadEventChoices(organizationId),
+  ]);
 
   // The jobs won here, newest first.
   const projects = await prisma.project.findMany({
@@ -310,6 +318,13 @@ export default async function CompanyDetailPage({
           />
 
           <ProjectsCard projects={projects} />
+
+          <UpcomingCard
+            events={upcoming}
+            choices={eventChoices}
+            defaults={{ companyId: company.id, startOn: today }}
+            label={company.name}
+          />
 
           <ActivityOverview
             notes={noteTotal}

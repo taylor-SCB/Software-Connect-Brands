@@ -13,6 +13,7 @@ import {
   IconSettings,
   IconLayers,
   IconBuilding,
+  IconCalendar,
   IconClock,
   IconStar,
   IconUsers as IconAccount,
@@ -53,6 +54,7 @@ const NAV: {
     Icon: IconTrending,
     children: [{ href: "/dashboard/deals/tracker", label: "Deal Tracker", Icon: IconClock }],
   },
+  { href: "/dashboard/calendar", label: "Calendar", Icon: IconCalendar },
   {
     href: "/dashboard/projects",
     label: "Projects",
