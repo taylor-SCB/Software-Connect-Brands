@@ -260,6 +260,47 @@ the contract then reads *Signed offline*. Deleting a contact, company or
 contract that has payments recorded or money still owed is refused, with
 the amounts, and offers to archive instead.
 
+**Projects** (Sept 14, 2026) — a won job. The moment a customer signs an
+agreement, the app makes one: **PRJ-1000**, with the customer, the date
+and a budget already in it. Nothing is typed. A supplier accepting a
+purchase order does not make a job, because that is a cost, not a win.
+For a job won on a handshake, **Award without paperwork** on the Deal
+Tracker writes the Sales Order the quote already implies, records who
+agreed to it and when, and starts the job. An agreement signed before
+jobs were tracked gets a **Track this as a job** button on its page.
+
+The budget is four numbers. **Awarded** is what the customer agreed to,
+from the signed agreement and any change since. **Spent** is what has
+actually been paid out. **Committed** is purchase orders that are out but
+not yet paid, so a draft order is still just a plan. **Left** is awarded
+less spent and committed; the bar turns amber past 85% and reads *Over by
+$500* when it goes through. Alongside them: **Billed**, **Collected** and
+**Still owed to you**, and an owner-only **Expected cost on file** from
+what the products cost you, which never appears on anything a customer
+can open.
+
+**Scopes of work.** Turn on **Split by service type** on a quote and each
+row can say what kind of work it is — Smart Locks, Access Control,
+Painting — from a per-workspace list that starts with the trades and the
+connected-device work and grows with "+ Add new service type". A product
+can carry one too, so a quote line picks it up. When the job is awarded,
+each kind of work becomes a scope with its own budget, its own crew and
+its own rows, and together they always add up to the job's: move a row
+from one scope to another and two bars change while the job's total does
+not. A job with one scope shows a single bar and never mentions the word.
+Under each bar is **the award history**: every signed agreement, change
+and typed adjustment, dated, with the reason, so the number above it can
+always be explained. Changing it by hand asks why.
+
+The **Projects** list searches names, customers and PRJ numbers, filters
+by stage and service type, and hides finished and cancelled jobs until
+you ask for them. Stages are Awarded → Active → Completed, plus
+**Delayed** and Cancelled. **Projects → Budgets** puts every live job's
+bar on one page, tightest first. A customer's page lists their jobs, and
+the dashboard opens with **Active jobs**. `npm run recompute-projects`
+re-derives every stored number from the paperwork and reports any drift;
+it should always say there is none.
+
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five

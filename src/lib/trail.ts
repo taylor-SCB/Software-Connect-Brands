@@ -24,6 +24,8 @@ const SECTION_LABELS: Record<string, string> = {
   "/dashboard/contacts": "Contacts",
   "/dashboard/companies": "Companies",
   "/dashboard/deals": "Pipeline",
+  "/dashboard/projects": "Projects",
+  "/dashboard/projects/budgets": "Budgets",
   "/dashboard/products": "Products",
   "/dashboard/products/ratesheets": "Ratesheets",
   "/dashboard/quotes": "Quotes",

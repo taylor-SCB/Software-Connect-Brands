@@ -23,6 +23,7 @@ import { setCompanyFavorite } from "../actions";
 import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
+import { ProjectsCard } from "@/components/projects-card";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
@@ -134,6 +135,22 @@ export default async function CompanyDetailPage({
 
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, todayIso(timeZone));
+
+  // The jobs won here, newest first.
+  const projects = await prisma.project.findMany({
+    where: { organizationId, OR: [{ companyId: company.id }, { contact: { companyId: company.id } }] },
+    orderBy: { updatedAt: "desc" },
+    take: FEED_LIMIT,
+    select: {
+      id: true,
+      number: true,
+      name: true,
+      stage: true,
+      awardedCents: true,
+      spentCents: true,
+      committedCents: true,
+    },
+  });
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
@@ -291,6 +308,8 @@ export default async function CompanyDetailPage({
             rows={balance.rows}
             timeZone={timeZone}
           />
+
+          <ProjectsCard projects={projects} />
 
           <ActivityOverview
             notes={noteTotal}

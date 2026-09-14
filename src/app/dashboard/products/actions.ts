@@ -49,6 +49,8 @@ const productSchema = z.object({
   description: z.string().trim().max(2000).optional(),
   sku: z.string().trim().max(60).optional(),
   defaultTag: z.enum(LINE_ITEM_TAGS),
+  // The kind of work this is sold under, by name from the workspace list.
+  serviceType: z.string().trim().max(60).optional(),
   unitOfMeasure: optionalEnum(UNITS_OF_MEASURE),
   softwareRate: optionalEnum(SOFTWARE_RATES),
   softwareTerm: z.string().trim().max(6).optional(),
@@ -77,6 +79,7 @@ function readInput(formData: FormData) {
     description: formData.get("description") ?? undefined,
     sku: formData.get("sku") ?? undefined,
     defaultTag: formData.get("defaultTag"),
+    serviceType: formData.get("serviceType") ?? undefined,
     unitOfMeasure: formData.get("unitOfMeasure") ?? "",
     softwareRate: formData.get("softwareRate") ?? "",
     softwareTerm: formData.get("softwareTerm") ?? "",
@@ -99,6 +102,7 @@ type Resolved = {
     unitPriceCents: number;
     costCents: number;
     defaultTag: (typeof LINE_ITEM_TAGS)[number];
+    serviceType: string | null;
     unitOfMeasure: (typeof UNITS_OF_MEASURE)[number] | null;
     softwareRate: (typeof SOFTWARE_RATES)[number] | null;
     softwareTerm: number | null;
@@ -239,6 +243,7 @@ async function resolveProductInput(
         unitPriceCents,
         costCents,
         defaultTag: input.defaultTag,
+        serviceType: input.serviceType ? input.serviceType : null,
         unitOfMeasure,
         softwareRate,
         softwareTerm,
@@ -374,6 +379,7 @@ export async function cloneProduct(formData: FormData) {
       unitPriceCents: source.unitPriceCents,
       costCents: source.costCents,
       defaultTag: source.defaultTag,
+      serviceType: source.serviceType,
       unitOfMeasure: source.unitOfMeasure,
       softwareRate: source.softwareRate,
       softwareTerm: source.softwareTerm,

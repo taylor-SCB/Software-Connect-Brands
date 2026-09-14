@@ -18,6 +18,7 @@ import {
 } from "@/lib/payments";
 import { formatCents } from "@/lib/format";
 import { paidCentsOf, settleRow } from "@/lib/money";
+import { refreshTotals, refreshTotalsForContract, syncProjectScopes } from "@/lib/projects";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -85,7 +86,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
     where: { id: input.quoteId, organizationId, dealId: input.dealId },
     include: {
       deal: { select: { id: true, contactId: true } },
-      lineItems: { orderBy: { position: "asc" } },
+      lineItems: {
+        orderBy: { position: "asc" },
+        include: { product: { select: { costCents: true } } },
+      },
     },
   });
   if (!quote) return { error: "That quote isn't on this deal" };
@@ -198,6 +202,11 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         quantity: line.quantity,
         unitPriceCents: line.unitPriceCents,
         tag: line.tag,
+        // Copied like the tag is, so the job's budget can split itself by
+        // scope of work and show the expected cost, and neither changes
+        // later when the catalog or the quote does.
+        serviceType: line.serviceType,
+        unitCostCents: line.product ? line.product.costCents : null,
         position,
       }));
       const totalCents = contractTotalCents(lineItems);
@@ -267,11 +276,30 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       });
       created.push(contract.id);
     }
+
+    // When the deal is already an awarded job, its new paperwork belongs
+    // to that job: a purchase order split off the same quote is a cost on
+    // it, and a change order will amend its budget when it is signed.
+    const project = await tx.project.findFirst({
+      where: { organizationId, dealId: input.dealId },
+      select: { id: true },
+    });
+    if (project) {
+      await tx.contract.updateMany({
+        where: { id: { in: created }, organizationId },
+        data: { projectId: project.id },
+      });
+      // File the new rows under the scope their service type names, so a
+      // purchase order counts against the work it is buying for.
+      await syncProjectScopes(tx, { organizationId, projectId: project.id, dealId: input.dealId });
+      await refreshTotals(tx, organizationId, project.id);
+    }
   });
 
   revalidateDeal(input.dealId, created);
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/companies");
+  revalidatePath("/dashboard/projects");
   redirect(`${input.returnTo}?dealId=${input.dealId}&quoteId=${input.quoteId}&created=${created.length}`);
 }
 
@@ -480,9 +508,12 @@ export async function savePaymentSchedule(input: {
     }
   });
 
+  // What is billed and received on the job moved, so its bar moves too.
+  await refreshTotalsForContract(organizationId, parsed.data.contractId);
   revalidateDeal(contract.dealId ?? "", [parsed.data.contractId]);
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/contacts");
+  revalidatePath("/dashboard/projects");
   return { success: "Payment schedule saved" };
 }
 

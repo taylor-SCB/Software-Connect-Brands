@@ -14,6 +14,7 @@ import { advanceDealStage } from "@/lib/deals";
 import { getTimeZone } from "@/lib/organization";
 import { NEW_TYPE_VALUE, canUserSend } from "@/lib/contracts";
 import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
+import { awardFromContract, reverseAward } from "@/lib/projects";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -27,6 +28,7 @@ function revalidateContract(contract: { id: string; dealId: string | null; publi
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/contacts");
+  revalidatePath("/dashboard/projects");
   if (contract.dealId) revalidatePath(`/dashboard/deals/${contract.dealId}`);
   if (contract.publicToken) revalidatePath(`/c/${contract.publicToken}`);
 }
@@ -440,10 +442,15 @@ export async function deleteContract(_prev: ActionState, formData: FormData): Pr
   const refusal = moneyHoldMessage(`CON-${contract.number} ${contract.title}`, hold, null);
   if (refusal) return { error: refusal };
 
-  await prisma.contract.deleteMany({ where: { id: id.data, organizationId } });
+  await prisma.$transaction(async (tx) => {
+    // Take its award back out of the budget before the rows go.
+    await reverseAward(tx, organizationId, id.data);
+    await tx.contract.deleteMany({ where: { id: id.data, organizationId } });
+  });
   revalidatePath("/dashboard/contracts");
   revalidatePath("/dashboard/deals/tracker");
   revalidatePath("/dashboard/contracts/tracker");
+  revalidatePath("/dashboard/projects");
   redirect("/dashboard/contracts");
 }
 
@@ -493,6 +500,9 @@ export async function markContractSigned(
   // signing anything else does.
   if (!contract.payable) {
     await advanceDealStage(contract.dealId, organizationId, "WON");
+    // A signed agreement is a job won: it becomes a project with the
+    // budget this contract just set.
+    await awardFromContract(organizationId, contract.id);
   }
 
   revalidateContract(contract);
@@ -547,6 +557,7 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
   // signing a purchase order (Money out) is not — the deal stays where it is.
   if (!contract.payable) {
     await advanceDealStage(contract.dealId, contract.organizationId, "WON");
+    await awardFromContract(contract.organizationId, contract.id);
   }
 
   revalidateContract(contract);

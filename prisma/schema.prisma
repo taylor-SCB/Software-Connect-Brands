@@ -68,6 +68,9 @@ model Organization {
   defaultPaymentPreset    String        @default("FULL")
   defaultDepositPercent   Int           @default(50)
   defaultInstallmentCount Int           @default(3)
+  // PRJ-n on an awarded project, allocated like the quote and contract
+  // numbers above.
+  nextProjectNumber       Int           @default(1000)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -92,6 +95,8 @@ model Organization {
   linkedRatesheets    LinkedRatesheet[]
   uploads             Upload[]
   payments            Payment[]
+  serviceTypeOptions  ServiceTypeOption[]
+  projects            Project[]
 
   @@index([status])
 }
@@ -185,6 +190,7 @@ model Company {
   activities Activity[]
   uploads    Upload[]
   contracts  Contract[]
+  projects   Project[]
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -234,6 +240,7 @@ model Contact {
   quotes     Quote[]
   contracts  Contract[]
   uploads    Upload[]
+  projects   Project[]
 
   @@index([organizationId])
   @@index([companyId])
@@ -275,6 +282,7 @@ model Deal {
 
   quotes    Quote[]
   contracts Contract[]
+  project   Project?
 
   @@index([organizationId])
   @@index([contactId])
@@ -369,6 +377,11 @@ model Product {
   // customer or partner can open.
   costCents           Int                  @default(0)
   defaultTag          LineItemTag          @default(MATERIALS)
+  // The kind of work this is sold under ("Access Control", "Painting"),
+  // by name from the workspace's ServiceTypeOption list. Copied onto a
+  // quote row when the product is added, which is what lets a won job
+  // split its budget by scope without anyone typing it twice.
+  serviceType         String?
   unitOfMeasure       UnitOfMeasure?
   // Software is priced per unit per period: the rate is the period and the
   // term is how many of them. Both are null unless the unit is a software
@@ -449,6 +462,10 @@ model QuoteLineItem {
   quantity       Float       @default(1)
   unitPriceCents Int         @default(0)
   tag            LineItemTag
+  // Optional: which kind of work this row belongs to, from the
+  // workspace's service-type list. Only shown once "Split by service
+  // type" is turned on, so a one-trade business never sees it.
+  serviceType    String?
   position       Int         @default(0)
   // Set from the deal tracker when a row is taken off the table without
   // deleting it from the quote: it stays on the quote, priced, but can
@@ -585,6 +602,10 @@ model Contract {
   // count as money owed to the business, and only their signature wins a
   // deal — a supplier signing a PO is not the customer saying yes.
   payable          Boolean           @default(false)
+  // The awarded job this paperwork belongs to: the signed agreement that
+  // created it, and every purchase order and change order since.
+  projectId        String?
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
   publicToken      String            @unique
   sentAt           DateTime?
   signedAt         DateTime?
@@ -617,6 +638,7 @@ model Contract {
   @@unique([organizationId, number])
   @@index([organizationId])
   @@index([organizationId, payable, status])
+  @@index([projectId])
   @@index([contactId])
   @@index([companyId])
   @@index([dealId])
@@ -638,10 +660,23 @@ model ContractLineItem {
   quantity        Float          @default(1)
   unitPriceCents  Int            @default(0)
   tag             LineItemTag
+  // Copied from the quote row, like the tag is, so the contract keeps
+  // reading the same after the quote is edited.
+  serviceType     String?
+  // What the product cost at the moment this row was put on the contract.
+  // Owner-only: it is what the job is expected to cost, never printed on
+  // anything a customer or partner can open. Null when there was no
+  // product behind the row, or no cost on file.
+  unitCostCents   Int?
+  // Which scope of the project this row's money belongs to. Set when the
+  // job is awarded, and movable afterwards from the Budget page.
+  scopeId         String?
+  scope           ProjectScope?  @relation(fields: [scopeId], references: [id], onDelete: SetNull)
   position        Int            @default(0)
 
   @@index([contractId])
   @@index([quoteLineItemId])
+  @@index([scopeId])
 }
 
 // One row of a contract's payment schedule: "50% deposit, due Sep 15".
@@ -938,4 +973,157 @@ model Upload {
   @@index([userId])
   @@index([companyId])
   @@index([contactId])
+}
+
+// ------------------------------------------------------------------
+// Projects and budgets
+// ------------------------------------------------------------------
+
+// The kinds of work a business sells: Painting, Roofing, Access Control.
+// A per-workspace pick list like ContractTypeOption, seeded from
+// SERVICE_TYPE_DEFAULTS the first time a form asks for it and extended
+// by "+ Add new service type". Stored by name wherever it is used, so a
+// renamed option is a label change rather than a migration.
+model ServiceTypeOption {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// Where a won job stands. AWARDED is signed but nothing scheduled;
+// ACTIVE flips on by itself the first time work is dated or hours are
+// logged. ON_HOLD reads "Delayed" on screen — Taylor's word for it.
+enum ProjectStage {
+  AWARDED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+// A job that was won. One per deal, created the moment the customer
+// signs (or when the user records a signature by hand), already carrying
+// the budget the signed contract set.
+model Project {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  number         Int
+  name           String
+  stage          ProjectStage @default(AWARDED)
+  // The deal it came from. One project per deal; null once the deal is
+  // deleted, which is why the customer's name is copied below.
+  dealId         String?      @unique
+  deal           Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  // "Harbor Property Group · Dana Ruiz" — kept as text so the row still
+  // reads after a company or contact is deleted.
+  customerName   String
+  // Where the work happens, which is often not the customer's office. One
+  // free line; nothing else in the app stores a job-site address.
+  siteAddress    String?
+  awardedAt      DateTime
+  // True when the award came from "Mark signed" or "Award without
+  // paperwork" rather than the customer signing the link.
+  awardedOffline Boolean      @default(false)
+  // The first dated day of work, which is what flips the stage to ACTIVE.
+  startOn        DateTime?    @db.Date
+  closedAt       DateTime?
+  closeOutNote   String?
+  // The bar's four numbers, kept on the row so the list and the roll-ups
+  // read them without adding every line item up again. Recomputed from
+  // scratch by refreshProjectTotals after anything that moves money, and
+  // by `npm run recompute-projects` if they are ever doubted.
+  awardedCents     Int        @default(0)
+  spentCents       Int        @default(0)
+  committedCents   Int        @default(0)
+  receivedCents    Int        @default(0)
+  billedCents      Int        @default(0)
+  plannedCostCents Int        @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  scopes    ProjectScope[]
+  contracts Contract[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, stage])
+  @@index([organizationId, updatedAt])
+  @@index([companyId])
+  @@index([contactId])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Project_name_trgm_idx")
+}
+
+// One scope of work inside a project: the smart-lock half and the
+// access-control half of the same job, each with its own bar, crew and
+// change orders. Every project has a default scope ("Whole job") that
+// holds anything untagged; when it is the only one the page shows a
+// single bar and never mentions scopes at all.
+model ProjectScope {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  // The service type this scope covers, by name; null on the default one.
+  serviceType String?
+  // The scope of work in the owner's own words.
+  description String   @default("")
+  // Who is doing it. Free text until crews are a record of their own.
+  crewLabel   String?
+  isDefault   Boolean  @default(false)
+  position    Int      @default(0)
+  // The same six numbers as the project, for this scope alone. The
+  // project's are the sum of its scopes', so the two can never disagree.
+  awardedCents     Int @default(0)
+  spentCents       Int @default(0)
+  committedCents   Int @default(0)
+  receivedCents    Int @default(0)
+  billedCents      Int @default(0)
+  plannedCostCents Int @default(0)
+
+  awards    ScopeAward[]
+  lineItems ContractLineItem[]
+
+  @@index([projectId])
+}
+
+// Why a scope's awarded amount is what it is. CONTRACT is the signed
+// agreement that started it, CHANGE_ORDER a signed change up or down,
+// CONTRACT_REMOVED the reversal when signed paperwork is deleted, QUOTE
+// the fallback for an agreement with no priced rows, and MANUAL an
+// adjustment someone typed with a reason. Rows are never edited, so the
+// history under the bar always explains the number above it.
+enum AwardKind {
+  CONTRACT
+  CHANGE_ORDER
+  CONTRACT_REMOVED
+  QUOTE
+  MANUAL
+}
+
+model ScopeAward {
+  id         String       @id @default(cuid())
+  scopeId    String
+  scope      ProjectScope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  kind       AwardKind
+  // Positive for an award or an addition, negative for a credit or a
+  // reversal. The scope's awarded total is the sum of these.
+  deltaCents Int
+  // The paperwork that produced it, when there was some. Together with
+  // the kind this is what makes re-awarding the same contract a no-op.
+  contractId String?
+  note       String       @default("")
+  createdAt  DateTime     @default(now())
+
+  @@index([scopeId])
+  @@index([contractId])
 }

@@ -6,7 +6,7 @@ import { owedTotals } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
 import { formatCents, formatDateTime } from "@/lib/format";
 import { computeQuoteTotals } from "@/lib/quote-math";
-import { ACTIVITY_LABELS, OPEN_DEAL_STAGES, type ActivityTypeValue } from "@/lib/constants";
+import { ACTIVITY_LABELS, OPEN_DEAL_STAGES, OPEN_PROJECT_STAGES, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PageHeader, Card, CardHeader, StatTile, EmptyState } from "@/components/ui";
 import {
@@ -40,6 +40,7 @@ export default async function DashboardPage() {
     signedCount,
     recentActivity,
     owed,
+    activeProjects,
   ] = await Promise.all([
     prisma.contact.count({ where: { organizationId } }),
     prisma.contact.count({ where: { organizationId, status: "LEAD" } }),
@@ -65,6 +66,7 @@ export default async function DashboardPage() {
     }),
     // What every customer still owes on signed paperwork, in one query.
     owedTotals(organizationId, todayIso(timeZone)),
+    prisma.project.count({ where: { organizationId, stage: { in: [...OPEN_PROJECT_STAGES] } } }),
   ]);
 
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
@@ -95,13 +97,21 @@ export default async function DashboardPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Link href="/dashboard/companies?owed=1" className="contents">
           <StatTile
             label="Owed to you"
             value={formatCents(owed.owedCents)}
             hint={owed.overdueCount > 0 ? `${owed.overdueCount} past due` : `${owed.customerCount} to chase`}
             accent={owed.overdueCount > 0 ? "#f87171" : "#34d399"}
+          />
+        </Link>
+        <Link href="/dashboard/projects" className="contents">
+          <StatTile
+            label="Active jobs"
+            value={activeProjects}
+            hint="Won and still running"
+            accent="#818cf8"
           />
         </Link>
         <StatTile label="Contacts" value={contactCount} hint={`${leadCount} open leads`} />

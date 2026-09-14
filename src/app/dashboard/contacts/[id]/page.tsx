@@ -27,6 +27,7 @@ import {
 } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
+import { ProjectsCard } from "@/components/projects-card";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
@@ -70,12 +71,26 @@ export default async function ContactDetailPage({
 
   if (!contact) notFound();
 
-  const [noteOthers, activityOthers, balance] = await Promise.all([
+  const [noteOthers, activityOthers, balance, projects] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
     // A homeowner's own balance. Someone at a company is billed through
     // the company, so their card reads zero and the company's carries it.
     loadBalance(organizationId, { contactId: contact.id }, todayIso(timeZone)),
+    prisma.project.findMany({
+      where: { organizationId, contactId: contact.id },
+      orderBy: { updatedAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        number: true,
+        name: true,
+        stage: true,
+        awardedCents: true,
+        spentCents: true,
+        committedCents: true,
+      },
+    }),
   ]);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
@@ -252,6 +267,8 @@ export default async function ContactDetailPage({
                 : "What is signed for and not yet paid."
             }
           />
+
+          <ProjectsCard projects={projects} />
 
           <ActivityOverview
             notes={contact.notes.length}

@@ -139,6 +139,8 @@ const lineItemSchema = z.object({
   // Enforced here as well as in the UI: the tag totals grid only
   // reconciles with the quote total if every line carries a tag.
   tag: z.enum(LINE_ITEM_TAGS, { message: "Every line needs a tag" }),
+  // The kind of work the row is, when the quote is split that way.
+  serviceType: z.string().trim().max(60).nullable().optional(),
 });
 
 export type LineItemInput = z.infer<typeof lineItemSchema>;
@@ -201,6 +203,7 @@ export async function saveLineItems(
         quantity: item.quantity,
         unitPriceCents: item.unitPriceCents,
         tag: item.tag,
+        serviceType: item.serviceType || null,
         position: index,
       };
       return item.id && keptIds.has(item.id)

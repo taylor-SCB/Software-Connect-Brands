@@ -18,11 +18,12 @@ import {
   Badge,
   TagBadge,
 } from "@/components/ui";
-import { IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
+import { IconSend, IconExternal, IconDownload, IconClock, IconHardHat } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { Avatar } from "@/components/avatar";
 import { ReminderButton } from "@/components/reminder-button";
 import { MarkSignedButton } from "@/components/mark-signed-button";
+import { CreateProjectButton } from "@/app/dashboard/projects/create-project-button";
 import { DeleteRecordForm } from "@/components/delete-record-form";
 import { ContractBodyForm } from "./body-form";
 import { PaymentScheduleEditor } from "./payment-schedule-editor";
@@ -60,6 +61,7 @@ export default async function ContractDetailPage({
         include: { payments: { orderBy: [{ paidOn: "asc" }, { createdAt: "asc" }] } },
       },
       deal: { select: { id: true, title: true, stage: true } },
+      project: { select: { id: true, number: true, name: true } },
       quote: { select: { id: true, number: true, title: true, status: true } },
       template: {
         select: { id: true, name: true, allUsersCanSend: true, senderUserIds: true },
@@ -123,6 +125,16 @@ export default async function ContractDetailPage({
             </a>
             {contract.status === "SENT" && (
               <MarkSignedButton contractId={contract.id} signerName={contract.contact.name} today={today} compact />
+            )}
+            {signed && !contract.payable && (
+              contract.project ? (
+                <Link href={`/dashboard/projects/${contract.project.id}`} className="btn btn-ghost btn-sm" data-testid="contract-project">
+                  <IconHardHat size={13} />
+                  PRJ-{contract.project.number}
+                </Link>
+              ) : (
+                <CreateProjectButton contractId={contract.id} />
+              )
             )}
             {contract.status === "DRAFT" && canSend && (
               <form action={setContractStatus}>

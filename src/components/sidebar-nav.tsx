@@ -6,6 +6,7 @@ import {
   IconGrid,
   IconUsers,
   IconBox,
+  IconHardHat,
   IconFileText,
   IconSignature,
   IconTrending,
@@ -51,6 +52,12 @@ const NAV: {
     label: "Pipeline",
     Icon: IconTrending,
     children: [{ href: "/dashboard/deals/tracker", label: "Deal Tracker", Icon: IconClock }],
+  },
+  {
+    href: "/dashboard/projects",
+    label: "Projects",
+    Icon: IconHardHat,
+    children: [{ href: "/dashboard/projects/budgets", label: "Budgets", Icon: IconTrending }],
   },
   {
     href: "/dashboard/products",

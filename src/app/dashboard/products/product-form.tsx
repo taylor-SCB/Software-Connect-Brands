@@ -46,6 +46,7 @@ export type ProductFormDefaults = {
   unitPriceCents?: number;
   costCents?: number;
   defaultTag?: string;
+  serviceType?: string | null;
   unitOfMeasure?: string | null;
   softwareRate?: string | null;
   softwareTerm?: number | null;
@@ -72,12 +73,14 @@ export function ProductForm({
   submitLabel,
   manufacturers,
   distributors,
+  serviceTypes,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   defaults?: ProductFormDefaults;
   submitLabel: string;
   manufacturers: FormManufacturer[];
   distributors: FormDistributor[];
+  serviceTypes: string[];
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
   const active = defaults?.active ?? true;
@@ -251,6 +254,28 @@ export function ProductForm({
                 </select>
                 <p className="faint mt-1 text-xs">
                   Pre-selects the category on a quote line, and picks which unit list applies.
+                </p>
+              </div>
+              <div>
+                <label className="label" htmlFor="serviceType">
+                  Service type
+                  <span className="faint font-normal"> · optional</span>
+                </label>
+                <select
+                  id="serviceType"
+                  name="serviceType"
+                  defaultValue={defaults?.serviceType ?? ""}
+                  className="select"
+                  data-testid="product-service-type"
+                >
+                  <option value="">— None —</option>
+                  {serviceTypes.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                <p className="faint mt-1 text-xs">
+                  The kind of work this is sold under. A quote line picks it up, and a won job gives
+                  each kind its own budget.
                 </p>
               </div>
               <div>

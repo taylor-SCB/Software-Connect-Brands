@@ -319,3 +319,16 @@ export function IconChevronRight(props: IconProps) {
     </Svg>
   );
 }
+
+// A hard hat: the Projects section.
+export function IconHardHat(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M2 17h20" />
+      <path d="M4 17a8 8 0 0 1 16 0" />
+      <path d="M10 5.2A8 8 0 0 1 12 5a8 8 0 0 1 2 .2" />
+      <path d="M10 5.2V9" />
+      <path d="M14 5.2V9" />
+    </Svg>
+  );
+}

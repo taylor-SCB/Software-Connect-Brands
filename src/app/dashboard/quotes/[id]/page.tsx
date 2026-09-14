@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { getServiceTypes } from "@/lib/service-types";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
@@ -32,7 +33,7 @@ export default async function QuoteBuilderPage({
 
   const timeZone = await getTimeZone();
 
-  const [quote, products] = await Promise.all([
+  const [quote, products, serviceTypes] = await Promise.all([
     prisma.quote.findFirst({
       where: { id, organizationId },
       include: {
@@ -50,8 +51,10 @@ export default async function QuoteBuilderPage({
         description: true,
         unitPriceCents: true,
         defaultTag: true,
+        serviceType: true,
       },
     }),
+    getServiceTypes(organizationId),
   ]);
 
   if (!quote) notFound();
@@ -156,7 +159,9 @@ export default async function QuoteBuilderPage({
               quantity: item.quantity,
               unitPriceCents: item.unitPriceCents,
               tag: item.tag,
+              serviceType: item.serviceType,
             }))}
+            serviceTypes={serviceTypes}
           />
         </Card>
 

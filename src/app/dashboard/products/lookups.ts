@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/prisma";
+import { getServiceTypes } from "@/lib/service-types";
 
 // The two pick lists on the product form, scoped to the workspace. Both
 // pages that render the form need the same shape, so it lives here.
 export async function loadProductLookups(organizationId: string) {
-  const [manufacturers, distributors] = await Promise.all([
+  const [manufacturers, distributors, serviceTypes] = await Promise.all([
     prisma.manufacturer.findMany({
       where: { organizationId },
       orderBy: { name: "asc" },
@@ -21,6 +22,7 @@ export async function loadProductLookups(organizationId: string) {
         },
       },
     }),
+    getServiceTypes(organizationId),
   ]);
-  return { manufacturers, distributors };
+  return { manufacturers, distributors, serviceTypes };
 }

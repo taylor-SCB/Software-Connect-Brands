@@ -8,6 +8,7 @@ import { getTimeZone } from "@/lib/organization";
 import { formatCents } from "@/lib/format";
 import { dateToIso, isoToDate, todayIso } from "@/lib/payments";
 import { paidCentsOf, settleRow, type PaymentView } from "@/lib/money";
+import { refreshProjectTotals } from "@/lib/projects";
 
 // Recording money against one row of a contract's payment table. Each
 // action answers with the row's new state so the editor can redraw that
@@ -24,7 +25,7 @@ export type RowState = {
 export type PaymentActionResult = { success?: string; error?: string; row?: RowState };
 
 // Every screen that shows what is owed or paid.
-function revalidateMoney(contract: { id: string; dealId: string | null; publicToken: string }) {
+function revalidateMoney(contract: { id: string; dealId: string | null; publicToken: string; projectId?: string | null }) {
   revalidatePath(`/dashboard/contracts/${contract.id}`);
   revalidatePath("/dashboard/deals/tracker");
   revalidatePath("/dashboard/contracts/tracker");
@@ -34,6 +35,8 @@ function revalidateMoney(contract: { id: string; dealId: string | null; publicTo
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/contacts");
   if (contract.dealId) revalidatePath(`/dashboard/deals/${contract.dealId}`);
+  revalidatePath("/dashboard/projects");
+  if (contract.projectId) revalidatePath(`/dashboard/projects/${contract.projectId}`);
   // The customer's copy prints "Paid <date>" on settled rows.
   revalidatePath(`/c/${contract.publicToken}`);
 }
@@ -47,7 +50,7 @@ async function loadRow(contractPaymentId: string, organizationId: string) {
       label: true,
       amountCents: true,
       paidAt: true,
-      contract: { select: { id: true, dealId: true, publicToken: true } },
+      contract: { select: { id: true, dealId: true, publicToken: true, projectId: true } },
       payments: {
         orderBy: [{ paidOn: "asc" }, { createdAt: "asc" }],
         select: { id: true, amountCents: true, paidOn: true, method: true, reference: true, note: true },
@@ -76,6 +79,8 @@ function rowState(row: LoadedRow): RowState {
 async function reply(contractPaymentId: string, organizationId: string, success: string): Promise<PaymentActionResult> {
   const row = await loadRow(contractPaymentId, organizationId);
   if (!row) return { error: "Payment row not found" };
+  // Money moving changes the job's budget bar too.
+  await refreshProjectTotals(organizationId, row.contract.projectId);
   revalidateMoney(row.contract);
   return { success, row: rowState(row) };
 }

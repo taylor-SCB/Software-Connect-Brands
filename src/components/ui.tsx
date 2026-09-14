@@ -101,6 +101,57 @@ export function EmptyState({
   );
 }
 
+// A budget bar: what has been spent, what is committed and what is left
+// of an amount. Amber past 85% of the budget, red once it is over.
+export function Meter({
+  segments,
+  max,
+  label,
+  height = 22,
+}: {
+  segments: { cents: number; tone: "spent" | "committed" }[];
+  max: number;
+  label: string;
+  height?: number;
+}) {
+  const used = segments.reduce((sum, segment) => sum + Math.max(0, segment.cents), 0);
+  const over = max > 0 && used > max;
+  const share = max > 0 ? used / max : 0;
+  const tight = share > 0.85;
+  const color = over ? "var(--danger)" : tight ? "var(--warn)" : "var(--brand)";
+  // With nothing awarded yet, anything spent fills the whole bar: there
+  // is no budget to be inside of.
+  const scale = max > 0 ? max : used;
+
+  return (
+    <div
+      className="flex overflow-hidden rounded-full border border-[rgb(255_255_255/0.08)] bg-[rgb(255_255_255/0.06)]"
+      style={{ height }}
+      role="img"
+      aria-label={label}
+      data-testid="meter"
+      data-over={over ? "1" : "0"}
+    >
+      {segments.map((segment, index) => {
+        const width = scale > 0 ? Math.min(100, (Math.max(0, segment.cents) / scale) * 100) : 0;
+        if (width === 0) return null;
+        return (
+          <div
+            key={index}
+            style={{
+              width: `${width}%`,
+              background:
+                segment.tone === "spent"
+                  ? color
+                  : `repeating-linear-gradient(135deg, ${color} 0 5px, rgb(255 255 255 / 0.12) 5px 10px)`,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export function StatTile({
   label,
   value,
@@ -183,11 +234,21 @@ const STATUS_COLORS: Record<string, string> = {
   PAID: "#34d399",
   DUE: "#fbbf24",
   OVERDUE: "#fb7185",
+  AWARDED: "#818cf8",
+  COMPLETED: "#64748b",
+  // A job on hold reads "Delayed"; see STATUS_LABELS below.
+  ON_HOLD: "#f97316",
+};
+
+// Where the plain-words label isn't just the status with a capital
+// letter. A job that is ON_HOLD is "Delayed" everywhere it shows.
+const STATUS_LABELS: Record<string, string> = {
+  ON_HOLD: "Delayed",
 };
 
 export function StatusBadge({ status }: { status: string }) {
   const label =
-    status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
+    STATUS_LABELS[status] ?? status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
   return (
     <Badge color={STATUS_COLORS[status] ?? "var(--text-dim)"} dot>
       {label}

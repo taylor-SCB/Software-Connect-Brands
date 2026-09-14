@@ -19,6 +19,7 @@ export type EditorProduct = {
   description: string;
   unitPriceCents: number;
   defaultTag: string;
+  serviceType: string | null;
 };
 
 export type EditorLine = {
@@ -32,6 +33,7 @@ export type EditorLine = {
   quantity: number;
   unitPriceCents: number;
   tag: string;
+  serviceType: string | null;
 };
 
 // Quantity and price live as strings while the user types so a partially
@@ -46,6 +48,8 @@ type Row = {
   quantityInput: string;
   unitPriceInput: string;
   tag: LineItemTagValue;
+  // Which kind of work the row is, when the quote is split that way.
+  serviceType: string;
 };
 
 let uidCounter = 0;
@@ -62,6 +66,7 @@ function toRow(line: EditorLine): Row {
     quantityInput: String(line.quantity),
     unitPriceInput: centsToDollarInput(line.unitPriceCents),
     tag: line.tag as LineItemTagValue,
+    serviceType: line.serviceType ?? "",
   };
 }
 
@@ -78,14 +83,22 @@ export function LineItemsEditor({
   quoteId,
   initialLines,
   products,
+  serviceTypes,
   readOnly = false,
 }: {
   quoteId: string;
   initialLines: EditorLine[];
   products: EditorProduct[];
+  // The workspace's kinds of work, for splitting the quote by scope.
+  serviceTypes: string[];
   readOnly?: boolean;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
+  // Off until it is wanted: a one-trade business never sees the column.
+  // On by itself when the quote already has a service type on a row.
+  const [splitByService, setSplitByService] = useState(() =>
+    initialLines.some((line) => Boolean(line.serviceType)),
+  );
   const [dirty, setDirty] = useState(false);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
@@ -125,6 +138,7 @@ export function LineItemsEditor({
         quantityInput: "1",
         unitPriceInput: "0.00",
         tag: "MATERIALS",
+        serviceType: "",
       },
     ]);
   }
@@ -144,6 +158,8 @@ export function LineItemsEditor({
         quantityInput: "1",
         unitPriceInput: centsToDollarInput(product.unitPriceCents),
         tag: product.defaultTag as LineItemTagValue,
+        // The catalog already knows what kind of work it is.
+        serviceType: product.serviceType ?? "",
       },
     ]);
   }
@@ -162,6 +178,7 @@ export function LineItemsEditor({
       quantity: rowQuantity(row),
       unitPriceCents: rowUnitCents(row),
       tag: row.tag,
+      serviceType: splitByService ? row.serviceType.trim() || null : null,
     }));
 
     const blank = payload.findIndex((line) => line.name.length === 0);
@@ -179,6 +196,23 @@ export function LineItemsEditor({
 
   return (
     <div>
+      {!readOnly && (
+        <label className="mb-3 flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={splitByService}
+            onChange={(event) => {
+              setSplitByService(event.target.checked);
+              setDirty(true);
+            }}
+            data-testid="split-by-service-type"
+          />
+          <span className="muted">
+            Split by service type — give each kind of work its own budget on the job
+          </span>
+        </label>
+      )}
       <div className="overflow-x-auto">
         <table className="table">
           <thead>
@@ -188,13 +222,14 @@ export function LineItemsEditor({
               <th className="w-32 text-right">Value</th>
               <th className="w-32 text-right">Total</th>
               <th className="w-44">Tag</th>
+              {splitByService && <th className="w-44">Service type</th>}
               {!readOnly && <th className="w-10" />}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={readOnly ? 5 : 6} className="faint py-8 text-center text-xs">
+                <td colSpan={(readOnly ? 5 : 6) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
                   No line items yet. Add one from your catalog or start a blank line.
                 </td>
               </tr>
@@ -283,6 +318,23 @@ export function LineItemsEditor({
                       ))}
                     </select>
                   </td>
+                  {splitByService && (
+                    <td>
+                      <select
+                        value={row.serviceType}
+                        onChange={(event) => updateRow(row.uid, { serviceType: event.target.value })}
+                        aria-label={`Line ${index + 1} service type`}
+                        disabled={readOnly}
+                        className="select input-sm"
+                        data-testid="line-service-type"
+                      >
+                        <option value="">Whole job</option>
+                        {serviceTypes.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
                   {!readOnly && (
                     <td className="pt-2.5">
                       <button

@@ -4,6 +4,7 @@ import { getOrganization } from "@/lib/organization";
 import { loadTrackerDeal, loadTrackerDeals, loadTrackerPickers } from "@/lib/tracker";
 import { todayIso } from "@/lib/payments";
 import { formatCents } from "@/lib/format";
+import { AwardWithoutPaperwork } from "@/app/dashboard/projects/award-without-paperwork";
 import { contractHoldsRows } from "@/lib/contracts";
 import { PageHeader, Card, CardHeader, EmptyState, StatusBadge, FormSuccess } from "@/components/ui";
 import { Avatar } from "@/components/avatar";
@@ -116,7 +117,7 @@ export async function DealTrackerPage({
                   </p>
                 </div>
               </div>
-              <dl className="grid grid-cols-3 gap-4 text-center">
+              <dl className="grid grid-cols-2 gap-4 text-center sm:grid-cols-4">
                 <div>
                   <dt className="eyebrow">Open rows</dt>
                   <dd className="num text-lg font-semibold">{openRows}</dd>
@@ -129,6 +130,22 @@ export async function DealTrackerPage({
                   <dt className="eyebrow">Outstanding</dt>
                   <dd className="num text-lg font-semibold" data-testid="tracker-outstanding">{formatCents(outstandingCents)}</dd>
                   <dd className="faint num text-xs" data-testid="tracker-signed-owed">Signed: {formatCents(signedOwedCents)}</dd>
+                </div>
+                <div>
+                  <dt className="eyebrow">Job</dt>
+                  <dd className="text-sm font-semibold">
+                    {deal.project ? (
+                      <Link
+                        href={`/dashboard/projects/${deal.project.id}`}
+                        className="link num"
+                        data-testid="tracker-project"
+                      >
+                        PRJ-{deal.project.number}
+                      </Link>
+                    ) : (
+                      <AwardWithoutPaperwork dealId={deal.id} disabled={!quote} />
+                    )}
+                  </dd>
                 </div>
               </dl>
             </div>

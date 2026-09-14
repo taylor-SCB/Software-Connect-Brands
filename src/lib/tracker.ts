@@ -82,6 +82,7 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           company: { select: { id: true, name: true, logoUrl: true } },
         },
       },
+      project: { select: { id: true, number: true, name: true, stage: true } },
       quotes: {
         orderBy: { createdAt: "desc" },
         select: {
@@ -156,6 +157,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
     title: deal.title,
     stage: deal.stage,
     contact: deal.contact,
+    // The awarded job, once there is one.
+    project: deal.project,
     primaryQuoteId: primary?.id ?? null,
     quotes: deal.quotes.map((quote) => ({
       id: quote.id,

@@ -274,6 +274,58 @@ export const DEFAULT_INDUSTRIES: { name: string; types: string[] }[] = [
   },
 ];
 
+// The kinds of work a new workspace can sell, in the order they appear on
+// a form. The trades first, then the connected-device work Taylor's own
+// market lives in. A workspace edits this list with "+ Add new service
+// type"; nothing here is fixed.
+export const SERVICE_TYPE_DEFAULTS = [
+  "Painting",
+  "Roofing",
+  "Siding",
+  "Gutters",
+  "Windows & Doors",
+  "Flooring",
+  "Drywall",
+  "Carpentry",
+  "Plumbing",
+  "Electrical",
+  "HVAC",
+  "Insulation",
+  "Concrete",
+  "Hardscapes",
+  "Landscaping",
+  "Lawn Care",
+  "Snow Removal",
+  "Fencing",
+  "Garage Doors",
+  "Cleaning",
+  "Pest Control",
+  "Locks & Hardware",
+  "Smart Locks",
+  "Access Control",
+  "Intercoms",
+  "Cameras",
+  "Smart Thermostats",
+  "Smart Leak Sensors",
+  "Internet Infrastructure / ISP",
+  "Software as a Service",
+  "General",
+] as const;
+
+// How a project's stages read on screen. "Delayed" is Taylor's word for
+// a job that is on hold.
+export const PROJECT_STAGES = ["AWARDED", "ACTIVE", "ON_HOLD", "COMPLETED", "CANCELLED"] as const;
+export type ProjectStageValue = (typeof PROJECT_STAGES)[number];
+export const PROJECT_STAGE_LABELS: Record<ProjectStageValue, string> = {
+  AWARDED: "Awarded",
+  ACTIVE: "Active",
+  ON_HOLD: "Delayed",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+};
+// The stages a job is still live in, which is what the list shows first.
+export const OPEN_PROJECT_STAGES = ["AWARDED", "ACTIVE", "ON_HOLD"] as const;
+
 // A contact with no company at all — a homeowner wanting a window quote —
 // reads as this company type on the list and in the filter. It is not a
 // pick-list row: it means "no company", so it can't be picked on a form.

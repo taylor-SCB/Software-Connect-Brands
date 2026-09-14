@@ -46,6 +46,7 @@ export default async function EditProductPage({
         submitLabel="Save changes"
         manufacturers={lookups.manufacturers}
         distributors={lookups.distributors}
+        serviceTypes={lookups.serviceTypes}
         defaults={{
           id: product.id,
           name: product.name,
