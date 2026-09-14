@@ -61,6 +61,7 @@ const NAV: {
     Icon: IconHardHat,
     children: [
       { href: "/dashboard/projects/budgets", label: "Budgets", Icon: IconTrending },
+      { href: "/dashboard/projects/properties", label: "Properties", Icon: IconBuilding },
       { href: "/dashboard/projects/crews", label: "Crews", Icon: IconHardHat },
     ],
   },

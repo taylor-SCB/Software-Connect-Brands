@@ -146,7 +146,17 @@ async function previewChips(page) {
 
   log("merge fields are chips with labels, grouped by tab");
   const tabs = await page.getByRole("tab").allTextContents();
-  assert.deepEqual(tabs, ["ALL", "Contacts", "Companies", "Pipeline", "Products", "Quotes", "Contracts", "Settings"]);
+  assert.deepEqual(tabs, [
+    "ALL",
+    "Contacts",
+    "Companies",
+    "Pipeline",
+    "Products",
+    "Quotes",
+    "Contracts",
+    "Projects",
+    "Settings",
+  ]);
   const palette = page.getByRole("tabpanel");
   assert.ok(await palette.getByRole("button", { name: "Company Name", exact: true }).isVisible());
   assert.equal(await palette.getByText("{{", { exact: false }).count(), 0, "no raw {{tokens}} in the palette");
@@ -156,6 +166,9 @@ async function previewChips(page) {
   await page.getByRole("tab", { name: "Quotes" }).click();
   assert.ok(await palette.getByRole("button", { name: "Quote ID" }).isVisible());
   assert.equal(await palette.getByRole("button", { name: "Contact Name" }).count(), 0, "Quotes tab hides Contact fields");
+  await page.getByRole("tab", { name: "Projects" }).click();
+  const projectChips = await palette.getByRole("button").allTextContents();
+  assert.deepEqual(projectChips, ["Job Number", "Job Name", "Job Site Address"]);
   await shot(page, "03-palette-quotes-tab");
 
   log("clicking a chip drops its field into the body at the cursor");

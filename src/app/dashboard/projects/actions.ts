@@ -10,6 +10,7 @@ import { PROJECT_STAGES, PROJECT_FILE_CATEGORIES } from "@/lib/constants";
 import { zonedNoon } from "@/lib/money";
 import { dollarsToCents, formatCents } from "@/lib/format";
 import { refreshTotals, refreshProjectTotals, awardFromContract, DEFAULT_SCOPE_NAME } from "@/lib/projects";
+import { openItems } from "@/lib/close-out";
 import { ensureServiceType } from "@/lib/service-types";
 import { advanceDealStage } from "@/lib/deals";
 import { computeSchedule, isoToDate, presetRows, todayIso, type SchedulePreset } from "@/lib/payments";
@@ -645,6 +646,7 @@ export async function orderFromSupplier(
       companyId,
       dealId: project.dealId,
       quoteId: null,
+      projectId: project.id,
       contractNumber: `CON-${number}`,
       paymentTerms: organization.defaultPaymentTerms,
       signerName: owner?.name ?? null,
@@ -803,6 +805,7 @@ export async function createChangeOrder(
       companyId: project.companyId,
       dealId: project.dealId,
       quoteId: null,
+      projectId: project.id,
       contractNumber: `CON-${number}`,
       paymentTerms: amends?.paymentTerms ?? organization.defaultPaymentTerms,
       signerName: owner?.name ?? null,
@@ -942,4 +945,105 @@ export async function deleteProjectFile(formData: FormData) {
 
   await prisma.upload.deleteMany({ where: { id: id.data, organizationId, kind: "PROJECT_FILE" } });
   if (upload.projectId) revalidatePath(`/dashboard/projects/${upload.projectId}/files`);
+}
+
+/* ------------------------------- Close out ------------------------------- */
+
+// One press marks the job done. The list of loose ends is beside the
+// button, not in the way of it: a contractor closing a job with $500
+// still owed knows something the app does not.
+export async function closeOutProject(
+  projectId: string,
+  note: string,
+): Promise<ActionState & { openCount?: number }> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(projectId);
+  if (!id.success) return { error: "Missing project reference" };
+
+  const project = await prisma.project.findFirst({
+    where: { id: id.data, organizationId },
+    select: { id: true, name: true, stage: true },
+  });
+  if (!project) return { error: "Project not found" };
+  if (project.stage === "COMPLETED") return { error: `${project.name} is already closed out.` };
+
+  const open = await openItems(organizationId, project.id);
+
+  await prisma.project.updateMany({
+    where: { id: project.id, organizationId },
+    data: {
+      stage: "COMPLETED",
+      closedAt: new Date(),
+      closeOutNote: note.trim().slice(0, 1000) || null,
+    },
+  });
+
+  revalidateProject(project.id);
+  revalidatePath("/dashboard/projects/properties");
+  return {
+    success:
+      open.length > 0
+        ? `${project.name} closed out with ${open.length} ${
+            open.length === 1 ? "loose end" : "loose ends"
+          } still open.`
+        : `${project.name} closed out.`,
+    openCount: open.length,
+  };
+}
+
+// Reopening a closed job. Back to Active, because a job being worked on
+// again is active by definition, and the closing note is kept as history.
+export async function reopenProject(projectId: string): Promise<ActionState> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(projectId);
+  if (!id.success) return { error: "Missing project reference" };
+
+  const result = await prisma.project.updateMany({
+    where: { id: id.data, organizationId, stage: "COMPLETED" },
+    data: { stage: "ACTIVE", closedAt: null },
+  });
+  if (result.count === 0) return { error: "That job is not closed out." };
+  revalidateProject(id.data);
+  return { success: "Reopened" };
+}
+
+/* --------------------------- Notes on a job --------------------------- */
+
+// A note about the job rather than about a person: "owner wants the north
+// side done first". Kept on the job so it outlives whoever said it.
+export async function addProjectNote(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = parseForm(
+    z.object({
+      projectId: idSchema,
+      body: z.string().trim().min(1, "Write the note first").max(4000),
+    }),
+    { projectId: formData.get("projectId"), body: formData.get("body") },
+  );
+  if (!parsed.ok) return { error: parsed.error };
+
+  const project = await prisma.project.findFirst({
+    where: { id: parsed.data.projectId, organizationId },
+    select: { id: true },
+  });
+  if (!project) return { error: "Project not found" };
+
+  await prisma.note.create({
+    data: { organizationId, projectId: project.id, authorId: userId, body: parsed.data.body },
+  });
+  revalidateProject(project.id);
+  return { success: "Note added" };
+}
+
+export async function deleteProjectNote(noteId: string): Promise<ActionState> {
+  const { organizationId } = await requireSession();
+  const note = await prisma.note.findFirst({
+    where: { id: noteId, organizationId, projectId: { not: null } },
+    select: { id: true, projectId: true },
+  });
+  if (!note) return { error: "That note is gone" };
+
+  await prisma.note.deleteMany({ where: { id: note.id, organizationId } });
+  if (note.projectId) revalidateProject(note.projectId);
+  return { success: "Note removed" };
 }

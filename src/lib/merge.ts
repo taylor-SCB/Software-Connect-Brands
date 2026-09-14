@@ -14,6 +14,7 @@ export const MERGE_GROUPS = [
   "Products",
   "Quotes",
   "Contracts",
+  "Projects",
   "Settings",
 ] as const;
 
@@ -76,6 +77,11 @@ export const MERGE_FIELDS: readonly MergeField[] = [
   { key: "payment_schedule", label: "Payment Schedule", group: "Contracts", description: "One line per scheduled payment: label, amount and due date" },
   { key: "final_payment_date", label: "Final Payment Date", group: "Contracts", description: "The last due date on the payment schedule" },
   { key: "your_signer_name", label: "Your Company Signer", group: "Contracts", description: "Who signs for your company on this contract" },
+
+  // Projects — the awarded job, on the paperwork raised against it.
+  { key: "project_number", label: "Job Number", group: "Projects", description: "The job's number, e.g. PRJ-1000 (blank until the deal is won)" },
+  { key: "project_name", label: "Job Name", group: "Projects", description: "What the job is called" },
+  { key: "project_site_address", label: "Job Site Address", group: "Projects", description: "Where the work happens, when it is not the customer's own address" },
 
   // Settings — your own company, from Settings → Company Information.
   { key: "your_company_address", label: "Your Address", group: "Settings", description: "Your street address, city, state and ZIP on one line" },

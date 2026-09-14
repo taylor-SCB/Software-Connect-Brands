@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { formatCents, formatDate } from "@/lib/format";
+import { formatCents, formatDate, formatDateTime } from "@/lib/format";
 import { getTimeZone } from "@/lib/organization";
 import { getServiceTypes } from "@/lib/service-types";
 import { leftCents, DEFAULT_SCOPE_NAME } from "@/lib/projects";
@@ -15,6 +15,10 @@ import { ProjectTabs } from "./project-tabs";
 import { ProjectHeaderForm } from "./project-header-form";
 import { ScopeCard } from "./scope-card";
 import { AddScopeForm } from "./add-scope-form";
+import { CloseOutButton } from "./close-out-button";
+import { ProjectNotes, type ProjectNoteView } from "./project-notes";
+import { PropertyPicker } from "./property-picker";
+import { openItems } from "@/lib/close-out";
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { organizationId } = await requireSession();
@@ -43,6 +47,15 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       plannedCostCents: true,
       laborSpentCents: true,
       laborCommittedCents: true,
+      closedAt: true,
+      closeOutNote: true,
+      propertyId: true,
+      property: { select: { id: true, name: true } },
+      notes: {
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: { id: true, body: true, createdAt: true, author: { select: { name: true } } },
+      },
       scopes: {
         orderBy: { position: "asc" },
         select: {
@@ -80,7 +93,23 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   });
   if (!project) notFound();
 
-  const serviceTypes = await getServiceTypes(organizationId);
+  const [serviceTypes, open, properties] = await Promise.all([
+    getServiceTypes(organizationId),
+    openItems(organizationId, project.id),
+    prisma.property.findMany({
+      where: { organizationId },
+      orderBy: { name: "asc" },
+      take: 300,
+      select: { id: true, name: true },
+    }),
+  ]);
+
+  const projectNotes: ProjectNoteView[] = project.notes.map((note) => ({
+    id: note.id,
+    body: note.body,
+    author: note.author.name,
+    when: formatDateTime(note.createdAt, timeZone),
+  }));
   const left = leftCents(project);
   const used = project.spentCents + project.committedCents;
   // The crew-time part of what has been used, so the bar can be explained
@@ -142,9 +171,30 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           Awarded {formatDate(project.awardedAt, timeZone)}
           {project.awardedOffline && " · recorded by hand"}
         </span>
+        {project.property && (
+          <Link href={`/dashboard/projects/properties/${project.property.id}`} className="link">
+            {project.property.name}
+          </Link>
+        )}
       </div>
 
       <ProjectTabs projectId={project.id} current="budget" />
+
+      <div className="mb-4">
+        <CloseOutButton
+          projectId={project.id}
+          projectName={project.name}
+          closed={project.stage === "COMPLETED"}
+          closedNote={
+            project.closedAt
+              ? `Closed ${formatDate(project.closedAt, timeZone)}${
+                  project.closeOutNote ? ` · ${project.closeOutNote}` : ""
+                }`
+              : null
+          }
+          openItems={open}
+        />
+      </div>
 
       <ProjectHeaderForm
         projectId={project.id}
@@ -281,6 +331,28 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <div className="mt-4">
         <AddScopeForm projectId={project.id} serviceTypes={serviceTypes} hasScopes={showScopes} />
       </div>
+
+      <Card lit className="mt-5">
+        <CardHeader
+          title="Notes on this job"
+          subtitle="What was said on site, kept with the job rather than with a person."
+        />
+        <ProjectNotes projectId={project.id} notes={projectNotes} />
+      </Card>
+
+      <Card lit className="mt-5">
+        <CardHeader
+          title="Which building"
+          subtitle="Several jobs at one property roll up into a single budget."
+        />
+        <div className="p-5">
+          <PropertyPicker
+            projectId={project.id}
+            propertyId={project.propertyId}
+            properties={properties}
+          />
+        </div>
+      </Card>
 
       {showScopes && shownScopes.some((scope) => scope.isDefault) && (
         <p className="faint mt-6 text-xs">

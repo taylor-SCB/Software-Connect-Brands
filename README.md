@@ -392,6 +392,36 @@ entries. And when a crew ends up in two places on one day with times that
 actually collide, the calendar says so. It is a note, not a refusal:
 sending half a crew to a service call in the morning is a normal day.
 
+**Properties** (Sept 14, 2026) — **Projects → Properties** is a building at
+a time. A property manager with four towers wants the number per tower, not
+per job: what was awarded across every job there, what has been spent, what
+is still owed. The bar is a **sum of the jobs' own numbers**, so it can never
+disagree with them, and there is nothing new to keep in sync.
+
+**A job belongs to at most one property**, which is what keeps the roll-up
+honest — the same money can never be counted under two buildings. Picking a
+job on a second property moves it, and the screen says so before you save.
+Which stages count is chosen on the screen rather than stored: **cancelled
+work is left out by default** because it is money nobody ever agreed to pay,
+and the chips put it back if you want it. That choice lives in the address
+bar, so a view can be sent to somebody. Jobs at no property are counted up
+at the bottom of the list, so nothing is quietly missing from every total.
+Deleting a property leaves every job at it exactly as it was.
+
+**Close out** (Sept 14, 2026) — a button on the job, not a process. What
+makes it worth pressing is the list beside it: money still owed, payments
+never sent as an invoice, an agreement never signed, bills still out, crew
+time not paid, work never scheduled, things still on the checklist. **None
+of it blocks the button** — a contractor closing a job with $500 still owed
+knows something the app does not. It records the day and a note, and
+reopening puts the job back to Active while keeping that note as history.
+
+**Notes on a job** sit beside the budget: what was said on site, kept with
+the job rather than with a person, so it outlives whoever said it. And
+`{{project_number}}`, `{{project_name}}` and `{{project_site_address}}` are
+merge fields under a **Projects** tab in the template palette, filled in on
+the change orders and purchase orders raised against a job.
+
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five

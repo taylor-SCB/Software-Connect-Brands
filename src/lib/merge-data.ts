@@ -27,10 +27,15 @@ export async function loadMergeContext(input: {
   payments?: { label: string; amountCents: number; dueOn: Date | null }[];
   paymentTerms?: string | null;
   signerName?: string | null;
+  // The awarded job, when the paperwork is being raised against one. A
+  // change order and a purchase order both know their job; a first
+  // contract does not have one yet, and its {{project_number}} stays
+  // visible rather than resolving to nothing.
+  projectId?: string | null;
 }): Promise<MergeContext> {
   const { organizationId } = input;
 
-  const [organization, contact, deal, pickedCompany] = await Promise.all([
+  const [organization, contact, deal, pickedCompany, project] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       where: { id: organizationId },
       select: {
@@ -63,6 +68,17 @@ export async function loadMergeContext(input: {
     input.companyId
       ? prisma.company.findFirst({ where: { id: input.companyId, organizationId } })
       : null,
+    input.projectId
+      ? prisma.project.findFirst({
+          where: { id: input.projectId, organizationId },
+          select: { number: true, name: true, siteAddress: true },
+        })
+      : input.dealId
+        ? prisma.project.findFirst({
+            where: { organizationId, dealId: input.dealId },
+            select: { number: true, name: true, siteAddress: true },
+          })
+        : null,
   ]);
 
   // The quote: the one asked for if it belongs to the deal, otherwise the
@@ -165,6 +181,11 @@ export async function loadMergeContext(input: {
       ? formatDate(`${schedule.finalDueOn}T12:00:00.000Z`, zone)
       : null,
     your_signer_name: input.signerName || null,
+
+    // Projects — the awarded job this paperwork belongs to
+    project_number: project ? `PRJ-${project.number}` : null,
+    project_name: project?.name ?? null,
+    project_site_address: project?.siteAddress || null,
 
     // Settings — your own company
     your_company_address: formatAddress(organization),

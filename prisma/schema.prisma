@@ -108,6 +108,7 @@ model Organization {
   eventTypeOptions    EventTypeOption[]
   calendarEvents      CalendarEvent[]
   projectTasks        ProjectTask[]
+  properties          Property[]
 
   @@index([status])
 }
@@ -205,6 +206,7 @@ model Company {
   distributor Distributor?
   crews       Crew[]
   events      CalendarEvent[]
+  properties  Property[]
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -257,6 +259,7 @@ model Contact {
   projects   Project[]
   crews      Crew[]
   events     CalendarEvent[]
+  properties Property[]
   // Events this person is expected at, as distinct from the one they are
   // the point of contact for above.
   attending  CalendarEvent[] @relation("EventAttendees")
@@ -329,6 +332,11 @@ model Note {
   contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
   companyId      String?
   company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  // A note can be about a job rather than a person: "owner wants the
+  // north side done first". Kept on the job so it survives the contact
+  // moving on.
+  projectId      String?
+  project        Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   authorId       String
   author         User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
   body           String
@@ -339,6 +347,7 @@ model Note {
   @@index([organizationId])
   @@index([contactId])
   @@index([companyId])
+  @@index([projectId])
   @@index([batchId])
 }
 
@@ -359,6 +368,8 @@ model Activity {
   contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
   companyId      String?
   company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  projectId      String?
+  project        Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   type           ActivityType
@@ -371,6 +382,7 @@ model Activity {
   @@index([contactId])
   @@index([contactId, type])
   @@index([companyId])
+  @@index([projectId])
   @@index([batchId])
 }
 
@@ -1075,6 +1087,11 @@ model Project {
   // "Harbor Property Group · Dana Ruiz" — kept as text so the row still
   // reads after a company or contact is deleted.
   customerName   String
+  // The building the work is at, when several jobs share one. A job has at
+  // most one property, which is what keeps a property's roll-up from
+  // counting the same money twice.
+  propertyId     String?
+  property       Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
   // Where the work happens, which is often not the customer's office. One
   // free line; nothing else in the app stores a job-site address.
   siteAddress    String?
@@ -1108,12 +1125,15 @@ model Project {
   timeEntries TimeEntry[]
   events      CalendarEvent[]
   tasks       ProjectTask[]
+  notes       Note[]
+  activities  Activity[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])
   @@index([organizationId, updatedAt])
   @@index([companyId])
   @@index([contactId])
+  @@index([propertyId])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Project_name_trgm_idx")
 }
 
@@ -1402,4 +1422,38 @@ model ProjectTask {
 
   @@index([projectId, doneAt])
   @@index([organizationId, dueOn])
+}
+
+// A building, with the jobs done at it. A property manager with four
+// towers wants the roll-up per tower, not per job: what was awarded
+// across every job there, what has been spent, what is still owed.
+//
+// A job belongs to at most one property, which is what keeps the roll-up
+// honest — the same money can never be counted under two buildings.
+// Which stages count is chosen on the screen, not stored: cancelled work
+// is money that never happened, and whether delayed work belongs in the
+// total is a judgement the person looking makes.
+model Property {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  address        String?
+  city           String?
+  state          String?
+  // Who owns or manages it. Both optional: a property can exist before
+  // anybody at it is in the CRM.
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  notes          String       @default("")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  projects Project[]
+
+  @@index([organizationId, name])
+  @@index([companyId])
+  @@index([contactId])
 }

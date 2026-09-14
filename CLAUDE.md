@@ -158,7 +158,30 @@ split a quote's rows into up to five contracts, each to its own company
 and contact with a template, payment terms and a payment preset; rows read
 Open / Sent / Signed / Cancelled; contracts get line items, a payment
 schedule that autocalculates, a "Your Company Signer", cancel/reopen and
-copy-and-log reminders; Sept 10, 2026), PDF export for both, per-workspace
+copy-and-log reminders; Sept 10, 2026), PDF export for both,
+**Owes you** under every Companies and Contacts row with a Balance card on
+their pages and an Owed to you tile on the dashboard, **invoices** (Send as
+invoice stamps INV-n and mints the page a customer opens at `/i/<token>`,
+with how-to-pay from Settings → General; nothing is emailed),
+**Projects** (Sept 14, 2026: a signed agreement makes PRJ-n on its own,
+a budget of Awarded / Spent / Committed / Left that is always derived from
+paperwork, scopes of work per service type with their own bars and award
+history, Projects → Budgets, `npm run recompute-projects` to prove the
+numbers tie out), the job's **Money** tab (bills by supplier, Order
+materials into a distributor's purchase order at cost, change orders and
+credits, Files including the other side's signed contract), **Crews** (your
+own people or a subcontractor who bills you, people with their own rates,
+time logged in hours and/or days with the rate snapshotted, unpaid time as
+Committed and paid as Spent, Mark paid through, and a warning when a sub's
+hours and their purchase order are both on one job), the **Calendar**
+(month and week, events of any type from a per-workspace pick list, day
+plus optional times, crews and attendees, Copy this week into next, a
+crew double-booking note) with **Schedule install** per scope on a job's
+Schedule tab that flips Awarded → Active, and a things-to-do checklist,
+**Properties** (a building at a time, rolling up the jobs at it, with stage
+chips deciding what counts and cancelled work left out by default) and
+**Close out** (one button, with the loose ends listed beside it and none of
+them blocking), per-workspace
 branding and time zone, Settings → My Account (title, mobile, avatar,
 change password) and Company Information (General, Branding with logo
 upload, Company Users, Compliance and Marketing file uploads), company
@@ -217,7 +240,20 @@ are all blocking before the first paying customer.
   and the **New quote, New contract and Deal Tracker pages still ship the
   whole contact list to the browser** for their pickers. Fine at demo
   scale; the next thing to fix for a workspace that has imported a big
-  CRM.
+  CRM. The Sept 14, 2026 pickers (crews, the event form, properties) cap
+  themselves at 200–300 rows rather than paging, which is the same
+  shortcut and will need the same fix.
+- **Nothing on a job is scheduled for a crew across jobs.** The calendar
+  flags a crew double-booked on one day, but there is no "what is this
+  crew's week" view and no capacity planning. Worth building once a
+  customer runs more than two crews.
+- **A subcontractor's hours default to tracked-only.** Their money comes
+  from their purchase order, which is right, but a sub genuinely paid by
+  the hour needs the per-entry tick each time — there is no per-crew
+  setting for it yet.
+- **A property is one level deep.** A building rolls up its jobs; there is
+  no portfolio rolling up buildings. A manager with forty towers will
+  want one.
 - **The import runs in the browser tab.** Any size works, but the tab
   has to stay open (about 5 to 10 minutes for 200,000 rows). A
   background job is the answer when a customer needs to walk away or
@@ -240,18 +276,33 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. Four more are checked in at
+suite, and the delete-confirmation suite. **Thirteen** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
 27-step deal tracker + settings + uploads suite (both Sept 10, 2026),
 the 17-step contacts import + filters + favorites suite and the
 200,000-row load test (both Sept 13, 2026; the load test seeds in SQL,
-takes several minutes, and must stay under its 2-second page budget).
+takes several minutes, and must stay under its 2-second page budget),
+and from Sept 14, 2026 the 8-step company enrichment suite, the 24-step
+money + payments suite, the 23-step projects core suite, the 22-step
+project money suite, the 30-step crews + time suite, the 35-step calendar
+suite and the 25-step properties + close out suite.
+
 Each signs up its own workspace and scopes its lookups to it, so they can
-run back to back; still run them one at a time. All of them run against a local Postgres
-on port 5433 and must pass before anything is pushed. That local database
-is the only safety net between a change and paying customers.
+run back to back; still run them one at a time. **Scope every SQL lookup
+in a suite to its own workspace** — an unscoped count read another suite's
+seeded rep as a duplicate of its own (Sept 14, 2026). And a suite that
+seeds budget numbers by hand must **delete its workspace when it
+finishes**: `properties-closeout.cjs` does, because every other suite
+asserts `recompute-projects --check` finds no drift anywhere, and
+hand-seeded totals have no paperwork to back them up. A contract seeded
+with SQL must also bump `Organization.nextContractNumber`, or the next
+real one collides.
+
+All of them run against a local Postgres on port 5433 and must pass before
+anything is pushed. That local database is the only safety net between a
+change and paying customers.
 
 Standing up that Postgres in a fresh session: the binaries are at
 `/usr/lib/postgresql/16/bin`; `initdb` into a short path such as
