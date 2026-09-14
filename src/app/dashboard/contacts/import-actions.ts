@@ -7,6 +7,8 @@ import { requireSession } from "@/lib/session";
 import { CONTACT_STATUSES } from "@/lib/constants";
 import { ensureIndustryOptions, inferIndustriesForTypes, mergeTags } from "@/lib/industries";
 import { IMPORT_BATCH_SIZE, emptyBatchResult, type ImportBatchResult } from "@/lib/contacts-csv";
+import type { AutoField, ContactHint } from "@/lib/enrich";
+import { dropAutoMarks, enrichCompanies, loadCompaniesForEnrichment } from "@/lib/enrich-companies";
 import type { Prisma } from "@/generated/prisma/client";
 
 const text = (max: number) => z.string().trim().max(max).nullable();
@@ -106,26 +108,59 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
     const names = Array.from(wantedCompanies.values()).map((company) => company.name);
     const existing = await prisma.company.findMany({
       where: { organizationId, name: { in: names, mode: "insensitive" } },
-      select: { id: true, name: true, phone: true, email: true, website: true, city: true, state: true, industries: true, companyTypes: true },
+      select: { id: true, name: true, phone: true, email: true, website: true, city: true, state: true, industries: true, companyTypes: true, autoFilled: true },
     });
     for (const company of existing) companyIds.set(lower(company.name), company.id);
 
-    // Fill blanks on the ones we already have; never overwrite a value.
+    // Fill blanks on the ones we already have; never overwrite a value a
+    // person entered. The one deliberate exception: a phone, website or
+    // tag the app filled in on its own (Company.autoFilled) is a guess, and
+    // a person's spreadsheet beats a guess — the file's value replaces it
+    // and the "auto" mark comes off.
     for (const company of existing) {
       const wanted = wantedCompanies.get(lower(company.name));
       if (!wanted) continue;
       const data: Prisma.CompanyUpdateManyMutationInput = {};
-      if (!company.phone && wanted.phone) data.phone = wanted.phone;
+      const auto = company.autoFilled;
+      // The marks to take off: one for each field the file is writing.
+      // Removed on the database side (dropAutoMarks) rather than by
+      // writing back the list read above, because "Fill in missing" in
+      // another tab may have marked a field since then — the file's value
+      // must never end up wearing an "auto" mark.
+      const unmark: AutoField[] = [];
+      if (wanted.phone && (!company.phone || auto.includes("phone"))) {
+        data.phone = wanted.phone;
+        unmark.push("phone");
+      }
       if (!company.email && wanted.email) data.email = wanted.email;
-      if (!company.website && wanted.website) data.website = wanted.website;
+      if (wanted.website && (!company.website || auto.includes("website"))) {
+        data.website = wanted.website;
+        unmark.push("website");
+      }
       if (!company.city && wanted.city) data.city = wanted.city;
       if (!company.state && wanted.state) data.state = wanted.state;
-      const industries = union(company.industries, wanted.industries.map(canonIndustry));
-      if (industries.length !== company.industries.length) data.industries = industries;
-      const companyTypes = union(company.companyTypes, wanted.companyTypes.map(canonType));
-      if (companyTypes.length !== company.companyTypes.length) data.companyTypes = companyTypes;
+      const fileHasTags = wanted.industries.length > 0 || wanted.companyTypes.length > 0;
+      const guessed = auto.includes("industries") || auto.includes("companyTypes");
+      const untagged = company.industries.length === 0 && company.companyTypes.length === 0;
+      if (fileHasTags && (guessed || untagged)) {
+        // The file's tags replace the guess rather than joining it, so the
+        // guess never lingers looking like something a person chose. An
+        // untagged company gets both lists written whole for the same
+        // reason: a guess made in the meantime must not stay behind.
+        data.industries = mergeTags([], wanted.industries.map(canonIndustry));
+        data.companyTypes = mergeTags([], wanted.companyTypes.map(canonType));
+        unmark.push("industries", "companyTypes");
+      } else {
+        const industries = union(company.industries, wanted.industries.map(canonIndustry));
+        if (industries.length !== company.industries.length) data.industries = industries;
+        const companyTypes = union(company.companyTypes, wanted.companyTypes.map(canonType));
+        if (companyTypes.length !== company.companyTypes.length) data.companyTypes = companyTypes;
+      }
       if (Object.keys(data).length === 0) continue;
-      await prisma.company.updateMany({ where: { id: company.id, organizationId }, data });
+      await prisma.$transaction([
+        prisma.company.updateMany({ where: { id: company.id, organizationId }, data }),
+        ...(unmark.length > 0 ? [dropAutoMarks(organizationId, company.id, unmark)] : []),
+      ]);
       result.companiesUpdated += 1;
     }
 
@@ -157,6 +192,7 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
   // ---- Contacts -------------------------------------------------------
   const people = rows.filter((row) => row.name);
   if (people.length === 0) {
+    await fillInBlanks(organizationId, Array.from(companyIds.values()), result);
     revalidateLists();
     return result;
   }
@@ -187,11 +223,20 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
 
   const creates: Prisma.ContactCreateManyInput[] = [];
   const seenNew = new Set<string>();
+  // This batch's people by company, for fillInBlanks below: what the file
+  // says about them counts for their company whether the row became a new
+  // contact or updated one, and however many people the company has.
+  const batchRows = new Map<string, ContactHint[]>();
   for (const row of people) {
     const companyId = row.company ? (companyIds.get(lower(row.company.name)) ?? null) : null;
     if (row.company && !companyId) {
       result.skipped.push({ line: row.line, reason: `Company "${row.company.name}" couldn't be created` });
       continue;
+    }
+    if (companyId) {
+      const hints = batchRows.get(companyId) ?? [];
+      hints.push({ phone: row.phone, email: row.email, title: row.title, website: row.website });
+      batchRows.set(companyId, hints);
     }
     const existingId =
       (row.email ? emailIds.get(row.email) : undefined) ?? nameIds.get(`${lower(row.name!)}|${companyId ?? ""}`);
@@ -238,8 +283,22 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
     result.contactsCreated += creates.length;
   }
 
+  await fillInBlanks(organizationId, Array.from(companyIds.values()), result, batchRows);
   revalidateLists();
   return result;
+}
+
+// After the file's own values are in: tag every company this batch
+// touched that still has no industry or type, and copy a phone or website
+// up from its people where those are blank (src/lib/enrich.ts). Runs once
+// the batch's contacts are written, and the batch's own rows are handed
+// over as well, so the people just imported count.
+async function fillInBlanks(organizationId: string, companyIds: string[], result: ImportBatchResult, batchRows?: Map<string, ContactHint[]>) {
+  if (companyIds.length === 0) return;
+  const counts = await enrichCompanies(organizationId, await loadCompaniesForEnrichment(organizationId, companyIds, batchRows));
+  result.tagged += counts.tagged;
+  result.phonesFilled += counts.phonesFilled;
+  result.websitesFilled += counts.websitesFilled;
 }
 
 function revalidateLists() {

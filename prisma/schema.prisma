@@ -160,6 +160,13 @@ model Company {
   // user today; "Favorite Companies" in the sidebar is this filter.
   favorite       Boolean       @default(false)
   status         ContactStatus @default(LEAD)
+  // Fields the app filled in on its own from the spreadsheet and the
+  // company's own people ('industries', 'companyTypes', 'phone',
+  // 'website'; see src/lib/enrich.ts). Each shows a small "auto" mark
+  // until a person edits that field or presses "Looks right", which
+  // clears it. enrichedAt is when the app last filled something in.
+  autoFilled     String[]      @default([])
+  enrichedAt     DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -176,6 +183,9 @@ model Company {
   @@index([organizationId, favorite])
   @@index([industries], type: Gin)
   @@index([companyTypes], type: Gin)
+  // No index on autoFilled: the "Auto-filled" toggle asks for a non-empty
+  // list (`<> '{}'`), which a GIN index cannot serve, and the
+  // organizationId index already narrows it enough.
   // Trigram indexes behind the list search (ILIKE '%text%'); pg_trgm is
   // declared on the datasource above so migrate dev keeps them.
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_name_trgm_idx")

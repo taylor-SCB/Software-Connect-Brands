@@ -13,8 +13,11 @@ import { ListFilters } from "@/components/list-filters";
 import { Pagination } from "@/components/pagination";
 import { StarButton } from "@/components/star-button";
 import { ImportCsvButton } from "@/components/import-csv-button";
+import { AutoPill } from "@/components/auto-pill";
+import { getTimeZone } from "@/lib/organization";
 import { TagCell } from "../contacts/contacts-list";
 import { setCompanyFavorite } from "./actions";
+import { FillMissingButton } from "./fill-missing-button";
 
 // The Companies table, shared by /companies, /companies/favorites and
 // /companies/with-deals. See ContactsList for the shape.
@@ -35,9 +38,10 @@ export async function CompaniesList({
   const params = parseListParams(searchParams, lock);
   const where = companyWhere(organizationId, params);
 
-  const [total, options, unfiltered] = await Promise.all([
+  const [total, options, timeZone, unfiltered] = await Promise.all([
     prisma.company.count({ where }),
     getFilterOptions(organizationId),
+    getTimeZone(),
     prisma.company.count({
       where: {
         organizationId,
@@ -76,6 +80,7 @@ export async function CompaniesList({
         actions={
           <>
             <ImportCsvButton kind="companies" />
+            <FillMissingButton />
             <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
               Add company
@@ -150,7 +155,10 @@ export async function CompaniesList({
                         </Link>
                       </td>
                       <td className="text-xs">
-                        <TagCell industries={company.industries} types={company.companyTypes} />
+                        <div className="flex flex-wrap items-center gap-1">
+                          <TagCell industries={company.industries} types={company.companyTypes} />
+                          <AutoPill field="industries" autoFilled={company.autoFilled} enrichedAt={company.enrichedAt} timeZone={timeZone} />
+                        </div>
                       </td>
                       <td className="muted">{location || <span className="faint">—</span>}</td>
                       <td className="muted num">
@@ -161,6 +169,7 @@ export async function CompaniesList({
                         ) : (
                           <span className="faint">—</span>
                         )}
+                        <AutoPill field="phone" autoFilled={company.autoFilled} enrichedAt={company.enrichedAt} timeZone={timeZone} />
                       </td>
                       <td className="muted">
                         {company.website ? (
@@ -176,6 +185,7 @@ export async function CompaniesList({
                         ) : (
                           <span className="faint">—</span>
                         )}
+                        <AutoPill field="website" autoFilled={company.autoFilled} enrichedAt={company.enrichedAt} timeZone={timeZone} />
                       </td>
                       <td>
                         <Link

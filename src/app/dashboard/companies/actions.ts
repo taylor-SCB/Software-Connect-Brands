@@ -10,6 +10,7 @@ import { CONTACT_STATUSES } from "@/lib/constants";
 import { normalizeWebsite, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
+import { sameTags, withoutAuto, type AutoField } from "@/lib/enrich";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -50,9 +51,9 @@ function companyData(parsed: z.infer<typeof companySchema>) {
 // Industry / Company Type from the picker, with anything new added to the
 // workspace's lists. Absent from the form (an older client, a test) means
 // leave the company's tags alone.
-async function tagData(formData: FormData, organizationId: string) {
+async function tagData(formData: FormData, organizationId: string): Promise<{ industries: string[]; companyTypes: string[] } | null> {
   const tags = readIndustryFields(formData);
-  if (!tags.touched) return {};
+  if (!tags.touched) return null;
   const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
   return { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) };
 }
@@ -87,7 +88,7 @@ export async function createCompany(_prev: ActionState, formData: FormData): Pro
   }
 
   const company = await prisma.company.create({
-    data: { organizationId, ...data, ...(await tagData(formData, organizationId)) },
+    data: { organizationId, ...data, ...((await tagData(formData, organizationId)) ?? {}) },
   });
   if (hasFile(logoFile)) {
     const logoUrl = await replaceImage({ organizationId, kind: "COMPANY_LOGO", file: logoFile, companyId: company.id });
@@ -115,7 +116,10 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
     return { error: "A company with that name already exists" };
   }
 
-  const existing = await prisma.company.findFirst({ where: { id: id.data, organizationId }, select: { id: true } });
+  const existing = await prisma.company.findFirst({
+    where: { id: id.data, organizationId },
+    select: { id: true, phone: true, website: true, industries: true, companyTypes: true, autoFilled: true },
+  });
   if (!existing) return { error: "Company not found" };
 
   const logo: { logoUrl?: string | null } = {};
@@ -126,9 +130,21 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
     logo.logoUrl = null;
   }
 
+  // A field the app filled in stops being "auto" the moment a person
+  // changes it; the mark stays if they saved without touching it.
+  const tags = await tagData(formData, organizationId);
+  const edited: AutoField[] = [];
+  if (data.phone !== existing.phone) edited.push("phone");
+  if (data.website !== existing.website) edited.push("website");
+  if (tags && (!sameTags(tags.industries, existing.industries) || !sameTags(tags.companyTypes, existing.companyTypes))) {
+    edited.push("industries", "companyTypes");
+  }
+  const autoFilled = withoutAuto(existing.autoFilled, edited);
+  const marks = autoFilled.length !== existing.autoFilled.length ? { autoFilled } : {};
+
   const result = await prisma.company.updateMany({
     where: { id: id.data, organizationId },
-    data: { ...data, ...logo, ...(await tagData(formData, organizationId)) },
+    data: { ...data, ...logo, ...(tags ?? {}), ...marks },
   });
   if (result.count === 0) return { error: "Company not found" };
 
@@ -136,6 +152,28 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
   revalidatePath(`/dashboard/companies/${id.data}`);
   revalidatePath("/dashboard/contacts");
   return { success: "Company saved" };
+}
+
+// "Looks right" on the company page: the person has read what the app
+// filled in and is keeping it, so the "auto" marks come off. The values
+// stay; updatedAt stays too, since nothing about the company changed.
+export async function confirmCompanyDetails(companyId: string): Promise<{ ok: true } | { error: string }> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(companyId);
+  if (!id.success) return { error: "Missing company reference" };
+  const company = await prisma.company.findFirst({
+    where: { id: id.data, organizationId },
+    select: { updatedAt: true },
+  });
+  if (!company) return { error: "Company not found" };
+  await prisma.company.updateMany({
+    where: { id: id.data, organizationId },
+    data: { autoFilled: [], updatedAt: company.updatedAt },
+  });
+  revalidatePath("/dashboard/companies");
+  revalidatePath(`/dashboard/companies/${id.data}`);
+  revalidatePath("/dashboard/contacts");
+  return { ok: true };
 }
 
 // The star. Returns the new state so the button can settle on it.

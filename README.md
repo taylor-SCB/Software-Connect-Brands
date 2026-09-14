@@ -54,7 +54,13 @@ list pages at fifty and every feed shows its latest 200) and takes notes
 and activity of its own. A residential customer is a contact with no
 company and reads as **Individual / Personal**; nothing downstream
 requires a company. Typing a company name on a contact creates the
-company.
+company. **Fill in missing** on the Companies list (Sept 14, 2026) tags
+every untagged company and copies a phone or website up from its people
+where those are blank, in batches with a progress bar; anything it fills
+wears a small **auto** mark (with an **Auto-filled** toggle in the filter
+bar to review them) until you edit that field or press **Looks right** on
+the company page. Rules in `src/lib/enrich.ts`; only the spreadsheet and
+the company's own people are used, nothing outside the workspace.
 
 **Industry and Company Type** (Sept 13, 2026) — two multi-select pick
 lists on the company, shown and edited on the contact form too (they
@@ -108,7 +114,17 @@ industry it already lives in ("Integrator" lands on Service Provider) or
 under "Uncategorized". A contact whose email already exists is updated
 (name included), else matched on name + company, else created.
 Re-uploading the same file updates instead of doubling. Windows Excel's
-non-UTF-8 CSVs are decoded correctly. **Stop
+non-UTF-8 CSVs are decoded correctly. Every company a batch touches that
+still has no Industry and no Company Type is tagged from its name, its
+website's domain, its people's work-email domain and their titles
+("Acme Electric" → Service Provider / Electrician, "Lakeside Towers" →
+MDU / Property Management, anything unplaceable → Uncategorized /
+General), and a blank company phone or website is copied up from its
+people when one person is clearly the main line or everyone agrees
+(Sept 14, 2026; `src/lib/enrich.ts`). Anything filled in that way wears
+a small **auto** mark; a later file that carries the value replaces the
+guess, and the running count reads "Tagged 12 · 5 phones · 8 websites
+filled in". **Stop
 after this batch** halts it; a skipped-rows CSV lists anything that did
 not import and why. **Download the template** gives the exact headers,
 contact fields first, then the company's

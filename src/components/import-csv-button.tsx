@@ -16,6 +16,7 @@ import {
   type ImportBatchResult,
 } from "@/lib/contacts-csv";
 import { importContactsBatch } from "@/app/dashboard/contacts/import-actions";
+import { describeFilled } from "@/lib/enrich";
 
 // "Import CSV" on the Contacts and Companies lists. The browser reads the
 // whole file (any size), shows what it found, then sends the rows up in
@@ -334,6 +335,15 @@ function Progress({
         <Stat label="Companies added" value={totals.companiesCreated} />
         <Stat label="Companies updated" value={totals.companiesUpdated} />
       </dl>
+      {(finished || totals.tagged + totals.phonesFilled + totals.websitesFilled > 0) && (
+        <p className="faint text-xs" data-testid="import-filled">
+          {/* An import may have had nothing to look for (every company complete
+              already) or nothing to find; either way the app added nothing. */}
+          {describeFilled(totals, "Nothing filled in by the app")}
+          {totals.tagged + totals.phonesFilled + totals.websitesFilled > 0 &&
+            " from your spreadsheet and the people at each company. Anything filled in wears a small “auto” mark until you confirm it."}
+        </p>
+      )}
       {totals.skipped.length > 0 && (
         <p className="text-xs text-[var(--warn)]">
           {totals.skipped.length.toLocaleString()} {totals.skipped.length === 1 ? "row" : "rows"} skipped — download the list below to fix and reload them.

@@ -17,8 +17,10 @@ import {
 } from "@/components/ui";
 import { IconGlobe, IconUserPlus, IconPlus, IconChevronLeft, IconChevronRight } from "@/components/icons";
 import { StarButton } from "@/components/star-button";
+import { AutoPill } from "@/components/auto-pill";
 import { TagCell } from "../../contacts/contacts-list";
 import { setCompanyFavorite } from "../actions";
+import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
 import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
@@ -212,13 +214,20 @@ export default async function CompanyDetailPage({
 
         <div className="space-y-5">
           <Card lit>
-            <CardHeader title="Details" />
+            <CardHeader
+              title="Details"
+              subtitle={company.autoFilled.length > 0 ? "Values marked “auto” were filled in by the app." : undefined}
+              actions={company.autoFilled.length > 0 ? <LooksRightButton companyId={company.id} /> : undefined}
+            />
             <dl className="space-y-3 p-5 text-sm">
               <Detail
                 label="Industry · Type"
                 value={
                   company.industries.length || company.companyTypes.length ? (
-                    <TagCell industries={company.industries} types={company.companyTypes} />
+                    <span className="inline-flex flex-wrap items-center justify-end gap-1">
+                      <TagCell industries={company.industries} types={company.companyTypes} />
+                      <AutoPill field="industries" autoFilled={company.autoFilled} enrichedAt={company.enrichedAt} timeZone={timeZone} />
+                    </span>
                   ) : null
                 }
               />
@@ -226,9 +235,12 @@ export default async function CompanyDetailPage({
                 label="Phone"
                 value={
                   company.phone ? (
-                    <a href={`tel:${company.phone}`} className="link num">
-                      {company.phone}
-                    </a>
+                    <>
+                      <a href={`tel:${company.phone}`} className="link num">
+                        {company.phone}
+                      </a>
+                      <AutoPill field="phone" autoFilled={company.autoFilled} enrichedAt={company.enrichedAt} timeZone={timeZone} />
+                    </>
                   ) : null
                 }
               />
@@ -246,15 +258,18 @@ export default async function CompanyDetailPage({
                 label="Website"
                 value={
                   company.website ? (
-                    <a
-                      href={company.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="link inline-flex items-center gap-1"
-                    >
-                      <IconGlobe size={12} />
-                      {company.website.replace(/^https?:\/\//, "")}
-                    </a>
+                    <>
+                      <a
+                        href={company.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="link inline-flex items-center gap-1"
+                      >
+                        <IconGlobe size={12} />
+                        {company.website.replace(/^https?:\/\//, "")}
+                      </a>
+                      <AutoPill field="website" autoFilled={company.autoFilled} enrichedAt={company.enrichedAt} timeZone={timeZone} />
+                    </>
                   ) : null
                 }
               />

@@ -10,6 +10,7 @@ import { dollarsToCents } from "@/lib/format";
 import { CONTACT_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
+import { sameTags, withoutAuto } from "@/lib/enrich";
 import {
   targetSchema,
   readTarget,
@@ -84,9 +85,18 @@ async function contactData(
   const tags = readIndustryFields(formData);
   if (companyId && tags.touched) {
     const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+    const industries = canonical.industries;
+    const companyTypes = mergeTags(canonical.companyTypes, tags.keepTypes);
+    // Tags the app guessed stop being "auto" once a person changes them here.
+    const current = await prisma.company.findFirst({
+      where: { id: companyId, organizationId },
+      select: { industries: true, companyTypes: true, autoFilled: true },
+    });
+    const changed = current && (!sameTags(current.industries, industries) || !sameTags(current.companyTypes, companyTypes));
+    const marks = changed ? { autoFilled: withoutAuto(current.autoFilled, ["industries", "companyTypes"]) } : {};
     await prisma.company.updateMany({
       where: { id: companyId, organizationId },
-      data: { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) },
+      data: { industries, companyTypes, ...marks },
     });
   }
   return {

@@ -32,6 +32,8 @@ export function companyWhere(organizationId: string, p: ListParams): Prisma.Comp
   if (p.deals) and.push({ contacts: { some: { deals: { some: {} } } } });
   // Needs attention: nothing known about it beyond a name, or no industry.
   if (p.attn) and.push({ OR: [{ industries: { isEmpty: true } }, { AND: [{ phone: null }, { email: null }] }] });
+  // Auto-filled: something on it was filled in by the app and not yet confirmed.
+  if (p.auto) and.push({ autoFilled: { isEmpty: false } });
   return { AND: and };
 }
 

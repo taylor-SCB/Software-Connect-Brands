@@ -337,7 +337,11 @@ async function rowCount(page, testId) {
   await page.waitForURL(/type=Gates/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies");
   await page.goto(`${BASE}/dashboard/companies?attn=1`);
-  assert.equal(await pageSummary(page), "Showing 1–3 of 3 companies", "Bluebird, Gates and Big Co have no phone or email");
+  // Was 3 before Sept 14, 2026: the import now copies Sam's phone up to Bluebird ISP (its one person with a number), so only Gates and Big Co are left unreachable.
+  assert.equal(await pageSummary(page), "Showing 1–2 of 2 companies", "Gates and Big Co have no phone or email");
+  const bluebirdPhone = (await sql(`SELECT phone, "autoFilled" FROM "Company" WHERE name='Bluebird ISP' AND "organizationId"=$1`, [org])).rows[0];
+  assert.equal(bluebirdPhone.phone, "555-1001", "Bluebird's phone copied up from Sam");
+  assert.ok(bluebirdPhone.autoFilled.includes("phone"), "and marked as filled in by the app");
   await page.goto(`${BASE}/dashboard/companies`);
   await page.locator("tr", { hasText: "Big Co" }).getByRole("link", { name: "Big Co" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);

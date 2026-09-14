@@ -392,11 +392,26 @@ export type ImportBatchResult = {
   contactsUpdated: number;
   companiesCreated: number;
   companiesUpdated: number;
+  // What the app filled in on its own for the companies this batch
+  // touched (src/lib/enrich.ts): tags where the file had none, phones and
+  // websites read off the company's people.
+  tagged: number;
+  phonesFilled: number;
+  websitesFilled: number;
   skipped: { line: number; reason: string }[];
 };
 
 export function emptyBatchResult(): ImportBatchResult {
-  return { contactsCreated: 0, contactsUpdated: 0, companiesCreated: 0, companiesUpdated: 0, skipped: [] };
+  return {
+    contactsCreated: 0,
+    contactsUpdated: 0,
+    companiesCreated: 0,
+    companiesUpdated: 0,
+    tagged: 0,
+    phonesFilled: 0,
+    websitesFilled: 0,
+    skipped: [],
+  };
 }
 
 export function addBatchResult(into: ImportBatchResult, result: ImportBatchResult) {
@@ -404,6 +419,9 @@ export function addBatchResult(into: ImportBatchResult, result: ImportBatchResul
   into.contactsUpdated += result.contactsUpdated;
   into.companiesCreated += result.companiesCreated;
   into.companiesUpdated += result.companiesUpdated;
+  into.tagged += result.tagged;
+  into.phonesFilled += result.phonesFilled;
+  into.websitesFilled += result.websitesFilled;
   into.skipped.push(...result.skipped);
 }
 

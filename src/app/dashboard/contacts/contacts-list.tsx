@@ -19,6 +19,8 @@ import { ListFilters } from "@/components/list-filters";
 import { Pagination } from "@/components/pagination";
 import { StarButton } from "@/components/star-button";
 import { ImportCsvButton } from "@/components/import-csv-button";
+import { AutoPill } from "@/components/auto-pill";
+import { getTimeZone } from "@/lib/organization";
 import { setContactFavorite } from "./actions";
 
 const ACTIVITY_ICONS = {
@@ -53,14 +55,17 @@ export async function ContactsList({
   subtitle?: string;
 }) {
   const { organizationId } = await requireSession();
-  const params = parseListParams(searchParams, lock);
+  // The Auto-filled toggle is a companies-only filter; a pasted ?auto=1
+  // is dropped here so the bar never claims a filter this list lacks.
+  const params = { ...parseListParams(searchParams, lock), auto: false };
   const where = contactWhere(organizationId, params, await companyIdsMatching(organizationId, params.q));
 
-  const [total, options, selectedCompanies, unfiltered] = await Promise.all([
+  const [total, options, selectedCompanies, unfiltered, timeZone] = await Promise.all([
     prisma.contact.count({ where }),
     getFilterOptions(organizationId),
     namesForCompanies(organizationId, params.companies),
     totalInWorkspace(organizationId, lock),
+    getTimeZone(),
   ]);
   const window = pageWindow(total, params.per, params.page);
 
@@ -71,7 +76,7 @@ export async function ContactsList({
     take: params.per,
     include: {
       _count: { select: { notes: true, deals: true } },
-      company: { select: { id: true, name: true, industries: true, companyTypes: true } },
+      company: { select: { id: true, name: true, industries: true, companyTypes: true, autoFilled: true, enrichedAt: true } },
     },
   });
 
@@ -192,10 +197,20 @@ export async function ContactsList({
                         )}
                       </td>
                       <td className="text-xs">
-                        <TagCell
-                          industries={contact.company?.industries ?? []}
-                          types={contact.company ? contact.company.companyTypes : [INDIVIDUAL_COMPANY_TYPE]}
-                        />
+                        <div className="flex flex-wrap items-center gap-1">
+                          <TagCell
+                            industries={contact.company?.industries ?? []}
+                            types={contact.company ? contact.company.companyTypes : [INDIVIDUAL_COMPANY_TYPE]}
+                          />
+                          {contact.company && (
+                            <AutoPill
+                              field="industries"
+                              autoFilled={contact.company.autoFilled}
+                              enrichedAt={contact.company.enrichedAt}
+                              timeZone={timeZone}
+                            />
+                          )}
+                        </div>
                       </td>
                       <td className="muted">
                         {contact.email ? (

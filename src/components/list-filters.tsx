@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding } from "@/components/icons";
+import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles } from "@/components/icons";
 import { INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES } from "@/lib/constants";
 import { listHref, activeFilterCount, type ListParams, type ListLock } from "@/lib/list-params";
 import { useSearch } from "@/lib/use-search";
@@ -138,6 +138,12 @@ export function ListFilters({
           <IconFilter size={13} />
           Needs attention
         </Toggle>
+        {kind === "companies" && (
+          <Toggle on={params.auto} onClick={() => go({ auto: !params.auto })} testId="filter-auto">
+            <IconSparkles size={13} />
+            Auto-filled
+          </Toggle>
+        )}
 
         <label className="ml-auto flex items-center gap-1.5 text-xs">
           <span className="faint">Per page</span>
@@ -182,10 +188,11 @@ export function ListFilters({
           {params.fav && !lock.fav && <Chip onRemove={() => go({ fav: false })}>Favorites</Chip>}
           {params.deals && !lock.deals && <Chip onRemove={() => go({ deals: false })}>With deals</Chip>}
           {params.attn && <Chip onRemove={() => go({ attn: false })}>Needs attention</Chip>}
+          {kind === "companies" && params.auto && <Chip onRemove={() => go({ auto: false })}>Auto-filled</Chip>}
           <button
             type="button"
             onClick={() =>
-              go({ q: "", states: [], industries: [], types: [], companies: [], fav: false, deals: false, attn: false })
+              go({ q: "", states: [], industries: [], types: [], companies: [], fav: false, deals: false, attn: false, auto: false })
             }
             className="btn btn-ghost btn-sm"
           >

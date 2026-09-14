@@ -15,6 +15,10 @@ export type ListParams = {
   fav: boolean;
   deals: boolean;
   attn: boolean;
+  // Companies only: those with a value the app filled in on its own
+  // (Company.autoFilled), for reviewing what it guessed. The Contacts
+  // list forces it off after parsing.
+  auto: boolean;
 };
 
 // The sub-panes ("Favorite Contacts", "Companies with Deals") are the same
@@ -51,6 +55,7 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     fav: lock.fav || raw.fav === "1",
     deals: lock.deals || raw.deals === "1",
     attn: raw.attn === "1",
+    auto: raw.auto === "1",
   };
 }
 
@@ -71,6 +76,7 @@ export function listHref(basePath: string, params: ListParams, overrides: Partia
   if (next.fav && !lock.fav) search.set("fav", "1");
   if (next.deals && !lock.deals) search.set("deals", "1");
   if (next.attn) search.set("attn", "1");
+  if (next.auto) search.set("auto", "1");
   const query = search.toString();
   return query ? `${basePath}?${query}` : basePath;
 }
@@ -83,7 +89,8 @@ export function activeFilterCount(params: ListParams, lock: ListLock = {}) {
     params.companies.length +
     (params.fav && !lock.fav ? 1 : 0) +
     (params.deals && !lock.deals ? 1 : 0) +
-    (params.attn ? 1 : 0)
+    (params.attn ? 1 : 0) +
+    (params.auto ? 1 : 0)
   );
 }
 
