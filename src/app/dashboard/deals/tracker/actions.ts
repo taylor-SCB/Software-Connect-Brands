@@ -16,6 +16,8 @@ import {
   presetRows,
   type ScheduleRowInput,
 } from "@/lib/payments";
+import { formatCents } from "@/lib/format";
+import { paidCentsOf, settleRow } from "@/lib/money";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -39,6 +41,9 @@ const columnSchema = z.object({
   newContactName: z.string().trim().max(120).optional(),
   templateId: z.string().trim().optional(),
   title: z.string().trim().max(160).optional(),
+  // Money out (true: a purchase order we pay) or Money in (false: the
+  // customer pays us). The grid defaults it from the template's type.
+  payable: z.boolean(),
   paymentTerms: z.string().trim().max(120).optional(),
   schedule: z
     .object({
@@ -210,6 +215,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         : [];
       const schedule = computeSchedule(scheduleInput, totalCents);
       const payments = schedule.rows.map((row, position) => ({
+        organizationId,
         label: row.label,
         kind: row.kind,
         percent: row.kind === "PERCENT" ? row.percent : null,
@@ -249,6 +255,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
           number,
           title: column.title || template.name,
           type: template.type,
+          payable: column.payable,
           body: renderMergeFields(template.body, context),
           publicToken: publicToken(),
           senderSignerName: signerName,
@@ -362,14 +369,22 @@ export async function logReminder(contractId: string): Promise<ActionState> {
 /* ----------------------------- Payment schedule ----------------------------- */
 
 const scheduleRowSchema = z.object({
+  // Set for a row that already exists, so it keeps its id (and the
+  // payments recorded on it) through a re-save; absent for a new row.
+  id: z.string().trim().min(1).optional(),
   label: z.string().trim().min(1, "Every payment needs a label").max(120),
   kind: z.enum(["PERCENT", "FIXED", "BALANCE"]),
   percent: z.number().min(0).max(100).nullable(),
   fixedCents: z.number().int().min(0).max(1_000_000_000).nullable(),
   dueOn: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A due date isn't valid")]),
-  paid: z.boolean().optional(),
 });
 
+// Saves the payment table. Rows the editor already had keep their ids —
+// the payments recorded on them stay attached — and are updated in place;
+// rows without an id are new; rows no longer present are deleted, unless
+// money was recorded on them. Allowed on a signed contract too: the dates,
+// amounts and percents can be amended after award. Paid is not part of
+// this save; it is recorded per row by the payment actions.
 export async function savePaymentSchedule(input: {
   contractId: string;
   paymentTerms: string;
@@ -394,7 +409,10 @@ export async function savePaymentSchedule(input: {
       status: true,
       dealId: true,
       lineItems: { select: { quantity: true, unitPriceCents: true } },
-      payments: { select: { id: true, position: true, paidAt: true }, orderBy: { position: "asc" } },
+      payments: {
+        orderBy: { position: "asc" },
+        select: { id: true, label: true, payments: { select: { amountCents: true } } },
+      },
     },
   });
   if (!contract) return { error: "Contract not found" };
@@ -405,29 +423,66 @@ export async function savePaymentSchedule(input: {
     return { error: "The fixed amounts add up to more than the contract total" };
   }
 
-  // Paid marks survive a re-save by position; a row that moved keeps
-  // whatever the editor sent for it.
-  await prisma.$transaction([
-    prisma.contract.update({
-      where: { id: parsed.data.contractId },
+  const existingById = new Map(contract.payments.map((row) => [row.id, row]));
+  const seen = new Set<string>();
+  for (const [index, row] of parsed.data.rows.entries()) {
+    if (!row.id) continue;
+    const existing = existingById.get(row.id);
+    // An id from another contract (or a stale one) is not this row.
+    if (!existing || seen.has(row.id)) {
+      return { error: "A row on this table has changed since the page loaded. Reload and try again." };
+    }
+    seen.add(row.id);
+    const received = paidCentsOf(existing);
+    if (schedule.rows[index].amountCents < received) {
+      return {
+        error: `'${row.label}' already has ${formatCents(received)} recorded on it — the amount can't go below that.`,
+      };
+    }
+  }
+  const removed = contract.payments.filter((row) => !seen.has(row.id));
+  for (const row of removed) {
+    const received = paidCentsOf(row);
+    if (received > 0) {
+      return { error: `'${row.label}' has ${formatCents(received)} recorded — remove that payment first.` };
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contract.updateMany({
+      where: { id: parsed.data.contractId, organizationId },
       data: { paymentTerms: parsed.data.paymentTerms || null },
-    }),
-    prisma.contractPayment.deleteMany({ where: { contractId: parsed.data.contractId } }),
-    prisma.contractPayment.createMany({
-      data: schedule.rows.map((row, position) => ({
-        contractId: parsed.data.contractId,
+    });
+    if (removed.length) {
+      await tx.contractPayment.deleteMany({
+        where: { id: { in: removed.map((row) => row.id) }, contractId: parsed.data.contractId },
+      });
+    }
+    for (const [position, row] of schedule.rows.entries()) {
+      const data = {
         label: row.label,
         kind: row.kind,
         percent: row.kind === "PERCENT" ? row.percent : null,
         amountCents: row.amountCents,
         dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
-        paidAt: parsed.data.rows[position]?.paid ? contract.payments[position]?.paidAt ?? new Date() : null,
         position,
-      })),
-    }),
-  ]);
+      };
+      const id = parsed.data.rows[position]?.id;
+      if (id) {
+        await tx.contractPayment.update({ where: { id }, data });
+        // A lower amount can settle a row that was partly paid.
+        await settleRow(tx, id);
+      } else {
+        await tx.contractPayment.create({
+          data: { ...data, contractId: parsed.data.contractId, organizationId },
+        });
+      }
+    }
+  });
 
   revalidateDeal(contract.dealId ?? "", [parsed.data.contractId]);
+  revalidatePath("/dashboard/companies");
+  revalidatePath("/dashboard/contacts");
   return { success: "Payment schedule saved" };
 }
 

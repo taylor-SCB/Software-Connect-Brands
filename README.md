@@ -207,8 +207,13 @@ addresses) — turns a deal's quote into the contracts it actually needs.
 Pick a deal and the quote's rows appear down the side with a column for
 each contract (up to five): who it goes to (company and contact, existing
 or typed in new — Contract A is prefilled from the deal), which template,
-payment terms and a payment preset (one payment, deposit + balance, or
-installments by month or year). Tick a row under every contract it belongs
+**which way the money goes**, payment terms and a payment preset (one
+payment, deposit + balance, or installments by month or year). **Money
+in** is the customer paying you (a Sales Order, a Change Order); **Money
+out** is you paying a supplier (a Purchase Order). It follows the
+template until you set it yourself, and it decides what counts as owed to
+you: only a Money-in signature wins the deal, and a supplier accepting a
+purchase order changes nothing on the pipeline. Tick a row under every contract it belongs
 on — the same materials line can sit on the customer's Sales Order *and*
 the supplier's Purchase Order — and an unticked row stays **Open** on the
 deal; rows can be cancelled and restored. "Your Company Signer" is
@@ -218,10 +223,29 @@ CON-1004 · Sent / Signed. Below the grid every contract on the deal shows
 sent and signed dates, total, paid-of-total and next due, reminders sent
 (a reminder is copied to the clipboard with the signing link and logged —
 no email is sent yet), with Edit, Cancel (frees the rows) and Reopen.
+**Outstanding** is what customers still owe on the deal, with the part
+they have signed for underneath it; purchase orders are money going the
+other way and are not in either number.
+
 A contract's page shows its line items, a payment table that recalculates
-(percent, fixed or balance rows; presets; final payment date; tick as
-paid), and the signer; the customer's copy prints the Items and Payment
-Schedule tables under the agreement, with the recipient's logo.
+(percent, fixed or balance rows; presets; final payment date), and the
+signer; the customer's copy prints the Items and Payment Schedule tables
+under the agreement, with the recipient's logo.
+
+**Payments** (Sept 14, 2026) — **Record payment** on any row of a payment
+table takes an amount, a date, how it was paid and a reference, and
+partial payments are normal: a row reads *Paid $600.00 of $1,200.00*
+until it is covered. Ticking **Paid** records one payment for whatever is
+still open; unticking takes those payments back off. A row can never take
+more than it is owed, and an amount can't be edited below what has
+already been recorded on it. A signed contract's payment table stays
+editable — dates, amounts and percents can all be amended after the job
+is awarded — and the rows keep their identity, so the payments on them
+stay attached. **Mark signed** on a sent contract records one that was
+signed on paper or agreed some other way: who signed, when, and a note;
+the contract then reads *Signed offline*. Deleting a contact, company or
+contract that has payments recorded or money still owed is refused, with
+the amounts, and offers to archive instead.
 
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a

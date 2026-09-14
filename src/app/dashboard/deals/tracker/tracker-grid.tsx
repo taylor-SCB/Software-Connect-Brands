@@ -12,6 +12,7 @@ import {
   type InstallmentUnit,
   type SchedulePreset,
 } from "@/lib/payments";
+import { DIRECTION_LABEL, directionForType, type Direction } from "@/lib/direction";
 import { TagBadge, Badge, FormError, StatusBadge } from "@/components/ui";
 import { IconPlus, IconX, IconSignature } from "@/components/icons";
 import type { TrackerPickers, TrackerQuote } from "@/lib/tracker";
@@ -27,6 +28,10 @@ type Column = {
   newContactName: string;
   templateId: string;
   title: string;
+  // Which way this contract's money goes. It follows the template until
+  // someone sets it by hand, and then stays put.
+  direction: Direction;
+  directionSet: boolean;
   paymentTerms: string;
   preset: SchedulePreset;
   start: string;
@@ -63,25 +68,39 @@ export function TrackerGrid({
 }) {
   const templateOfType = (type: string) => pickers.templates.find((t) => t.type === type)?.id;
   const firstTemplate = pickers.templates[0]?.id ?? "";
+  const typeOfTemplate = (id: string) => pickers.templates.find((t) => t.id === id)?.type;
+  const defaults = pickers.paymentDefaults;
 
   function blankColumn(key: number, first: boolean): Column {
+    const templateId =
+      (first ? templateOfType("Sales Order") : templateOfType("Purchase Order")) ?? firstTemplate;
     return {
       key,
       companyId: first ? dealContact.companyId ?? "" : "",
       newCompanyName: "",
       contactId: first ? dealContact.id : "",
       newContactName: "",
-      templateId:
-        (first ? templateOfType("Sales Order") : templateOfType("Purchase Order")) ?? firstTemplate,
+      templateId,
       title: "",
-      paymentTerms: "Net 30",
-      preset: "FULL",
+      direction: directionForType(typeOfTemplate(templateId)),
+      directionSet: false,
+      // The Preset Payment Table from Settings → Company Information.
+      paymentTerms: defaults.terms,
+      preset: defaults.preset,
       start: today,
-      depositPercent: 50,
-      count: 3,
+      depositPercent: defaults.depositPercent,
+      count: defaults.installmentCount,
       unit: "MONTH",
       selected: [],
     };
+  }
+
+  // Picking a different template re-reads the direction from it, unless
+  // someone has already said which way this one goes.
+  function pickTemplate(column: Column, templateId: string): Partial<Column> {
+    return column.directionSet
+      ? { templateId }
+      : { templateId, direction: directionForType(typeOfTemplate(templateId)) };
   }
 
   const [columns, setColumns] = useState<Column[]>(() => [blankColumn(1, true)]);
@@ -152,6 +171,7 @@ export function TrackerGrid({
         newContactName: column.contactId === NEW ? column.newContactName : undefined,
         templateId: column.templateId || undefined,
         title: column.title || undefined,
+        payable: column.direction === "out",
         paymentTerms: column.paymentTerms || undefined,
         schedule: {
           preset: column.preset,
@@ -205,6 +225,7 @@ export function TrackerGrid({
                     pickers={pickers}
                     canRemove={columns.length > 1}
                     onChange={(changes) => patch(column.key, changes)}
+                    onPickTemplate={(templateId) => pickTemplate(column, templateId)}
                     onRemove={() => removeColumn(column.key)}
                   />
                 </th>
@@ -352,6 +373,7 @@ function ColumnHeader({
   pickers,
   canRemove,
   onChange,
+  onPickTemplate,
   onRemove,
 }: {
   column: Column;
@@ -359,6 +381,7 @@ function ColumnHeader({
   pickers: TrackerPickers;
   canRemove: boolean;
   onChange: (changes: Partial<Column>) => void;
+  onPickTemplate: (templateId: string) => Partial<Column>;
   onRemove: () => void;
 }) {
   // Contacts at the chosen company, plus people with no company at all
@@ -442,11 +465,25 @@ function ColumnHeader({
           id={id("template")}
           className="select"
           value={column.templateId}
-          onChange={(event) => onChange({ templateId: event.target.value })}
+          onChange={(event) => onChange(onPickTemplate(event.target.value))}
         >
           {pickers.templates.map((template) => (
             <option key={template.id} value={template.id}>{template.name} · {template.type}</option>
           ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="label" htmlFor={id("direction")}>Which way the money goes</label>
+        <select
+          id={id("direction")}
+          data-testid="column-direction"
+          className="select"
+          value={column.direction}
+          onChange={(event) => onChange({ direction: event.target.value as Direction, directionSet: true })}
+        >
+          <option value="in">{DIRECTION_LABEL.in} · they pay us</option>
+          <option value="out">{DIRECTION_LABEL.out} · we pay them</option>
         </select>
       </div>
 
@@ -481,6 +518,7 @@ function ColumnHeader({
             <label className="block text-xs">
               <span className="faint block">Deposit %</span>
               <input
+                id={id("depositPercent")}
                 type="number"
                 min={1}
                 max={99}
@@ -495,6 +533,7 @@ function ColumnHeader({
               <label className="block text-xs">
                 <span className="faint block">How many</span>
                 <input
+                  id={id("count")}
                   type="number"
                   min={2}
                   max={60}

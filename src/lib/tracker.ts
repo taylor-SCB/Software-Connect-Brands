@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { contractHoldsRows, contractTotalCents } from "@/lib/contracts";
 import { pickPrimaryQuote } from "@/lib/deals";
+import { paidCentsOf } from "@/lib/money";
+import type { SchedulePreset } from "@/lib/payments";
 
 // Everything the Deal Tracker page needs for one deal: the quote and its
 // rows (with which contract each row is already on), the contracts made
@@ -8,8 +10,33 @@ import { pickPrimaryQuote } from "@/lib/deals";
 
 export const CONTRACT_LINE_STATE = ["OPEN", "SENT", "SIGNED", "DRAFT", "CANCELLED"] as const;
 
+const SCHEDULE_PRESETS: SchedulePreset[] = ["FULL", "DEPOSIT_BALANCE", "INSTALLMENTS"];
+
+// The Preset Payment Table from Settings → General: what a new contract's
+// terms and payment rows start as, on the tracker and the classic page.
+export async function loadPaymentDefaults(organizationId: string) {
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: {
+      defaultPaymentTerms: true,
+      defaultPaymentPreset: true,
+      defaultDepositPercent: true,
+      defaultInstallmentCount: true,
+    },
+  });
+  const preset = SCHEDULE_PRESETS.find((candidate) => candidate === organization.defaultPaymentPreset) ?? "FULL";
+  return {
+    terms: organization.defaultPaymentTerms,
+    preset,
+    depositPercent: organization.defaultDepositPercent,
+    installmentCount: organization.defaultInstallmentCount,
+  };
+}
+
+export type PaymentDefaults = Awaited<ReturnType<typeof loadPaymentDefaults>>;
+
 export async function loadTrackerPickers(organizationId: string) {
-  const [companies, contacts, templates, owner] = await Promise.all([
+  const [companies, contacts, templates, owner, paymentDefaults] = await Promise.all([
     prisma.company.findMany({
       where: { organizationId },
       orderBy: { name: "asc" },
@@ -32,8 +59,9 @@ export async function loadTrackerPickers(organizationId: string) {
       orderBy: [{ role: "asc" }, { createdAt: "asc" }],
       select: { name: true, title: true },
     }),
+    loadPaymentDefaults(organizationId),
   ]);
-  return { companies, contacts, templates, ownerName: owner?.name ?? "" };
+  return { companies, contacts, templates, ownerName: owner?.name ?? "", paymentDefaults };
 }
 
 export type TrackerPickers = Awaited<ReturnType<typeof loadTrackerPickers>>;
@@ -89,8 +117,11 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           title: true,
           type: true,
           status: true,
+          payable: true,
           sentAt: true,
           signedAt: true,
+          signedOffline: true,
+          signedNote: true,
           cancelledAt: true,
           declinedAt: true,
           publicToken: true,
@@ -103,7 +134,14 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           lineItems: { select: { quantity: true, unitPriceCents: true } },
           payments: {
             orderBy: { position: "asc" },
-            select: { id: true, label: true, amountCents: true, dueOn: true, paidAt: true },
+            select: {
+              id: true,
+              label: true,
+              amountCents: true,
+              dueOn: true,
+              paidAt: true,
+              payments: { select: { amountCents: true } },
+            },
           },
         },
       },
@@ -148,9 +186,9 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
     })),
     contracts: deal.contracts.map((contract) => {
       const totalCents = contractTotalCents(contract.lineItems);
-      const paidCents = contract.payments
-        .filter((payment) => payment.paidAt)
-        .reduce((sum, payment) => sum + payment.amountCents, 0);
+      // Paid is what was actually recorded, partial payments included —
+      // not the sum of rows that happen to be ticked.
+      const paidCents = contract.payments.reduce((sum, row) => sum + paidCentsOf(row), 0);
       const nextDue = contract.payments.find((payment) => !payment.paidAt) ?? null;
       return {
         id: contract.id,
@@ -158,8 +196,11 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
         title: contract.title,
         type: contract.type,
         status: contract.status,
+        payable: contract.payable,
         sentAt: contract.sentAt,
         signedAt: contract.signedAt,
+        signedOffline: contract.signedOffline,
+        signedNote: contract.signedNote,
         cancelledAt: contract.cancelledAt,
         declinedAt: contract.declinedAt,
         publicToken: contract.publicToken,

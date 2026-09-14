@@ -318,25 +318,29 @@ async function anonymousStatus(browser, url) {
 
   log("Contract A is prefilled with the deal's company, contact and a Sales Order; the signer is the owner");
   const colA = page.locator("[data-testid=column-header]").nth(0);
-  assert.equal(await colA.locator("select").nth(0).evaluate((el) => el.selectedOptions[0].textContent), "Palmetto Roofing");
-  assert.match(await colA.locator("select").nth(1).evaluate((el) => el.selectedOptions[0].textContent), /Danny Ortiz/);
-  assert.match(await colA.locator("select").nth(2).evaluate((el) => el.selectedOptions[0].textContent), /Sales Order/);
+  // Fields are addressed by their own ids (col-<key>-<field>), not by
+  // position, so a new field in the header doesn't shift the suite.
+  const selected = (id) => page.locator(id).evaluate((el) => el.selectedOptions[0].textContent);
+  assert.equal(await selected("#col-1-company"), "Palmetto Roofing");
+  assert.match(await selected("#col-1-contact"), /Danny Ortiz/);
+  assert.match(await selected("#col-1-template"), /Sales Order/);
+  assert.equal(await page.locator("#col-1-direction").inputValue(), "in", "a Sales Order is money coming in");
   assert.equal(await page.locator("#signerName").inputValue(), "Taylor Test");
   assert.ok(await page.locator("[data-testid=create-contracts]").isDisabled(), "nothing ticked yet");
 
   log("tick labor and tile on A with a 50% deposit; add Contract B to a new supplier company and contact, Purchase Order, tile only");
   await page.getByRole("checkbox", { name: "Put Demo labor on Contract A" }).check();
   await page.getByRole("checkbox", { name: "Put Tile on Contract A" }).check();
-  await colA.locator("select").nth(4).selectOption("DEPOSIT_BALANCE");
+  await page.locator("#col-1-preset").selectOption("DEPOSIT_BALANCE");
   await colA.locator("input[type=date]").fill("2026-10-01");
   assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$250.00");
   assert.match(await page.locator("[data-testid=schedule-preview]").nth(0).textContent(), /Deposit\$125\.002026-10-01Balance on completion\$125\.00/);
   await page.locator("[data-testid=add-column]").click();
-  const colB = page.locator("[data-testid=column-header]").nth(1);
-  await colB.locator("select").nth(0).selectOption("__new__");
+  await page.locator("#col-2-company").selectOption("__new__");
   await page.getByLabel("New company for Contract B").fill("ACME Supply");
   await page.getByLabel("New contact for Contract B").fill("Sue Rep");
-  assert.match(await colB.locator("select").nth(2).evaluate((el) => el.selectedOptions[0].textContent), /Purchase Order/, "second column defaults to a PO");
+  assert.match(await selected("#col-2-template"), /Purchase Order/, "second column defaults to a PO");
+  assert.equal(await page.locator("#col-2-direction").inputValue(), "out", "a Purchase Order is money going out");
   await page.getByRole("checkbox", { name: "Put Tile on Contract B" }).check();
   assert.equal(await page.locator("[data-testid=column-total]").nth(1).textContent(), "$50.00");
   await shot(page, "05-tracker-grid");

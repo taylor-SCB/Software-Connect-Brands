@@ -11,9 +11,25 @@ import { renderMergeFields, type MergeContext } from "@/lib/merge";
 import { loadMergeContext } from "@/lib/merge-data";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
+import { getTimeZone } from "@/lib/organization";
 import { NEW_TYPE_VALUE, canUserSend } from "@/lib/contracts";
+import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
+
+// Every screen that shows a contract's status or adds its money up.
+function revalidateContract(contract: { id: string; dealId: string | null; publicToken?: string }) {
+  revalidatePath(`/dashboard/contracts/${contract.id}`);
+  revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath("/dashboard/contracts/tracker");
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/companies");
+  revalidatePath("/dashboard/contacts");
+  if (contract.dealId) revalidatePath(`/dashboard/deals/${contract.dealId}`);
+  if (contract.publicToken) revalidatePath(`/c/${contract.publicToken}`);
+}
 
 async function nextContractNumber(organizationId: string) {
   const organization = await prisma.organization.update({
@@ -205,6 +221,10 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       quoteId: z.string().trim().optional(),
       templateId: idSchema,
       title: z.string().trim().max(160).optional(),
+      // "in" (they pay us) or "out" (we pay them); absent from an older
+      // form means Money in unless the template is a Purchase Order.
+      direction: z.enum(["in", "out"]).optional(),
+      paymentTerms: z.string().trim().max(120).optional(),
     }),
     {
       contactId: formData.get("contactId"),
@@ -213,6 +233,8 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       quoteId: formData.get("quoteId") ?? undefined,
       templateId: formData.get("templateId"),
       title: formData.get("title") ?? undefined,
+      direction: formData.get("direction") ?? undefined,
+      paymentTerms: formData.get("paymentTerms") ?? undefined,
     },
   );
   if (!parsed.ok) return { error: parsed.error };
@@ -260,6 +282,21 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
 
   const number = await nextContractNumber(organizationId);
 
+  // Terms default from the Preset Payment Table (Settings → General); the
+  // form can pick different ones.
+  const paymentTerms =
+    parsed.data.paymentTerms ||
+    (
+      await prisma.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+        select: { defaultPaymentTerms: true },
+      })
+    ).defaultPaymentTerms ||
+    null;
+  const payable = parsed.data.direction
+    ? parsed.data.direction === "out"
+    : template.type === "Purchase Order";
+
   // Merge fields resolve once, here — the stored body is the exact text
   // the customer will read and sign.
   const body = renderMergeFields(
@@ -270,6 +307,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       dealId: deal?.id ?? null,
       quoteId: quote?.id ?? null,
       contractNumber: `CON-${number}`,
+      paymentTerms,
       signerName: owner?.name ?? null,
     }),
   );
@@ -286,6 +324,8 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
       number,
       title: parsed.data.title?.trim() || template.name,
       type: template.type,
+      payable,
+      paymentTerms,
       body,
       publicToken: publicToken(),
     },
@@ -383,14 +423,80 @@ export async function setContractStatus(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
-export async function deleteContract(formData: FormData) {
+// Deleting is refused once money is on the contract — payments recorded,
+// or a signed Money-in contract with a row still open. Cancel it instead.
+export async function deleteContract(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
   const id = idSchema.safeParse(formData.get("contractId"));
-  if (!id.success) return;
+  if (!id.success) return { error: "Missing contract reference" };
+
+  const contract = await prisma.contract.findFirst({
+    where: { id: id.data, organizationId },
+    select: { number: true, title: true },
+  });
+  if (!contract) return { error: "Contract not found" };
+
+  const hold = await moneyHold(organizationId, { id: id.data });
+  const refusal = moneyHoldMessage(`CON-${contract.number} ${contract.title}`, hold, null);
+  if (refusal) return { error: refusal };
 
   await prisma.contract.deleteMany({ where: { id: id.data, organizationId } });
   revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath("/dashboard/contracts/tracker");
   redirect("/dashboard/contracts");
+}
+
+/* ---------------------------- Mark signed ---------------------------- */
+
+const markSignedSchema = z.object({
+  contractId: idSchema,
+  signerName: z.string().trim().min(2, "Who signed it?").max(120),
+  signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the date it was signed"),
+  note: z.string().trim().max(500).optional(),
+});
+
+// The manual override: the customer signed a paper copy, or said yes in
+// person, and the user records it here. Same effect as the signing link —
+// a Money-in signature wins the deal — plus a note of how it happened.
+export async function markContractSigned(
+  contractId: string,
+  input: { signerName: string; signedOn: string; note?: string },
+): Promise<ActionState> {
+  const { organizationId } = await requireSession();
+  const parsed = markSignedSchema.safeParse({ contractId, ...input });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form" };
+
+  const contract = await prisma.contract.findFirst({
+    where: { id: parsed.data.contractId, organizationId },
+    select: { id: true, status: true, payable: true, dealId: true, publicToken: true, contact: { select: { email: true } } },
+  });
+  if (!contract) return { error: "Contract not found" };
+  if (contract.status === "SIGNED") return { error: "This contract is already signed" };
+  if (contract.status !== "SENT") return { error: "Send the contract first, then mark it signed" };
+
+  const timeZone = await getTimeZone();
+  const result = await prisma.contract.updateMany({
+    where: { id: contract.id, organizationId, status: "SENT" },
+    data: {
+      status: "SIGNED",
+      signedAt: zonedNoon(parsed.data.signedOn, timeZone),
+      signerName: parsed.data.signerName,
+      signerEmail: contract.contact.email,
+      signedOffline: true,
+      signedNote: parsed.data.note || null,
+    },
+  });
+  if (result.count === 0) return { error: "This contract changed under you. Reload and try again." };
+
+  // A supplier signing a purchase order never wins a deal; a customer
+  // signing anything else does.
+  if (!contract.payable) {
+    await advanceDealStage(contract.dealId, organizationId, "WON");
+  }
+
+  revalidateContract(contract);
+  return { success: "Marked signed" };
 }
 
 /* --------------------- Customer-facing signature --------------------- */
@@ -415,8 +521,10 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
     select: {
       id: true,
       status: true,
+      payable: true,
       organizationId: true,
       dealId: true,
+      publicToken: true,
       contact: { select: { email: true } },
     },
   });
@@ -435,11 +543,12 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
     },
   });
 
-  // A signature is the customer saying yes: the deal is won.
-  await advanceDealStage(contract.dealId, contract.organizationId, "WON");
+  // A customer's signature is them saying yes: the deal is won. A supplier
+  // signing a purchase order (Money out) is not — the deal stays where it is.
+  if (!contract.payable) {
+    await advanceDealStage(contract.dealId, contract.organizationId, "WON");
+  }
 
-  revalidatePath(`/c/${parsed.data.token}`);
-  revalidatePath("/dashboard/contracts");
-  revalidatePath("/dashboard/deals");
+  revalidateContract(contract);
   return { success: "Signed" };
 }

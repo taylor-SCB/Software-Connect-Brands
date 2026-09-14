@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getIndustryPickList } from "@/lib/industries";
 import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
-import { IconTrash } from "@/components/icons";
+import { DeleteRecordForm } from "@/components/delete-record-form";
 import { ContactForm } from "../../contact-form";
 import { updateContact, deleteContact } from "../../actions";
 
@@ -56,15 +56,9 @@ export default async function EditContactPage({
       <Card className="mt-5 border-[rgb(251_113_133/0.25)]">
         <CardHeader
           title="Danger zone"
-          subtitle="Deleting removes this contact and all of its notes, activity, deals, quotes and contracts."
+          subtitle="Deleting removes this contact and all of its notes, activity, deals, quotes and contracts. Once money is owed or recorded on their contracts, archive them instead."
         />
-        <form action={deleteContact} className="p-5">
-          <input type="hidden" name="contactId" value={contact.id} />
-          <button type="submit" className="btn btn-danger btn-sm">
-            <IconTrash size={13} />
-            Delete contact
-          </button>
-        </form>
+        <DeleteRecordForm action={deleteContact} hiddenName="contactId" hiddenValue={contact.id} label="Delete contact" />
       </Card>
     </div>
   );

@@ -47,7 +47,15 @@ export async function DealTrackerPage({
     : 0;
   const standing = deal ? deal.contracts.filter((contract) => contractHoldsRows(contract.status)) : [];
   const awaiting = standing.filter((contract) => contract.status === "SENT").length;
-  const outstandingCents = standing.reduce((sum, contract) => sum + contract.totalCents - contract.paidCents, 0);
+  // What the customer still owes on this deal. Money-out purchase orders
+  // are what we owe a supplier, so they are not part of it.
+  const incoming = standing.filter((contract) => !contract.payable);
+  const outstandingCents = incoming.reduce((sum, contract) => sum + contract.totalCents - contract.paidCents, 0);
+  // The part of it they have already signed for — the same number their
+  // company row shows as "Owes you".
+  const signedOwedCents = incoming
+    .filter((contract) => contract.status === "SIGNED")
+    .reduce((sum, contract) => sum + contract.totalCents - contract.paidCents, 0);
 
   return (
     <div>
@@ -119,7 +127,8 @@ export async function DealTrackerPage({
                 </div>
                 <div>
                   <dt className="eyebrow">Outstanding</dt>
-                  <dd className="num text-lg font-semibold">{formatCents(outstandingCents)}</dd>
+                  <dd className="num text-lg font-semibold" data-testid="tracker-outstanding">{formatCents(outstandingCents)}</dd>
+                  <dd className="faint num text-xs" data-testid="tracker-signed-owed">Signed: {formatCents(signedOwedCents)}</dd>
                 </div>
               </dl>
             </div>

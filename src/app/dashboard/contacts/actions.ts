@@ -11,6 +11,7 @@ import { CONTACT_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
+import { moneyHold, moneyHoldMessage } from "@/lib/money";
 import {
   targetSchema,
   readTarget,
@@ -189,10 +190,23 @@ export async function setContactFavorite(
   return { favorite: Boolean(favorite) };
 }
 
-export async function deleteContact(formData: FormData) {
+// Deleting a contact takes their contracts with it, so it is refused once
+// money is on them — payments recorded, or a signed Money-in contract
+// still owed. Archiving keeps the history and gets them out of the way.
+export async function deleteContact(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
   const id = idSchema.safeParse(formData.get("contactId"));
-  if (!id.success) return;
+  if (!id.success) return { error: "Missing contact reference" };
+
+  const contact = await prisma.contact.findFirst({
+    where: { id: id.data, organizationId },
+    select: { name: true },
+  });
+  if (!contact) return { error: "Contact not found" };
+
+  const hold = await moneyHold(organizationId, { contactId: id.data });
+  const refusal = moneyHoldMessage(contact.name, hold, "contact");
+  if (refusal) return { error: refusal };
 
   await prisma.contact.deleteMany({ where: { id: id.data, organizationId } });
   revalidatePath("/dashboard/contacts");

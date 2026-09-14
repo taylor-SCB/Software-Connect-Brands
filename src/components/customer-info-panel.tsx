@@ -4,6 +4,7 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { Field, FormError } from "@/components/ui";
 import { DealPicker, type PickableDeal } from "@/components/deal-picker";
 import { IconSignature } from "@/components/icons";
+import { DIRECTION_LABEL, directionForType, type Direction } from "@/lib/direction";
 import type { ActionState } from "@/lib/forms";
 
 export type PickableContact = { id: string; name: string; company: string | null };
@@ -29,6 +30,7 @@ export type CustomerSelection = {
 export function CustomerInfoPanel({
   action,
   templateId,
+  templateType,
   contacts,
   deals,
   quotes,
@@ -40,6 +42,8 @@ export function CustomerInfoPanel({
   // Missing until a template is saved; the panel then explains why
   // Generate is off instead of hiding it.
   templateId?: string;
+  // The template's type, which says which way the money goes by default.
+  templateType?: string;
   contacts: PickableContact[];
   deals: PickableDeal[];
   quotes: PickableQuote[];
@@ -53,6 +57,11 @@ export function CustomerInfoPanel({
   // The user's explicit quote pick; the effective quote is derived below so
   // switching deals never leaves a quote from the old deal selected.
   const [quoteChoice, setQuoteChoice] = useState(defaults?.quoteId ?? "");
+  // Follows the template's type until someone sets it by hand.
+  const [direction, setDirection] = useState<Direction>(directionForType(templateType));
+  const [directionSet, setDirectionSet] = useState(false);
+  const templateDirection = directionForType(templateType);
+  if (!directionSet && direction !== templateDirection) setDirection(templateDirection);
 
   // Quotes on the picked deal, newest first, so the default is the one
   // most recently worked on — same as the pipeline reads the value from.
@@ -160,6 +169,24 @@ export function CustomerInfoPanel({
         name="title"
         placeholder="Leave blank to use the template name"
       />
+
+      <div>
+        <label className="label" htmlFor="direction">Which way the money goes</label>
+        <select
+          id="direction"
+          name="direction"
+          data-testid="contract-direction"
+          className="select"
+          value={direction}
+          onChange={(event) => {
+            setDirection(event.target.value as Direction);
+            setDirectionSet(true);
+          }}
+        >
+          <option value="in">{DIRECTION_LABEL.in} · they pay us</option>
+          <option value="out">{DIRECTION_LABEL.out} · we pay them</option>
+        </select>
+      </div>
 
       <FormError message={state?.error} />
 

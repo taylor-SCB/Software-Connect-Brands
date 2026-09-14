@@ -88,7 +88,9 @@ export function netDays(terms: string | null | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
-export type SchedulePreset = "FULL" | "DEPOSIT_BALANCE" | "INSTALLMENTS";
+export const SCHEDULE_PRESETS = ["FULL", "DEPOSIT_BALANCE", "INSTALLMENTS"] as const;
+
+export type SchedulePreset = (typeof SCHEDULE_PRESETS)[number];
 
 export const SCHEDULE_PRESET_LABELS: Record<SchedulePreset, string> = {
   FULL: "One payment",

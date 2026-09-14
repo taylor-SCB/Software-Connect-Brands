@@ -259,6 +259,7 @@ export function TemplateWorkspace({
             <CustomerInfoPanel
               action={createContract}
               templateId={defaults?.id}
+              templateType={type}
               contacts={pickers.contacts}
               deals={pickers.deals}
               quotes={pickers.quotes}

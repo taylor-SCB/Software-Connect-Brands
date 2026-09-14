@@ -44,6 +44,10 @@ export default async function CompanyGeneralPage() {
             website: organization.website,
             description: organization.description,
             history: organization.history,
+            defaultPaymentTerms: organization.defaultPaymentTerms,
+            defaultPaymentPreset: organization.defaultPaymentPreset,
+            defaultDepositPercent: organization.defaultDepositPercent,
+            defaultInstallmentCount: organization.defaultInstallmentCount,
           }}
           canEdit={canEdit}
         />

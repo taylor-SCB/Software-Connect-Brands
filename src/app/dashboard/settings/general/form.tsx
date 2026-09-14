@@ -1,10 +1,98 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Field, TextareaField, FormError, FormSuccess } from "@/components/ui";
 import { ImageUploadField } from "@/components/image-upload-field";
+import { PAYMENT_TERM_OPTIONS, SCHEDULE_PRESETS, SCHEDULE_PRESET_LABELS } from "@/lib/payments";
 import { updateCompanyInfo } from "../actions";
 import type { ActionState } from "@/lib/forms";
+
+// Your standard payment table. A new contract starts with these terms
+// and rows, on the Deal Tracker and the New contract page; the dates and
+// amounts can still be changed on any contract afterwards.
+function PaymentTablePreset({
+  organization,
+}: {
+  organization: {
+    defaultPaymentTerms: string;
+    defaultPaymentPreset: string;
+    defaultDepositPercent: number;
+    defaultInstallmentCount: number;
+  };
+}) {
+  const [preset, setPreset] = useState(organization.defaultPaymentPreset);
+  return (
+    <div className="space-y-4 border-t border-[rgb(255_255_255/0.06)] pt-5">
+      <div>
+        <h3 className="text-sm font-semibold">Payment table</h3>
+        <p className="muted text-sm">
+          What a new contract&apos;s payments start as. You can change the dates and amounts on any contract later.
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="label" htmlFor="defaultPaymentTerms">Payment terms</label>
+          <select
+            id="defaultPaymentTerms"
+            name="defaultPaymentTerms"
+            className="select"
+            defaultValue={organization.defaultPaymentTerms}
+            data-testid="preset-terms"
+          >
+            {PAYMENT_TERM_OPTIONS.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label" htmlFor="defaultPaymentPreset">Payments</label>
+          <select
+            id="defaultPaymentPreset"
+            name="defaultPaymentPreset"
+            className="select"
+            value={preset}
+            onChange={(event) => setPreset(event.target.value)}
+            data-testid="preset-kind"
+          >
+            {SCHEDULE_PRESETS.map((option) => (
+              <option key={option} value={option}>{SCHEDULE_PRESET_LABELS[option]}</option>
+            ))}
+          </select>
+        </div>
+        {preset === "DEPOSIT_BALANCE" && (
+          <div>
+            <label className="label" htmlFor="defaultDepositPercent">Deposit %</label>
+            <input
+              id="defaultDepositPercent"
+              name="defaultDepositPercent"
+              type="number"
+              min={1}
+              max={99}
+              className="input num"
+              defaultValue={organization.defaultDepositPercent}
+              data-testid="preset-deposit"
+            />
+          </div>
+        )}
+        {preset === "INSTALLMENTS" && (
+          <div>
+            <label className="label" htmlFor="defaultInstallmentCount">How many payments</label>
+            <input
+              id="defaultInstallmentCount"
+              name="defaultInstallmentCount"
+              type="number"
+              min={2}
+              max={60}
+              className="input num"
+              defaultValue={organization.defaultInstallmentCount}
+              data-testid="preset-installments"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function CompanyInfoForm({
   organization,
@@ -23,6 +111,10 @@ export function CompanyInfoForm({
     website: string | null;
     description: string;
     history: string;
+    defaultPaymentTerms: string;
+    defaultPaymentPreset: string;
+    defaultDepositPercent: number;
+    defaultInstallmentCount: number;
   };
   canEdit: boolean;
 }) {
@@ -78,6 +170,8 @@ export function CompanyInfoForm({
           defaultValue={organization.history}
           hint="Available on templates as the Company History merge field."
         />
+
+        <PaymentTablePreset organization={organization} />
       </fieldset>
 
       <FormError message={state?.error} />

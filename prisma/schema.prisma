@@ -59,6 +59,15 @@ model Organization {
   // sequential document numbers (QUO-1004, CON-1002...).
   nextQuoteNumber    Int                @default(1000)
   nextContractNumber Int                @default(1000)
+  // The Preset Payment Table (Settings → Company Information → General):
+  // what a new contract's payment table starts as. The preset uses the
+  // same identifiers the tracker's preset picker does (see
+  // SchedulePreset in src/lib/payments.ts); the percent and count only
+  // matter for the preset that needs them.
+  defaultPaymentTerms     String        @default("Net 30")
+  defaultPaymentPreset    String        @default("FULL")
+  defaultDepositPercent   Int           @default(50)
+  defaultInstallmentCount Int           @default(3)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -82,6 +91,7 @@ model Organization {
   ratesheetInvites    RatesheetInvite[]
   linkedRatesheets    LinkedRatesheet[]
   uploads             Upload[]
+  payments            Payment[]
 
   @@index([status])
 }
@@ -568,11 +578,23 @@ model Contract {
   // signed copy is a frozen snapshot of what the customer agreed to.
   body             String
   status           ContractStatus    @default(DRAFT)
+  // Which way the money goes. false = they owe us (a Sales Order, Service
+  // Agreement, Change Order or Invoice: "Money in"); true = we owe them (a
+  // Purchase Order to a supplier: "Money out"). Defaults from the
+  // template's type, and the user can flip it. Only Money-in contracts
+  // count as money owed to the business, and only their signature wins a
+  // deal — a supplier signing a PO is not the customer saying yes.
+  payable          Boolean           @default(false)
   publicToken      String            @unique
   sentAt           DateTime?
   signedAt         DateTime?
   signerName       String?
   signerEmail      String?
+  // "Mark signed": the customer signed a paper copy, or said yes some
+  // other way, and the user recorded it by hand instead of through the
+  // signing link. The note is their own words ("signed on site").
+  signedOffline    Boolean           @default(false)
+  signedNote       String?
   declinedAt       DateTime?
   cancelledAt      DateTime?
   // "Your Company Signer": who signs for the workspace. Prefilled with the
@@ -594,6 +616,7 @@ model Contract {
 
   @@unique([organizationId, number])
   @@index([organizationId])
+  @@index([organizationId, payable, status])
   @@index([contactId])
   @@index([companyId])
   @@index([dealId])
@@ -626,19 +649,55 @@ model ContractLineItem {
 // is saved, so the stored number is always what the row was worth when
 // the customer last saw it.
 model ContractPayment {
-  id          String      @id @default(cuid())
-  contractId  String
-  contract    Contract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  label       String
-  kind        PaymentKind @default(PERCENT)
+  id             String      @id @default(cuid())
+  contractId     String
+  contract       Contract    @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  // Copied from the contract so a payment row can be looked up with the
+  // workspace in the WHERE clause. Nullable only because it was added
+  // after the table existed; the migration backfilled every row and every
+  // write since sets it.
+  organizationId String?
+  label          String
+  kind           PaymentKind @default(PERCENT)
   // Whole percent for PERCENT rows (50 = 50%); unused otherwise.
-  percent     Float?
-  amountCents Int         @default(0)
-  dueOn       DateTime?   @db.Date
-  paidAt      DateTime?
-  position    Int         @default(0)
+  percent        Float?
+  amountCents    Int         @default(0)
+  dueOn          DateTime?   @db.Date
+  // When the row was settled: set the moment the payments recorded on it
+  // add up to amountCents, cleared when a payment is removed below that.
+  // Written only by settleRow in src/lib/money.ts, never by hand.
+  paidAt         DateTime?
+  position       Int         @default(0)
+
+  payments Payment[]
 
   @@index([contractId])
+  @@index([organizationId])
+}
+
+// Money that actually came in (or went out) against one row of a payment
+// table: "$600 by check on Sep 12, ref 1042". A row can carry several,
+// which is how a partial payment is recorded; the row is settled when
+// they add up to its amount. Ticking "Paid" records one for the balance.
+model Payment {
+  id                String          @id @default(cuid())
+  organizationId    String
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contractPaymentId String
+  contractPayment   ContractPayment @relation(fields: [contractPaymentId], references: [id], onDelete: Cascade)
+  amountCents       Int
+  // The day the money moved, as a calendar date in the workspace's zone.
+  paidOn            DateTime        @db.Date
+  // "Check", "ACH", "Zelle"... free text with suggestions; null when the
+  // row was simply ticked Paid.
+  method            String?
+  // Check number, transaction id — whatever helps find it again.
+  reference         String?
+  note              String?
+  createdAt         DateTime        @default(now())
+
+  @@index([contractPaymentId])
+  @@index([organizationId, paidOn])
 }
 
 // ------------------------------------------------------------------

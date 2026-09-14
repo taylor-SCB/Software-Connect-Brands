@@ -156,6 +156,7 @@ export function NewContractComposer({
             <CustomerInfoPanel
               action={createContract}
               templateId={template?.id}
+              templateType={template?.type}
               contacts={pickers.contacts}
               deals={pickers.deals}
               quotes={pickers.quotes}

@@ -11,6 +11,7 @@ import { normalizeWebsite, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
 import { sameTags, withoutAuto, type AutoField } from "@/lib/enrich";
+import { moneyHold, moneyHoldMessage } from "@/lib/money";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -196,10 +197,25 @@ export async function setCompanyFavorite(
 
 // The people stay; they just lose their company link (the database sets
 // it to null). Notes and activity logged on the company itself go with it.
-export async function deleteCompany(formData: FormData) {
+// Refused once money is on the company's contracts — payments recorded,
+// or a signed Money-in contract still owed — since the money tracking
+// hangs off the company row. Archive it instead.
+export async function deleteCompany(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
   const id = idSchema.safeParse(formData.get("companyId"));
-  if (!id.success) return;
+  if (!id.success) return { error: "Missing company reference" };
+
+  const company = await prisma.company.findFirst({
+    where: { id: id.data, organizationId },
+    select: { name: true },
+  });
+  if (!company) return { error: "Company not found" };
+
+  const hold = await moneyHold(organizationId, {
+    OR: [{ companyId: id.data }, { contact: { companyId: id.data } }],
+  });
+  const refusal = moneyHoldMessage(company.name, hold, "company");
+  if (refusal) return { error: refusal };
 
   await prisma.company.deleteMany({ where: { id: id.data, organizationId } });
   revalidatePath("/dashboard/companies");

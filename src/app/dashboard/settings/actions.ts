@@ -17,7 +17,7 @@ import {
   replaceImage,
   MAX_DOCUMENT_BYTES,
 } from "@/lib/uploads";
-import { isoToDate } from "@/lib/payments";
+import { isoToDate, PAYMENT_TERM_OPTIONS, SCHEDULE_PRESETS } from "@/lib/payments";
 import { COMPLIANCE_CATEGORIES } from "@/lib/constants";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -131,6 +131,12 @@ const companyInfoSchema = z.object({
   website: z.union([z.literal(""), z.string().trim().max(200)]).optional(),
   description: z.string().trim().max(4000, "Keep the description under 4,000 characters").optional(),
   history: z.string().trim().max(4000, "Keep the history under 4,000 characters").optional(),
+  // The Preset Payment Table: what a new contract's payment rows and
+  // terms start as, on the Deal Tracker and the New contract page.
+  defaultPaymentTerms: z.enum(PAYMENT_TERM_OPTIONS).optional(),
+  defaultPaymentPreset: z.enum(SCHEDULE_PRESETS).optional(),
+  defaultDepositPercent: z.coerce.number().int().min(1, "A deposit is at least 1%").max(99, "A deposit is under 100%").optional(),
+  defaultInstallmentCount: z.coerce.number().int().min(2, "Installments start at 2").max(60, "Keep installments under 60").optional(),
 });
 
 export async function updateCompanyInfo(
@@ -157,6 +163,10 @@ export async function updateCompanyInfo(
     website: formData.get("website") ?? undefined,
     description: formData.get("description") ?? undefined,
     history: formData.get("history") ?? undefined,
+    defaultPaymentTerms: formData.get("defaultPaymentTerms") ?? undefined,
+    defaultPaymentPreset: formData.get("defaultPaymentPreset") ?? undefined,
+    defaultDepositPercent: formData.get("defaultDepositPercent") ?? undefined,
+    defaultInstallmentCount: formData.get("defaultInstallmentCount") ?? undefined,
   });
   if (!parsed.ok) return { error: parsed.error };
 
@@ -186,11 +196,19 @@ export async function updateCompanyInfo(
       website: normalizeWebsite(parsed.data.website || null),
       description: parsed.data.description ?? "",
       history: parsed.data.history ?? "",
+      ...(parsed.data.defaultPaymentTerms ? { defaultPaymentTerms: parsed.data.defaultPaymentTerms } : {}),
+      ...(parsed.data.defaultPaymentPreset ? { defaultPaymentPreset: parsed.data.defaultPaymentPreset } : {}),
+      ...(parsed.data.defaultDepositPercent ? { defaultDepositPercent: parsed.data.defaultDepositPercent } : {}),
+      ...(parsed.data.defaultInstallmentCount ? { defaultInstallmentCount: parsed.data.defaultInstallmentCount } : {}),
       ...logo,
     },
   });
 
   revalidateDashboard();
+  // A new contract's payment table reads these.
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath("/dashboard/contracts/tracker");
+  revalidatePath("/dashboard/contracts/new");
   return { success: "Company information saved" };
 }
 

@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getIndustryPickList } from "@/lib/industries";
 import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
-import { IconTrash } from "@/components/icons";
+import { DeleteRecordForm } from "@/components/delete-record-form";
 import { CompanyForm } from "../../company-form";
 import { updateCompany, deleteCompany } from "../../actions";
 
@@ -51,15 +51,9 @@ export default async function EditCompanyPage({
       <Card className="mt-5 border-[rgb(251_113_133/0.25)]">
         <CardHeader
           title="Danger zone"
-          subtitle="Deleting removes the company and the notes and activity logged on it. The people stay as contacts with no company."
+          subtitle="Deleting removes the company and the notes and activity logged on it. The people stay as contacts with no company. Once money is owed or recorded on its contracts, archive it instead."
         />
-        <form action={deleteCompany} className="p-5">
-          <input type="hidden" name="companyId" value={company.id} />
-          <button type="submit" className="btn btn-danger btn-sm">
-            <IconTrash size={13} />
-            Delete company
-          </button>
-        </form>
+        <DeleteRecordForm action={deleteCompany} hiddenName="companyId" hiddenValue={company.id} label="Delete company" />
       </Card>
     </div>
   );

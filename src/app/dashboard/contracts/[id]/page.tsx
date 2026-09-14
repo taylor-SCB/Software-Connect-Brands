@@ -8,6 +8,7 @@ import { canUserSend, contractTotalCents } from "@/lib/contracts";
 import { dateToIso, todayIso } from "@/lib/payments";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { LINE_ITEM_TAGS } from "@/lib/constants";
+import { DIRECTION_LABEL } from "@/lib/direction";
 import {
   PageHeader,
   Card,
@@ -17,10 +18,12 @@ import {
   Badge,
   TagBadge,
 } from "@/components/ui";
-import { IconTrash, IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
+import { IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { Avatar } from "@/components/avatar";
 import { ReminderButton } from "@/components/reminder-button";
+import { MarkSignedButton } from "@/components/mark-signed-button";
+import { DeleteRecordForm } from "@/components/delete-record-form";
 import { ContractBodyForm } from "./body-form";
 import { PaymentScheduleEditor } from "./payment-schedule-editor";
 import { SignerForm } from "./signer-form";
@@ -52,7 +55,10 @@ export default async function ContractDetailPage({
       },
       company: { select: { id: true, name: true, logoUrl: true } },
       lineItems: { orderBy: { position: "asc" } },
-      payments: { orderBy: { position: "asc" } },
+      payments: {
+        orderBy: { position: "asc" },
+        include: { payments: { orderBy: [{ paidOn: "asc" }, { createdAt: "asc" }] } },
+      },
       deal: { select: { id: true, title: true, stage: true } },
       quote: { select: { id: true, number: true, title: true, status: true } },
       template: {
@@ -65,6 +71,8 @@ export default async function ContractDetailPage({
   const publicPath = `/c/${contract.publicToken}`;
   const signed = contract.status === "SIGNED";
   const cancelled = contract.status === "CANCELLED";
+  const today = todayIso(timeZone);
+  const direction = DIRECTION_LABEL[contract.payable ? "out" : "in"];
   // The business the document is addressed to: the one picked on the
   // tracker, else the contact's own.
   const recipient = contract.company ?? contract.contact.company ?? null;
@@ -96,6 +104,9 @@ export default async function ContractDetailPage({
         actions={
           <>
             <Badge>{contract.type}</Badge>
+            <span data-testid="contract-direction">
+              <Badge color={contract.payable ? "#fb7185" : "#34d399"}>{direction}</Badge>
+            </span>
             <StatusBadge status={contract.status} />
             <Link
               href={publicPath}
@@ -110,6 +121,9 @@ export default async function ContractDetailPage({
               <IconDownload size={13} />
               PDF
             </a>
+            {contract.status === "SENT" && (
+              <MarkSignedButton contractId={contract.id} signerName={contract.contact.name} today={today} compact />
+            )}
             {contract.status === "DRAFT" && canSend && (
               <form action={setContractStatus}>
                 <input type="hidden" name="contractId" value={contract.id} />
@@ -130,11 +144,19 @@ export default async function ContractDetailPage({
           {signed && (
             <Card className="p-4">
               <p className="eyebrow mb-1">Signed</p>
-              <p className="text-sm">
-                <span className="font-semibold">{contract.signerName}</span> accepted this
-                contract on{" "}
-                {contract.signedAt ? formatDateTime(contract.signedAt, timeZone) : "—"}.
-              </p>
+              {contract.signedOffline ? (
+                <p className="text-sm" data-testid="signed-offline">
+                  <span className="font-semibold">{contract.signerName}</span> · Signed offline ·{" "}
+                  {contract.signedAt ? formatDate(contract.signedAt, timeZone) : "—"}
+                  {contract.signedNote ? ` · ${contract.signedNote}` : ""}
+                </p>
+              ) : (
+                <p className="text-sm">
+                  <span className="font-semibold">{contract.signerName}</span> accepted this
+                  contract on{" "}
+                  {contract.signedAt ? formatDateTime(contract.signedAt, timeZone) : "—"}.
+                </p>
+              )}
             </Card>
           )}
 
@@ -205,10 +227,10 @@ export default async function ContractDetailPage({
           {(contract.lineItems.length > 0 || contract.payments.length > 0) && (
             <Card lit>
               <CardHeader
-                title="Payment schedule"
+                title="Payment table"
                 subtitle={
                   signed
-                    ? "Amounts and dates are locked after signature. Tick payments as they come in."
+                    ? "Record payments as they come in. Dates, amounts and percents can still be amended after award."
                     : "Percent of the total, a fixed amount, or the balance. Amounts recalculate as you go."
                 }
               />
@@ -216,15 +238,23 @@ export default async function ContractDetailPage({
                 contractId={contract.id}
                 totalCents={totalCents}
                 paymentTerms={contract.paymentTerms ?? ""}
-                today={todayIso(timeZone)}
-                locked={signed}
+                today={today}
                 initialRows={contract.payments.map((payment) => ({
+                  id: payment.id,
                   label: payment.label,
                   kind: payment.kind,
                   percent: payment.percent,
                   amountCents: payment.amountCents,
                   dueOn: dateToIso(payment.dueOn),
-                  paid: Boolean(payment.paidAt),
+                  settled: Boolean(payment.paidAt),
+                  payments: payment.payments.map((entry) => ({
+                    id: entry.id,
+                    amountCents: entry.amountCents,
+                    paidOn: dateToIso(entry.paidOn),
+                    method: entry.method,
+                    reference: entry.reference,
+                    note: entry.note,
+                  })),
                 }))}
               />
             </Card>
@@ -249,16 +279,10 @@ export default async function ContractDetailPage({
                     </button>
                   </form>
                 )}
-                <form action={deleteContract}>
-                  <input type="hidden" name="contractId" value={contract.id} />
-                  <button type="submit" className="btn btn-danger btn-sm">
-                    <IconTrash size={13} />
-                    Delete contract
-                  </button>
-                </form>
               </div>
+              <DeleteRecordForm action={deleteContract} hiddenName="contractId" hiddenValue={contract.id} label="Delete contract" />
               <p className="faint px-5 pb-4 text-xs">
-                Cancelling keeps the record and frees its rows on the Deal Tracker. Deleting removes it.
+                Cancelling keeps the record and frees its rows on the Deal Tracker. Deleting removes it — unless money has been recorded on it.
               </p>
             </Card>
           )}
@@ -400,13 +424,15 @@ export default async function ContractDetailPage({
                     {contract.sentAt && ` Sent ${formatDate(contract.sentAt, timeZone)}.`}
                   </p>
                   {contract.status === "SENT" && (
-                    <div className="pt-1">
+                    <div className="space-y-2 pt-1">
                       <ReminderButton contractId={contract.id} message={reminderMessage} path={publicPath} />
                       <p className="faint mt-1 text-xs">
                         {contract.reminderCount === 0
                           ? "No reminders yet."
                           : `${contract.reminderCount} ${contract.reminderCount === 1 ? "reminder" : "reminders"} sent${contract.lastReminderAt ? `, last ${formatDate(contract.lastReminderAt, timeZone)}` : ""}.`}
                       </p>
+                      <MarkSignedButton contractId={contract.id} signerName={contract.contact.name} today={today} />
+                      <p className="faint text-xs">Signed a paper copy, or said yes in person? Record it here.</p>
                     </div>
                   )}
                   {!signed && (
