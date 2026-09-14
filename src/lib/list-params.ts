@@ -19,6 +19,9 @@ export type ListParams = {
   // (Company.autoFilled), for reviewing what it guessed. The Contacts
   // list forces it off after parsing.
   auto: boolean;
+  // Only the people who still owe money on signed paperwork — the first
+  // thing to look at in the morning.
+  owed: boolean;
 };
 
 // The sub-panes ("Favorite Contacts", "Companies with Deals") are the same
@@ -56,6 +59,7 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     deals: lock.deals || raw.deals === "1",
     attn: raw.attn === "1",
     auto: raw.auto === "1",
+    owed: raw.owed === "1",
   };
 }
 
@@ -77,6 +81,7 @@ export function listHref(basePath: string, params: ListParams, overrides: Partia
   if (next.deals && !lock.deals) search.set("deals", "1");
   if (next.attn) search.set("attn", "1");
   if (next.auto) search.set("auto", "1");
+  if (next.owed) search.set("owed", "1");
   const query = search.toString();
   return query ? `${basePath}?${query}` : basePath;
 }
@@ -90,7 +95,8 @@ export function activeFilterCount(params: ListParams, lock: ListLock = {}) {
     (params.fav && !lock.fav ? 1 : 0) +
     (params.deals && !lock.deals ? 1 : 0) +
     (params.attn ? 1 : 0) +
-    (params.auto ? 1 : 0)
+    (params.auto ? 1 : 0) +
+    (params.owed ? 1 : 0)
   );
 }
 

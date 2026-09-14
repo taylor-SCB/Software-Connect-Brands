@@ -11,6 +11,14 @@ import type { ListParams } from "@/lib/list-params";
 
 const insensitive = "insensitive" as const;
 
+// A contract the customer signed that still has a payment row nobody has
+// covered. The same rule the "Owes you" line adds up (src/lib/money.ts).
+const OWES_MONEY = {
+  payable: false,
+  status: "SIGNED",
+  payments: { some: { paidAt: null, amountCents: { gt: 0 } } },
+} satisfies Prisma.ContractWhereInput;
+
 export function companyWhere(organizationId: string, p: ListParams): Prisma.CompanyWhereInput {
   const and: Prisma.CompanyWhereInput[] = [{ organizationId }];
   if (p.q) {
@@ -34,6 +42,9 @@ export function companyWhere(organizationId: string, p: ListParams): Prisma.Comp
   if (p.attn) and.push({ OR: [{ industries: { isEmpty: true } }, { AND: [{ phone: null }, { email: null }] }] });
   // Auto-filled: something on it was filled in by the app and not yet confirmed.
   if (p.auto) and.push({ autoFilled: { isEmpty: false } });
+  // Owes money: a signed Money-in contract with a row nobody has covered
+  // yet. Purchase orders are money going the other way and never count.
+  if (p.owed) and.push({ contracts: { some: OWES_MONEY } });
   return { AND: and };
 }
 
@@ -92,6 +103,9 @@ export function contactWhere(organizationId: string, p: ListParams, companyIds: 
       OR: [{ AND: [{ email: null }, { phone: null }] }, { company: { industries: { isEmpty: true } } }],
     });
   }
+  // Owes money: only a homeowner's own paperwork lands on their row;
+  // anyone with a company is counted on the company's row instead.
+  if (p.owed) and.push({ companyId: null, contracts: { some: OWES_MONEY } });
   return { AND: and };
 }
 

@@ -3,7 +3,7 @@
 // "paid so far" number in the app is a sum of Payment rows, and a table
 // row's paidAt (settled) is derived from them here and nowhere else.
 
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/format";
 
@@ -109,4 +109,220 @@ export function moneyHoldMessage(
   if (parts.length === 0) return null;
   const tail = archiveAs ? ` — archive this ${archiveAs} instead of deleting.` : " — remove the payments first.";
   return `${name} has ${parts.join(" and ")}${tail}`;
+}
+
+/* ------------------------- What a customer owes ------------------------- */
+
+// What someone owes, as the list rows and the Balance card read it.
+export type Balance = {
+  // Everything billed on signed paperwork.
+  billedCents: number;
+  receivedCents: number;
+  owedCents: number;
+  // Rows past their due date with money still open.
+  overdueCount: number;
+  // yyyy-mm-dd of the next open row, if there is one.
+  nextDue: string | null;
+};
+
+const EMPTY_BALANCE: Balance = {
+  billedCents: 0,
+  receivedCents: 0,
+  owedCents: 0,
+  overdueCount: 0,
+  nextDue: null,
+};
+
+type BalanceRow = {
+  key: string;
+  billed: number | string | null;
+  received: number | string | null;
+  overdue: number | string | null;
+  next_due: Date | null;
+};
+
+function toBalances(rows: BalanceRow[]): Map<string, Balance> {
+  const balances = new Map<string, Balance>();
+  for (const row of rows) {
+    const billedCents = Number(row.billed ?? 0);
+    const receivedCents = Number(row.received ?? 0);
+    balances.set(row.key, {
+      billedCents,
+      receivedCents,
+      owedCents: billedCents - receivedCents,
+      overdueCount: Number(row.overdue ?? 0),
+      nextDue: row.next_due ? row.next_due.toISOString().slice(0, 10) : null,
+    });
+  }
+  return balances;
+}
+
+// What each of these customers still owes: their signed Money-in
+// paperwork, less what has been recorded against it. Money-out purchase
+// orders are what we owe a supplier, so they are never in here — a
+// company that is both shows "Owes you" on its row and "You owe them" on
+// its page, never one netted number.
+//
+// One statement for the whole page of rows rather than a query each, so
+// the list stays inside its budget at forty thousand companies. `by`
+// picks whether the rows are companies or the homeowners who have no
+// company at all.
+export async function owedBy(
+  organizationId: string,
+  by: "company" | "contact",
+  ids: string[],
+  today: string,
+): Promise<Map<string, Balance>> {
+  if (ids.length === 0) return new Map();
+  const keyColumn = by === "company" ? Prisma.sql`c."companyId"` : Prisma.sql`c."contactId"`;
+  // A homeowner's contracts are the ones filed under no company at all;
+  // anything with a company belongs on the company's row instead.
+  const scope =
+    by === "company"
+      ? Prisma.sql`c."companyId" = ANY(${ids})`
+      : Prisma.sql`c."companyId" IS NULL AND c."contactId" = ANY(${ids})`;
+
+  const rows = await prisma.$queryRaw<BalanceRow[]>`
+    SELECT ${keyColumn} AS key,
+           SUM(cp."amountCents")::int AS billed,
+           COALESCE(SUM(paid.total), 0)::int AS received,
+           COUNT(*) FILTER (
+             WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
+           )::int AS overdue,
+           MIN(cp."dueOn") FILTER (WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0) AS next_due
+      FROM "Contract" c
+      JOIN "ContractPayment" cp ON cp."contractId" = c.id
+      LEFT JOIN LATERAL (
+             SELECT SUM(p."amountCents") AS total FROM "Payment" p WHERE p."contractPaymentId" = cp.id
+           ) paid ON true
+     WHERE c."organizationId" = ${organizationId}
+       AND c.payable = false
+       AND c.status = 'SIGNED'
+       AND cp."amountCents" > 0
+       AND ${scope}
+     GROUP BY 1
+  `;
+  return toBalances(rows);
+}
+
+// The other direction: what we still owe these suppliers on purchase
+// orders that are out or signed.
+export async function payableBy(
+  organizationId: string,
+  companyIds: string[],
+  today: string,
+): Promise<Map<string, Balance>> {
+  if (companyIds.length === 0) return new Map();
+  const rows = await prisma.$queryRaw<BalanceRow[]>`
+    SELECT c."companyId" AS key,
+           SUM(cp."amountCents")::int AS billed,
+           COALESCE(SUM(paid.total), 0)::int AS received,
+           COUNT(*) FILTER (
+             WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
+           )::int AS overdue,
+           MIN(cp."dueOn") FILTER (WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0) AS next_due
+      FROM "Contract" c
+      JOIN "ContractPayment" cp ON cp."contractId" = c.id
+      LEFT JOIN LATERAL (
+             SELECT SUM(p."amountCents") AS total FROM "Payment" p WHERE p."contractPaymentId" = cp.id
+           ) paid ON true
+     WHERE c."organizationId" = ${organizationId}
+       AND c.payable = true
+       AND c.status IN ('SENT', 'SIGNED')
+       AND cp."amountCents" > 0
+       AND c."companyId" = ANY(${companyIds})
+     GROUP BY 1
+  `;
+  return toBalances(rows);
+}
+
+// One workspace-wide number for the dashboard tile.
+export async function owedTotals(organizationId: string, today: string) {
+  const rows = await prisma.$queryRaw<
+    { owed: number | string | null; overdue: number | string | null; customers: number | string | null }[]
+  >`
+    SELECT COALESCE(SUM(cp."amountCents" - COALESCE(paid.total, 0)), 0)::int AS owed,
+           COUNT(*) FILTER (
+             WHERE cp."paidAt" IS NULL AND cp."dueOn" < ${today}::date
+           )::int AS overdue,
+           COUNT(DISTINCT COALESCE(c."companyId", c."contactId")) FILTER (
+             WHERE cp."paidAt" IS NULL
+           )::int AS customers
+      FROM "Contract" c
+      JOIN "ContractPayment" cp ON cp."contractId" = c.id
+      LEFT JOIN LATERAL (
+             SELECT SUM(p."amountCents") AS total FROM "Payment" p WHERE p."contractPaymentId" = cp.id
+           ) paid ON true
+     WHERE c."organizationId" = ${organizationId}
+       AND c.payable = false
+       AND c.status = 'SIGNED'
+       AND cp."amountCents" > 0
+       AND cp."paidAt" IS NULL
+  `;
+  const row = rows[0];
+  return {
+    owedCents: Number(row?.owed ?? 0),
+    overdueCount: Number(row?.overdue ?? 0),
+    customerCount: Number(row?.customers ?? 0),
+  };
+}
+
+export function emptyBalance(): Balance {
+  return EMPTY_BALANCE;
+}
+
+/* ----------------------- The Balance card's contents ----------------------- */
+
+// Everything the Balance card on a company or contact page shows: what
+// they owe, what we owe them, and each open row. `where` picks the
+// contracts that belong to the record being looked at.
+export async function loadBalance(
+  organizationId: string,
+  target: { companyId: string } | { contactId: string },
+  today: string,
+) {
+  const isCompany = "companyId" in target;
+  const id = isCompany ? target.companyId : target.contactId;
+  const [owedMap, payableMap, openRows] = await Promise.all([
+    owedBy(organizationId, isCompany ? "company" : "contact", [id], today),
+    isCompany ? payableBy(organizationId, [id], today) : Promise.resolve(new Map<string, Balance>()),
+    prisma.contractPayment.findMany({
+      where: {
+        amountCents: { gt: 0 },
+        paidAt: null,
+        contract: {
+          organizationId,
+          payable: false,
+          status: "SIGNED",
+          ...(isCompany ? { companyId: id } : { companyId: null, contactId: id }),
+        },
+      },
+      orderBy: [{ dueOn: "asc" }, { position: "asc" }],
+      take: 25,
+      select: {
+        label: true,
+        amountCents: true,
+        dueOn: true,
+        contract: { select: { id: true, number: true } },
+        payments: { select: { amountCents: true } },
+      },
+    }),
+  ]);
+
+  return {
+    owed: owedMap.get(id) ?? EMPTY_BALANCE,
+    payable: payableMap.get(id) ?? EMPTY_BALANCE,
+    rows: openRows.map((row) => {
+      const dueOn = row.dueOn ? row.dueOn.toISOString().slice(0, 10) : null;
+      return {
+        contractId: row.contract.id,
+        contractNumber: row.contract.number,
+        label: row.label,
+        amountCents: row.amountCents,
+        receivedCents: paidCentsOf(row),
+        dueOn,
+        overdue: Boolean(dueOn && dueOn < today),
+      };
+    }),
+  };
 }

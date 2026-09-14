@@ -26,6 +26,9 @@ import {
   IconBuilding,
 } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
+import { BalanceCard } from "@/components/balance-card";
+import { loadBalance } from "@/lib/money";
+import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
@@ -67,9 +70,12 @@ export default async function ContactDetailPage({
 
   if (!contact) notFound();
 
-  const [noteOthers, activityOthers] = await Promise.all([
+  const [noteOthers, activityOthers, balance] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
+    // A homeowner's own balance. Someone at a company is billed through
+    // the company, so their card reads zero and the company's carries it.
+    loadBalance(organizationId, { contactId: contact.id }, todayIso(timeZone)),
   ]);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
@@ -235,6 +241,17 @@ export default async function ContactDetailPage({
               <Detail label="State" value={contact.state} />
             </dl>
           </Card>
+
+          <BalanceCard
+            owed={balance.owed}
+            rows={balance.rows}
+            timeZone={timeZone}
+            subtitle={
+              contact.company
+                ? `Billed to ${contact.company.name}, so this reads zero unless something is addressed to them directly.`
+                : "What is signed for and not yet paid."
+            }
+          />
 
           <ActivityOverview
             notes={contact.notes.length}

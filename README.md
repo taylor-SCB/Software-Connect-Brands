@@ -92,6 +92,19 @@ ten best matches instead of loading the table. Trigram indexes
 keep search and filters fast at 200,000 rows;
 `scripts/browser-tests/load-test.cjs` proves it.
 
+**Owes you** (Sept 14, 2026) — under the name on every Companies and
+Contacts row: *Owes you $1,800.00 · 1 overdue · next due Dec 15*. It is
+what they signed for on Money-in paperwork less the payments recorded
+against it, so it needs no invoice typed; a purchase order to a supplier
+is money going the other way and never counts. Nothing shows at zero.
+**Owes money** in the filter bar keeps only the people who owe. A
+homeowner has no company, so their balance sits on their own contact row.
+Company and contact pages carry a **Balance** card — Owes you, You owe
+them, next due, and every open payment row with what is left on it — and
+the dashboard opens with **Owed to you** across the whole workspace,
+which links to the list already filtered. The figure is worked out in one
+database query per page, so it stays fast on a long list.
+
 **Favorites** (Sept 13, 2026) — the star on a contact or company row and
 page. **Favorite Contacts** and **Favorite Companies** in the sidebar are
 the list with the star held on; **Contacts with Deals** and **Companies

@@ -8,8 +8,10 @@
  * and refusing an amount below what was recorded; the tracker's
  * Outstanding counting only money coming in, with the signed part under
  * it; "Mark signed" as the manual override; the Preset Payment Table in
- * Settings feeding a new tracker column; and deleting a contact with
- * money on the books being refused.
+ * Settings feeding a new tracker column; deleting a contact with money on
+ * the books being refused; and the "Owes you" line on the Companies and
+ * Contacts rows, the Owes money filter, the Balance card on a company and
+ * a contact page, and the dashboard's Owed to you tile.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
@@ -346,6 +348,104 @@ async function signAs(browser, token, name) {
   assert.match(refusal, /archive this contact instead of deleting/);
   assert.equal(Number((await sql(`SELECT count(*) FROM "Contact" WHERE id='ctc_mo'`)).rows[0].count), 1);
   await shot(page, "06-delete-refused");
+
+
+  /* ------------------------------ Owes you ------------------------------ */
+
+  log("the Companies row shows what the customer owes, and the supplier's row shows nothing");
+  await page.goto(`${BASE}/dashboard/companies`);
+  const harborRow = page.locator("[data-testid=company-row]").filter({ hasText: "Harbor Property Group" });
+  const gulfRow = page.locator("[data-testid=company-row]").filter({ hasText: "Gulf Supply" });
+  // $3,000 signed, $1,200 recorded, so $1,800 is still owed.
+  assert.equal(await harborRow.locator("[data-testid=owes-line]").getAttribute("data-cents"), "180000");
+  assert.match(await harborRow.locator("[data-testid=owes-line]").textContent(), /Owes you \$1,800\.00/);
+  assert.equal(
+    await gulfRow.locator("[data-testid=owes-line]").count(),
+    0,
+    "a purchase order is money we owe them, not money they owe us",
+  );
+  await shot(page, "07-owes-line");
+
+  log("the Owes money filter keeps only the customers who owe");
+  await page.locator("[data-testid=filter-owed]").click();
+  await page.waitForURL(/owed=1/);
+  await page.locator("[data-testid=company-row]").first().waitFor();
+  assert.equal(await page.locator("[data-testid=company-row]").count(), 1);
+  assert.match(await page.locator("[data-testid=company-row]").first().textContent(), /Harbor Property Group/);
+  assert.match(await page.locator("[data-testid=active-filters]").textContent(), /Owes money/);
+
+  log("a homeowner with no company owes on their own row");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,email,"updatedAt")
+     VALUES ('ctc_home','${org}','Rae Nolan','rae@example.com',now())`,
+  );
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId",number,title,type,body,status,payable,"publicToken","signedAt","updatedAt")
+     VALUES ('con_home','${org}','ctc_home',3000,'Roof repair','Sales Order','Body','SIGNED',false,'tok_con_home_012345678',now(),now())`,
+  );
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"contractId","organizationId",label,kind,"amountCents","dueOn",position)
+     VALUES ('cpm_home','con_home','${org}','Due on completion','FIXED',75000,current_date + 1,0)`,
+  );
+  await page.goto(`${BASE}/dashboard/contacts?owed=1`);
+  await page.locator("[data-testid=contact-row]").first().waitFor();
+  assert.equal(await page.locator("[data-testid=contact-row]").count(), 1);
+  const homeRow = page.locator("[data-testid=contact-row]").first();
+  assert.match(await homeRow.textContent(), /Rae Nolan/);
+  assert.equal(await homeRow.locator("[data-testid=owes-line]").getAttribute("data-cents"), "75000");
+
+  log("the customer's Balance card shows what they owe and every open row");
+  await page.goto(`${BASE}/dashboard/companies/cmp_mo`);
+  await page.locator("[data-testid=balance-card]").waitFor();
+  assert.equal(await page.locator("[data-testid=balance-owed]").getAttribute("data-cents"), "180000");
+  assert.equal(await page.locator("[data-testid=balance-payable]").count(), 0, "we owe the customer nothing");
+  assert.equal(await page.locator("[data-testid=balance-row]").count(), 1, "one open row left");
+  await shot(page, "08-balance-card");
+
+  log("the supplier's Balance card shows what we owe them instead");
+  await page.goto(`${BASE}/dashboard/companies/cmp_sup`);
+  await page.locator("[data-testid=balance-card]").waitFor();
+  assert.equal(await page.locator("[data-testid=balance-owed]").getAttribute("data-cents"), "0");
+  assert.equal(
+    await page.locator("[data-testid=balance-payable]").getAttribute("data-cents"),
+    "100000",
+    "the purchase order is money going out to them",
+  );
+
+  log("the dashboard's Owed to you tile adds up every customer");
+  await page.goto(`${BASE}/dashboard`);
+  const tile = page.locator("text=Owed to you").locator("xpath=ancestor::*[self::a or self::div][1]");
+  // $1,800 from Harbor plus $750 from the homeowner.
+  assert.match(await tile.textContent(), /\$2,550\.00/);
+
+  log("the numbers on the page agree with the database");
+  const truth = (await sql(
+    `SELECT COALESCE(SUM(cp."amountCents") - COALESCE(SUM(p.total), 0), 0)::int AS owed
+       FROM "Contract" c
+       JOIN "ContractPayment" cp ON cp."contractId" = c.id
+       LEFT JOIN LATERAL (SELECT SUM(pm."amountCents") AS total FROM "Payment" pm WHERE pm."contractPaymentId" = cp.id) p ON true
+      WHERE c."organizationId" = $1 AND c.payable = false AND c.status = 'SIGNED' AND cp."amountCents" > 0
+        AND c."companyId" = 'cmp_mo'`,
+    [org],
+  )).rows[0].owed;
+  assert.equal(truth, 180000, "the Owes you line is what the payment rows minus the payments say");
+
+  log("the Owes you line fits a phone screen");
+  const phone = await browser.newContext({ viewport: { width: 400, height: 800 } });
+  const ppage = await phone.newPage();
+  await ppage.goto(`${BASE}/login`);
+  await ppage.fill("#email", EMAIL);
+  await ppage.fill("#password", PASSWORD);
+  await ppage.click("button[type=submit]");
+  await ppage.waitForURL(/\/dashboard$/);
+  await ppage.goto(`${BASE}/dashboard/companies`);
+  await ppage.locator("[data-testid=company-row]").first().waitFor();
+  assert.ok(
+    await ppage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    "the page itself does not scroll sideways on a phone",
+  );
+  await ppage.screenshot({ path: path.join(OUT, "09-phone.png"), fullPage: true });
+  await phone.close();
 
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED · screenshots in ${OUT}`);

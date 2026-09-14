@@ -21,6 +21,9 @@ import { StarButton } from "@/components/star-button";
 import { ImportCsvButton } from "@/components/import-csv-button";
 import { AutoPill } from "@/components/auto-pill";
 import { getTimeZone } from "@/lib/organization";
+import { todayIso } from "@/lib/payments";
+import { owedBy } from "@/lib/money";
+import { OwesLine } from "@/components/owes-line";
 import { setContactFavorite } from "./actions";
 
 const ACTIVITY_ICONS = {
@@ -96,6 +99,8 @@ export async function ContactsList({
     counts.set(row.contactId, existing);
   }
 
+  // A homeowner has no company, so what they owe lands on their own row.
+  const owed = await owedBy(organizationId, "contact", contacts.map((contact) => contact.id), todayIso(timeZone));
   const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
@@ -195,6 +200,7 @@ export async function ContactsList({
                             {contact._count.deals} {contact._count.deals === 1 ? "deal" : "deals"}
                           </p>
                         )}
+                        <OwesLine balance={owed.get(contact.id)} timeZone={timeZone} />
                       </td>
                       <td className="text-xs">
                         <div className="flex flex-wrap items-center gap-1">

@@ -22,6 +22,9 @@ import { TagCell } from "../../contacts/contacts-list";
 import { setCompanyFavorite } from "../actions";
 import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
+import { BalanceCard } from "@/components/balance-card";
+import { loadBalance } from "@/lib/money";
+import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
@@ -128,6 +131,9 @@ export default async function CompanyDetailPage({
         select: { valueCents: true, stage: true, quotes: QUOTES_FOR_VALUE },
       }),
     ]);
+
+  // What this company owes and what we owe them, for the Balance card.
+  const balance = await loadBalance(organizationId, { companyId: company.id }, todayIso(timeZone));
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
@@ -278,6 +284,13 @@ export default async function CompanyDetailPage({
               <Detail label="State" value={company.state} />
             </dl>
           </Card>
+
+          <BalanceCard
+            owed={balance.owed}
+            payable={balance.payable}
+            rows={balance.rows}
+            timeZone={timeZone}
+          />
 
           <ActivityOverview
             notes={noteTotal}

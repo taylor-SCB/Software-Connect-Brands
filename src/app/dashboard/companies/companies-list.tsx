@@ -15,6 +15,9 @@ import { StarButton } from "@/components/star-button";
 import { ImportCsvButton } from "@/components/import-csv-button";
 import { AutoPill } from "@/components/auto-pill";
 import { getTimeZone } from "@/lib/organization";
+import { todayIso } from "@/lib/payments";
+import { owedBy } from "@/lib/money";
+import { OwesLine } from "@/components/owes-line";
 import { TagCell } from "../contacts/contacts-list";
 import { setCompanyFavorite } from "./actions";
 import { FillMissingButton } from "./fill-missing-button";
@@ -69,6 +72,9 @@ export async function CompaniesList({
       },
     },
   });
+  // What each company on this page still owes, in one statement rather
+  // than a query per row, so the list stays fast at forty thousand.
+  const owed = await owedBy(organizationId, "company", companies.map((company) => company.id), todayIso(timeZone));
   const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
@@ -153,6 +159,7 @@ export async function CompaniesList({
                         <Link href={`/dashboard/companies/${company.id}`} className="link">
                           {company.name}
                         </Link>
+                        <OwesLine balance={owed.get(company.id)} timeZone={timeZone} />
                       </td>
                       <td className="text-xs">
                         <div className="flex flex-wrap items-center gap-1">
