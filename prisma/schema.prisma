@@ -102,6 +102,9 @@ model Organization {
   payments            Payment[]
   serviceTypeOptions  ServiceTypeOption[]
   projects            Project[]
+  crews               Crew[]
+  workers             Worker[]
+  timeEntries         TimeEntry[]
 
   @@index([status])
 }
@@ -197,6 +200,7 @@ model Company {
   contracts   Contract[]
   projects    Project[]
   distributor Distributor?
+  crews       Crew[]
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -247,6 +251,7 @@ model Contact {
   contracts  Contract[]
   uploads    Upload[]
   projects   Project[]
+  crews      Crew[]
 
   @@index([organizationId])
   @@index([companyId])
@@ -1082,12 +1087,16 @@ model Project {
   receivedCents    Int        @default(0)
   billedCents      Int        @default(0)
   plannedCostCents Int        @default(0)
+  // The crew-time part of spent and committed, summed from its scopes.
+  laborSpentCents     Int     @default(0)
+  laborCommittedCents Int     @default(0)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  scopes    ProjectScope[]
-  contracts Contract[]
-  uploads   Upload[]
+  scopes      ProjectScope[]
+  contracts   Contract[]
+  uploads     Upload[]
+  timeEntries TimeEntry[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])
@@ -1111,7 +1120,11 @@ model ProjectScope {
   serviceType String?
   // The scope of work in the owner's own words.
   description String   @default("")
-  // Who is doing it. Free text until crews are a record of their own.
+  // Who is doing it. The crew picked from the workspace's own list, or a
+  // typed name when there is no crew record — the field predates crews and
+  // still reads for a one-off sub nobody wants to set up.
+  crewId      String?
+  crew        Crew?    @relation(fields: [crewId], references: [id], onDelete: SetNull)
   crewLabel   String?
   isDefault   Boolean  @default(false)
   position    Int      @default(0)
@@ -1123,11 +1136,17 @@ model ProjectScope {
   receivedCents    Int @default(0)
   billedCents      Int @default(0)
   plannedCostCents Int @default(0)
+  // The part of spent and committed that is crew time rather than
+  // materials, so the bar can be explained without adding hours up again.
+  laborSpentCents     Int @default(0)
+  laborCommittedCents Int @default(0)
 
-  awards    ScopeAward[]
-  lineItems ContractLineItem[]
+  awards      ScopeAward[]
+  lineItems   ContractLineItem[]
+  timeEntries TimeEntry[]
 
   @@index([projectId])
+  @@index([crewId])
 }
 
 // Why a scope's awarded amount is what it is. CONTRACT is the signed
@@ -1160,4 +1179,123 @@ model ScopeAward {
 
   @@index([scopeId])
   @@index([contractId])
+}
+
+// Who does the work. Two kinds, and the difference is entirely about
+// money: your OWN people cost you their hours, so their time lands in the
+// job's Spent. A SUBCONTRACTOR is another company that bills you, so
+// their money arrives as their purchase order and their hours are tracked
+// for the schedule and for checking that bill — never counted twice.
+enum CrewKind {
+  OWN
+  SUBCONTRACTOR
+}
+
+// A crew is a named group you send to a job: "Install Team A", or
+// "Ridgeline Roofing" as a subcontractor. Built once, assigned to scopes
+// of work on any number of jobs.
+model Crew {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  kind           CrewKind     @default(OWN)
+  // The company that bills you, on a subcontractor crew. Their record in
+  // the CRM, so what is owed to them reads on one page.
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  // Who you call: their foreman or coordinator.
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  // What they do, by service-type name, so a scope suggests the right crew.
+  serviceTypes   String[]     @default([])
+  // What they cost. Either rate, or both: a crew quoted by the day still
+  // gets called out for four hours sometimes.
+  hourlyRateCents Int?
+  dailyRateCents  Int?
+  phone          String?
+  email          String?
+  notes          String       @default("")
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  workers     Worker[]
+  timeEntries TimeEntry[]
+  scopes      ProjectScope[]
+
+  @@index([organizationId, active])
+  @@index([companyId])
+  @@index([contactId])
+}
+
+// One person on a crew. Their own rate when they have one, else the
+// crew's. Not a login — nobody here can sign in.
+model Worker {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  crewId         String?
+  crew           Crew?        @relation(fields: [crewId], references: [id], onDelete: SetNull)
+  name           String
+  // "Journeyman electrician", "Apprentice", "Foreman" — their trade in
+  // their own words, not a pick list.
+  role           String?
+  hourlyRateCents Int?
+  dailyRateCents  Int?
+  phone          String?
+  email          String?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  timeEntries TimeEntry[]
+
+  @@index([organizationId, active])
+  @@index([crewId])
+}
+
+// Time on a job: hours, days, or both on the same row — three days plus
+// four hours of overtime is one entry, not two. The rates are copied onto
+// the row when it is logged, so raising a crew's rate never rewrites what
+// last month cost.
+model TimeEntry {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Which scope of work it was against. Null lands it on the whole job.
+  scopeId        String?
+  scope          ProjectScope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  crewId         String?
+  crew           Crew?         @relation(fields: [crewId], references: [id], onDelete: SetNull)
+  workerId       String?
+  worker         Worker?       @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  // Who it was, as text, so the row still reads after a crew or worker is
+  // deleted.
+  workerName     String
+  workedOn       DateTime      @db.Date
+  hours          Float         @default(0)
+  days           Float         @default(0)
+  hourlyRateCents Int          @default(0)
+  dailyRateCents  Int          @default(0)
+  // hours × hourly + days × daily, rounded once and stored, so a total is
+  // a sum and never a recomputation.
+  amountCents    Int           @default(0)
+  // False for a subcontractor's hours, whose money arrives as their
+  // purchase order instead. Tracked either way; only ever counted once.
+  countsAsCost   Boolean       @default(true)
+  // The day it was paid out. Set one row at a time, or in bulk by
+  // "Mark paid through". Unpaid time is Committed; paid time is Spent.
+  paidOn         DateTime?     @db.Date
+  note           String        @default("")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId, workedOn])
+  @@index([projectId, workedOn])
+  @@index([scopeId])
+  @@index([crewId, workedOn])
+  @@index([workerId])
 }

@@ -165,7 +165,7 @@ export function StatTile({
 }) {
   const color = accent ?? "var(--brand)";
   return (
-    <div className="card card-hover relative overflow-hidden p-4">
+    <div className="card card-hover relative overflow-hidden p-4" data-testid="stat-tile" data-label={label}>
       <div
         className="absolute -right-6 -top-8 h-20 w-20 rounded-full opacity-40 blur-2xl"
         style={{ background: color }}

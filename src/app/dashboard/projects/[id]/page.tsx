@@ -41,6 +41,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       receivedCents: true,
       billedCents: true,
       plannedCostCents: true,
+      laborSpentCents: true,
+      laborCommittedCents: true,
       scopes: {
         orderBy: { position: "asc" },
         select: {
@@ -49,6 +51,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           serviceType: true,
           description: true,
           crewLabel: true,
+          crew: { select: { name: true } },
           isDefault: true,
           awardedCents: true,
           spentCents: true,
@@ -80,6 +83,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const serviceTypes = await getServiceTypes(organizationId);
   const left = leftCents(project);
   const used = project.spentCents + project.committedCents;
+  // The crew-time part of what has been used, so the bar can be explained
+  // without opening the Crew & time tab.
+  const labor = project.laborSpentCents + project.laborCommittedCents;
   // The whole-job scope is a bucket for untagged rows. When the job is
   // split and nothing landed in it, showing it as an empty budget is
   // noise, so it only appears when it holds something.
@@ -204,6 +210,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               Still owed{" "}
               <span className="num font-medium">{formatCents(project.billedCents - project.receivedCents)}</span>
             </span>
+            {labor > 0 && (
+              <span className="muted" data-testid="project-labor">
+                Of which crew time{" "}
+                <span className="num font-medium">{formatCents(labor)}</span>
+              </span>
+            )}
             {project.plannedCostCents > 0 && (
               <span className="faint" data-testid="planned-cost">
                 Expected cost on file{" "}
@@ -225,6 +237,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               key={scope.id}
               scope={{
                 ...scope,
+                crewName: scope.crew?.name ?? null,
                 awards: scope.awards.map((award) => ({
                   ...award,
                   createdAt: formatDate(award.createdAt, timeZone),

@@ -24,6 +24,10 @@ export type ScopeView = {
   serviceType: string | null;
   description: string;
   crewLabel: string | null;
+  // The crew on it, when one from the workspace's list is assigned. Set
+  // on the Crew & time tab; the typed label below is the fallback for a
+  // one-off sub nobody wants to set up as a crew.
+  crewName: string | null;
   isDefault: boolean;
   awardedCents: number;
   spentCents: number;
@@ -78,20 +82,28 @@ export function ScopeCard({
         subtitle={scope.serviceType ?? (scope.isDefault ? "Anything with no service type on it" : undefined)}
         actions={
           <div className="flex items-center gap-2">
-            <label className="block text-xs">
-              <span className="faint sr-only">Crew</span>
-              <input
-                value={crew}
-                onChange={(event) => setCrew(event.target.value)}
-                onBlur={() => {
-                  if ((scope.crewLabel ?? "") !== crew) run(() => updateScope(scope.id, { crewLabel: crew }));
-                }}
-                placeholder="Crew or sub"
-                aria-label={`Crew on ${scope.name}`}
-                className="input input-sm w-36"
-                data-testid="scope-crew"
-              />
-            </label>
+            {/* A crew off the workspace's list wins over a typed name, and
+                is changed where the crews are — on the Crew & time tab. */}
+            {scope.crewName ? (
+              <span className="muted text-xs" data-testid="scope-crew-name">
+                {scope.crewName}
+              </span>
+            ) : (
+              <label className="block text-xs">
+                <span className="faint sr-only">Crew</span>
+                <input
+                  value={crew}
+                  onChange={(event) => setCrew(event.target.value)}
+                  onBlur={() => {
+                    if ((scope.crewLabel ?? "") !== crew) run(() => updateScope(scope.id, { crewLabel: crew }));
+                  }}
+                  placeholder="Crew or sub"
+                  aria-label={`Crew on ${scope.name}`}
+                  className="input input-sm w-36"
+                  data-testid="scope-crew"
+                />
+              </label>
+            )}
             {!scope.isDefault && (
               <button
                 type="button"

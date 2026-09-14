@@ -16,6 +16,8 @@ const TOTALS = {
   receivedCents: true,
   billedCents: true,
   plannedCostCents: true,
+  laborSpentCents: true,
+  laborCommittedCents: true,
 } as const;
 
 type Totals = {
@@ -25,6 +27,8 @@ type Totals = {
   receivedCents: number;
   billedCents: number;
   plannedCostCents: number;
+  laborSpentCents: number;
+  laborCommittedCents: number;
 };
 
 const FIELDS = Object.keys(TOTALS) as (keyof Totals)[];
@@ -44,6 +48,8 @@ async function main() {
       receivedCents: project.receivedCents,
       billedCents: project.billedCents,
       plannedCostCents: project.plannedCostCents,
+      laborSpentCents: project.laborSpentCents,
+      laborCommittedCents: project.laborCommittedCents,
     };
 
     await prisma.$transaction((tx) => refreshTotals(tx, project.organizationId, project.id));

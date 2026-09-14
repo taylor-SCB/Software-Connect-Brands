@@ -1,10 +1,11 @@
 import Link from "next/link";
 
-export type ProjectTab = "budget" | "money" | "files";
+export type ProjectTab = "budget" | "money" | "crew" | "files";
 
 const TABS: { key: ProjectTab; segment: string; label: string }[] = [
   { key: "budget", segment: "", label: "Budget" },
   { key: "money", segment: "/money", label: "Money" },
+  { key: "crew", segment: "/crew", label: "Crew & time" },
   { key: "files", segment: "/files", label: "Files" },
 ];
 

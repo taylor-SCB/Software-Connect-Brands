@@ -5,8 +5,10 @@
 //              agreement and any signed change order since
 //   Billed     the part of that which is on a payment table
 //   Received   what has actually come in against those rows
-//   Committed  purchase orders that are out but not yet paid
-//   Spent      payments already made out on those purchase orders
+//   Committed  purchase orders that are out but not yet paid, plus crew
+//              time logged but not yet paid out
+//   Spent      payments already made out on those purchase orders, plus
+//              crew time already paid
 //   Left       awarded − spent − committed
 //
 // Nothing here is typed by hand: every figure comes from paperwork the
@@ -373,6 +375,14 @@ export async function refreshTotals(
           payments: { select: { amountCents: true, payments: { select: { amountCents: true } } } },
         },
       },
+      // Crew time is a cost like any other: paid time is Spent, time
+      // logged but not yet paid out is Committed. A subcontractor's hours
+      // carry countsAsCost false, because their money arrives as their
+      // purchase order and must not be counted a second time.
+      timeEntries: {
+        where: { countsAsCost: true },
+        select: { scopeId: true, amountCents: true, paidOn: true },
+      },
     },
   });
   if (!project) return;
@@ -387,6 +397,8 @@ export async function refreshTotals(
   const committed = zero();
   const spent = zero();
   const plannedCost = zero();
+  const laborSpent = zero();
+  const laborCommitted = zero();
 
   for (const scope of project.scopes) {
     awarded.set(scope.id, scope.awards.reduce((sum, award) => sum + award.deltaCents, 0));
@@ -423,6 +435,17 @@ export async function refreshTotals(
     add(committed, apportion(contract.lineItems, Math.max(0, rowsTotal - paidTotal), defaultScopeId));
   }
 
+  // A scope that has been deleted since the hours were logged leaves the
+  // entry pointing at nothing, so its cost falls to the whole job rather
+  // than disappearing from the budget.
+  for (const entry of project.timeEntries) {
+    const key = entry.scopeId && awarded.has(entry.scopeId) ? entry.scopeId : defaultScopeId;
+    const target = entry.paidOn ? laborSpent : laborCommitted;
+    target.set(key, (target.get(key) ?? 0) + entry.amountCents);
+  }
+  add(spent, laborSpent);
+  add(committed, laborCommitted);
+
   const sum = (map: Map<string, number>) => Array.from(map.values()).reduce((a, b) => a + b, 0);
 
   for (const scope of project.scopes) {
@@ -435,6 +458,8 @@ export async function refreshTotals(
         committedCents: committed.get(scope.id) ?? 0,
         spentCents: spent.get(scope.id) ?? 0,
         plannedCostCents: plannedCost.get(scope.id) ?? 0,
+        laborSpentCents: laborSpent.get(scope.id) ?? 0,
+        laborCommittedCents: laborCommitted.get(scope.id) ?? 0,
       },
     });
   }
@@ -448,6 +473,8 @@ export async function refreshTotals(
       committedCents: sum(committed),
       spentCents: sum(spent),
       plannedCostCents: sum(plannedCost),
+      laborSpentCents: sum(laborSpent),
+      laborCommittedCents: sum(laborCommitted),
     },
   });
 }

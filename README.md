@@ -329,6 +329,32 @@ customer owes rather than showing as something to chase. **Files** on a
 job hold the other party's own signed contract and anything else the job
 needs; a job's file needs a login, unlike a logo.
 
+**Crews and time** (Sept 14, 2026) — **Projects → Crews** is who does the
+work. A crew is either **your own people** or a **subcontractor**, and the
+difference is entirely about money: your own crew's hours are your cost, so
+the time you log lands on the job's budget; a subcontractor bills you, so
+their money arrives as their purchase order and their hours are tracked for
+the schedule and for checking that bill, never added on top. The screen says
+so in those words, and the one mistake that can double a cost — a sub's
+hours counted *and* their order on the same job — gets called out on the job
+with the crew named.
+
+A crew carries an hourly rate, a day rate or both, a phone and email, and
+the service types they cover. People on a crew have their own rate when
+theirs differs, and the row says which number a logged hour will use. Money
+is why nobody can be deleted once they have worked: retire a crew instead,
+and the cost stays on the jobs they worked.
+
+On a job, **Crew & time** logs a day in two taps. Hours, days, or both on
+one entry — three days plus four hours of overtime is one row, because that
+is how a week actually goes. Picking the crew moves the scope to the one
+they are on. The rate is copied onto the entry as it stands that day, so
+raising a rate next month never rewrites what last month cost. **Time still
+to pay counts as Committed on the budget and paid time counts as Spent**, so
+the bar is honest before payroll runs; **Mark paid through** settles
+everything up to the day payroll went out, for everyone or for one crew.
+`npm run recompute-projects` checks it all still ties out.
+
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five
