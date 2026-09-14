@@ -482,6 +482,70 @@ async function cents(locator) {
   await page.locator("[data-testid=log-time-save]").click();
   await page.getByText(/no hourly rate — log it in days/).waitFor();
 
+  log("audit fixes: a minus sign or a comma in Hours is refused, not silently reinterpreted");
+  await page.goto(`${BASE}/dashboard/projects/${projectId}/crew`);
+  await page.selectOption("#log-crewId", { label: "Install Team A" });
+  const beforeBad = (await sql(`SELECT count(*)::int AS n FROM "TimeEntry" WHERE "organizationId"=$1`, [org]))
+    .rows[0].n;
+  // "-8" used to become 8 hours; "7,5" used to become 75 hours, ten times
+  // the cost the preview had just quoted.
+  for (const typed of ["-8", "7,5", "8..5"]) {
+    await page.locator("[data-testid=log-hours]").fill(typed);
+    await page.locator("[data-testid=log-time-save]").click();
+    await page.getByText(/Hours has to be a plain number/).waitFor();
+  }
+  assert.equal(
+    (await sql(`SELECT count(*)::int AS n FROM "TimeEntry" WHERE "organizationId"=$1`, [org])).rows[0].n,
+    beforeBad,
+    "none of them wrote an entry",
+  );
+
+  log("audit fixes: hours past the cap are refused rather than quietly clamped");
+  await page.locator("[data-testid=log-hours]").fill("2000");
+  await page.locator("[data-testid=log-time-save]").click();
+  await page.getByText(/Hours of more than 999 looks like a slip/).waitFor();
+  assert.equal(
+    (await sql(`SELECT count(*)::int AS n FROM "TimeEntry" WHERE "organizationId"=$1 AND hours=999`, [org]))
+      .rows[0].n,
+    0,
+    "nothing was logged at the cap instead of what was typed",
+  );
+
+  log("audit fixes: logging a day clears the amount so it cannot be charged twice");
+  await page.locator("[data-testid=log-hours]").fill("3");
+  await page.locator("[data-testid=log-time-save]").click();
+  await page.getByText(/3 hrs logged/).waitFor();
+  assert.equal(
+    await page.locator("[data-testid=log-hours]").inputValue(),
+    "",
+    "the hours box is empty again",
+  );
+  assert.equal(
+    await page.locator("[data-testid=log-preview]").count(),
+    0,
+    "and the cost preview is gone with it",
+  );
+
+  log("audit fixes: a retired crew still on a scope is named, not blanked");
+  await page.goto(`${BASE}/dashboard/projects/crews`);
+  await teamA.locator("[data-testid=crew-retire]").click();
+  await teamA.getByText("Retired", { exact: true }).waitFor();
+  await page.goto(`${BASE}/dashboard/projects/${projectId}/crew`);
+  const lockRow = page.locator("[data-testid=scope-crew]").filter({ hasText: "Smart Locks" }).first();
+  assert.match(
+    await lockRow.textContent(),
+    /Install Team A — retired, still on this scope/,
+    "the row says who is on it and that they have been retired",
+  );
+  assert.equal(
+    (await page.getByLabel("Crew on Smart Locks").locator("option:checked").textContent()).trim(),
+    "Install Team A (retired)",
+    "and the picker still has them selected rather than showing blank",
+  );
+  await page.goto(`${BASE}/dashboard/projects/crews`);
+  await teamA.locator("[data-testid=crew-retire]").click();
+  await teamA.getByText("Retired", { exact: true }).waitFor({ state: "detached" });
+
   log("the Crew & time tab and the crews page fit a phone screen");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const small = await phone.newPage();

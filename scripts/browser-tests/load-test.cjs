@@ -149,6 +149,14 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   await timed(page, "Contacts Favorites", `${BASE}/dashboard/contacts/favorites`, "[data-testid=contact-row]");
   await timed(page, "Contacts with Deals", `${BASE}/dashboard/contacts/with-deals`, "[data-testid=contact-row]");
   await timed(page, "Contacts Needs attention", `${BASE}/dashboard/contacts?attn=1`, "[data-testid=contact-row]");
+  // "Owes money" is the one filter that cannot be a where-clause: the
+  // figure is the rows less the payments against them, so it goes through
+  // a grouped aggregate (owingIds in src/lib/money.ts). It has to stay
+  // inside the budget at this size like everything else. Both pages
+  // legitimately come back empty here — nothing is billed in the seed —
+  // so the wait is on the page's own heading, not on a row.
+  await timed(page, "Contacts Owes money", `${BASE}/dashboard/contacts?owed=1`, "h1");
+  await timed(page, "Companies Owes money", `${BASE}/dashboard/companies?owed=1`, "h1");
   await timed(page, "Companies list, first page", `${BASE}/dashboard/companies`, "[data-testid=company-row]");
   await timed(page, "Companies search 'granite'", `${BASE}/dashboard/companies?q=granite`, "[data-testid=company-row]");
   await timed(page, "Companies filtered Industry=Service Provider + type=Integrator", `${BASE}/dashboard/companies?industry=Service%20Provider&type=Integrator`, "[data-testid=company-row]");

@@ -422,6 +422,21 @@ the job rather than with a person, so it outlives whoever said it. And
 merge fields under a **Projects** tab in the template palette, filled in on
 the change orders and purchase orders raised against a job.
 
+A **bug audit** on Sept 14, 2026 (`/session-auditor`) found and fixed 27
+confirmed defects in that day's work. The ones worth knowing about as
+behaviour: money on a job is recomputed when a purchase order is sent,
+cancelled or deleted, not only when a payment moves; a credit change
+order comes off Billed as well as off what is owed, so the Budget tab and
+the Money tab agree; a second agreement with no priced rows on a deal
+that is already a job adds nothing (it used to add the whole quote
+again); `-8` or `7,5` typed into Hours is refused by name rather than
+read as 8 or 75; an amount past what a money column holds is refused in
+words; **"Owes money" now means what the figure beside the name says** —
+a credit that settles a customer takes them off the list, and money on a
+contract follows the contract rather than whatever company the contact is
+at today; and a refused save hands your typing back instead of emptying
+the form.
+
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five

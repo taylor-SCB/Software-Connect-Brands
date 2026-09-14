@@ -119,10 +119,15 @@ type ContractForAward = Prisma.ContractGetPayload<{ select: typeof CONTRACT_FOR_
 async function writeAwardRows(
   tx: Prisma.TransactionClient,
   contract: ContractForAward,
-  scopeIds: { defaultScopeId: string },
+  scopeIds: { defaultScopeId: string; projectId: string },
   kind: "CONTRACT" | "CHANGE_ORDER",
 ) {
-  await tx.scopeAward.deleteMany({ where: { contractId: contract.id, kind } });
+  // Every kind this contract could have written, so re-running replaces
+  // its rows rather than appending to them. The QUOTE fallback below is
+  // one of them: leaving it out made a second run add the quote again.
+  await tx.scopeAward.deleteMany({
+    where: { contractId: contract.id, kind: { in: [kind, "QUOTE"] } },
+  });
 
   const byScope = new Map<string, number>();
   for (const line of contract.lineItems) {
@@ -134,6 +139,21 @@ async function writeAwardRows(
     // An agreement written the classic way carries no priced rows, so the
     // quote it came from is the best statement of what was agreed. Said so
     // on screen, rather than quietly showing a budget of nothing.
+    //
+    // Only ever once per job, though. Signing a second row-less agreement
+    // on the same deal — a Compliance Agreement, a paper Service
+    // Agreement — used to add the whole quote a second time, so a $3,000
+    // job reported $6,000 awarded.
+    const alreadyAwarded = await tx.scopeAward.findFirst({
+      where: {
+        scope: { projectId: scopeIds.projectId },
+        kind: { in: ["CONTRACT", "QUOTE"] },
+        contractId: { not: contract.id },
+      },
+      select: { id: true },
+    });
+    if (alreadyAwarded) return;
+
     const fromQuote = contract.deal ? dealValueCents(contract.deal) : 0;
     await tx.scopeAward.create({
       data: {
@@ -298,7 +318,12 @@ export async function awardFromContract(organizationId: string, contractId: stri
       where: { id: contract.id },
       select: CONTRACT_FOR_AWARD,
     })) as ContractForAward;
-    await writeAwardRows(tx, refreshed, { defaultScopeId }, isChangeOrder ? "CHANGE_ORDER" : "CONTRACT");
+    await writeAwardRows(
+      tx,
+      refreshed,
+      { defaultScopeId, projectId: project.id },
+      isChangeOrder ? "CHANGE_ORDER" : "CONTRACT",
+    );
 
     // Every other piece of paperwork on the deal belongs to this job too:
     // the purchase orders split off the same quote are its costs.
@@ -411,13 +436,20 @@ export async function refreshTotals(
   };
 
   for (const contract of project.contracts) {
-    const rowsTotal = contract.payments.reduce((sum, row) => sum + Math.max(0, row.amountCents), 0);
+    // What the customer was billed is the plain sum, credits included: a
+    // change order for −$500 lowers what they owe, and clamping it to
+    // zero here made the Budget tab disagree with the Money tab and the
+    // customer's own Balance card by exactly the credit.
+    const billedTotal = contract.payments.reduce((sum, row) => sum + row.amountCents, 0);
+    // An order out to a supplier is only ever positive, and a stray
+    // negative row on one must not quietly reduce what is committed.
+    const orderedTotal = contract.payments.reduce((sum, row) => sum + Math.max(0, row.amountCents), 0);
     const paidTotal = contract.payments.reduce((sum, row) => sum + paidCentsOf(row), 0);
 
     if (!contract.payable) {
       // Money coming in only counts once the customer has signed for it.
       if (contract.status !== "SIGNED") continue;
-      add(billed, apportion(contract.lineItems, rowsTotal, defaultScopeId));
+      add(billed, apportion(contract.lineItems, billedTotal, defaultScopeId));
       add(received, apportion(contract.lineItems, paidTotal, defaultScopeId));
       for (const line of contract.lineItems) {
         if (line.unitCostCents === null) continue;
@@ -432,7 +464,7 @@ export async function refreshTotals(
     // a draft purchase order is still just a plan.
     if (contract.status !== "SENT" && contract.status !== "SIGNED") continue;
     add(spent, apportion(contract.lineItems, paidTotal, defaultScopeId));
-    add(committed, apportion(contract.lineItems, Math.max(0, rowsTotal - paidTotal), defaultScopeId));
+    add(committed, apportion(contract.lineItems, Math.max(0, orderedTotal - paidTotal), defaultScopeId));
   }
 
   // A scope that has been deleted since the hours were logged leaves the

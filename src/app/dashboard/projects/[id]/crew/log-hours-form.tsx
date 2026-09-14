@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState } from "react";
 import { formatCents } from "@/lib/format";
 import { ratesFor, timeEntryAmountCents, describeRates } from "@/lib/crews";
 import { FormError, FormSuccess } from "@/components/ui";
+import type { ActionState } from "@/lib/forms";
 import { IconClock } from "@/components/icons";
 import { logTime } from "./actions";
 
@@ -41,6 +42,20 @@ export function LogHoursForm({
   // picker, so a day spent elsewhere is one change away.
   const scopeForCrew = (id: string) => scopes.find((scope) => scope.crewId === id)?.id ?? scopes[0]?.id ?? "";
   const [scopeId, setScopeId] = useState(() => scopeForCrew(crews[0]?.id ?? ""));
+
+  // After a day is logged the amount has to go off the screen with it.
+  // Hours and days are React state, so the form's own reset does not
+  // touch them: the figure stayed in the box with the cost preview under
+  // it while the note and the date cleared, which read as "nothing
+  // saved" and invited a second press — a second charge on the job.
+  const [handled, setHandled] = useState<ActionState | null>(state);
+  if (state !== handled) {
+    setHandled(state);
+    if (state.success) {
+      setHours("");
+      setDays("");
+    }
+  }
 
   const crew = crews.find((entry) => entry.id === crewId) ?? null;
   const worker = crew?.workers.find((entry) => entry.id === workerId) ?? null;

@@ -1,6 +1,22 @@
 import type { z } from "zod";
 
-export type ActionState = { error?: string; success?: string };
+// `kept` is what the person had typed, handed back with an error so the
+// form can put it straight back on the screen. React resets a form whose
+// action is a server function — including when that function refuses —
+// so without this a rejected save emptied every box and the reason for
+// the refusal was the only thing left.
+export type ActionState = { error?: string; success?: string; kept?: Record<string, string> };
+
+// Snapshots the text fields of a submitted form, for handing back with
+// an error. Only strings: a file cannot be put back in an input anyway.
+export function keepFields(formData: FormData, names: readonly string[]): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const name of names) {
+    const value = formData.get(name);
+    if (typeof value === "string" && value !== "") kept[name] = value;
+  }
+  return kept;
+}
 
 // Every server action funnels form parsing through here so a missing or
 // malformed field becomes a readable message instead of a 500 from a

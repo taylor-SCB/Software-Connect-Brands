@@ -98,14 +98,28 @@ export default async function DashboardPage() {
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Link href="/dashboard/companies?owed=1" className="contents">
-          <StatTile
-            label="Owed to you"
-            value={formatCents(owed.owedCents)}
-            hint={owed.overdueCount > 0 ? `${owed.overdueCount} past due` : `${owed.customerCount} to chase`}
-            accent={owed.overdueCount > 0 ? "#f87171" : "#34d399"}
-          />
-        </Link>
+        {/* The tile counts homeowners as well as companies, so it says
+            where each half is rather than sending every click to the
+            companies list and hiding a homeowner's share of the money. */}
+        <div>
+          <Link href="/dashboard/companies?owed=1" className="contents">
+            <StatTile
+              label="Owed to you"
+              value={formatCents(owed.owedCents)}
+              hint={owed.overdueCount > 0 ? `${owed.overdueCount} past due` : `${owed.customerCount} to chase`}
+              accent={owed.overdueCount > 0 ? "#f87171" : "#34d399"}
+            />
+          </Link>
+          <p className="faint mt-1.5 text-xs" data-testid="owed-where">
+            <Link href="/dashboard/companies?owed=1" className="link">
+              Companies
+            </Link>
+            {" · "}
+            <Link href="/dashboard/contacts?owed=1" className="link">
+              People with no company
+            </Link>
+          </p>
+        </div>
         <Link href="/dashboard/projects" className="contents">
           <StatTile
             label="Active jobs"

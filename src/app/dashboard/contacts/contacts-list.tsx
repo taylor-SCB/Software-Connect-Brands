@@ -61,7 +61,7 @@ export async function ContactsList({
   // The Auto-filled toggle is a companies-only filter; a pasted ?auto=1
   // is dropped here so the bar never claims a filter this list lacks.
   const params = { ...parseListParams(searchParams, lock), auto: false };
-  const where = contactWhere(organizationId, params, await companyIdsMatching(organizationId, params.q));
+  const where = await contactWhere(organizationId, params, await companyIdsMatching(organizationId, params.q));
 
   const [total, options, selectedCompanies, unfiltered, timeZone] = await Promise.all([
     prisma.contact.count({ where }),

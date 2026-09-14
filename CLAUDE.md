@@ -254,6 +254,17 @@ are all blocking before the first paying customer.
 - **A property is one level deep.** A building rolls up its jobs; there is
   no portfolio rolling up buildings. A manager with forty towers will
   want one.
+- **The Properties list is capped at 200 buildings, not paged**, and has
+  no search box. A building is typed in by hand so a workspace has tens
+  of them; the cap is what stops one render pulling every job through the
+  nested read. It needs the same paging the Contacts and Companies lists
+  got when a customer has more.
+- **"Owes money" considers at most 10,000 customers.** The filter is a
+  grouped aggregate rather than a where-clause, because "owes" is the
+  rows less the payments against them and a credit nets off. Only
+  customers with signed paperwork are ever in that set, so the cap is far
+  above a real workspace (0.20s at 200,000 contacts), but past it the
+  filter narrows silently.
 - **The import runs in the browser tab.** Any size works, but the tab
   has to stay open (about 5 to 10 minutes for 200,000 rows). A
   background job is the answer when a customer needs to walk away or
@@ -303,6 +314,27 @@ real one collides.
 All of them run against a local Postgres on port 5433 and must pass before
 anything is pushed. That local database is the only safety net between a
 change and paying customers.
+
+**Clear the test workspaces before a full run** when a fix changes how a
+stored number is derived: `DELETE FROM "Organization" WHERE slug LIKE
+'test-%'`. Leftovers from a run made *before* the fix carry the old
+numbers, and the global `recompute-projects --check` in three suites
+correctly reports them as drift — which reads as a new bug and is not one.
+
+The Sept 14, 2026 audit found 27 confirmed defects in one session's work
+(35 flagged, 30 distinct, 3 refuted). Four of them were one root cause
+worth remembering: **a `<select>` whose saved value is not among its
+options falls back to the first one, and saving the form then writes
+that.** A finished job, a retired crew, an archived company — each was
+silently unlinked by an unrelated edit. Any picker that filters its list
+(active only, open only, capped at 200) must offer the currently-linked
+record back, labelled for what it is. Two more were one pattern: a form
+that closes or resets by comparing `state.success` **as a message** never
+fires twice, because two saves in a row report the same words — compare
+the state object instead. And React empties a form whose action is a
+server function, including when that function refuses, so an action that
+can refuse has to hand the typed values back (`keepFields` in
+`src/lib/forms.ts`).
 
 Standing up that Postgres in a fresh session: the binaries are at
 `/usr/lib/postgresql/16/bin`; `initdb` into a short path such as

@@ -33,7 +33,7 @@ export default async function PropertyPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ stages?: string }>;
+  searchParams: Promise<{ stages?: string | string[] }>;
 }) {
   const { organizationId } = await requireSession();
   const { id } = await params;
@@ -258,6 +258,8 @@ export default async function PropertyPage({
               companyId: property.companyId,
               contactId: property.contactId,
               notes: property.notes,
+              companyName: property.company?.name ?? null,
+              contactName: property.contact?.name ?? null,
             }}
             companies={companies}
             contacts={contacts}

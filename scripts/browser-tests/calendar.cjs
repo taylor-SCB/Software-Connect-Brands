@@ -528,6 +528,180 @@ function daysAgo(n) {
     /Coffee about the next building/,
   );
 
+  log("audit fixes: a refused save keeps every field that was typed");
+  await page.goto(`${BASE}/dashboard/calendar?on=${day(1)}`);
+  await page.locator("[data-testid=cal-add-event]").click();
+  await page.locator("[data-testid=event-title]").fill("Walk with the super");
+  await page.locator("[data-testid=event-start-on]").fill(day(18));
+  await page.locator("[data-testid=event-notes]").fill("Gate code 4412");
+  await page.locator("[data-testid=event-timed]").check();
+  await page.locator("[data-testid=event-start-time]").fill("16:00");
+  await page.locator("[data-testid=event-end-time]").fill("09:00");
+  await page.locator("[data-testid=event-save]").click();
+  await page.getByText("The finish time is before the start time.").waitFor();
+  // The whole event used to be wiped along with the refusal.
+  assert.equal(await page.locator("[data-testid=event-title]").inputValue(), "Walk with the super");
+  assert.equal(await page.locator("[data-testid=event-start-on]").inputValue(), day(18));
+  assert.equal(await page.locator("[data-testid=event-notes]").inputValue(), "Gate code 4412");
+  assert.equal(await page.locator("[data-testid=event-start-time]").inputValue(), "16:00");
+  // And fixing the one wrong field is enough to save it.
+  await page.locator("[data-testid=event-end-time]").fill("17:00");
+  await page.locator("[data-testid=event-save]").click();
+  await page.locator(`[data-testid=month-day][data-day="${day(18)}"][data-count="1"]`).waitFor();
+
+  log("audit fixes: two open new-event forms do not share DOM ids");
+  await page.locator("[data-testid=cal-add-event]").click();
+  await page.locator(`[data-testid=month-day][data-day="${day(20)}"]`).click();
+  await page.locator("[data-testid=day-add-event]").click();
+  const dupes = await page.evaluate(() => {
+    const seen = new Map();
+    for (const el of document.querySelectorAll("[id]")) {
+      seen.set(el.id, (seen.get(el.id) ?? 0) + 1);
+    }
+    return [...seen.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+  });
+  assert.deepEqual(dupes, [], `ids are shared between the two forms: ${dupes.join(", ")}`);
+  await page.goto(`${BASE}/dashboard/calendar?on=${day(1)}`);
+
+  log("audit fixes: editing a day on a finished job keeps it on that job");
+  await sql(`UPDATE "Project" SET stage='COMPLETED' WHERE id=$1`, [projectId]);
+  await page.goto(`${BASE}/dashboard/projects/${projectId}/schedule`);
+  const onClosed = page.locator("[data-testid=event-card]").first();
+  // The exact day being edited, so the before-and-after is about it and
+  // not about whichever of the job's days the database hands back first.
+  const closedEventId = await onClosed.getAttribute("data-event-id");
+  const before = (
+    await sql(`SELECT "projectId","scopeId" FROM "CalendarEvent" WHERE id=$1`, [closedEventId])
+  ).rows[0];
+  await onClosed.locator("[data-testid=event-edit]").click();
+  // The job is off the picker now, so it is offered back, marked.
+  const jobPicked = await page
+    .locator("[data-testid=event-form] [data-testid=event-project] option:checked")
+    .textContent();
+  assert.match(jobPicked, /finished/, `the finished job is still selected; got "${jobPicked}"`);
+  await page.locator("[data-testid=event-form] [data-testid=event-notes]").fill("Warranty visit booked");
+  await page.locator("[data-testid=event-form] [data-testid=event-save]").click();
+  await page.getByText("Warranty visit booked").first().waitFor();
+  const afterEdit = (
+    await sql(`SELECT "projectId","scopeId",notes FROM "CalendarEvent" WHERE id=$1`, [closedEventId])
+  ).rows[0];
+  assert.equal(afterEdit.notes, "Warranty visit booked", "the edit landed on that day");
+  assert.equal(afterEdit.projectId, projectId, "the day is still on the job");
+  assert.equal(afterEdit.scopeId, before.scopeId, "and still on its scope");
+  await sql(`UPDATE "Project" SET stage='ACTIVE' WHERE id=$1`, [projectId]);
+
+  log("audit fixes: editing a day keeps a retired crew on it");
+  await sql(`UPDATE "Crew" SET active=false WHERE id='crw_cal_roof'`);
+  await page.goto(`${BASE}/dashboard/calendar?on=${day(1)}`);
+  await page.locator(`[data-testid=month-day][data-day="${day(9)}"]`).click();
+  const subDay = page.locator("[data-testid=event-card]").filter({ hasText: "Roofing — " }).first();
+  await subDay.locator("[data-testid=event-edit]").click();
+  const crewPicked = await page
+    .locator("[data-testid=event-form] [data-testid=event-crew] option:checked")
+    .textContent();
+  assert.match(crewPicked, /retired/, `the retired crew is still selected; got "${crewPicked}"`);
+  await page.locator("[data-testid=event-form] [data-testid=event-save]").click();
+  await page.waitForTimeout(600);
+  assert.equal(
+    (
+      await sql(
+        `SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1 AND "crewId"='crw_cal_roof'`,
+        [org],
+      )
+    ).rows[0].n > 0,
+    true,
+    "the crew is still on its days",
+  );
+  await sql(`UPDATE "Crew" SET active=true WHERE id='crw_cal_roof'`);
+
+  log("audit fixes: moving a day to another job recomputes the job it left");
+  await sql(
+    `INSERT INTO "Project" (id,"organizationId",number,name,stage,"contactId","customerName","awardedAt","updatedAt")
+     VALUES ('prj_cal_other','${org}',2000,'Second building','AWARDED','ctc_cal','Harbor Property Group',now(),now())`,
+  );
+  await sql(
+    `INSERT INTO "ProjectScope" (id,"projectId",name,"isDefault",position)
+     VALUES ('scp_cal_other','prj_cal_other','Whole job',true,0)`,
+  );
+  const startBefore = (await sql(`SELECT "startOn" FROM "Project" WHERE id=$1`, [projectId])).rows[0].startOn;
+  assert.ok(startBefore, "the first job has a start day to lose");
+  // Move every install off it, and its start day must go with them.
+  await sql(
+    `UPDATE "CalendarEvent" SET "projectId"='prj_cal_other', "scopeId"=NULL
+      WHERE "organizationId"=$1 AND "projectId"=$2 AND type='Install' AND id <> (
+        SELECT id FROM "CalendarEvent" WHERE "organizationId"=$1 AND "projectId"=$2 AND type='Install'
+         ORDER BY "startOn" LIMIT 1)`,
+    [org, projectId],
+  );
+  await page.goto(`${BASE}/dashboard/projects/${projectId}/schedule`);
+  const lastInstall = page.locator("[data-testid=event-card]").filter({ hasText: "Install" }).first();
+  await lastInstall.locator("[data-testid=event-edit]").click();
+  await page.locator("[data-testid=event-form] [data-testid=event-project]").selectOption("prj_cal_other");
+  await page.locator("[data-testid=event-form] [data-testid=event-save]").click();
+  for (let tries = 0; tries < 40; tries += 1) {
+    const row = await sql(`SELECT "startOn" FROM "Project" WHERE id=$1`, [projectId]);
+    if (row.rows[0].startOn === null) break;
+    await page.waitForTimeout(250);
+  }
+  assert.equal(
+    (await sql(`SELECT "startOn" FROM "Project" WHERE id=$1`, [projectId])).rows[0].startOn,
+    null,
+    "the job it left has no start day left on it",
+  );
+  assert.ok(
+    (await sql(`SELECT "startOn" FROM "Project" WHERE id='prj_cal_other'`)).rows[0].startOn !== null,
+    "and the job it moved to has one now",
+  );
+
+  log("audit fixes: Copy this week only copies what the filter is showing");
+  // A week with an install and a non-install in it, filtered to installs.
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","updatedAt")
+     VALUES ('evt_cal_hidden','${org}','Hidden site walk','Site walk','${day(4)}',now())`,
+  );
+  const countBy = async (type) =>
+    (
+      await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1 AND type=$2`, [
+        org,
+        type,
+      ])
+    ).rows[0].n;
+  const walksBefore = await countBy("Site walk");
+  const installsBefore = await countBy("Install");
+  await page.goto(`${BASE}/dashboard/calendar?view=week&on=${day(4)}&type=Install`);
+  await page.locator("[data-testid=cal-copy-week]").click();
+  await page.getByText(/copied into the week of/).waitFor();
+  assert.equal(
+    await countBy("Site walk"),
+    walksBefore,
+    "the site walk the filter was hiding got no copy",
+  );
+  assert.ok(await countBy("Install") > installsBefore, "and the installs on screen did");
+
+  log("audit fixes: a day that does not exist in the URL still renders the calendar");
+  for (const bad of ["2026-13-01", "2026-00-15", "2026-02-30", "not-a-date"]) {
+    const response = await page.goto(`${BASE}/dashboard/calendar?on=${bad}`);
+    assert.equal(response.status(), 200, `?on=${bad} should fall back to today, not 500`);
+    await page.getByRole("heading", { name: "Calendar" }).waitFor();
+  }
+
+  log("audit fixes: booking a second install on a scope confirms and closes the form");
+  await page.goto(`${BASE}/dashboard/projects/${projectId}/schedule`);
+  const anyScope = page.locator("[data-testid=scope-schedule]").first();
+  for (const on of [day(24), day(25)]) {
+    await anyScope.locator("[data-testid=schedule-install]").click();
+    await anyScope.locator("[data-testid=install-start]").fill(on);
+    await anyScope.locator("[data-testid=install-save]").click();
+    // Closing is the signal the booking took; it used to stay open on the
+    // second one, with the date reset and no confirmation.
+    await anyScope.locator("[data-testid=schedule-install]").waitFor();
+  }
+  assert.match(
+    await anyScope.textContent(),
+    /Install booked/,
+    "and it says so where the button is",
+  );
+
   log("cross-tenant: another workspace's event is not on this calendar");
   await sql(
     `INSERT INTO "Organization" (id,name,slug,status,"updatedAt")

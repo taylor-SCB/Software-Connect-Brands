@@ -430,6 +430,91 @@ async function signAs(browser, token, name) {
   )).rows[0].owed;
   assert.equal(truth, 180000, "the Owes you line is what the payment rows minus the payments say");
 
+  log("audit fixes: a credit that cancels a balance takes the customer off Owes money");
+  // The filter used to test each row on its own, so a customer whose
+  // credit had already settled them stayed on the collections list with
+  // no amount beside their name.
+  await sql(`UPDATE "Organization" SET "nextContractNumber"=9300 WHERE id=$1`, [org]);
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,city,state,"updatedAt")
+     VALUES ('cmp_mo_credit','${org}','Credited Co','Austin','TX',now())`,
+  );
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,"updatedAt")
+     VALUES ('ctc_mo_credit','${org}','cmp_mo_credit','Cal Credit',now())`,
+  );
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId","companyId",number,title,type,payable,status,body,"publicToken","signedAt","updatedAt")
+     VALUES ('con_mo_credit','${org}','ctc_mo_credit','cmp_mo_credit',9300,'Work','Sales Order',false,'SIGNED','','tok_con_mo_cr_01',now(),now())`,
+  );
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"organizationId","contractId",label,kind,"amountCents",position)
+     VALUES ('cp_mo_credit','${org}','con_mo_credit','Balance','BALANCE',100000,0)`,
+  );
+  await page.goto(`${BASE}/dashboard/companies?owed=1`);
+  await page.getByText("Credited Co").waitFor();
+  // Now the credit, which settles them.
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"organizationId","contractId",label,kind,"amountCents","paidAt",position)
+     VALUES ('cp_mo_credit2','${org}','con_mo_credit','Credit','BALANCE',-100000,now(),1)`,
+  );
+  await page.goto(`${BASE}/dashboard/companies?owed=1`);
+  await page.locator("h1").first().waitFor();
+  assert.equal(
+    await page.getByText("Credited Co").count(),
+    0,
+    "a customer who owes nothing is off the Owes money list",
+  );
+
+  log("audit fixes: money on a contract follows the contract, not the contact's company today");
+  // A homeowner's paperwork is theirs; paperwork with a company on it
+  // belongs to the company even after the contact leaves it.
+  await sql(`UPDATE "Contact" SET "companyId"=NULL WHERE id='ctc_mo_credit'`);
+  await page.goto(`${BASE}/dashboard/contacts?owed=1`);
+  await page.locator("h1").first().waitFor();
+  assert.equal(
+    await page.getByText("Cal Credit").count(),
+    0,
+    "their company's paperwork does not put them on the people list",
+  );
+
+  log("audit fixes: a lifetime total past what an int holds still renders");
+  // SUM(int) is bigint in Postgres; casting it back to int threw once a
+  // workspace passed $21,474,836.47 and took the dashboard and both
+  // lists down with no way back.
+  await sql(`UPDATE "Organization" SET "nextContractNumber"=9400 WHERE id=$1`, [org]);
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId","companyId",number,title,type,payable,status,body,"publicToken","signedAt","updatedAt")
+     VALUES ('con_mo_big','${org}','ctc_mo','cmp_mo',9400,'Tower programme','Sales Order',false,'SIGNED','','tok_con_mo_big_01',now(),now())`,
+  );
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"organizationId","contractId",label,kind,"amountCents",position)
+     VALUES ('cp_mo_big1','${org}','con_mo_big','Phase one','BALANCE',2000000000,0),
+            ('cp_mo_big2','${org}','con_mo_big','Phase two','BALANCE',2000000000,1)`,
+  );
+  for (const [url, name] of [
+    [`${BASE}/dashboard`, "the dashboard"],
+    [`${BASE}/dashboard/companies`, "the companies list"],
+    [`${BASE}/dashboard/contacts`, "the contacts list"],
+    [`${BASE}/dashboard/companies/cmp_mo`, "the company page"],
+  ]) {
+    const response = await page.goto(url);
+    assert.equal(response.status(), 200, `${name} should render past $21.5M owed`);
+    await page.locator("h1").first().waitFor();
+  }
+  log("audit fixes: the Owed to you tile says where each half of the money is");
+  await page.goto(`${BASE}/dashboard`);
+  assert.match(
+    await page.locator("[data-testid=stat-tile]").first().textContent(),
+    /\$40,0/,
+    "the dashboard shows the real total rather than erroring",
+  );
+  const where = await page.locator("[data-testid=owed-where]").textContent();
+  assert.match(where, /Companies/);
+  assert.match(where, /People with no company/, "a homeowner's share is reachable from the tile");
+  await sql(`DELETE FROM "Contract" WHERE id IN ('con_mo_big','con_mo_credit')`);
+  await sql(`DELETE FROM "Company" WHERE id='cmp_mo_credit'`);
+
   log("the Owes you line fits a phone screen");
   const phone = await browser.newContext({ viewport: { width: 400, height: 800 } });
   const ppage = await phone.newPage();

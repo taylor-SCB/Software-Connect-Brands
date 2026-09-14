@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { formatDay } from "@/lib/format";
 import { Badge, FormError } from "@/components/ui";
+import type { ActionState } from "@/lib/forms";
 import { IconTrash, IconPlus } from "@/components/icons";
 import { addTask, deleteTask, setTaskDone } from "../../../calendar/actions";
 
@@ -36,9 +37,12 @@ export function TaskList({
     if (state.success) form.current?.reset();
   }, [state.success]);
 
-  const [handled, setHandled] = useState(state.success);
-  if (state.success !== handled) {
-    setHandled(state.success);
+  // On the state object, not its message: two tasks added in a row both
+  // report "Added", and comparing the words made the second one look
+  // already handled.
+  const [handled, setHandled] = useState<ActionState | null>(state);
+  if (state !== handled) {
+    setHandled(state);
     if (state.success) setWithDate(false);
   }
 

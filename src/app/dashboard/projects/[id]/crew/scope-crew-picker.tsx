@@ -22,7 +22,18 @@ export function ScopeCrewPicker({
   scope,
   crews,
 }: {
-  scope: { id: string; name: string; serviceType: string | null; crewId: string | null; crewLabel: string | null };
+  scope: {
+    id: string;
+    name: string;
+    serviceType: string | null;
+    crewId: string | null;
+    crewLabel: string | null;
+    // The crew as stored, even if it has since been retired: a crew
+    // leaving mid-job must not make this row read "Nobody assigned"
+    // while the Budget tab still names them.
+    crewName: string | null;
+    crewActive: boolean;
+  };
   crews: Crew[];
 }) {
   const [error, setError] = useState<string | undefined>();
@@ -33,6 +44,7 @@ export function ScopeCrewPicker({
     : [];
   const others = crews.filter((crew) => !suited.includes(crew));
   const current = crews.find((crew) => crew.id === scope.crewId) ?? null;
+  const retired = scope.crewId && !current ? { id: scope.crewId, name: scope.crewName ?? "That crew" } : null;
 
   return (
     <li className="flex flex-wrap items-center justify-between gap-3 px-5 py-3" data-testid="scope-crew">
@@ -47,9 +59,11 @@ export function ScopeCrewPicker({
                 },
                 formatCents,
               )
-            : scope.crewLabel
-              ? `${scope.crewLabel} — typed by hand, not a crew on the list`
-              : "Nobody assigned"}
+            : retired
+              ? `${retired.name} — retired, still on this scope`
+              : scope.crewLabel
+                ? `${scope.crewLabel} — typed by hand, not a crew on the list`
+                : "Nobody assigned"}
         </p>
       </div>
       <div>
@@ -69,6 +83,7 @@ export function ScopeCrewPicker({
           data-testid="scope-crew-select"
         >
           <option value="">Nobody yet</option>
+          {retired && <option value={retired.id}>{retired.name} (retired)</option>}
           {suited.length > 0 && (
             <optgroup label={`Does ${scope.serviceType}`}>
               {suited.map((crew) => (

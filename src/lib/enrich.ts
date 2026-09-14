@@ -84,6 +84,51 @@ export const FREE_MAIL_DOMAINS = [
   "proton.me",
   "ymail.com",
   "mail.com",
+  // The ISP and webmail domains the first list missed. Writing one of
+  // these into a company's Website linked the customer to their own
+  // email provider's home page — cox.net for a roofer called Smith
+  // Roofing. comcast.net and att.net were already here, which made the
+  // gaps arbitrary rather than deliberate.
+  "cox.net",
+  "charter.net",
+  "bellsouth.net",
+  "earthlink.net",
+  "roadrunner.com",
+  "rr.com",
+  "optonline.net",
+  "frontier.com",
+  "frontiernet.net",
+  "windstream.net",
+  "centurylink.net",
+  "embarqmail.com",
+  "juno.com",
+  "netzero.net",
+  "aim.com",
+  "rocketmail.com",
+  "googlemail.com",
+  "gmx.com",
+  "gmx.net",
+  "mac.com",
+  "zoho.com",
+  "yandex.com",
+  "fastmail.com",
+  "hushmail.com",
+  "shaw.ca",
+  "sympatico.ca",
+  "telus.net",
+  "rogers.com",
+  "btinternet.com",
+  "sky.com",
+  "virginmedia.com",
+  "talktalk.net",
+  "web.de",
+  "t-online.de",
+  "orange.fr",
+  "wanadoo.fr",
+  "free.fr",
+  "libero.it",
+  "bigpond.com",
+  "optusnet.com.au",
 ] as const;
 
 // A person's LinkedIn or Facebook page is not their company's website.
@@ -116,8 +161,19 @@ export function emailDomain(email: string | null | undefined) {
   return domain.includes(".") ? domain : null;
 }
 
+// A country variant (yahoo.co.uk) and a provider's own subdomain
+// (mail.yahoo.com) are the same thing as the plain domain, so neither
+// should end up on a company as its website.
 export function isFreeMailDomain(domain: string) {
-  return (FREE_MAIL_DOMAINS as readonly string[]).includes(domain.toLowerCase());
+  const clean = domain.toLowerCase();
+  return (FREE_MAIL_DOMAINS as readonly string[]).some((free) => {
+    if (clean === free) return true;
+    // mail.yahoo.com under yahoo.com.
+    if (clean.endsWith(`.${free}`)) return true;
+    // yahoo.co.uk / hotmail.co.uk under yahoo.com / hotmail.com.
+    const stem = free.replace(/\.[a-z.]+$/, "");
+    return clean === `${stem}.co.uk` || clean.endsWith(`.${stem}.co.uk`);
+  });
 }
 
 function isProfileSite(domain: string) {

@@ -38,7 +38,15 @@ export default async function ProjectCrewPage({ params }: { params: Promise<{ id
         laborCommittedCents: true,
         scopes: {
           orderBy: { position: "asc" },
-          select: { id: true, name: true, serviceType: true, crewId: true, crewLabel: true, isDefault: true },
+          select: {
+            id: true,
+            name: true,
+            serviceType: true,
+            crewId: true,
+            crewLabel: true,
+            isDefault: true,
+            crew: { select: { name: true, active: true } },
+          },
         },
         timeEntries: {
           orderBy: [{ workedOn: "desc" }, { createdAt: "desc" }],
@@ -240,7 +248,15 @@ export default async function ProjectCrewPage({ params }: { params: Promise<{ id
           />
           <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
             {project.scopes.map((scope) => (
-              <ScopeCrewPicker key={scope.id} scope={scope} crews={crews} />
+              <ScopeCrewPicker
+                key={scope.id}
+                scope={{
+                  ...scope,
+                  crewName: scope.crew?.name ?? null,
+                  crewActive: scope.crew?.active ?? false,
+                }}
+                crews={crews}
+              />
             ))}
           </ul>
         </Card>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { Card, CardHeader, FormError } from "@/components/ui";
 import { IconPlus } from "@/components/icons";
+import type { ActionState } from "@/lib/forms";
 import { saveProperty } from "./actions";
 
 export type PropertyValues = {
@@ -14,6 +15,12 @@ export type PropertyValues = {
   companyId: string | null;
   contactId: string | null;
   notes: string;
+  // What they are called, so the form can offer them even when the
+  // picker's list no longer has them — archived, or past the cap on a
+  // workspace with thousands of companies. Without this the <select>
+  // fell back to "Nobody yet" and saving the address unlinked the owner.
+  companyName?: string | null;
+  contactName?: string | null;
 };
 
 type Choice = { id: string; name: string };
@@ -34,9 +41,25 @@ export function PropertyForm({
   const [state, action, pending] = useActionState(saveProperty, {});
   const id = (field: string) => `property-${property?.id ?? "new"}-${field}`;
 
-  useEffect(() => {
+  // Closes on a save that worked, and only then, so an error telling you
+  // why nothing was saved stays on the screen. Keyed on the state object
+  // rather than its message: saving twice reports the same words, and
+  // comparing the words made the second save look already handled.
+  const [handled, setHandled] = useState<ActionState | null>(state);
+  if (state !== handled) {
+    setHandled(state);
     if (state.success && onDone) onDone();
-  }, [state.success, onDone]);
+  }
+
+  // Whoever is linked now stays pickable whatever the list holds.
+  const missingCompany =
+    property?.companyId && !companies.some((entry) => entry.id === property.companyId)
+      ? { id: property.companyId, name: `${property.companyName ?? "Linked company"} (archived)` }
+      : null;
+  const missingContact =
+    property?.contactId && !contacts.some((entry) => entry.id === property.contactId)
+      ? { id: property.contactId, name: `${property.contactName ?? "Linked contact"} (archived)` }
+      : null;
 
   return (
     <form action={action} className="space-y-3" data-testid="property-form">
@@ -99,6 +122,7 @@ export function PropertyForm({
             data-testid="property-company"
           >
             <option value="">Nobody yet</option>
+            {missingCompany && <option value={missingCompany.id}>{missingCompany.name}</option>}
             {companies.map((company) => (
               <option key={company.id} value={company.id}>
                 {company.name}
@@ -117,6 +141,7 @@ export function PropertyForm({
             className="select"
           >
             <option value="">Nobody in particular</option>
+            {missingContact && <option value={missingContact.id}>{missingContact.name}</option>}
             {contacts.map((contact) => (
               <option key={contact.id} value={contact.id}>
                 {contact.name}

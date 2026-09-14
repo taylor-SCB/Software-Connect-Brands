@@ -8,7 +8,7 @@ import { getTimeZone } from "@/lib/organization";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { PROJECT_STAGES, PROJECT_FILE_CATEGORIES } from "@/lib/constants";
 import { zonedNoon } from "@/lib/money";
-import { dollarsToCents, formatCents } from "@/lib/format";
+import { dollarsToCents, formatCents, moneyTooBig, MAX_MONEY_CENTS } from "@/lib/format";
 import { refreshTotals, refreshProjectTotals, awardFromContract, DEFAULT_SCOPE_NAME } from "@/lib/projects";
 import { openItems } from "@/lib/close-out";
 import { ensureServiceType } from "@/lib/service-types";
@@ -48,6 +48,10 @@ export async function setProjectStage(projectId: string, stage: string): Promise
       stage: parsed.data.stage,
       // Closing a job stamps when; reopening one clears it.
       closedAt: parsed.data.stage === "COMPLETED" ? new Date() : null,
+      // The note belongs to the closing that wrote it. Closing from the
+      // stage dropdown writes no note, so an old one must not be paired
+      // with today's date as though somebody had just written it.
+      ...(parsed.data.stage === "COMPLETED" ? { closeOutNote: null } : {}),
     },
   });
   if (result.count === 0) return { error: "Project not found" };
@@ -234,6 +238,9 @@ export async function adjustAward(
   if (!note) return { error: "Say why the awarded amount is changing" };
   if (!Number.isInteger(input.amountCents) || input.amountCents === 0) {
     return { error: "Enter an amount to add or take off" };
+  }
+  if (moneyTooBig(input.amountCents)) {
+    return { error: `That is more than ${formatCents(MAX_MONEY_CENTS)}. Check the amount.` };
   }
 
   await prisma.$transaction(async (tx) => {
@@ -742,6 +749,9 @@ export async function createChangeOrder(
 
   const amountCents = dollarsToCents(parsed.data.amount);
   if (amountCents === 0) return { error: "Enter how much more, or how much less with a minus." };
+  if (moneyTooBig(amountCents)) {
+    return { error: `That is more than ${formatCents(MAX_MONEY_CENTS)}. Check the amount.` };
+  }
 
   const project = await prisma.project.findFirst({
     where: { id: parsed.data.projectId, organizationId },

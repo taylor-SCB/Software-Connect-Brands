@@ -23,15 +23,27 @@ function revalidateJob(projectId: string) {
   revalidatePath("/dashboard");
 }
 
+// A day is 24 hours and a job is not 400 days long, so anything past
+// this is a slipped decimal rather than a real entry.
+const MAX_TIME = 999;
+
 // A number typed into an hours or days box. Blank is nothing, not an
 // error: a day's work is logged as days with hours left empty.
-function amount(input: FormDataEntryValue | null) {
-  if (typeof input !== "string" || input.trim() === "") return 0;
-  const value = Number.parseFloat(input.replace(/[^0-9.]/g, ""));
-  if (!Number.isFinite(value) || value < 0) return 0;
-  // A day is 24 hours and a job is not 400 days long; a slipped decimal
-  // would otherwise put six figures on a budget.
-  return Math.min(value, 999);
+//
+// Nothing is stripped before it is judged. Stripping first meant "-8"
+// became 8 and was logged as eight hours of work, and "7,5" — a comma
+// for a decimal point, which plenty of people type — became 75 hours,
+// ten times the cost the screen had just quoted. Anything that is not a
+// plain number now comes back as bad input and is refused by name.
+function amount(input: FormDataEntryValue | null): number | "bad" | "over" {
+  if (typeof input !== "string") return 0;
+  const text = input.trim();
+  if (text === "") return 0;
+  if (!/^\d*\.?\d+$/.test(text)) return "bad";
+  const value = Number.parseFloat(text);
+  if (!Number.isFinite(value)) return "bad";
+  if (value > MAX_TIME) return "over";
+  return value;
 }
 
 const logSchema = z.object({
@@ -59,8 +71,23 @@ export async function logTime(_prev: ActionState, formData: FormData): Promise<A
   });
   if (!parsed.ok) return { error: parsed.error };
 
-  const hours = amount(formData.get("hours"));
-  const days = amount(formData.get("days"));
+  const askedHours = amount(formData.get("hours"));
+  const askedDays = amount(formData.get("days"));
+  for (const [what, asked] of [
+    ["Hours", askedHours],
+    ["Days", askedDays],
+  ] as const) {
+    if (asked === "bad") {
+      return { error: `${what} has to be a plain number, like 7.5 — use a dot, not a comma.` };
+    }
+    // Refused rather than quietly clamped: logging 999 hours when 2000
+    // was typed writes a five-figure cost nobody asked for.
+    if (asked === "over") {
+      return { error: `${what} of more than ${MAX_TIME} looks like a slip. Log it in shorter stretches.` };
+    }
+  }
+  const hours = askedHours as number;
+  const days = askedDays as number;
   if (hours === 0 && days === 0) return { error: "Enter the hours, the days, or both." };
 
   const project = await prisma.project.findFirst({

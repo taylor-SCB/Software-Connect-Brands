@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useId, useState } from "react";
 import { FormError } from "@/components/ui";
 import { saveEvent } from "./actions";
 
@@ -20,6 +20,14 @@ export type EventFormValues = {
   contactId: string | null;
   crewId: string | null;
   attendeeIds: string[];
+  // What the job and the crew are called, so the form can offer them as
+  // options even when they are no longer on the pickers' lists — a
+  // finished job, a retired crew. Without these the <select> fell back
+  // to its first option and quietly unlinked them on any save.
+  projectLabel?: string | null;
+  projectNumber?: number | null;
+  scopeName?: string | null;
+  crewName?: string | null;
 };
 
 export type EventChoices = {
@@ -55,10 +63,40 @@ export function EventForm({
   const [multiDay, setMultiDay] = useState(Boolean(event?.endOn));
   const [timed, setTimed] = useState(Boolean(event?.startTime || event?.endTime));
   const [attendees, setAttendees] = useState<string[]>(event?.attendeeIds ?? []);
-  const id = (field: string) => `event-${event?.id ?? "new"}-${field}`;
+  // Unique per rendered form, not per event: the calendar can have the
+  // toolbar's new-event form and a day panel's open at once, and two
+  // controls sharing an id sent a click on one label to the other form.
+  const formId = useId();
+  const id = (field: string) => `event-${event?.id ?? formId}-${field}`;
+
+  // What was typed, handed back when the server refused the save. React
+  // empties a form whose action is a server function, so without this a
+  // wrong finish time threw away the whole event.
+  const kept = state.kept ?? {};
+  const was = (field: string, fallback: string) => kept[field] ?? fallback;
 
   const project = choices.projects.find((entry) => entry.id === projectId) ?? null;
   const scopes = project?.scopes.filter((scope) => !scope.isDefault) ?? [];
+
+  // A job that is finished, or a crew that has been retired, is not on
+  // the pickers any more. Saving the form must not be what unlinks it,
+  // so each is added back as an option and labelled for what it is.
+  const missingProject =
+    event?.projectId && !choices.projects.some((entry) => entry.id === event.projectId)
+      ? {
+          id: event.projectId,
+          label: event.projectNumber
+            ? `PRJ-${event.projectNumber} · ${event.projectLabel ?? "this job"} (finished)`
+            : `${event.projectLabel ?? "This job"} (finished)`,
+        }
+      : null;
+  const missingCrew =
+    event?.crewId && !choices.crews.some((entry) => entry.id === event.crewId)
+      ? { id: event.crewId, label: `${event.crewName ?? "That crew"} (retired)` }
+      : null;
+  // Its scope is not on any list when its job is not, so it rides along
+  // on a hidden field instead of being blanked.
+  const keepScope = missingProject !== null && projectId === event?.projectId;
 
   useEffect(() => {
     if (state.success && onDone) onDone();
@@ -84,7 +122,7 @@ export function EventForm({
           <input
             id={id("title")}
             name="title"
-            defaultValue={event?.title}
+            defaultValue={was("title", event?.title ?? "")}
             required
             maxLength={160}
             placeholder="Site walk with the property manager"
@@ -144,7 +182,7 @@ export function EventForm({
             name="startOn"
             type="date"
             required
-            defaultValue={event?.startOn ?? defaults?.startOn ?? ""}
+            defaultValue={was("startOn", event?.startOn ?? defaults?.startOn ?? "")}
             className="input"
             data-testid="event-start-on"
           />
@@ -158,7 +196,7 @@ export function EventForm({
               id={id("endOn")}
               name="endOn"
               type="date"
-              defaultValue={event?.endOn ?? ""}
+              defaultValue={was("endOn", event?.endOn ?? "")}
               className="input"
               data-testid="event-end-on"
             />
@@ -176,7 +214,7 @@ export function EventForm({
                 id={id("startTime")}
                 name="startTime"
                 type="time"
-                defaultValue={event?.startTime ?? ""}
+                defaultValue={was("startTime", event?.startTime ?? "")}
                 className="input"
                 data-testid="event-start-time"
               />
@@ -189,7 +227,7 @@ export function EventForm({
                 id={id("endTime")}
                 name="endTime"
                 type="time"
-                defaultValue={event?.endTime ?? ""}
+                defaultValue={was("endTime", event?.endTime ?? "")}
                 className="input"
                 data-testid="event-end-time"
               />
@@ -232,6 +270,7 @@ export function EventForm({
             data-testid="event-crew"
           >
             <option value="">Nobody assigned</option>
+            {missingCrew && <option value={missingCrew.id}>{missingCrew.label}</option>}
             {choices.crews.map((crew) => (
               <option key={crew.id} value={crew.id}>
                 {crew.name}
@@ -253,6 +292,7 @@ export function EventForm({
             data-testid="event-project"
           >
             <option value="">Not tied to a job</option>
+            {missingProject && <option value={missingProject.id}>{missingProject.label}</option>}
             {choices.projects.map((entry) => (
               <option key={entry.id} value={entry.id}>
                 {entry.label}
@@ -281,7 +321,7 @@ export function EventForm({
             </select>
           </div>
         ) : (
-          <input type="hidden" name="scopeId" value="" />
+          <input type="hidden" name="scopeId" value={keepScope ? (event?.scopeId ?? "") : ""} />
         )}
         <div className={scopes.length > 0 ? "sm:col-span-2 lg:col-span-3" : ""}>
           <label className="label" htmlFor={id("location")}>
@@ -290,7 +330,7 @@ export function EventForm({
           <input
             id={id("location")}
             name="location"
-            defaultValue={event?.location ?? ""}
+            defaultValue={was("location", event?.location ?? "")}
             maxLength={200}
             placeholder={project ? "The job's site address, unless you say otherwise" : "1400 Harbor Blvd, Tampa"}
             className="input"
@@ -334,7 +374,7 @@ export function EventForm({
           id={id("notes")}
           name="notes"
           rows={2}
-          defaultValue={event?.notes ?? ""}
+          defaultValue={was("notes", event?.notes ?? "")}
           placeholder="Gate code 4412. Park on the north side."
           className="textarea"
           data-testid="event-notes"

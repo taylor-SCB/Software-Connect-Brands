@@ -383,8 +383,24 @@ async function signAs(browser, token, name) {
     `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
      VALUES ('qli_pj5','quo_pj2','Paint and labor',1,240000,'LABOR',0)`,
   );
+  // A workspace on Pacific time, where the browser's UTC clock reads
+  // tomorrow from 5pm onward — the date prefilled here has to come from
+  // the workspace's own clock instead.
+  await sql(`UPDATE "Organization" SET "timeZone"='America/Los_Angeles' WHERE id=$1`, [org]);
   await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_pj2`);
   await page.locator("[data-testid=award-without-paperwork]").click();
+  const pacificToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  assert.equal(
+    await page.locator("[data-testid=award-date]").inputValue(),
+    pacificToday,
+    "audit fix: the agreement date is today where the business is, not in UTC",
+  );
+  await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);
   await page.locator("[data-testid=award-signer]").fill("Dana Ruiz");
   await page.locator("[data-testid=award-note]").fill("agreed on site");
   await page.locator("[data-testid=award-save]").click();
@@ -480,6 +496,88 @@ async function signAs(browser, token, name) {
     (await sql(`SELECT "siteAddress" FROM "Project" WHERE id=$1`, [project.id])).rows[0].siteAddress,
     "1200 Lakeside Dr, Austin",
   );
+
+  log("audit fixes: a second row-less agreement does not award the quote twice");
+  // The classic New contract page writes no priced rows, so awarding used
+  // to fall back to the whole quote — a second such agreement on the same
+  // deal added the quote again and a $3,000 job reported $6,000 awarded.
+  const awardedBefore = (await sql(`SELECT "awardedCents" FROM "Project" WHERE id=$1`, [project.id]))
+    .rows[0].awardedCents;
+  await sql(`UPDATE "Organization" SET "nextContractNumber"=9100 WHERE id=$1`, [org]);
+  // Signed, on the same deal, no priced rows and no job of its own — so
+  // the contract page offers "Track this as a job", which is the award
+  // path a person actually presses.
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId","dealId",number,title,type,payable,status,body,"publicToken","signedAt","updatedAt")
+     VALUES ('con_pj_extra','${org}','ctc_pj','deal_pj',9100,'Compliance agreement','Compliance Agreement',false,'SIGNED','','tok_con_pj_extra_01',now(),now())`,
+  );
+  await page.goto(`${BASE}/dashboard/contracts/con_pj_extra`);
+  await page.locator("[data-testid=create-project]").click();
+  await page.waitForURL(/\/dashboard\/projects\//);
+  const awardedAfter = (await sql(`SELECT "awardedCents" FROM "Project" WHERE id=$1`, [project.id]))
+    .rows[0].awardedCents;
+  assert.equal(
+    awardedAfter,
+    awardedBefore,
+    "a second agreement with no priced rows adds nothing to the budget",
+  );
+  assert.equal(
+    (await sql(`SELECT count(*)::int AS n FROM "ScopeAward" WHERE "contractId"='con_pj_extra'`)).rows[0].n,
+    0,
+    "and writes no award row of its own",
+  );
+  await sql(`DELETE FROM "Contract" WHERE id='con_pj_extra'`);
+
+  log("audit fixes: sending, then deleting a purchase order keeps Committed honest");
+  await sql(`UPDATE "Organization" SET "nextContractNumber"=9200 WHERE id=$1`, [org]);
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId","projectId",number,title,type,payable,status,body,"publicToken","updatedAt")
+     VALUES ('con_pj_po','${org}','ctc_pj','${project.id}',9200,'Supply order','Purchase Order',true,'DRAFT','','tok_con_pj_po_01',now())`,
+  );
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"organizationId","contractId",label,kind,"amountCents",position)
+     VALUES ('cp_pj_po','${org}','con_pj_po','Due on invoice','BALANCE',180000,0)`,
+  );
+  const committedDraft = (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id]))
+    .rows[0].committedCents;
+  // Mark as sent: the stored budget has to pick the order up.
+  await page.goto(`${BASE}/dashboard/contracts/con_pj_po`);
+  await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
+  await page.getByText(/Sent/).first().waitFor();
+  for (let tries = 0; tries < 40; tries += 1) {
+    const now = (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id])).rows[0]
+      .committedCents;
+    if (now === committedDraft + 180000) break;
+    await page.waitForTimeout(250);
+  }
+  assert.equal(
+    (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id])).rows[0].committedCents,
+    committedDraft + 180000,
+    "an order that is out counts as committed on the job",
+  );
+  // And deleting it has to take the money back out — a purchase order has
+  // no award rows, so the reversal alone never touched the totals.
+  await page.locator("[data-testid=delete-record]").click();
+  await page.waitForURL(/\/dashboard\/contracts$/);
+  for (let tries = 0; tries < 40; tries += 1) {
+    const now = (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id])).rows[0]
+      .committedCents;
+    if (now === committedDraft) break;
+    await page.waitForTimeout(250);
+  }
+  assert.equal(
+    (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id])).rows[0].committedCents,
+    committedDraft,
+    "and a deleted order stops counting",
+  );
+
+  log("audit fixes: an amount past what a money column holds is refused in words");
+  await page.goto(`${BASE}/dashboard/projects/${project.id}`);
+  await page.locator("[data-testid=scope-adjust]").first().click();
+  await page.locator("[data-testid=adjust-amount]").first().fill("99999999.99");
+  await page.locator("[data-testid=adjust-note]").first().fill("Fat finger");
+  await page.locator("[data-testid=adjust-save]").first().click();
+  await page.getByText(/That is more than \$21,474,836\.47/).waitFor();
 
   log("recompute-projects agrees with every number the app stored");
   const recompute = execFileSync("npm", ["run", "--silent", "recompute-projects"], {

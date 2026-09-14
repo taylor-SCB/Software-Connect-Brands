@@ -144,7 +144,11 @@ export function CalendarToolbar({
               onClick={() =>
                 start(async () => {
                   setCopyState({});
-                  const result = await copyWeek({ weekOf: anchor, crewId: crewId || undefined });
+                  const result = await copyWeek({
+                    weekOf: anchor,
+                    crewId: crewId || undefined,
+                    type: type || undefined,
+                  });
                   setCopyState(result ?? {});
                 })
               }

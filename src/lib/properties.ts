@@ -81,9 +81,13 @@ export function rollUp(projects: Totals[], stages: ProjectStage[]): Rollup {
 // page — a bookmarked link with a typo in it should still work.
 const ALL_STAGES: ProjectStage[] = ["AWARDED", "ACTIVE", "ON_HOLD", "COMPLETED", "CANCELLED"];
 
-export function parseStages(value: string | undefined): ProjectStage[] {
+// Next hands back an array when a key appears twice in the URL
+// (?stages=A&stages=B), which a bookmarked or hand-edited link does, so
+// this takes either shape. Splitting a string it assumed was a string
+// used to 500 the page before it could even check the property exists.
+export function parseStages(value: string | string[] | undefined): ProjectStage[] {
   if (!value) return DEFAULT_ROLLUP_STAGES;
-  const asked = value
+  const asked = (Array.isArray(value) ? value.join(",") : value)
     .split(",")
     .map((part) => part.trim().toUpperCase())
     .filter((part): part is ProjectStage => (ALL_STAGES as string[]).includes(part));

@@ -9,13 +9,26 @@ import { awardWithoutPaperwork } from "./actions";
 // For a job won on a handshake. Writes the Sales Order the quote already
 // implies, records who agreed to it and when, and starts the job — so
 // there is always one signed agreement behind a budget.
-export function AwardWithoutPaperwork({ dealId, disabled }: { dealId: string; disabled?: boolean }) {
+export function AwardWithoutPaperwork({
+  dealId,
+  today,
+  disabled,
+}: {
+  dealId: string;
+  // Today in the workspace's own clock, from the server. Reading the
+  // browser's UTC clock prefilled tomorrow's date from 7pm Central
+  // onward, and accepting it — the natural thing, since it looks like a
+  // sensible default — dated the agreement and every payment on it a
+  // day late.
+  today: string;
+  disabled?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | undefined>();
   const [name, setName] = useState("");
-  const [signedOn, setSignedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [signedOn, setSignedOn] = useState(today);
   const [note, setNote] = useState("");
   const [preset, setPreset] = useState<SchedulePreset | "">("");
 

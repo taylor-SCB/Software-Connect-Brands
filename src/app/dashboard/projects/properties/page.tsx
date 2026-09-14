@@ -9,6 +9,10 @@ import { IconBuilding } from "@/components/icons";
 import { NewPropertyButton } from "./property-form";
 import { StageChips } from "./stage-chips";
 
+// Far more buildings than a service business has, and low enough that
+// the nested read of their jobs stays cheap.
+const MAX_PROPERTIES = 200;
+
 const TOTALS = {
   stage: true,
   awardedCents: true,
@@ -26,7 +30,7 @@ const TOTALS = {
 export default async function PropertiesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ stages?: string }>;
+  searchParams: Promise<{ stages?: string | string[] }>;
 }) {
   const { organizationId } = await requireSession();
   const params = await searchParams;
@@ -36,6 +40,12 @@ export default async function PropertiesPage({
     prisma.property.findMany({
       where: { organizationId },
       orderBy: { name: "asc" },
+      // Capped rather than paged: a building is a thing somebody types in
+      // by hand, so a workspace has tens of them, not thousands. The cap
+      // is what stops one render pulling every job in the database
+      // through the nested read. Paging and a search box go in with the
+      // other list pages (see Known gaps in CLAUDE.md).
+      take: MAX_PROPERTIES,
       select: {
         id: true,
         name: true,
@@ -175,6 +185,12 @@ export default async function PropertiesPage({
             );
           })}
         </div>
+      )}
+
+      {rows.length >= MAX_PROPERTIES && (
+        <p className="faint mt-5 text-xs" data-testid="property-cap">
+          Showing the first {MAX_PROPERTIES} buildings by name.
+        </p>
       )}
 
       {loose > 0 && (

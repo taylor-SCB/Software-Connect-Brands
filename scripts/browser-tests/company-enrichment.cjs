@@ -415,6 +415,56 @@ async function company(org, name) {
   assert.equal(await pageSummary(page), `Showing 1–50 of ${attn.toLocaleString()} companies`);
   await shot(page, "06-needs-attention");
 
+  log("audit fixes: an ISP or webmail domain is never written in as a company's website");
+  // A roofer whose only contact emails from cox.net used to end up with
+  // https://cox.net as their website — the CRM linking the customer to
+  // their own email provider's home page.
+  // The bulk seed is done with; clearing it means one fill run reaches
+  // these three rather than working through 1,200 others first.
+  await sql(`DELETE FROM "Company" WHERE "organizationId"=$1 AND name LIKE 'Seeded %'`, [org]);
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,"updatedAt")
+     VALUES ('cmp_isp','${org}','Smith Roofing',now()),
+            ('cmp_isp2','${org}','Nguyen Drywall',now()),
+            ('cmp_real','${org}','Gulf Lock Works',now())`,
+  );
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,email,phone,"updatedAt")
+     VALUES ('ctc_isp','${org}','cmp_isp','Bob Smith','bob@cox.net','555-0100',now()),
+            ('ctc_isp2','${org}','cmp_isp2','Mai Nguyen','mai@mail.yahoo.com','555-0101',now()),
+            ('ctc_real','${org}','cmp_real','Ana Ruiz','ana@gulflockworks.com','555-0102',now())`,
+  );
+  await page.goto(`${BASE}/dashboard/companies`);
+  await page.getByTestId("fill-missing-button").click();
+  await page.getByTestId("fill-missing-plan").waitFor();
+  await page.getByTestId("fill-missing-start").click();
+  await page.getByTestId("fill-missing-summary").waitFor({ timeout: 120000 });
+  // The run works in batches, so wait until all three have actually been
+  // looked at — otherwise these assertions would pass on work that had
+  // not happened yet.
+  let filled = [];
+  for (let tries = 0; tries < 80; tries += 1) {
+    filled = (
+      await sql(
+        `SELECT name, website, "enrichedAt" FROM "Company"
+          WHERE id IN ('cmp_isp','cmp_isp2','cmp_real') ORDER BY name`,
+      )
+    ).rows;
+    if (filled.every((row) => row.enrichedAt !== null)) break;
+    await page.waitForTimeout(250);
+  }
+  for (const row of filled) {
+    assert.ok(row.enrichedAt !== null, `${row.name} was never processed by the fill run`);
+  }
+  const byName = Object.fromEntries(filled.map((row) => [row.name, row.website]));
+  assert.equal(byName["Smith Roofing"], null, "cox.net is not a website");
+  assert.equal(byName["Nguyen Drywall"], null, "nor is a provider's own subdomain");
+  assert.equal(
+    byName["Gulf Lock Works"],
+    "https://gulflockworks.com",
+    "a real company domain is still filled in",
+  );
+
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED. Screenshots in ${OUT}`);
 })().catch((err) => {

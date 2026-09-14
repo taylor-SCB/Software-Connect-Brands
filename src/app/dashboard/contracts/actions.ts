@@ -14,7 +14,7 @@ import { advanceDealStage } from "@/lib/deals";
 import { getTimeZone } from "@/lib/organization";
 import { NEW_TYPE_VALUE, canUserSend } from "@/lib/contracts";
 import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
-import { awardFromContract, reverseAward } from "@/lib/projects";
+import { awardFromContract, reverseAward, refreshProjectTotals } from "@/lib/projects";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -396,6 +396,7 @@ export async function setContractStatus(formData: FormData) {
     select: {
       status: true,
       dealId: true,
+      projectId: true,
       template: { select: { allUsersCanSend: true, senderUserIds: true } },
     },
   });
@@ -419,7 +420,17 @@ export async function setContractStatus(formData: FormData) {
     await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT");
   }
 
+  // A purchase order only counts as Committed on the job once it is out
+  // the door, so the job's stored budget has to be redone here. Without
+  // this the Budget tab showed $0 committed while the Money tab on the
+  // same job showed the supplier's full order.
+  await refreshProjectTotals(organizationId, contract.projectId);
+
   revalidatePath(`/dashboard/contracts/${parsed.data.contractId}`);
+  revalidatePath("/dashboard/projects");
+  revalidatePath("/dashboard/projects/budgets");
+  revalidatePath("/dashboard/projects/properties");
+  if (contract.projectId) revalidatePath(`/dashboard/projects/${contract.projectId}`);
   revalidatePath("/dashboard/contracts");
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard");
@@ -434,7 +445,7 @@ export async function deleteContract(_prev: ActionState, formData: FormData): Pr
 
   const contract = await prisma.contract.findFirst({
     where: { id: id.data, organizationId },
-    select: { number: true, title: true },
+    select: { number: true, title: true, projectId: true },
   });
   if (!contract) return { error: "Contract not found" };
 
@@ -447,10 +458,17 @@ export async function deleteContract(_prev: ActionState, formData: FormData): Pr
     await reverseAward(tx, organizationId, id.data);
     await tx.contract.deleteMany({ where: { id: id.data, organizationId } });
   });
+  // reverseAward only walks award rows, and a purchase order never has
+  // any — so deleting one used to leave its money counted as Committed
+  // on the job forever, with no paperwork left to explain it.
+  await refreshProjectTotals(organizationId, contract.projectId);
   revalidatePath("/dashboard/contracts");
   revalidatePath("/dashboard/deals/tracker");
   revalidatePath("/dashboard/contracts/tracker");
   revalidatePath("/dashboard/projects");
+  revalidatePath("/dashboard/projects/budgets");
+  revalidatePath("/dashboard/projects/properties");
+  if (contract.projectId) revalidatePath(`/dashboard/projects/${contract.projectId}`);
   redirect("/dashboard/contracts");
 }
 

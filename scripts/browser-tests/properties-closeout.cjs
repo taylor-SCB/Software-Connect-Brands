@@ -420,6 +420,61 @@ async function waitForProperty(page, projectId, expected) {
     "--check left the stored numbers alone",
   );
 
+  log("audit fixes: a repeated stages= in the URL still renders both pages");
+  for (const url of [
+    `${BASE}/dashboard/projects/properties?stages=AWARDED&stages=ACTIVE`,
+    `${BASE}/dashboard/projects/properties/${propertyId}?stages=AWARDED&stages=ACTIVE`,
+  ]) {
+    const response = await page.goto(url);
+    assert.equal(response.status(), 200, `${url} should render, not 500`);
+    await page.locator("h1").first().waitFor();
+  }
+  // And both stages named in the repeated param are the ones counted.
+  const both = await page.locator("[data-testid=stage-chips] [aria-pressed=true]").allTextContents();
+  assert.deepEqual(both.sort(), ["Active", "Awarded"], `got ${both.join(", ")}`);
+
+  log("audit fixes: saving a property does not unlink an archived owner");
+  await sql(`UPDATE "Company" SET status='ARCHIVED' WHERE id='cmp_pr'`);
+  await page.goto(`${BASE}/dashboard/projects/properties/${propertyId}`);
+  // The archived company is off the picker's list, so it is offered back.
+  const owner = await page.locator("[data-testid=property-company] option:checked").textContent();
+  assert.match(owner, /Harbor Property Group/, `the owner is still selected; got "${owner}"`);
+  await page.locator("[data-testid=property-address]").fill("1400 Harbor Blvd, Suite 200");
+  await page.locator("[data-testid=property-save]").click();
+  for (let tries = 0; tries < 40; tries += 1) {
+    const row = await sql(`SELECT address FROM "Property" WHERE id=$1`, [propertyId]);
+    if (row.rows[0].address === "1400 Harbor Blvd, Suite 200") break;
+    await page.waitForTimeout(250);
+  }
+  assert.equal(
+    (await sql(`SELECT "companyId" FROM "Property" WHERE id=$1`, [propertyId])).rows[0].companyId,
+    "cmp_pr",
+    "editing the address left the owner alone",
+  );
+  await sql(`UPDATE "Company" SET status='CUSTOMER' WHERE id='cmp_pr'`);
+
+  log("audit fixes: a note from an earlier closing does not reappear on a later one");
+  // prj_b was closed out with a note, then reopened, back in step 19.
+  assert.match(
+    (await sql(`SELECT "closeOutNote" FROM "Project" WHERE id='prj_b'`)).rows[0].closeOutNote,
+    /Punch list signed off/,
+    "the note from that closing is still there as history",
+  );
+  await page.goto(`${BASE}/dashboard/projects/prj_b`);
+  // Completing from the stage dropdown writes no note of its own, so the
+  // old one must not be paired with today's date as though it were new.
+  await page.locator("[data-testid=project-stage]").selectOption("COMPLETED");
+  for (let tries = 0; tries < 40; tries += 1) {
+    const row = await sql(`SELECT stage,"closeOutNote" FROM "Project" WHERE id='prj_b'`);
+    if (row.rows[0].stage === "COMPLETED") break;
+    await page.waitForTimeout(250);
+  }
+  assert.equal(
+    (await sql(`SELECT "closeOutNote" FROM "Project" WHERE id='prj_b'`)).rows[0].closeOutNote,
+    null,
+    "no note is shown against a closing nobody wrote one for",
+  );
+
   log("cross-tenant: another workspace's property is a 404");
   await sql(
     `INSERT INTO "Organization" (id,name,slug,status,"updatedAt")

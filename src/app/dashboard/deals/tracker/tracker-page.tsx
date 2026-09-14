@@ -143,7 +143,11 @@ export async function DealTrackerPage({
                         PRJ-{deal.project.number}
                       </Link>
                     ) : (
-                      <AwardWithoutPaperwork dealId={deal.id} disabled={!quote} />
+                      <AwardWithoutPaperwork
+                        dealId={deal.id}
+                        today={todayIso(organization.timeZone)}
+                        disabled={!quote}
+                      />
                     )}
                   </dd>
                 </div>

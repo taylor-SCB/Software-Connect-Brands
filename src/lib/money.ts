@@ -187,8 +187,8 @@ export async function owedBy(
 
   const rows = await prisma.$queryRaw<BalanceRow[]>`
     SELECT ${keyColumn} AS key,
-           SUM(cp."amountCents")::int AS billed,
-           COALESCE(SUM(paid.total), 0)::int AS received,
+           SUM(cp."amountCents")::bigint AS billed,
+           COALESCE(SUM(paid.total), 0)::bigint AS received,
            COUNT(*) FILTER (
              WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
            )::int AS overdue,
@@ -207,6 +207,48 @@ export async function owedBy(
   return toBalances(rows);
 }
 
+// The most rows the "Owes money" filter will consider. Only customers
+// with signed paperwork are ever in here, so this is far above what a
+// real workspace reaches; past it the filter silently narrows rather
+// than timing out.
+export const MAX_OWING_IDS = 10_000;
+
+// Who actually owes money right now, as ids. The "Owes money" toggle on
+// the Contacts and Companies lists uses this rather than a where-clause
+// of its own, because a where-clause cannot do the arithmetic the screen
+// does: "owes" is the sum of the rows less the payments against them,
+// and a credit from a change order is a negative row that nets off. The
+// old clause tested each row on its own, so it listed a customer whose
+// credit had already cancelled their balance, and — on contacts — tested
+// the contact's current company rather than the company on the contract,
+// so a homeowner who once had a company was listed with no amount beside
+// them. Same rule as owedBy above means the filter and the figure can
+// never disagree.
+export async function owingIds(organizationId: string, by: "company" | "contact"): Promise<string[]> {
+  const keyColumn = by === "company" ? Prisma.sql`c."companyId"` : Prisma.sql`c."contactId"`;
+  const scope =
+    by === "company"
+      ? Prisma.sql`c."companyId" IS NOT NULL`
+      : Prisma.sql`c."companyId" IS NULL AND c."contactId" IS NOT NULL`;
+
+  const rows = await prisma.$queryRaw<{ key: string }[]>`
+    SELECT ${keyColumn} AS key
+      FROM "Contract" c
+      JOIN "ContractPayment" cp ON cp."contractId" = c.id
+      LEFT JOIN LATERAL (
+             SELECT SUM(p."amountCents") AS total FROM "Payment" p WHERE p."contractPaymentId" = cp.id
+           ) paid ON true
+     WHERE c."organizationId" = ${organizationId}
+       AND c.payable = false
+       AND c.status = 'SIGNED'
+       AND ${scope}
+     GROUP BY 1
+    HAVING SUM(cp."amountCents" - COALESCE(paid.total, 0)) > 0
+     LIMIT ${MAX_OWING_IDS}
+  `;
+  return rows.map((row) => row.key);
+}
+
 // The other direction: what we still owe these suppliers on purchase
 // orders that are out or signed.
 export async function payableBy(
@@ -217,8 +259,8 @@ export async function payableBy(
   if (companyIds.length === 0) return new Map();
   const rows = await prisma.$queryRaw<BalanceRow[]>`
     SELECT c."companyId" AS key,
-           SUM(cp."amountCents")::int AS billed,
-           COALESCE(SUM(paid.total), 0)::int AS received,
+           SUM(cp."amountCents")::bigint AS billed,
+           COALESCE(SUM(paid.total), 0)::bigint AS received,
            COUNT(*) FILTER (
              WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
            )::int AS overdue,
@@ -242,7 +284,7 @@ export async function owedTotals(organizationId: string, today: string) {
   const rows = await prisma.$queryRaw<
     { owed: number | string | null; overdue: number | string | null; customers: number | string | null }[]
   >`
-    SELECT COALESCE(SUM(cp."amountCents" - COALESCE(paid.total, 0)), 0)::int AS owed,
+    SELECT COALESCE(SUM(cp."amountCents" - COALESCE(paid.total, 0)), 0)::bigint AS owed,
            COUNT(*) FILTER (
              WHERE cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
            )::int AS overdue,

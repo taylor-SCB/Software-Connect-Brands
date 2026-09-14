@@ -112,3 +112,13 @@ export const TIME_ZONES = [
 export function daysSince(date: Date) {
   return Math.floor((Date.now() - date.getTime()) / 86_400_000);
 }
+
+// The largest amount a cents column can hold: Postgres integer. Anything
+// past it used to reach the database and come back as a raw driver error
+// on a blank page, so the forms that take a typed amount check it first
+// and say so in words.
+export const MAX_MONEY_CENTS = 2_147_483_647;
+
+export function moneyTooBig(cents: number) {
+  return !Number.isFinite(cents) || Math.abs(cents) > MAX_MONEY_CENTS;
+}

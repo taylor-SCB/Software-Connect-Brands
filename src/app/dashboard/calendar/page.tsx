@@ -6,6 +6,7 @@ import {
   crewOverlaps,
   dayRangeTitle,
   eventDays,
+  isRealDay,
   monthGrid,
   monthTitle,
   startOfMonth,
@@ -22,7 +23,7 @@ import { MonthView, WeekView } from "./calendar-views";
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string; on?: string; crew?: string; type?: string }>;
+  searchParams: Promise<{ view?: string; on?: string | string[]; crew?: string; type?: string }>;
 }) {
   const { organizationId } = await requireSession();
   const params = await searchParams;
@@ -30,7 +31,9 @@ export default async function CalendarPage({
   const today = todayIso(timeZone);
 
   const view = params.view === "week" ? "week" : "month";
-  const asked = /^\d{4}-\d{2}-\d{2}$/.test(params.on ?? "") ? params.on! : today;
+  // Anything that is not a real day falls back to today rather than
+  // taking the page down with it.
+  const asked = isRealDay(params.on) ? params.on : today;
   const anchor = view === "month" ? startOfMonth(asked) : startOfWeek(asked);
 
   // The window is the grid, not the month: the six-week grid shows days

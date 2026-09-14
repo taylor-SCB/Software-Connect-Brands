@@ -10,6 +10,20 @@ import { addDays } from "@/lib/payments";
 
 /* ------------------------------ Day arithmetic ------------------------------ */
 
+// Whether a yyyy-mm-dd is a day that exists. The shape being right is
+// not enough: 2026-13-01 and 2026-02-30 both match the pattern and then
+// poison every calculation downstream, which turned a mistyped or
+// truncated shared link into a 500 with no calendar on it.
+export function isRealDay(value: string | string[] | undefined): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+  );
+}
+
 // The weekday of a yyyy-mm-dd, 0 = Sunday. Parsed as UTC so the answer
 // never depends on where the server is.
 export function weekdayOf(iso: string) {

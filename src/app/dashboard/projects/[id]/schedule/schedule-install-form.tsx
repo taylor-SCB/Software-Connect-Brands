@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { FormError } from "@/components/ui";
+import { FormError, FormSuccess } from "@/components/ui";
+import type { ActionState } from "@/lib/forms";
 import { IconCalendar } from "@/components/icons";
 import { scheduleInstall } from "../../../calendar/actions";
 
@@ -30,23 +31,32 @@ export function ScheduleInstallForm({
   // booking was refused stays on the screen. Adjusted during render
   // rather than in an effect: that is React's own advice, and it avoids
   // the flash of an open form over a day that is already booked.
-  const [handled, setHandled] = useState(state.success);
-  if (state.success !== handled) {
-    setHandled(state.success);
+  //
+  // The comparison is on the state object, not its message. Comparing
+  // the message meant a second booking — same wording, "Install booked"
+  // — read as the one already handled, so the form stayed open with the
+  // date snapped back to today and no confirmation, which invited a
+  // duplicate booking.
+  const [handled, setHandled] = useState<ActionState | null>(state);
+  if (state !== handled) {
+    setHandled(state);
     if (state.success) setOpen(false);
   }
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="btn btn-ghost btn-sm"
-        data-testid="schedule-install"
-      >
-        <IconCalendar size={13} />
-        Schedule install
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="btn btn-ghost btn-sm"
+          data-testid="schedule-install"
+        >
+          <IconCalendar size={13} />
+          Schedule install
+        </button>
+        <FormSuccess message={state.success} />
+      </div>
     );
   }
 

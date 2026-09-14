@@ -2,6 +2,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
 import { getIndustryPickList } from "@/lib/industries";
+import { owingIds } from "@/lib/money";
 import type { ListParams } from "@/lib/list-params";
 
 // The database side of the Contacts and Companies lists: the where-clauses
@@ -11,15 +12,12 @@ import type { ListParams } from "@/lib/list-params";
 
 const insensitive = "insensitive" as const;
 
-// A contract the customer signed that still has a payment row nobody has
-// covered. The same rule the "Owes you" line adds up (src/lib/money.ts).
-const OWES_MONEY = {
-  payable: false,
-  status: "SIGNED",
-  payments: { some: { paidAt: null, amountCents: { gt: 0 } } },
-} satisfies Prisma.ContractWhereInput;
+// "Owes money" is the net of the rows less the payments against them, so
+// it cannot be a where-clause — see owingIds in src/lib/money.ts, which
+// is the same arithmetic the "Owes you" line prints. Both list builders
+// are async for that reason.
 
-export function companyWhere(organizationId: string, p: ListParams): Prisma.CompanyWhereInput {
+export async function companyWhere(organizationId: string, p: ListParams): Promise<Prisma.CompanyWhereInput> {
   const and: Prisma.CompanyWhereInput[] = [{ organizationId }];
   if (p.q) {
     and.push({
@@ -44,7 +42,9 @@ export function companyWhere(organizationId: string, p: ListParams): Prisma.Comp
   if (p.auto) and.push({ autoFilled: { isEmpty: false } });
   // Owes money: a signed Money-in contract with a row nobody has covered
   // yet. Purchase orders are money going the other way and never count.
-  if (p.owed) and.push({ contracts: { some: OWES_MONEY } });
+  // The net figure, so the filter and the "Owes you" line beside each
+  // name can never disagree.
+  if (p.owed) and.push({ id: { in: await owingIds(organizationId, "company") } });
   return { AND: and };
 }
 
@@ -63,7 +63,11 @@ export async function companyIdsMatching(organizationId: string, q: string): Pro
   return rows.map((row) => row.id);
 }
 
-export function contactWhere(organizationId: string, p: ListParams, companyIds: string[] = []): Prisma.ContactWhereInput {
+export async function contactWhere(
+  organizationId: string,
+  p: ListParams,
+  companyIds: string[] = [],
+): Promise<Prisma.ContactWhereInput> {
   const and: Prisma.ContactWhereInput[] = [{ organizationId }];
   if (p.q) {
     and.push({
@@ -103,9 +107,12 @@ export function contactWhere(organizationId: string, p: ListParams, companyIds: 
       OR: [{ AND: [{ email: null }, { phone: null }] }, { company: { industries: { isEmpty: true } } }],
     });
   }
-  // Owes money: only a homeowner's own paperwork lands on their row;
-  // anyone with a company is counted on the company's row instead.
-  if (p.owed) and.push({ companyId: null, contracts: { some: OWES_MONEY } });
+  // Owes money: only a homeowner's own paperwork lands on their row —
+  // paperwork with a company on it is counted on the company's row
+  // instead. That is decided by the contract, not by whatever company
+  // the contact happens to be at today, which is why this goes through
+  // owingIds rather than a clause about the contact.
+  if (p.owed) and.push({ id: { in: await owingIds(organizationId, "contact") } });
   return { AND: and };
 }
 

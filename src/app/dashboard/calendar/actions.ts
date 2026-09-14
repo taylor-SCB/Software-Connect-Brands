@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { getTimeZone } from "@/lib/organization";
-import { parseForm, type ActionState } from "@/lib/forms";
+import { parseForm, keepFields, type ActionState } from "@/lib/forms";
 import { isoToDate, todayIso, addDays } from "@/lib/payments";
 import { cleanTime, eventDays, MAX_EVENT_DAYS } from "@/lib/calendar";
 import { formatDay } from "@/lib/format";
@@ -41,12 +41,26 @@ const eventSchema = z.object({
   crewId: z.string().trim().optional(),
 });
 
+// The text fields the form can put back when a save is refused.
+const EVENT_FIELDS = [
+  "title",
+  "type",
+  "startOn",
+  "endOn",
+  "startTime",
+  "endTime",
+  "location",
+  "notes",
+] as const;
+
 // One form creates and edits any kind of day: an install, a site walk, a
 // construction meeting with the owner's team. Everything it can be tied
 // to is optional, because a site walk often happens before there is a job
 // and a coffee with a contact belongs to nothing at all.
 export async function saveEvent(_prev: ActionState, formData: FormData): Promise<ActionState & { eventId?: string }> {
   const { organizationId } = await requireSession();
+  // Whatever was typed, ready to hand back with any refusal below.
+  const kept = keepFields(formData, EVENT_FIELDS);
   const parsed = parseForm(eventSchema, {
     eventId: formData.get("eventId") ?? undefined,
     title: formData.get("title"),
@@ -62,13 +76,15 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
     contactId: formData.get("contactId") ?? undefined,
     crewId: formData.get("crewId") ?? undefined,
   });
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return { error: parsed.error, kept };
 
   const startOn = parsed.data.startOn;
   const endOn = parsed.data.endOn || "";
-  if (endOn && endOn < startOn) return { error: "The last day cannot be before the first one." };
+  if (endOn && endOn < startOn) {
+    return { error: "The last day cannot be before the first one.", kept };
+  }
   if (endOn && eventDays({ startOn, endOn }).length >= MAX_EVENT_DAYS) {
-    return { error: `That is more than ${MAX_EVENT_DAYS} days. Book it in shorter stretches.` };
+    return { error: `That is more than ${MAX_EVENT_DAYS} days. Book it in shorter stretches.`, kept };
   }
 
   const startTime = cleanTime(formData.get("startTime"));
@@ -76,7 +92,7 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
   // A day that runs backwards on the clock is a typo, not a night shift
   // spanning midnight — those are two days and get two events.
   if (startTime && endTime && endTime <= startTime && (!endOn || endOn === startOn)) {
-    return { error: "The finish time is before the start time." };
+    return { error: "The finish time is before the start time.", kept };
   }
 
   const type = (await ensureEventType(organizationId, parsed.data.type)) ?? parsed.data.type;
@@ -139,12 +155,17 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
   };
 
   let eventId = parsed.data.eventId ?? "";
+  // The job it was on before, so moving a day off a job — or off jobs
+  // altogether — recomputes that job too. Without it the old job kept a
+  // start date and an Active stage with nothing scheduled on it.
+  let previousProjectId: string | null = null;
   if (eventId) {
     const existing = await prisma.calendarEvent.findFirst({
       where: { id: eventId, organizationId },
-      select: { id: true },
+      select: { id: true, projectId: true },
     });
-    if (!existing) return { error: "That day is no longer on the calendar" };
+    if (!existing) return { error: "That day is no longer on the calendar", kept };
+    previousProjectId = existing.projectId;
     await prisma.calendarEvent.update({
       where: { id: existing.id },
       data: { ...data, attendees: { set: attendees.map((row) => ({ id: row.id })) } },
@@ -158,6 +179,10 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
   }
 
   await startJobOnFirstDatedDay(organizationId, project?.id);
+  if (previousProjectId && previousProjectId !== project?.id) {
+    await startJobOnFirstDatedDay(organizationId, previousProjectId);
+    revalidateCalendar(previousProjectId);
+  }
   revalidateCalendar(project?.id);
   if (data.contactId) revalidatePath(`/dashboard/contacts/${data.contactId}`);
   if (data.companyId) revalidatePath(`/dashboard/companies/${data.companyId}`);
@@ -259,6 +284,10 @@ export async function copyWeek(input: {
   weekOf: string;
   crewId?: string;
   projectId?: string;
+  // Whatever the screen is filtering by, so the copy matches what is on
+  // it. Copying while filtered to Install used to duplicate the hidden
+  // site walks and meetings too, and report a count nobody could see.
+  type?: string;
 }): Promise<ActionState> {
   const { organizationId } = await requireSession();
   const parsed = z
@@ -266,6 +295,7 @@ export async function copyWeek(input: {
       weekOf: isoDate,
       crewId: z.string().trim().optional(),
       projectId: z.string().trim().optional(),
+      type: z.string().trim().max(60).optional(),
     })
     .safeParse(input);
   if (!parsed.success) return { error: "Pick the week to copy" };
@@ -278,6 +308,7 @@ export async function copyWeek(input: {
       startOn: { gte: isoToDate(from)!, lt: isoToDate(to)! },
       ...(parsed.data.crewId ? { crewId: parsed.data.crewId } : {}),
       ...(parsed.data.projectId ? { projectId: parsed.data.projectId } : {}),
+      ...(parsed.data.type ? { type: parsed.data.type } : {}),
     },
     select: {
       title: true,

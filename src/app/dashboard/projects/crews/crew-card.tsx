@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { formatCents, centsToDollarInput } from "@/lib/format";
 import { CREW_KIND_LABELS, describeRates, ratesFor } from "@/lib/crews";
 import { Card, CardHeader, Badge, FormError } from "@/components/ui";
 import { IconTrash, IconPlus, IconUserPlus } from "@/components/icons";
+import type { ActionState } from "@/lib/forms";
 import { CrewForm, type CrewValues } from "./crew-form";
 import { deleteCrew, deleteWorker, saveWorker, setCrewActive, setWorkerActive } from "./actions";
 
@@ -288,9 +289,13 @@ function WorkerForm({ crewId, worker, onDone }: { crewId: string; worker?: Worke
 
   // Closes on a save that worked, and only then: a form that closed on a
   // timer would swallow the error telling you why nothing was saved.
-  useEffect(() => {
+  // Keyed on the state object rather than its message, so adding two
+  // people in a row does not read as one.
+  const [handled, setHandled] = useState<ActionState | null>(state);
+  if (state !== handled) {
+    setHandled(state);
     if (state.success) onDone();
-  }, [state.success, onDone]);
+  }
 
   return (
     <form action={action} className="space-y-2" data-testid="worker-form">

@@ -39,7 +39,7 @@ export async function CompaniesList({
 }) {
   const { organizationId } = await requireSession();
   const params = parseListParams(searchParams, lock);
-  const where = companyWhere(organizationId, params);
+  const where = await companyWhere(organizationId, params);
 
   const [total, options, timeZone, unfiltered] = await Promise.all([
     prisma.company.count({ where }),

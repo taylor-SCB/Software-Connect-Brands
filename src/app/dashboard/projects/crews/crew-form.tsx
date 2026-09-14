@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { centsToDollarInput } from "@/lib/format";
 import { CREW_KINDS, CREW_KIND_LABELS, CREW_KIND_HINTS } from "@/lib/crews";
 import { FormError, FormSuccess } from "@/components/ui";
+import type { ActionState } from "@/lib/forms";
 import { saveCrew } from "./actions";
 
 export type CrewValues = {
@@ -45,10 +46,14 @@ export function CrewForm({
   const subcontractor = kind === "SUBCONTRACTOR";
 
   // Closes on a save that worked, and only then, so an error telling you
-  // why nothing was saved stays on the screen.
-  useEffect(() => {
+  // why nothing was saved stays on the screen. Keyed on the state object
+  // rather than its message: saving twice reports the same words, and
+  // comparing the words made the second save look already handled.
+  const [handled, setHandled] = useState<ActionState | null>(state);
+  if (state !== handled) {
+    setHandled(state);
     if (state.success && onDone) onDone();
-  }, [state.success, onDone]);
+  }
 
   const toggle = (name: string) =>
     setPicked((current) =>

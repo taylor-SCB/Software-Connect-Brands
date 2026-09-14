@@ -18,7 +18,7 @@ import {
 } from "@/lib/payments";
 import { formatCents } from "@/lib/format";
 import { paidCentsOf, settleRow } from "@/lib/money";
-import { refreshTotals, refreshTotalsForContract, syncProjectScopes } from "@/lib/projects";
+import { refreshTotals, refreshTotalsForContract, refreshProjectTotals, syncProjectScopes } from "@/lib/projects";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -342,7 +342,7 @@ export async function cancelContract(formData: FormData) {
 
   const contract = await prisma.contract.findFirst({
     where: { id: id.data, organizationId },
-    select: { status: true, dealId: true },
+    select: { status: true, dealId: true, projectId: true },
   });
   if (!contract || contract.status === "SIGNED") return;
 
@@ -350,6 +350,9 @@ export async function cancelContract(formData: FormData) {
     where: { id: id.data, organizationId },
     data: { status: "CANCELLED", cancelledAt: new Date() },
   });
+  // A purchase order that is withdrawn stops being Committed on the job,
+  // and one that is reopened stops counting until it goes out again.
+  await refreshProjectTotals(organizationId, contract.projectId);
   revalidateDeal(contract.dealId ?? "", [id.data]);
 }
 
@@ -361,7 +364,7 @@ export async function reopenContract(formData: FormData) {
 
   const contract = await prisma.contract.findFirst({
     where: { id: id.data, organizationId },
-    select: { status: true, dealId: true },
+    select: { status: true, dealId: true, projectId: true },
   });
   if (!contract || contract.status !== "CANCELLED") return;
 
@@ -369,6 +372,9 @@ export async function reopenContract(formData: FormData) {
     where: { id: id.data, organizationId },
     data: { status: "DRAFT", cancelledAt: null, sentAt: null },
   });
+  // A purchase order that is withdrawn stops being Committed on the job,
+  // and one that is reopened stops counting until it goes out again.
+  await refreshProjectTotals(organizationId, contract.projectId);
   revalidateDeal(contract.dealId ?? "", [id.data]);
 }
 
