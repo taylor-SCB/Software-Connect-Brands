@@ -21,10 +21,14 @@ async function launch(): Promise<Browser> {
     });
   }
 
+  // `chromium.args` already carries `--headless='shell'` because the bundled
+  // binary is chrome-headless-shell. Passing `headless: true` makes Puppeteer
+  // add a second, conflicting `--headless=new` that the shell build does not
+  // understand, so say "shell" here and the two agree on one flag.
   return puppeteer.launch({
     args: chromium.args,
     executablePath: await chromium.executablePath(),
-    headless: true,
+    headless: "shell",
   });
 }
 

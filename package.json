@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && node scripts/migrate-if-production.cjs && next build",
+    "build": "prisma generate && node scripts/migrate-if-production.cjs && next build && node scripts/check-pdf-trace.cjs",
     "build:app": "next build",
     "start": "next start",
     "lint": "eslint",
+    "check-pdf-trace": "node scripts/check-pdf-trace.cjs",
     "postinstall": "prisma generate",
     "promote-admin": "tsx scripts/promote-admin.ts",
     "recompute-projects": "tsx scripts/recompute-project-totals.ts"
