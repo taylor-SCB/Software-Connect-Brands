@@ -20,9 +20,21 @@ export default async function PublicQuotePage({
 }) {
   const { token } = await params;
 
+  // Named field by field on purpose. This is the allow-list of what a
+  // customer may see, and it has to stay one: a line carries internal
+  // columns (what we pay, who we buy it from) that must never reach the
+  // page or the PDF taken from it.
   const quote = await prisma.quote.findUnique({
     where: { publicToken: token },
-    include: {
+    select: {
+      number: true,
+      title: true,
+      template: true,
+      status: true,
+      introNote: true,
+      terms: true,
+      validUntil: true,
+      createdAt: true,
       organization: {
         select: {
           id: true,
@@ -35,7 +47,18 @@ export default async function PublicQuotePage({
       contact: {
         select: { name: true, company: { select: { name: true, logoUrl: true } }, email: true, phone: true },
       },
-      lineItems: { orderBy: { position: "asc" } },
+      lineItems: {
+        orderBy: { position: "asc" },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          projectNotes: true,
+          quantity: true,
+          unitPriceCents: true,
+          tag: true,
+        },
+      },
     },
   });
 

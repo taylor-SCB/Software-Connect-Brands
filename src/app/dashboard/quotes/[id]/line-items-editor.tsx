@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { saveLineItems, type LineItemInput } from "../actions";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
 import { computeQuoteTotals, lineTotalCents } from "@/lib/quote-math";
@@ -102,6 +102,9 @@ export function LineItemsEditor({
   const [dirty, setDirty] = useState(false);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
+  // Set by any edit made while a save is in flight, so finishing that save
+  // doesn't clear "Unsaved changes" on work it never sent.
+  const editedDuringSave = useRef(false);
 
   const totals = useMemo(
     () =>
@@ -118,6 +121,7 @@ export function LineItemsEditor({
   function mutate(next: Row[]) {
     setRows(next);
     setDirty(true);
+    editedDuringSave.current = true;
     setState({});
   }
 
@@ -171,6 +175,7 @@ export function LineItemsEditor({
   function save() {
     const payload: LineItemInput[] = rows.map((row) => ({
       id: row.id,
+      uid: row.uid,
       productId: row.productId,
       name: row.name.trim(),
       description: row.description.trim(),
@@ -187,10 +192,23 @@ export function LineItemsEditor({
       return;
     }
 
+    editedDuringSave.current = false;
     startTransition(async () => {
       const result = await saveLineItems(quoteId, payload);
-      setState(result);
-      if (!result.error) setDirty(false);
+      setState({ error: result.error, success: result.success });
+      if (result.error) return;
+
+      // Take on the ids the save just handed back, matched by uid rather
+      // than position: a row added or deleted mid-save shifts the array,
+      // and writing an id onto the wrong row deletes a live one next time.
+      const savedByUid = new Map((result.lines ?? []).map((line) => [line.uid, line]));
+      setRows((current) =>
+        current.map((row) => {
+          const saved = savedByUid.get(row.uid);
+          return saved ? { ...row, id: saved.id, productId: saved.productId } : row;
+        }),
+      );
+      if (!editedDuringSave.current) setDirty(false);
     });
   }
 

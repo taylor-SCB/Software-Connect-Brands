@@ -130,6 +130,11 @@ const lineItemSchema = z.object({
   // Present for a row that already exists; the save keeps that row so a
   // contract split off it stays linked and its cancelled mark survives.
   id: z.string().trim().nullable().optional(),
+  // The editor's own handle for the row, echoed back untouched so it can
+  // match a created row's new id to the right row. Matching on array
+  // position instead would write the wrong id onto a row whenever one is
+  // added or deleted while the save is in flight.
+  uid: z.string().trim().max(60).nullable().optional(),
   productId: z.string().trim().nullable().optional(),
   name: z.string().trim().min(1, "Every line needs a product name").max(200),
   description: z.string().max(2000).optional(),
@@ -145,10 +150,16 @@ const lineItemSchema = z.object({
 
 export type LineItemInput = z.infer<typeof lineItemSchema>;
 
+// What a saved row came back as. The editor folds these into its state so
+// a row created by this save carries its stored id from now on; without
+// that the next save sees no id, deletes the row and creates a new one —
+// which silently severs any contract line pointing at it.
+export type SavedLine = { uid: string | null; id: string; productId: string | null };
+
 export async function saveLineItems(
   quoteId: string,
   items: LineItemInput[],
-): Promise<ActionState> {
+): Promise<ActionState & { lines?: SavedLine[] }> {
   const { organizationId } = await requireSession();
 
   const id = idSchema.safeParse(quoteId);
@@ -190,11 +201,16 @@ export async function saveLineItems(
     parsed.data.map((item) => item.id).filter((id): id is string => Boolean(id) && existingIds.has(id as string)),
   );
 
-  await prisma.$transaction([
-    prisma.quoteLineItem.deleteMany({
+  // Interactive rather than the array form: the array form builds every
+  // promise before the transaction opens, so a row cannot use an id
+  // created earlier in the same save.
+  const lines = await prisma.$transaction(async (tx) => {
+    await tx.quoteLineItem.deleteMany({
       where: { quoteId: quote.id, id: { notIn: [...keptIds] } },
-    }),
-    ...parsed.data.map((item, index) => {
+    });
+
+    const saved: SavedLine[] = [];
+    for (const [index, item] of parsed.data.entries()) {
       const data = {
         productId: item.productId && ownedIds.has(item.productId) ? item.productId : null,
         name: item.name,
@@ -206,16 +222,21 @@ export async function saveLineItems(
         serviceType: item.serviceType || null,
         position: index,
       };
-      return item.id && keptIds.has(item.id)
-        ? prisma.quoteLineItem.update({ where: { id: item.id }, data })
-        : prisma.quoteLineItem.create({ data: { quoteId: quote.id, ...data } });
-    }),
-    prisma.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } }),
-  ]);
+      const select = { id: true, productId: true } as const;
+      const row =
+        item.id && keptIds.has(item.id)
+          ? await tx.quoteLineItem.update({ where: { id: item.id }, data, select })
+          : await tx.quoteLineItem.create({ data: { quoteId: quote.id, ...data }, select });
+      saved.push({ uid: item.uid ?? null, id: row.id, productId: row.productId });
+    }
+
+    await tx.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } });
+    return saved;
+  });
 
   revalidatePath(`/dashboard/quotes/${quote.id}`);
   revalidatePath("/dashboard/quotes");
-  return { success: "Line items saved" };
+  return { success: "Line items saved", lines };
 }
 
 export async function setQuoteStatus(formData: FormData) {
