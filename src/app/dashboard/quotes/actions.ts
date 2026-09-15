@@ -7,7 +7,14 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
-import { LINE_ITEM_TAGS, QUOTE_TEMPLATES } from "@/lib/constants";
+import {
+  LINE_ITEM_TAGS,
+  QUOTE_TEMPLATES,
+  UNITS_OF_MEASURE,
+  SOFTWARE_RATES,
+  tagHasUnits,
+  unitAllowedForTag,
+} from "@/lib/constants";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
 
@@ -146,6 +153,13 @@ const lineItemSchema = z.object({
   tag: z.enum(LINE_ITEM_TAGS, { message: "Every line needs a tag" }),
   // The kind of work the row is, when the quote is split that way.
   serviceType: z.string().trim().max(60).nullable().optional(),
+  // Who we buy the line from. Internal — never rendered for a customer.
+  supplierCompanyId: z.string().trim().nullable().optional(),
+  unitOfMeasure: z.enum(UNITS_OF_MEASURE).nullable().optional(),
+  softwareRate: z.enum(SOFTWARE_RATES).nullable().optional(),
+  softwareTermMonths: z.number().int().min(1).max(1200).nullable().optional(),
+  // Whether to put a hand-typed line into the catalog as well.
+  saveAsProduct: z.boolean().optional(),
 });
 
 export type LineItemInput = z.infer<typeof lineItemSchema>;
@@ -189,6 +203,21 @@ export async function saveLineItems(
     : [];
   const ownedIds = new Set(ownedProducts.map((product) => product.id));
 
+  // Same footing for suppliers: a company id from another tenant is
+  // downgraded to nothing rather than trusted or refused. Refusing would
+  // make a legitimate save fail because of an unrelated deletion, which is
+  // how the product check already behaves.
+  const supplierIds = parsed.data
+    .map((item) => item.supplierCompanyId)
+    .filter((value): value is string => Boolean(value));
+  const ownedSuppliers = supplierIds.length
+    ? await prisma.company.findMany({
+        where: { id: { in: supplierIds }, organizationId },
+        select: { id: true },
+      })
+    : [];
+  const ownedSupplierIds = new Set(ownedSuppliers.map((company) => company.id));
+
   // The editor's order is authoritative. Rows it still has are updated
   // in place (their ids matter: the deal tracker's contracts point at
   // them), rows it dropped are deleted, new ones are created.
@@ -204,15 +233,74 @@ export async function saveLineItems(
   // Interactive rather than the array form: the array form builds every
   // promise before the transaction opens, so a row cannot use an id
   // created earlier in the same save.
+  let createdProducts = 0;
+
   const lines = await prisma.$transaction(async (tx) => {
     await tx.quoteLineItem.deleteMany({
       where: { quoteId: quote.id, id: { notIn: [...keptIds] } },
     });
 
+    // Names claimed by a product made earlier in this same save, so two
+    // identical typed lines become one catalog entry rather than two.
+    const madeThisSave = new Map<string, string>();
+
     const saved: SavedLine[] = [];
     for (const [index, item] of parsed.data.entries()) {
+      // A unit that doesn't belong to the row's tag is dropped rather than
+      // stored: the Products form enforces the same pairing and would
+      // refuse to re-save a row carrying a mismatched one.
+      const unit =
+        item.unitOfMeasure && tagHasUnits(item.tag) && unitAllowedForTag(item.unitOfMeasure, item.tag)
+          ? item.unitOfMeasure
+          : null;
+      const isSoftware = item.tag === "SOFTWARE";
+
+      let productId = item.productId && ownedIds.has(item.productId) ? item.productId : null;
+
+      // "Save as product?" — ticked by default on a line typed by hand.
+      if (!productId && item.saveAsProduct && item.name) {
+        // Product.name allows 160 where a line allows 200, so a long line
+        // would fail validation the moment anyone opened it in Products.
+        const productName = item.name.slice(0, 160);
+        const key = productName.toLowerCase();
+
+        const already = madeThisSave.get(key);
+        if (already) {
+          productId = already;
+        } else {
+          // Product has no unique constraint on name, so without this a
+          // re-save would make a twin every time.
+          const existing = await tx.product.findFirst({
+            where: { organizationId, name: { equals: productName, mode: "insensitive" } },
+            select: { id: true },
+          });
+          if (existing) {
+            productId = existing.id;
+          } else {
+            const created = await tx.product.create({
+              data: {
+                organizationId,
+                name: productName,
+                // A discount row is legitimately negative on a quote, but a
+                // negative price in the catalog is not.
+                unitPriceCents: Math.max(0, item.unitPriceCents),
+                defaultTag: item.tag,
+                serviceType: item.serviceType || null,
+                unitOfMeasure: unit,
+                softwareRate: isSoftware ? item.softwareRate ?? null : null,
+                active: true,
+              },
+              select: { id: true },
+            });
+            productId = created.id;
+            createdProducts += 1;
+          }
+          madeThisSave.set(key, productId);
+        }
+      }
+
       const data = {
-        productId: item.productId && ownedIds.has(item.productId) ? item.productId : null,
+        productId,
         name: item.name,
         description: item.description ?? "",
         projectNotes: item.projectNotes ?? "",
@@ -220,6 +308,13 @@ export async function saveLineItems(
         unitPriceCents: item.unitPriceCents,
         tag: item.tag,
         serviceType: item.serviceType || null,
+        supplierCompanyId:
+          item.supplierCompanyId && ownedSupplierIds.has(item.supplierCompanyId)
+            ? item.supplierCompanyId
+            : null,
+        unitOfMeasure: unit,
+        softwareRate: isSoftware ? item.softwareRate ?? null : null,
+        softwareTermMonths: isSoftware ? item.softwareTermMonths ?? null : null,
         position: index,
       };
       const select = { id: true, productId: true } as const;
@@ -236,6 +331,7 @@ export async function saveLineItems(
 
   revalidatePath(`/dashboard/quotes/${quote.id}`);
   revalidatePath("/dashboard/quotes");
+  if (createdProducts > 0) revalidatePath("/dashboard/products");
   return { success: "Line items saved", lines };
 }
 

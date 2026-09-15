@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { getServiceTypes } from "@/lib/service-types";
+import { loadDistributorCompanies } from "@/lib/distributors";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
@@ -52,12 +53,24 @@ export default async function QuoteBuilderPage({
         unitPriceCents: true,
         defaultTag: true,
         serviceType: true,
+        unitOfMeasure: true,
+        softwareRate: true,
+        softwareTerm: true,
       },
     }),
     getServiceTypes(organizationId),
   ]);
 
   if (!quote) notFound();
+
+  // Suppliers already on a line are fetched back even if they have since
+  // stopped being distributors, so the picker can offer the linked one.
+  const suppliers = await loadDistributorCompanies(
+    organizationId,
+    quote.lineItems
+      .map((item) => item.supplierCompanyId)
+      .filter((value): value is string => Boolean(value)),
+  );
 
   const publicPath = `/q/${quote.publicToken}`;
 
@@ -160,8 +173,13 @@ export default async function QuoteBuilderPage({
               unitPriceCents: item.unitPriceCents,
               tag: item.tag,
               serviceType: item.serviceType,
+              supplierCompanyId: item.supplierCompanyId,
+              unitOfMeasure: item.unitOfMeasure,
+              softwareRate: item.softwareRate,
+              softwareTermMonths: item.softwareTermMonths,
             }))}
             serviceTypes={serviceTypes}
+            suppliers={suppliers}
           />
         </Card>
 

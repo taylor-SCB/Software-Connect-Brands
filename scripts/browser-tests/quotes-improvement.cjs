@@ -179,6 +179,172 @@ let context;
     "ids changed across a reload-and-save",
   );
 
+  /* ---------------------------------------------------------------- *
+   * W6 — "Save as product?", ticked by default on a hand-typed line.
+   * ---------------------------------------------------------------- */
+  log("a hand-typed line saves itself into Products, ticked by default");
+  // The two lines typed above already became products — that is the
+  // feature, ticked by default — so this counts the change, not the total.
+  const productsBefore = (
+    await sql(`SELECT count(*)::int AS n FROM "Product" WHERE "organizationId"=$1`, [org])
+  ).rows[0].n;
+  assert.equal(productsBefore, 2, "the two hand-typed lines above should already be in the catalog");
+
+  await page.reload();
+  await page.getByRole("button", { name: "Blank line" }).click();
+  const saveAsProduct = page.getByLabel("Line 3 save as product", { exact: true });
+  assert.equal(await saveAsProduct.isChecked(), true, "Save as product? defaults to ticked");
+  await page.getByLabel("Line 3 product", { exact: true }).fill("Site survey");
+  await page.getByLabel("Line 3 unit value", { exact: true }).fill("300.00");
+  await page.getByLabel("Line 3 tag", { exact: true }).selectOption("LABOR");
+  await page.getByLabel("Line 3 unit", { exact: true }).selectOption("PER_HOUR");
+  await saveLines(page);
+
+  const made = await sql(
+    `SELECT id, name, "unitPriceCents", "defaultTag", "unitOfMeasure" FROM "Product"
+      WHERE "organizationId"=$1 AND name='Site survey'`,
+    [org],
+  );
+  assert.equal(made.rows.length, 1, "one product created from the typed line");
+  assert.equal(made.rows[0].unitPriceCents, 30000);
+  assert.equal(made.rows[0].defaultTag, "LABOR");
+  assert.equal(made.rows[0].unitOfMeasure, "PER_HOUR", "the unit came across too");
+
+  const linkedProduct = await sql(
+    `SELECT "productId" FROM "QuoteLineItem" WHERE "quoteId"='quo_qi' AND name='Site survey'`,
+  );
+  assert.equal(linkedProduct.rows[0].productId, made.rows[0].id, "the line points at the new product");
+
+  log("re-saving does not make a second copy of the same product");
+  await page.getByLabel("Line 3 quantity", { exact: true }).fill("6");
+  await saveLines(page);
+  const stillOne = await sql(`SELECT count(*)::int AS n FROM "Product" WHERE "organizationId"=$1`, [org]);
+  assert.equal(stillOne.rows[0].n, productsBefore + 1, "a re-save duplicated the product");
+
+  log("unticking it leaves the catalog alone");
+  await page.getByRole("button", { name: "Blank line" }).click();
+  await page.getByLabel("Line 4 save as product", { exact: true }).uncheck();
+  await page.getByLabel("Line 4 product", { exact: true }).fill("One-off crane hire");
+  await page.getByLabel("Line 4 unit value", { exact: true }).fill("900.00");
+  await saveLines(page);
+  const afterUntick = await sql(`SELECT count(*)::int AS n FROM "Product" WHERE "organizationId"=$1`, [org]);
+  assert.equal(afterUntick.rows[0].n, productsBefore + 1, "an unticked line was still added to the catalog");
+
+  /* ---------------------------------------------------------------- *
+   * W7 — software unit, billing and term, with the Term Total readout.
+   * ---------------------------------------------------------------- */
+  log("a software line carries unit, billing and term, and shows a Term Total");
+  await page.getByRole("button", { name: "Blank line" }).click();
+  await page.getByLabel("Line 5 product", { exact: true }).fill("Cloud licences");
+  await page.getByLabel("Line 5 quantity", { exact: true }).fill("120");
+  await page.getByLabel("Line 5 unit value", { exact: true }).fill("50.00");
+  await page.getByLabel("Line 5 tag", { exact: true }).selectOption("SOFTWARE");
+  await page.getByLabel("Line 5 unit", { exact: true }).selectOption("PER_DEVICE");
+  await page.getByLabel("Line 5 billing", { exact: true }).selectOption("PER_MONTH");
+  await page.getByLabel("Line 5 term years", { exact: true }).fill("3");
+  await saveLines(page);
+
+  const software = await sql(
+    `SELECT "unitOfMeasure","softwareRate","softwareTermMonths" FROM "QuoteLineItem"
+      WHERE "quoteId"='quo_qi' AND name='Cloud licences'`,
+  );
+  assert.equal(software.rows[0].unitOfMeasure, "PER_DEVICE");
+  assert.equal(software.rows[0].softwareRate, "PER_MONTH");
+  assert.equal(software.rows[0].softwareTermMonths, 36, "3 years stored as 36 months");
+
+  // $50 x 120 devices x 36 months = $216,000. The line total stays $6,000.
+  const termTotal = page.getByTestId("line-term-total");
+  await termTotal.first().waitFor();
+  assert.match(
+    (await termTotal.first().innerText()).replace(/\s+/g, " "),
+    /216,000/,
+    "Term Total should read $216,000",
+  );
+  await shot(page, "02-software-term-total");
+
+  log("switching the tag away from Software clears its unit, billing and term");
+  await page.getByLabel("Line 5 tag", { exact: true }).selectOption("MATERIALS");
+  await saveLines(page);
+  const cleared = await sql(
+    `SELECT "unitOfMeasure","softwareRate","softwareTermMonths" FROM "QuoteLineItem"
+      WHERE "quoteId"='quo_qi' AND name='Cloud licences'`,
+  );
+  assert.equal(cleared.rows[0].softwareRate, null, "software rate should have been cleared");
+  assert.equal(cleared.rows[0].softwareTermMonths, null, "software term should have been cleared");
+  assert.equal(cleared.rows[0].unitOfMeasure, null, "a Software unit is not legal on a Materials line");
+
+  /* ---------------------------------------------------------------- *
+   * W4 + W5 — Supplier / Contractor, and Distributor as a company type.
+   * ---------------------------------------------------------------- */
+  log("add a distributor from inside a line and pick it as the supplier");
+  await page.getByLabel("Line 1 supplier", { exact: true }).selectOption("__new__");
+  await page.getByLabel("Line 1 supplier new name", { exact: true }).fill("Gulf Supply");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByLabel("Line 1 supplier", { exact: true }).waitFor();
+  await saveLines(page);
+
+  const supplierCompany = await sql(
+    `SELECT id, "companyTypes", industries FROM "Company" WHERE "organizationId"=$1 AND name='Gulf Supply'`,
+    [org],
+  );
+  assert.equal(supplierCompany.rows.length, 1, "the supplier was created as a company");
+  assert.ok(
+    supplierCompany.rows[0].companyTypes.includes("Distributor"),
+    "the company is tagged Distributor",
+  );
+
+  const bridged = await sql(
+    `SELECT "companyId" FROM "Distributor" WHERE "organizationId"=$1 AND name='Gulf Supply'`,
+    [org],
+  );
+  assert.equal(bridged.rows.length, 1, "the matching Distributor record was created");
+  assert.equal(
+    bridged.rows[0].companyId,
+    supplierCompany.rows[0].id,
+    "the Distributor and the Company are linked, not two separate records",
+  );
+
+  const onLine = await sql(
+    `SELECT "supplierCompanyId" FROM "QuoteLineItem" WHERE id=$1`,
+    [firstId],
+  );
+  assert.equal(onLine.rows[0].supplierCompanyId, supplierCompany.rows[0].id, "the line stored its supplier");
+
+  log("Distributor is in the workspace's company-type pick list");
+  const typeOption = await sql(
+    `SELECT name FROM "CompanyTypeOption" WHERE "organizationId"=$1 AND name='Distributor'`,
+    [org],
+  );
+  assert.equal(typeOption.rows.length, 1, "Distributor should be a real pick-list option");
+
+  log("the supplier survives an unrelated edit rather than being re-pointed");
+  await page.reload();
+  await page.getByLabel("Line 1 quantity", { exact: true }).fill("5");
+  await saveLines(page);
+  const stillLinked = await sql(`SELECT "supplierCompanyId" FROM "QuoteLineItem" WHERE id=$1`, [firstId]);
+  assert.equal(
+    stillLinked.rows[0].supplierCompanyId,
+    supplierCompany.rows[0].id,
+    "an unrelated edit silently changed the line's supplier",
+  );
+
+  /* ---------------------------------------------------------------- *
+   * The leak test: the supplier must not reach the customer's copy.
+   * ---------------------------------------------------------------- */
+  log("the supplier appears nowhere on the public quote");
+  await sql(`UPDATE "Quote" SET status='SENT' WHERE id='quo_qi'`);
+  const publicPage = await context.newPage();
+  await publicPage.goto(`${BASE}/q/tok_quo_qi_0123456789`);
+  await publicPage.getByText("Install labor").first().waitFor();
+  const html = await publicPage.content();
+  assert.ok(!html.includes("Gulf Supply"), "the supplier's NAME reached the customer's copy");
+  assert.ok(
+    !html.includes(supplierCompany.rows[0].id),
+    "the supplier's ID reached the customer's copy",
+  );
+  await shot(publicPage, "03-public-quote-no-supplier");
+  await publicPage.close();
+
   console.log("\nAll steps passed.");
   await context.close();
   await browser.close();
