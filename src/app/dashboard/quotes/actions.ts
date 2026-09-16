@@ -17,7 +17,7 @@ import {
 } from "@/lib/constants";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
-import { computeSchedule, isoToDate } from "@/lib/payments";
+import { computeSchedule, dateToIso, isoToDate } from "@/lib/payments";
 import { computeQuoteTotals } from "@/lib/quote-math";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -213,6 +213,15 @@ const lineItemSchema = z.object({
 
 export type LineItemInput = z.infer<typeof lineItemSchema>;
 
+// A quote line stores a term in plain months; a Product counts periods of
+// whatever its rate says. "Pay in full" is one period however long it runs.
+function softwareTermPeriods(rate: string, months: number | null | undefined): number | null {
+  if (!months || months <= 0) return null;
+  if (rate === "PER_TERM") return 1;
+  const periods = rate === "PER_YEAR" ? Math.round(months / 12) : months;
+  return periods >= 1 && periods <= 1200 ? periods : null;
+}
+
 // What a saved row came back as. The editor folds these into its state so
 // a row created by this save carries its stored id from now on; without
 // that the next save sees no id, deletes the row and creates a new one —
@@ -319,12 +328,19 @@ export async function saveLineItems(
         } else {
           // Product has no unique constraint on name, so without this a
           // re-save would make a twin every time.
-          const existing = await tx.product.findFirst({
-            where: { organizationId, name: { equals: productName, mode: "insensitive" } },
-            select: { id: true },
-          });
-          if (existing) {
-            productId = existing.id;
+          //
+          // Compared with lower() rather than Prisma's insensitive equals:
+          // that compiles to ILIKE, which reads % and _ in the name as
+          // wildcards — so a line called "3% Fee" would silently attach
+          // itself to an existing "3% Card Processing Fee".
+          const existing = await tx.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "Product"
+             WHERE "organizationId" = ${organizationId}
+               AND lower("name") = lower(${productName})
+             ORDER BY "createdAt" ASC
+             LIMIT 1`;
+          if (existing.length > 0) {
+            productId = existing[0].id;
           } else {
             const created = await tx.product.create({
               data: {
@@ -336,7 +352,17 @@ export async function saveLineItems(
                 defaultTag: item.tag,
                 serviceType: item.serviceType || null,
                 unitOfMeasure: unit,
-                softwareRate: isSoftware ? item.softwareRate ?? null : null,
+                // The catalog only shows a rate and term beside a software
+                // UNIT, so writing a rate without one makes it invisible
+                // there and the product's own next save wipes it. Carry
+                // both or neither. The line stores plain months; the
+                // catalog counts periods of whatever the rate says.
+                ...(isSoftware && unit && item.softwareRate
+                  ? {
+                      softwareRate: item.softwareRate,
+                      softwareTerm: softwareTermPeriods(item.softwareRate, item.softwareTermMonths),
+                    }
+                  : {}),
                 active: true,
               },
               select: { id: true },
@@ -372,6 +398,46 @@ export async function saveLineItems(
           ? await tx.quoteLineItem.update({ where: { id: item.id }, data, select })
           : await tx.quoteLineItem.create({ data: { quoteId: quote.id, ...data }, select });
       saved.push({ uid: item.uid ?? null, id: row.id, productId: row.productId });
+    }
+
+    // The payment rows are priced against the lines, so changing the lines
+    // has to re-price them in the same breath. Without this the stored
+    // amounts stay frozen while the quote total moves, and the customer's
+    // copy prints a total and a payment schedule that disagree — the
+    // sender never sees it, because their own table recomputes live.
+    const payments = await tx.quotePayment.findMany({
+      where: { quoteId: quote.id },
+      orderBy: { position: "asc" },
+      select: { id: true, label: true, kind: true, percent: true, amountCents: true, dueOn: true, terms: true },
+    });
+    if (payments.length > 0) {
+      const totalCents = computeQuoteTotals(
+        parsed.data.map((item) => ({
+          quantity: item.quantity,
+          unitPriceCents: item.unitPriceCents,
+          tag: item.tag,
+        })),
+      ).totalCents;
+      const repriced = computeSchedule(
+        payments.map((row) => ({
+          label: row.label,
+          kind: row.kind,
+          percent: row.percent,
+          // A fixed amount is a number the sender typed; it stays put.
+          fixedCents: row.kind === "FIXED" ? row.amountCents : null,
+          dueOn: dateToIso(row.dueOn),
+          terms: row.terms,
+        })),
+        totalCents,
+      );
+      for (const [index, row] of repriced.rows.entries()) {
+        const stored = payments[index];
+        if (!stored || stored.amountCents === row.amountCents) continue;
+        await tx.quotePayment.update({
+          where: { id: stored.id },
+          data: { amountCents: row.amountCents },
+        });
+      }
     }
 
     await tx.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } });

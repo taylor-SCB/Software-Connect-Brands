@@ -215,6 +215,9 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         position,
       }));
       const totalCents = contractTotalCents(lineItems);
+      // What the quote's own payment rows were priced against, so a fixed
+      // amount can carry over as the share of the deal it represents.
+      const quoteTotalCents = contractTotalCents(quote.lineItems);
 
       // A preset the person picked for this column wins — they asked for
       // it here. Otherwise the quote's own table carries over, so the
@@ -233,9 +236,18 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         : fromQuote
           ? quote.payments.map((row) => ({
               label: row.label,
-              kind: row.kind,
-              percent: row.percent,
-              fixedCents: row.kind === "FIXED" ? row.amountCents : null,
+              // A fixed amount from the quote is a share of the WHOLE
+              // quote, so it carries as that share rather than as the
+              // number itself. A $5,000 deposit on a $10,000 quote must
+              // not land whole on a $2,000 slice of it: that made a
+              // deposit bigger than the contract and a negative balance
+              // row, printed on the document the customer signs.
+              kind: row.kind === "FIXED" && quoteTotalCents > 0 ? "PERCENT" : row.kind,
+              percent:
+                row.kind === "FIXED" && quoteTotalCents > 0
+                  ? (row.amountCents / quoteTotalCents) * 100
+                  : row.percent,
+              fixedCents: row.kind === "FIXED" && quoteTotalCents <= 0 ? row.amountCents : null,
               dueOn: dateToIso(row.dueOn),
               terms: row.terms,
             }))
@@ -246,7 +258,11 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         label: row.label,
         kind: row.kind,
         percent: row.kind === "PERCENT" ? row.percent : null,
-        amountCents: row.amountCents,
+        // Never below zero. The two sibling save paths refuse an
+        // over-total schedule outright; this one has no screen to refuse
+        // on, and a negative row would print on the signed document and
+        // then block every later edit of that contract's table.
+        amountCents: Math.max(0, row.amountCents),
         dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
         terms: row.terms ?? null,
         position,

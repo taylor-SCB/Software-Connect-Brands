@@ -294,7 +294,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Total
           </p>
-          <p className="mt-1 font-mono text-3xl font-semibold tabular-nums">
+          <p className="mt-1 font-mono text-3xl font-semibold tabular-nums" data-testid="document-total">
             {formatCents(totals.totalCents)}
           </p>
         </div>
@@ -490,7 +490,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
             <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/50">
               Quote total
             </p>
-            <p className="mt-1 font-mono text-4xl font-semibold tabular-nums text-white">
+            <p className="mt-1 font-mono text-4xl font-semibold tabular-nums text-white" data-testid="document-total">
               {formatCents(totals.totalCents)}
             </p>
           </div>

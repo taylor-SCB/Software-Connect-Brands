@@ -625,6 +625,180 @@ let context;
   );
   await shot(page, "09-contract-amended");
 
+  /* ---------------------------------------------------------------- *
+   * Audit fixes (Sept 16, 2026). Each asserts the exact wrong
+   * behaviour the audit found no longer happens.
+   * ---------------------------------------------------------------- */
+  log("audit fix: changing the lines re-prices the saved payment rows");
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi`);
+  const beforeReprice = await sql(
+    `SELECT id, "amountCents" FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`,
+  );
+  const totalBefore = beforeReprice.rows.reduce((sum, r) => sum + r.amountCents, 0);
+
+  // Double one line's price; the stored schedule must follow.
+  await page.getByLabel("Line 1 unit value", { exact: true }).fill("1100.00");
+  await saveLines(page);
+
+  const lineTotal = (
+    await sql(
+      `SELECT COALESCE(SUM(ROUND(quantity * "unitPriceCents")),0)::int AS total
+         FROM "QuoteLineItem" WHERE "quoteId"='quo_qi'`,
+    )
+  ).rows[0].total;
+  const afterReprice = await sql(
+    `SELECT id, "amountCents" FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`,
+  );
+  assert.deepEqual(
+    afterReprice.rows.map((r) => r.id),
+    beforeReprice.rows.map((r) => r.id),
+    "re-pricing must update the rows, not replace them",
+  );
+  const totalAfter = afterReprice.rows.reduce((sum, r) => sum + r.amountCents, 0);
+  assert.notEqual(totalAfter, totalBefore, "the stored schedule did not move with the lines");
+  assert.equal(
+    totalAfter,
+    lineTotal,
+    "the customer's copy would print a total and a payment schedule that disagree",
+  );
+
+  // And the customer's copy agrees with itself.
+  const check = await context.newPage();
+  await check.goto(`${BASE}/q/tok_quo_qi_0123456789`);
+  await check.getByTestId("document-payments").waitFor();
+  assert.equal(
+    (await check.getByTestId("document-payments-total").innerText()).replace(/\s/g, ""),
+    (await check.getByTestId("document-total").innerText()).replace(/\s/g, ""),
+    "the two totals on the customer's copy disagree",
+  );
+  await shot(check, "10-audit-reprice");
+  await check.close();
+
+  log("audit fix: a product name containing % is not matched as a wildcard");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,"unitPriceCents","defaultTag",active,"updatedAt")
+     VALUES ('prd_pct','${org}','3% Card Processing Fee',1000,'MATERIALS',true,now())`,
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Blank line" }).click();
+  const pctLine = (await page.getByLabel(/^Line \d+ product$/).count());
+  await page.getByLabel(`Line ${pctLine} product`, { exact: true }).fill("3% Fee");
+  await page.getByLabel(`Line ${pctLine} unit value`, { exact: true }).fill("25.00");
+  await saveLines(page);
+
+  const pctProducts = await sql(
+    `SELECT id, name FROM "Product" WHERE "organizationId"=$1 AND name IN ('3% Fee','3% Card Processing Fee') ORDER BY name`,
+    [org],
+  );
+  assert.equal(pctProducts.rows.length, 2, "'3% Fee' was swallowed by the existing '3% ...' product");
+  const pctLineRow = await sql(
+    `SELECT "productId" FROM "QuoteLineItem" WHERE "quoteId"='quo_qi' AND name='3% Fee'`,
+  );
+  const ownProduct = pctProducts.rows.find((r) => r.name === "3% Fee");
+  assert.equal(
+    pctLineRow.rows[0].productId,
+    ownProduct.id,
+    "the line was attached to the wrong catalog product",
+  );
+
+  log("audit fix: a supplier whose name differs only by case does not duplicate or crash");
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,"companyTypes",industries,"updatedAt")
+     VALUES ('cmp_adi','${org}','ADI Global',ARRAY['Distributor'],ARRAY['Service Provider'],now())`,
+  );
+  await sql(
+    `INSERT INTO "Distributor" (id,"organizationId",name,"companyId","updatedAt")
+     VALUES ('dst_adi','${org}','ADI global','cmp_adi',now())`,
+  );
+  await page.reload();
+  await page.getByLabel("Line 1 supplier", { exact: true }).selectOption("__new__");
+  await page.getByLabel("Line 1 supplier new name", { exact: true }).fill("ADI Global");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByLabel("Line 1 supplier", { exact: true }).waitFor();
+
+  const adiDistributors = await sql(
+    `SELECT id, "companyId" FROM "Distributor" WHERE "organizationId"=$1 AND lower(name)='adi global'`,
+    [org],
+  );
+  assert.equal(adiDistributors.rows.length, 1, "a second Distributor row was created for one business");
+  assert.equal(adiDistributors.rows[0].id, "dst_adi", "the existing bridged record should have been reused");
+  const adiCompanies = await sql(
+    `SELECT count(*)::int AS n FROM "Company" WHERE "organizationId"=$1 AND lower(name)='adi global'`,
+    [org],
+  );
+  assert.equal(adiCompanies.rows[0].n, 1, "a duplicate Company was created");
+
+  log("audit fix: a refused Quote details save keeps a field the user cleared");
+  await page.locator("#terms").fill("Quote valid 30 days.");
+  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByText("Quote details saved", { exact: true }).waitFor();
+  await page.locator("#terms").fill("");
+  await page.getByLabel("Quote title").fill("y".repeat(200));
+  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByText(/at most 160|too big|Too long/i).waitFor();
+  assert.equal(
+    await page.locator("#terms").inputValue(),
+    "",
+    "a refused save put deleted Terms text back, which the next save would write",
+  );
+  await page.getByLabel("Quote title").fill("Rekey quote");
+  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByText("Quote details saved", { exact: true }).waitFor();
+
+  log("audit fix: a fixed-dollar quote row carries into a smaller contract without going negative");
+  await sql(`DELETE FROM "QuotePayment" WHERE "quoteId"='quo_qi'`);
+  const bigTotal = (
+    await sql(
+      `SELECT COALESCE(SUM(ROUND(quantity * "unitPriceCents")),0)::int AS total
+         FROM "QuoteLineItem" WHERE "quoteId"='quo_qi'`,
+    )
+  ).rows[0].total;
+  await sql(
+    `INSERT INTO "QuotePayment" (id,"quoteId","organizationId",label,kind,"amountCents",position,"updatedAt")
+     VALUES ('qp_fix','quo_qi','${org}','Deposit','FIXED',$1,0,now()),
+            ('qp_bal','quo_qi','${org}','Balance','BALANCE',0,1,now())`,
+    [Math.round(bigTotal * 0.5)],
+  );
+
+  await page.goto(`${BASE}/dashboard/contracts/tracker?dealId=deal_qi&quoteId=quo_qi`);
+  await page.getByTestId("tracker-grid").waitFor();
+  // Tick only ONE row, so the column is worth far less than the deposit.
+  const oneBox = page.getByRole("checkbox", { name: /^Put .* on Contract A$/ }).first();
+  await oneBox.check();
+  await page.getByTestId("create-contracts").click();
+  await page.waitForURL(/created=1/, { timeout: 30000 });
+
+  const smallContract = (
+    await sql(
+      `SELECT c.id FROM "Contract" c WHERE c."organizationId"=$1 ORDER BY c."createdAt" DESC LIMIT 1`,
+      [org],
+    )
+  ).rows[0];
+  const smallRows = await sql(
+    `SELECT label, "amountCents" FROM "ContractPayment" WHERE "contractId"=$1 ORDER BY position`,
+    [smallContract.id],
+  );
+  assert.ok(smallRows.rows.length > 0, "the contract should have carried the quote's rows");
+  for (const row of smallRows.rows) {
+    assert.ok(
+      row.amountCents >= 0,
+      `'${row.label}' came out at ${row.amountCents} — a negative row would print on the signed document`,
+    );
+  }
+  const smallTotal = (
+    await sql(
+      `SELECT COALESCE(SUM(ROUND(quantity * "unitPriceCents")),0)::int AS total
+         FROM "ContractLineItem" WHERE "contractId"=$1`,
+      [smallContract.id],
+    )
+  ).rows[0].total;
+  assert.equal(
+    smallRows.rows.reduce((sum, r) => sum + r.amountCents, 0),
+    smallTotal,
+    "the carried schedule should tie out to this contract's own total",
+  );
+  await shot(page, "11-audit-split-no-negative");
+
   console.log("\nAll steps passed.");
   await context.close();
   await browser.close();

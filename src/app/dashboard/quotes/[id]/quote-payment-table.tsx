@@ -15,6 +15,7 @@ export function QuotePaymentTable({
   hidePaymentTable,
   initialRows,
   today,
+  unsaved = false,
 }: {
   quoteId: string;
   totalCents: number;
@@ -22,8 +23,12 @@ export function QuotePaymentTable({
   hidePaymentTable: boolean;
   initialRows: PaymentTableRowInput[];
   today: string;
+  // True while the rows on screen are the suggested starting table and
+  // nothing has been stored yet.
+  unsaved?: boolean;
 }) {
   const [hidden, setHidden] = useState(hidePaymentTable);
+  const [everSaved, setEverSaved] = useState(!unsaved);
 
   return (
     <PaymentTable
@@ -32,22 +37,35 @@ export function QuotePaymentTable({
       initialRows={initialRows}
       today={today}
       saveLabel="Save payment table"
-      onSave={async (payload) =>
-        saveQuotePaymentSchedule({ quoteId, hidePaymentTable: hidden, ...payload })
-      }
+      onSave={async (payload) => {
+        const result = await saveQuotePaymentSchedule({ quoteId, hidePaymentTable: hidden, ...payload });
+        if (!result.error) setEverSaved(true);
+        return result;
+      }}
       above={
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            checked={hidden}
-            onChange={(event) => setHidden(event.target.checked)}
-            data-testid="hide-payment-table"
-          />
-          <span className="muted">
-            Hide from quote — keep this table off the customer&apos;s copy and the PDF
-          </span>
-        </label>
+        <>
+          {/* These rows are a suggestion until someone saves them. Without
+              saying so, a quote sent straight from this screen reaches the
+              customer with no payment terms at all, while the sender was
+              looking at a complete table. */}
+          {!everSaved && (
+            <p className="text-xs text-[var(--warn)]" data-testid="payment-table-unsaved">
+              Not saved yet — this is a suggested table. The customer sees nothing until you save it.
+            </p>
+          )}
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={hidden}
+              onChange={(event) => setHidden(event.target.checked)}
+              data-testid="hide-payment-table"
+            />
+            <span className="muted">
+              Hide from quote — keep this table off the customer&apos;s copy and the PDF
+            </span>
+          </label>
+        </>
       }
     />
   );

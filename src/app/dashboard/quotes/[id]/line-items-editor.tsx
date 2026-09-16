@@ -183,8 +183,15 @@ export function LineItemsEditor({
     setState({});
   }
 
+  // Applied to whatever the rows are NOW, not to the array captured when
+  // the handler was created. Adding a supplier is a server round trip, and
+  // its callback fires long after: mapping a stale array there replaced the
+  // whole table and threw away anything typed while it ran.
   function updateRow(uid: string, patch: Partial<Row>) {
-    mutate(rows.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+    setRows((current) => current.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+    setDirty(true);
+    editedDuringSave.current = true;
+    setState({});
   }
 
   function addBlankLine() {
@@ -337,6 +344,10 @@ export function LineItemsEditor({
             onChange={(event) => {
               setSplitByService(event.target.checked);
               setDirty(true);
+              // Same as any row edit: a save already in flight was built
+              // before this, so finishing it must not clear "Unsaved
+              // changes" on a toggle it never sent.
+              editedDuringSave.current = true;
             }}
             data-testid="split-by-service-type"
           />

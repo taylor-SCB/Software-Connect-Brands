@@ -203,6 +203,7 @@ export default async function QuoteBuilderPage({
             paymentTerms={quote.paymentTerms ?? ""}
             hidePaymentTable={quote.hidePaymentTable}
             today={today}
+            unsaved={quote.payments.length === 0}
             initialRows={
               // Nothing is written on a page load: an empty table starts
               // from the baseline unsaved, so it is there to edit but only

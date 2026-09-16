@@ -65,8 +65,13 @@ export function QuoteMetaForm({
   // Everyone except whoever is already named as rep or signer.
   const others = users.filter((user) => user.id !== leadSalesRepId && user.id !== contractSignerId);
 
+  // Once a save has been refused, `kept` is the whole truth about what was
+  // in the form: it omits a field that was empty, so a field missing from
+  // it was deliberately cleared and must come back empty. Falling back to
+  // the stored value there put deleted text straight back on the screen,
+  // and the next save would have written it again.
   const was = (field: keyof typeof defaults, fallback: string) =>
-    (state?.kept?.[field] as string | undefined) ?? fallback;
+    state?.kept ? state.kept[field] ?? "" : fallback;
 
   return (
     <form action={formAction} className="space-y-4 p-5">

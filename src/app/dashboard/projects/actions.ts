@@ -616,7 +616,18 @@ export async function orderFromSupplier(
             select: { id: true },
           })
         ).id;
-      await tx.distributor.update({ where: { id: distributor.id }, data: { companyId } });
+      // Distributor.companyId is unique. If another distributor already
+      // holds this company — two suppliers whose names differ only by the
+      // company being renamed — claiming it here would throw and the
+      // purchase order would fail outright. The order is addressed to the
+      // right company either way; only the bridge is missing.
+      const claimed = await tx.distributor.findUnique({
+        where: { companyId },
+        select: { id: true },
+      });
+      if (!claimed) {
+        await tx.distributor.update({ where: { id: distributor.id }, data: { companyId } });
+      }
     }
 
     // Someone to address it to. The distributor's own contact if there is

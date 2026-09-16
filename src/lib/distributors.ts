@@ -125,10 +125,17 @@ export async function linkDistributorCompany(
   // invisible to the supplier picker.
   const typeName = await ensureDistributorTypeName(organizationId);
 
-  const existing = await prisma.company.findFirst({
-    where: { organizationId, name: { equals: name, mode: "insensitive" } },
-    select: { id: true, name: true, companyTypes: true, industries: true },
-  });
+  // lower() rather than Prisma's insensitive equals, which compiles to
+  // ILIKE and would read % and _ in a company name as wildcards.
+  const matches = await prisma.$queryRaw<
+    { id: string; name: string; companyTypes: string[]; industries: string[] }[]
+  >`
+    SELECT "id", "name", "companyTypes", "industries" FROM "Company"
+     WHERE "organizationId" = ${organizationId}
+       AND lower("name") = lower(${name})
+     ORDER BY "createdAt" ASC
+     LIMIT 1`;
+  const existing = matches[0] ?? null;
 
   let companyId: string;
   let companyName: string;
@@ -165,22 +172,47 @@ export async function linkDistributorCompany(
     companyName = created.name;
   }
 
-  // Distributor.companyId is unique, so a company already claimed by a
-  // differently-named distributor must not be re-pointed here — that would
-  // throw and lose the supplier the user was adding. The two records still
-  // exist and still work; they just aren't bridged.
+  // Now the Distributor half. Three cases, in this order, so the pair is
+  // always bridged and a second record is never made for one business:
+  //
+  //  1. The company is already claimed by a distributor — that IS the
+  //     bridge, whatever it is called. Reuse it.
+  //  2. A distributor of this name exists (matched without case, because
+  //     orderFromSupplier leaves each row its own spelling) — point it at
+  //     the company.
+  //  3. Neither — create the pair.
+  //
+  // Distributor.companyId is unique, so case 1 has to come first; and the
+  // name lookup has to be the same case-insensitive one the create would
+  // collide on, or an upsert keyed on the exact name makes a duplicate and
+  // then throws on the unique companyId.
   const claimed = await prisma.distributor.findUnique({
     where: { companyId },
-    select: { id: true, name: true },
-  });
-  const linkable = !claimed || claimed.name.toLowerCase() === companyName.toLowerCase();
-
-  const distributor = await prisma.distributor.upsert({
-    where: { organizationId_name: { organizationId, name: companyName } },
-    create: { organizationId, name: companyName, companyId: linkable ? companyId : null },
-    update: linkable ? { companyId } : {},
     select: { id: true },
   });
+
+  let distributorId: string;
+  if (claimed) {
+    distributorId = claimed.id;
+  } else {
+    const byName = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "Distributor"
+       WHERE "organizationId" = ${organizationId}
+         AND lower("name") = lower(${companyName})
+       ORDER BY "createdAt" ASC
+       LIMIT 1`;
+    if (byName.length > 0) {
+      distributorId = byName[0].id;
+      await prisma.distributor.update({ where: { id: distributorId }, data: { companyId } });
+    } else {
+      const created = await prisma.distributor.create({
+        data: { organizationId, name: companyName, companyId },
+        select: { id: true },
+      });
+      distributorId = created.id;
+    }
+  }
+  const distributor = { id: distributorId };
 
   return { companyId, distributorId: distributor.id, name: companyName };
 }
