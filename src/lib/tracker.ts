@@ -2,9 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { contractHoldsRows, contractTotalCents } from "@/lib/contracts";
 import { pickPrimaryQuote } from "@/lib/deals";
 import { paidCentsOf } from "@/lib/money";
-import type { SchedulePreset } from "@/lib/payments";
+import { dateToIso, type SchedulePreset } from "@/lib/payments";
 
-// Everything the Deal Tracker page needs for one deal: the quote and its
+// Everything the Contract Coordinator page needs for one deal: the quote and its
 // rows (with which contract each row is already on), the contracts made
 // off the deal so far, and the pick lists the grid's column headers use.
 
@@ -91,6 +91,13 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           title: true,
           status: true,
           updatedAt: true,
+          paymentTerms: true,
+          // The terms the customer was already shown, so a contract split
+          // off this quote can start from them rather than a preset.
+          payments: {
+            orderBy: { position: "asc" },
+            select: { id: true, label: true, kind: true, percent: true, amountCents: true, dueOn: true, terms: true },
+          },
           lineItems: {
             orderBy: { position: "asc" },
             select: {
@@ -165,6 +172,17 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
       number: quote.number,
       title: quote.title,
       status: quote.status,
+      paymentTerms: quote.paymentTerms,
+      // Dates travel as yyyy-mm-dd: this crosses to a client component,
+      // and a Date would have to be serialised anyway.
+      payments: quote.payments.map((row) => ({
+        label: row.label,
+        kind: row.kind,
+        percent: row.percent,
+        amountCents: row.amountCents,
+        dueOn: dateToIso(row.dueOn),
+        terms: row.terms,
+      })),
       lineItems: quote.lineItems.map((item) => ({
         id: item.id,
         name: item.name,

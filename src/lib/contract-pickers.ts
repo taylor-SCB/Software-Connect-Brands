@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { loadWorkspaceUsers } from "@/lib/workspace-users";
 
 // Everything the Customer Information column and the template form need
 // to offer as choices: customers, their deals and quotes, the people who
@@ -22,11 +23,7 @@ export async function loadContractPickers(organizationId: string) {
       orderBy: { updatedAt: "desc" },
       select: { id: true, number: true, title: true, dealId: true, status: true, updatedAt: true },
     }),
-    prisma.user.findMany({
-      where: { organizationId },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, email: true },
-    }),
+    loadWorkspaceUsers(organizationId),
     prisma.contractTypeOption.findMany({
       where: { organizationId },
       orderBy: { createdAt: "asc" },

@@ -15,7 +15,7 @@ import { TrackerContracts } from "./tracker-contracts";
 
 export type TrackerSearchParams = Promise<{ dealId?: string; quoteId?: string; created?: string }>;
 
-// The Deal Tracker. Lives under Pipeline and under Contracts — same page,
+// The Contract Coordinator. Lives under Pipeline and under Contracts — same page,
 // two addresses — so it is one click away from either side of the job.
 // Blank until a deal is picked; then the split grid for its quote and
 // the contracts already made from it.
@@ -62,7 +62,7 @@ export async function DealTrackerPage({
     <div>
       <PageHeader
         eyebrow={eyebrow}
-        title="Deal Tracker"
+        title="Contract Coordinator"
         subtitle="Split a deal's quote into the contracts it needs — a Sales Order for the customer, a Purchase Order for the supplier — and track each one to signature and payment."
       />
 

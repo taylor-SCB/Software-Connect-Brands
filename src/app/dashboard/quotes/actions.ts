@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { parseForm, type ActionState } from "@/lib/forms";
+import { parseForm, keepFields, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
 import {
   LINE_ITEM_TAGS,
@@ -34,7 +34,7 @@ async function nextQuoteNumber(organizationId: string) {
 }
 
 export async function createQuote(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
     z.object({
@@ -77,6 +77,9 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
       template: parsed.data.template,
       number: await nextQuoteNumber(organizationId),
       publicToken: publicToken(),
+      // Whoever wrote it owns it until someone says otherwise, so a
+      // one-person workspace never has to fill this in.
+      leadSalesRepId: userId,
     },
   });
 
@@ -86,8 +89,17 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
   redirect(`/dashboard/quotes/${quote.id}`);
 }
 
+const QUOTE_META_FIELDS = ["title", "template", "introNote", "terms", "validUntil"] as const;
+
 export async function updateQuoteMeta(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
+
+  // React empties a form whose action is a server function, including when
+  // that function refuses, so what was typed has to be handed back with
+  // every error. The three people fields are held in the form's own state
+  // instead: this can only carry one value per field, so it would lose a
+  // multi-select and would put a deliberately cleared name back.
+  const kept = keepFields(formData, QUOTE_META_FIELDS);
 
   const parsed = parseForm(
     z.object({
@@ -97,6 +109,8 @@ export async function updateQuoteMeta(_prev: ActionState, formData: FormData): P
       introNote: z.string().trim().max(4000).optional(),
       terms: z.string().trim().max(4000).optional(),
       validUntil: z.string().trim().optional(),
+      leadSalesRepId: z.string().trim().optional(),
+      contractSignerId: z.string().trim().optional(),
     }),
     {
       quoteId: formData.get("quoteId"),
@@ -105,9 +119,17 @@ export async function updateQuoteMeta(_prev: ActionState, formData: FormData): P
       introNote: formData.get("introNote") ?? undefined,
       terms: formData.get("terms") ?? undefined,
       validUntil: formData.get("validUntil") ?? undefined,
+      leadSalesRepId: formData.get("leadSalesRepId") ?? undefined,
+      contractSignerId: formData.get("contractSignerId") ?? undefined,
     },
   );
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return { error: parsed.error, kept };
+
+  // Read outside parseForm, which takes one value per field.
+  const teamUserIds = formData
+    .getAll("teamUserIds")
+    .filter((value): value is string => typeof value === "string" && value.trim() !== "")
+    .slice(0, 200);
 
   // A date input gives "2026-09-30"; parse as UTC noon so the displayed
   // day can't drift backwards for viewers behind UTC.
@@ -115,9 +137,31 @@ export async function updateQuoteMeta(_prev: ActionState, formData: FormData): P
     ? new Date(`${parsed.data.validUntil}T12:00:00.000Z`)
     : null;
   if (validUntil && Number.isNaN(validUntil.getTime())) {
-    return { error: "That expiry date isn't valid" };
+    return { error: "That expiry date isn't valid", kept };
   }
 
+  // These arrive as hidden inputs, so anyone could post any id. Keep only
+  // the ones that really belong to this workspace; a name that doesn't
+  // survive becomes nobody rather than an error, the way a line's product
+  // and supplier already behave.
+  const wanted = [parsed.data.leadSalesRepId, parsed.data.contractSignerId, ...teamUserIds].filter(
+    (value): value is string => Boolean(value),
+  );
+  const owned = wanted.length
+    ? new Set(
+        (
+          await prisma.user.findMany({
+            where: { organizationId, id: { in: wanted } },
+            select: { id: true },
+          })
+        ).map((user) => user.id),
+      )
+    : new Set<string>();
+  const ownedOrNull = (id: string | undefined) => (id && owned.has(id) ? id : null);
+
+  // All three are plain columns, so this stays an updateMany with the
+  // workspace in the WHERE clause. A join table would force a bare update
+  // by id, which drops the tenant check.
   const result = await prisma.quote.updateMany({
     where: { id: parsed.data.quoteId, organizationId },
     data: {
@@ -126,9 +170,12 @@ export async function updateQuoteMeta(_prev: ActionState, formData: FormData): P
       introNote: parsed.data.introNote ?? "",
       terms: parsed.data.terms ?? "",
       validUntil,
+      leadSalesRepId: ownedOrNull(parsed.data.leadSalesRepId),
+      contractSignerId: ownedOrNull(parsed.data.contractSignerId),
+      teamUserIds: [...new Set(teamUserIds.filter((id) => owned.has(id)))],
     },
   });
-  if (result.count === 0) return { error: "Quote not found" };
+  if (result.count === 0) return { error: "Quote not found", kept };
 
   revalidatePath(`/dashboard/quotes/${parsed.data.quoteId}`);
   revalidatePath("/dashboard/quotes");

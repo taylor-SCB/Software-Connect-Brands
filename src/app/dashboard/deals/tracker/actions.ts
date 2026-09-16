@@ -12,6 +12,7 @@ import { loadMergeContext } from "@/lib/merge-data";
 import { canUserSend, contractTotalCents, MAX_TRACKER_COLUMNS } from "@/lib/contracts";
 import {
   computeSchedule,
+  dateToIso,
   isoToDate,
   presetRows,
   type ScheduleRowInput,
@@ -90,6 +91,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         orderBy: { position: "asc" },
         include: { product: { select: { costCents: true } } },
       },
+      // The terms the customer was already shown. Each contract starts
+      // from these rather than a preset, so what was quoted is what gets
+      // sent unless someone deliberately changes it.
+      payments: { orderBy: { position: "asc" } },
     },
   });
   if (!quote) return { error: "That quote isn't on this deal" };
@@ -211,8 +216,12 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       }));
       const totalCents = contractTotalCents(lineItems);
 
-      // Payment schedule from the preset, priced against this contract's
-      // own total.
+      // A preset the person picked for this column wins — they asked for
+      // it here. Otherwise the quote's own table carries over, so the
+      // customer is asked to pay what they were quoted. Percentages
+      // re-price against this contract's total, not the whole quote's,
+      // since a quote can split into as many as five contracts.
+      const fromQuote = !column.schedule && quote.payments.length > 0;
       const scheduleInput: ScheduleRowInput[] = column.schedule
         ? presetRows({
             preset: column.schedule.preset,
@@ -221,7 +230,16 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
             count: column.schedule.count,
             unit: column.schedule.unit,
           })
-        : [];
+        : fromQuote
+          ? quote.payments.map((row) => ({
+              label: row.label,
+              kind: row.kind,
+              percent: row.percent,
+              fixedCents: row.kind === "FIXED" ? row.amountCents : null,
+              dueOn: dateToIso(row.dueOn),
+              terms: row.terms,
+            }))
+          : [];
       const schedule = computeSchedule(scheduleInput, totalCents);
       const payments = schedule.rows.map((row, position) => ({
         organizationId,
@@ -230,6 +248,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         percent: row.kind === "PERCENT" ? row.percent : null,
         amountCents: row.amountCents,
         dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
+        terms: row.terms ?? null,
         position,
       }));
 
@@ -268,7 +287,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
           body: renderMergeFields(template.body, context),
           publicToken: publicToken(),
           senderSignerName: signerName,
-          paymentTerms,
+          paymentTerms: fromQuote ? paymentTerms ?? quote.paymentTerms : paymentTerms,
+          // Remembered so the schedule can say it came from the quote, and
+          // say so again if someone changes it afterwards.
+          scheduleFromQuote: fromQuote,
           lineItems: { create: lineItems },
           payments: { create: payments },
         },
@@ -447,10 +469,21 @@ export async function savePaymentSchedule(input: {
     select: {
       status: true,
       dealId: true,
+      scheduleFromQuote: true,
+      scheduleAmendedAt: true,
       lineItems: { select: { quantity: true, unitPriceCents: true } },
       payments: {
         orderBy: { position: "asc" },
-        select: { id: true, label: true, payments: { select: { amountCents: true } } },
+        select: {
+          id: true,
+          label: true,
+          kind: true,
+          percent: true,
+          amountCents: true,
+          dueOn: true,
+          terms: true,
+          payments: { select: { amountCents: true } },
+        },
       },
     },
   });
@@ -489,10 +522,32 @@ export async function savePaymentSchedule(input: {
 
   const saved: { uid: number; id: string }[] = [];
 
+  // A schedule that came from the quote gets marked once it stops matching
+  // what the customer was quoted, so the difference is visible on the
+  // document rather than silent. Only the first change stamps it.
+  const changedFromQuote =
+    contract.scheduleFromQuote &&
+    !contract.scheduleAmendedAt &&
+    (contract.payments.length !== schedule.rows.length ||
+      schedule.rows.some((row, index) => {
+        const before = contract.payments[index];
+        if (!before) return true;
+        return (
+          before.label !== row.label ||
+          before.kind !== row.kind ||
+          before.amountCents !== row.amountCents ||
+          (before.terms ?? "") !== (parsed.data.rows[index]?.terms?.trim() || "") ||
+          dateToIso(before.dueOn) !== row.dueOn
+        );
+      }));
+
   await prisma.$transaction(async (tx) => {
     await tx.contract.updateMany({
       where: { id: parsed.data.contractId, organizationId },
-      data: { paymentTerms: parsed.data.paymentTerms || null },
+      data: {
+        paymentTerms: parsed.data.paymentTerms || null,
+        ...(changedFromQuote ? { scheduleAmendedAt: new Date() } : {}),
+      },
     });
     if (removed.length) {
       await tx.contractPayment.deleteMany({

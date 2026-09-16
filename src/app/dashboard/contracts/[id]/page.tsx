@@ -251,6 +251,15 @@ export default async function ContractDetailPage({
                 totalCents={totalCents}
                 paymentTerms={contract.paymentTerms ?? ""}
                 today={today}
+                note={
+                  contract.scheduleFromQuote ? (
+                    <p className="faint text-xs" data-testid="schedule-origin">
+                      {contract.scheduleAmendedAt
+                        ? `Amended from original quote · ${formatDate(contract.scheduleAmendedAt, timeZone)}`
+                        : "Carried over from the quote."}
+                    </p>
+                  ) : null
+                }
                 initialRows={contract.payments.map((payment) => ({
                   id: payment.id,
                   label: payment.label,
@@ -295,7 +304,7 @@ export default async function ContractDetailPage({
               </div>
               <DeleteRecordForm action={deleteContract} hiddenName="contractId" hiddenValue={contract.id} label="Delete contract" />
               <p className="faint px-5 pb-4 text-xs">
-                Cancelling keeps the record and frees its rows on the Deal Tracker. Deleting removes it — unless money has been recorded on it.
+                Cancelling keeps the record and frees its rows on the Contract Coordinator. Deleting removes it — unless money has been recorded on it.
               </p>
             </Card>
           )}
@@ -357,7 +366,7 @@ export default async function ContractDetailPage({
                       </Link>{" "}
                       <StatusBadge status={contract.deal.stage} />
                       <Link href={`/dashboard/contracts/tracker?dealId=${contract.deal.id}`} className="faint ml-2 inline-flex items-center gap-1 text-xs hover:text-[var(--text)]">
-                        <IconClock size={11} /> Deal Tracker
+                        <IconClock size={11} /> Contract Coordinator
                       </Link>
                     </>
                   ) : (
@@ -401,7 +410,7 @@ export default async function ContractDetailPage({
               {cancelled ? (
                 <p className="muted text-sm">
                   Cancelled{contract.cancelledAt ? ` ${formatDate(contract.cancelledAt, timeZone)}` : ""}. Its rows are open again on the
-                  Deal Tracker. Reopen it below to send it after all.
+                  Contract Coordinator. Reopen it below to send it after all.
                 </p>
               ) : contract.status === "DRAFT" ? (
                 canSend ? (

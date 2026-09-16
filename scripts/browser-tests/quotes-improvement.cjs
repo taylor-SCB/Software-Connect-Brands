@@ -475,7 +475,155 @@ let context;
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   await publicPage.reload();
   await publicPage.getByTestId("document-payments").waitFor();
+
+  /* ---------------------------------------------------------------- *
+   * W12 — lead sales rep, contract signer, other team members.
+   * ---------------------------------------------------------------- */
+  log("the lead sales rep defaults to whoever made the quote, and prints for the customer");
+  const me = (await sql(`SELECT id, name FROM "User" WHERE "organizationId"=$1`, [org])).rows[0];
+  await sql(`UPDATE "User" SET title='Sales Director', phone='555-0199' WHERE id=$1`, [me.id]);
+  await page.reload();
+  assert.equal(
+    await page.getByTestId("lead-sales-rep").inputValue(),
+    "",
+    "this quote was seeded by SQL, so it has no rep yet",
+  );
+
+  await page.getByTestId("lead-sales-rep").selectOption(me.id);
+  await page.getByTestId("contract-signer").selectOption(me.id);
+  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByText("Quote details saved", { exact: true }).waitFor();
+
+  const people = await sql(
+    `SELECT "leadSalesRepId","contractSignerId","teamUserIds" FROM "Quote" WHERE id='quo_qi'`,
+  );
+  assert.equal(people.rows[0].leadSalesRepId, me.id);
+  assert.equal(people.rows[0].contractSignerId, me.id);
+
+  await publicPage.reload();
+  await publicPage.getByTestId("document-rep").waitFor();
+  const repBlock = await publicPage.getByTestId("document-rep").innerText();
+  assert.match(repBlock, new RegExp(me.name), "the rep's name prints");
+  assert.match(repBlock, /Sales Director/, "their role prints when it is filled in");
+  assert.match(repBlock, /555-0199/, "their phone prints when it is filled in");
+  await shot(publicPage, "06-public-quote-rep");
+
+  // React empties a form whose action is a server function even when that
+  // function refuses. A title past the limit is a refusal the server makes
+  // (an empty one is blocked by the browser before it ever gets there).
+  log("a refused save keeps what was typed, and keeps the rep");
+  await page.getByLabel("Quote title").fill("x".repeat(200));
+  await page.locator("#terms").fill("Quote valid 30 days.");
+  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByText(/at most 160|too big|Too long/i).waitFor();
+  assert.equal(
+    await page.getByTestId("lead-sales-rep").inputValue(),
+    me.id,
+    "a refused save cleared the rep, which the next save would then write",
+  );
+  assert.equal(
+    await page.locator("#terms").inputValue(),
+    "Quote valid 30 days.",
+    "a refused save threw away what was typed in Terms",
+  );
+  await page.getByLabel("Quote title").fill("Rekey quote");
+  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByText("Quote details saved", { exact: true }).waitFor();
   await publicPage.close();
+
+  /* ---------------------------------------------------------------- *
+   * W14 — a contract starts from the quote's payment table.
+   * ---------------------------------------------------------------- */
+  log("split the quote into a contract; it inherits the quote's payment table");
+  await page.goto(`${BASE}/dashboard/contracts/tracker?dealId=deal_qi&quoteId=quo_qi`);
+  await page.getByTestId("tracker-grid").waitFor();
+  await shot(page, "07-contract-coordinator");
+
+  log('the module now reads "Contract Coordinator"');
+  await page.getByRole("heading", { name: "Contract Coordinator" }).waitFor();
+  assert.equal(
+    await page.getByRole("heading", { name: "Deal Tracker" }).count(),
+    0,
+    "the old name is still on the page",
+  );
+
+  log("the payment schedule defaults to the quote's own table");
+  assert.equal(
+    await page.locator("#col-1-preset").inputValue(),
+    "__quote__",
+    "a quote with a payment table should carry it over by default",
+  );
+
+  log("tick every row onto Contract A; the preview shows the quote's rows");
+  const rowNames = await page.getByRole("checkbox", { name: /^Put .* on Contract A$/ }).all();
+  for (const box of rowNames) await box.check();
+  // The preview only renders once the column is worth something.
+  await page.getByTestId("schedule-preview").first().waitFor();
+  assert.match(
+    await page.getByTestId("schedule-preview").first().textContent(),
+    /Deposit/,
+    "the preview should show the quote's rows, not a preset's",
+  );
+
+  log("create the contract; its rows and terms came from the quote");
+  await page.getByTestId("create-contracts").click();
+  // Creating returns to the tracker with the new paperwork listed.
+  await page.waitForURL(/created=1/, { timeout: 30000 });
+
+  const madeContract = (
+    await sql(
+      `SELECT id, "scheduleFromQuote", "scheduleAmendedAt" FROM "Contract" WHERE "organizationId"=$1`,
+      [org],
+    )
+  ).rows[0];
+  assert.equal(madeContract.scheduleFromQuote, true, "the contract should be marked as carrying the quote's table");
+  assert.equal(madeContract.scheduleAmendedAt, null, "nothing has been amended yet");
+
+  const inherited = await sql(
+    `SELECT label, kind, percent, terms, "amountCents" FROM "ContractPayment"
+      WHERE "contractId"=$1 ORDER BY position`,
+    [madeContract.id],
+  );
+  assert.equal(inherited.rows.length, 2, "two rows carried over from the quote");
+  assert.match(inherited.rows[0].label, /Deposit/);
+  assert.equal(inherited.rows[0].terms, "Net 30", "the row's term came across too");
+  assert.equal(inherited.rows[1].kind, "BALANCE");
+  const contractTotal = (
+    await sql(
+      `SELECT COALESCE(SUM(ROUND(quantity * "unitPriceCents")),0)::int AS total
+         FROM "ContractLineItem" WHERE "contractId"=$1`,
+      [madeContract.id],
+    )
+  ).rows[0].total;
+  assert.equal(
+    inherited.rows[0].amountCents + inherited.rows[1].amountCents,
+    contractTotal,
+    "the percentages re-priced against the contract's own total",
+  );
+  await page.goto(`${BASE}/dashboard/contracts/${madeContract.id}`);
+  await page.getByTestId("schedule-origin").waitFor();
+  assert.match(
+    await page.getByTestId("schedule-origin").innerText(),
+    /Carried over from the quote/,
+    "the contract should say where its schedule came from",
+  );
+  await shot(page, "08-contract-inherited-schedule");
+
+  log('changing it stamps "Amended from original quote"');
+  await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — revised");
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment schedule saved", { exact: true }).waitFor();
+  const amended = (
+    await sql(`SELECT "scheduleAmendedAt" FROM "Contract" WHERE id=$1`, [madeContract.id])
+  ).rows[0];
+  assert.ok(amended.scheduleAmendedAt, "editing an inherited schedule should stamp it as amended");
+  await page.reload();
+  assert.match(
+    await page.getByTestId("schedule-origin").innerText(),
+    /Amended from original quote/,
+    "the amended note should show once it differs from the quote",
+  );
+  await shot(page, "09-contract-amended");
 
   console.log("\nAll steps passed.");
   await context.close();

@@ -52,7 +52,7 @@ const NAV: {
     href: "/dashboard/deals",
     label: "Pipeline",
     Icon: IconTrending,
-    children: [{ href: "/dashboard/deals/tracker", label: "Deal Tracker", Icon: IconClock }],
+    children: [{ href: "/dashboard/deals/tracker", label: "Contract Coordinator", Icon: IconClock }],
   },
   { href: "/dashboard/calendar", label: "Calendar", Icon: IconCalendar },
   {
@@ -76,7 +76,7 @@ const NAV: {
     href: "/dashboard/contracts",
     label: "Contracts",
     Icon: IconSignature,
-    children: [{ href: "/dashboard/contracts/tracker", label: "Deal Tracker", Icon: IconClock }],
+    children: [{ href: "/dashboard/contracts/tracker", label: "Contract Coordinator", Icon: IconClock }],
   },
   {
     href: "/dashboard/settings",

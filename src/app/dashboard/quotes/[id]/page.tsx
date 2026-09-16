@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { getServiceTypes } from "@/lib/service-types";
 import { loadDistributorCompanies } from "@/lib/distributors";
+import { loadWorkspaceUsers } from "@/lib/workspace-users";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
@@ -64,6 +65,8 @@ export default async function QuoteBuilderPage({
     }),
     getServiceTypes(organizationId),
   ]);
+
+  const users = await loadWorkspaceUsers(organizationId);
 
   if (!quote) notFound();
 
@@ -230,12 +233,16 @@ export default async function QuoteBuilderPage({
           <CardHeader title="Quote details" />
           <QuoteMetaForm
             quoteId={quote.id}
+            users={users}
             defaults={{
               title: quote.title,
               template: quote.template,
               introNote: quote.introNote,
               terms: quote.terms,
               validUntil: toDateInput(quote.validUntil),
+              leadSalesRepId: quote.leadSalesRepId ?? "",
+              contractSignerId: quote.contractSignerId ?? "",
+              teamUserIds: quote.teamUserIds,
             }}
           />
         </Card>

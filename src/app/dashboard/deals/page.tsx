@@ -37,7 +37,7 @@ export default async function DealsPage() {
           <>
             <Link href="/dashboard/deals/tracker" className="btn btn-ghost btn-sm">
               <IconClock size={13} />
-              Deal Tracker
+              Contract Coordinator
             </Link>
             <Link href="/dashboard/quotes/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
@@ -131,7 +131,7 @@ export default async function DealsPage() {
                           className="faint mt-2 flex items-center gap-1 text-[0.7rem] hover:text-[var(--text)]"
                         >
                           <IconClock size={11} />
-                          Deal Tracker
+                          Contract Coordinator
                         </Link>
                       </div>
                     ))}
