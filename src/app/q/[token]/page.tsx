@@ -59,6 +59,14 @@ export default async function PublicQuotePage({
           tag: true,
         },
       },
+      paymentTerms: true,
+      hidePaymentTable: true,
+      payments: {
+        orderBy: { position: "asc" },
+        select: { id: true, label: true, amountCents: true, dueOn: true, terms: true },
+      },
+      // Only what is filled in on their account gets printed.
+      leadSalesRep: { select: { name: true, email: true, phone: true, title: true } },
     },
   });
 
@@ -83,7 +91,17 @@ export default async function PublicQuotePage({
           </span>
         </div>
       )}
-      <QuoteDocument quote={quote} />
+      {/* Hide from quote is honoured here rather than in CSS: hiding it in
+          the browser would still ship the numbers inside the page, and
+          .no-print only hides things on paper. */}
+      <QuoteDocument
+        quote={{
+          ...quote,
+          payments: quote.hidePaymentTable ? [] : quote.payments,
+          paymentTerms: quote.hidePaymentTable ? null : quote.paymentTerms,
+          salesRep: quote.leadSalesRep,
+        }}
+      />
 
       {/* Contractors need a file to drop into a bid package, not just a
           link — this is the primary action on a customer-facing quote. */}

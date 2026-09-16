@@ -17,6 +17,8 @@ import {
 } from "@/lib/constants";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
+import { computeSchedule, isoToDate } from "@/lib/payments";
+import { computeQuoteTotals } from "@/lib/quote-math";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -333,6 +335,119 @@ export async function saveLineItems(
   revalidatePath("/dashboard/quotes");
   if (createdProducts > 0) revalidatePath("/dashboard/products");
   return { success: "Line items saved", lines };
+}
+
+/* ------------------------- The quote's payment table ------------------------- */
+
+const quotePaymentRowSchema = z.object({
+  // Set for a row that already exists, so a re-save updates it in place.
+  id: z.string().trim().min(1).optional(),
+  // The editor's handle for the row, echoed back so a row created by this
+  // save can be told its stored id without relying on array position.
+  uid: z.number().int().optional(),
+  label: z.string().trim().min(1, "Every payment needs a label").max(120),
+  kind: z.enum(["PERCENT", "FIXED", "BALANCE"]),
+  percent: z.number().min(0).max(100).nullable(),
+  fixedCents: z.number().int().min(0).max(1_000_000_000).nullable(),
+  dueOn: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A due date isn't valid")]),
+  terms: z.string().trim().max(60).nullable().optional(),
+});
+
+// The same shape as a contract's schedule save, minus everything about
+// money: a quote takes none, so there is no paid floor to respect, no row
+// to settle, and no project budget to refresh.
+export async function saveQuotePaymentSchedule(input: {
+  quoteId: string;
+  paymentTerms: string;
+  hidePaymentTable: boolean;
+  rows: z.infer<typeof quotePaymentRowSchema>[];
+}): Promise<ActionState & { saved?: { uid: number; id: string }[] }> {
+  const { organizationId } = await requireSession();
+
+  const parsed = z
+    .object({
+      quoteId: idSchema,
+      paymentTerms: z.string().trim().max(120),
+      hidePaymentTable: z.boolean(),
+      rows: z.array(quotePaymentRowSchema).max(60),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the payment table" };
+  }
+
+  const quote = await prisma.quote.findFirst({
+    where: { id: parsed.data.quoteId, organizationId },
+    select: {
+      id: true,
+      lineItems: { select: { quantity: true, unitPriceCents: true, tag: true } },
+      payments: { orderBy: { position: "asc" }, select: { id: true } },
+    },
+  });
+  if (!quote) return { error: "Quote not found" };
+
+  // Recomputed here and never taken from the browser: the quote's total is
+  // its lines, and nothing about it is stored.
+  const totalCents = computeQuoteTotals(quote.lineItems).totalCents;
+  const schedule = computeSchedule(parsed.data.rows, totalCents);
+  if (schedule.rows.some((row) => row.amountCents < 0)) {
+    return { error: "The fixed amounts add up to more than the quote total" };
+  }
+
+  const existingIds = new Set(quote.payments.map((row) => row.id));
+  const seen = new Set<string>();
+  for (const row of parsed.data.rows) {
+    if (!row.id) continue;
+    // An id from another quote, or one deleted since the page loaded, is
+    // not this row — writing it would rewrite someone else's table.
+    if (!existingIds.has(row.id) || seen.has(row.id)) {
+      return { error: "A row on this table has changed since the page loaded. Reload and try again." };
+    }
+    seen.add(row.id);
+  }
+
+  const saved: { uid: number; id: string }[] = [];
+
+  await prisma.$transaction(async (tx) => {
+    await tx.quote.updateMany({
+      where: { id: quote.id, organizationId },
+      data: {
+        paymentTerms: parsed.data.paymentTerms || null,
+        hidePaymentTable: parsed.data.hidePaymentTable,
+      },
+    });
+
+    const removed = [...existingIds].filter((id) => !seen.has(id));
+    if (removed.length) {
+      await tx.quotePayment.deleteMany({ where: { id: { in: removed }, quoteId: quote.id } });
+    }
+
+    for (const [position, row] of schedule.rows.entries()) {
+      const source = parsed.data.rows[position];
+      const data = {
+        label: row.label,
+        kind: row.kind,
+        percent: row.kind === "PERCENT" ? row.percent : null,
+        amountCents: row.amountCents,
+        dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
+        terms: source?.terms?.trim() || null,
+        position,
+      };
+      if (source?.id) {
+        await tx.quotePayment.update({ where: { id: source.id }, data });
+        if (source.uid !== undefined) saved.push({ uid: source.uid, id: source.id });
+      } else {
+        const created = await tx.quotePayment.create({
+          data: { ...data, quoteId: quote.id, organizationId },
+          select: { id: true },
+        });
+        if (source?.uid !== undefined) saved.push({ uid: source.uid, id: created.id });
+      }
+    }
+  });
+
+  revalidatePath(`/dashboard/quotes/${quote.id}`);
+  return { success: "Payment table saved", saved };
 }
 
 export async function setQuoteStatus(formData: FormData) {

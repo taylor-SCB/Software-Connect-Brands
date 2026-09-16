@@ -258,6 +258,7 @@ export default async function ContractDetailPage({
                   percent: payment.percent,
                   amountCents: payment.amountCents,
                   dueOn: dateToIso(payment.dueOn),
+                  terms: payment.terms ?? "",
                   settled: Boolean(payment.paidAt),
                   payments: payment.payments.map((entry) => ({
                     id: entry.id,

@@ -329,6 +329,104 @@ let context;
   );
 
   /* ---------------------------------------------------------------- *
+   * W10 — the quote's own payment table.
+   * ---------------------------------------------------------------- */
+  log("the payment table starts at the 50/50 baseline, unsaved");
+  await page.reload();
+  const table = page.getByTestId("payment-schedule");
+  await table.waitFor();
+  assert.equal(await table.locator("[data-testid=payment-row]").count(), 2, "two baseline rows");
+  assert.equal(
+    (await sql(`SELECT count(*)::int AS n FROM "QuotePayment" WHERE "quoteId"='quo_qi'`)).rows[0].n,
+    0,
+    "a page load must not write payment rows",
+  );
+  const labels = await table.getByLabel("Payment label").all();
+  assert.match(await labels[0].inputValue(), /Deposit/, "first row is the deposit");
+  assert.match(await labels[1].inputValue(), /Final Pay/, "second row is the final payment");
+  const rowTerms = await table.getByTestId("row-terms").all();
+  assert.equal(await rowTerms[0].inputValue(), "Net 30", "the baseline carries Net 30");
+
+  log("save it; the two rows add up to the quote total exactly");
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment table saved", { exact: true }).waitFor();
+
+  const quoteTotal = (
+    await sql(
+      `SELECT COALESCE(SUM(ROUND(quantity * "unitPriceCents")),0)::int AS total
+         FROM "QuoteLineItem" WHERE "quoteId"='quo_qi'`,
+    )
+  ).rows[0].total;
+  const savedRows = await sql(
+    `SELECT id, label, kind, percent, "amountCents", terms FROM "QuotePayment"
+      WHERE "quoteId"='quo_qi' ORDER BY position`,
+  );
+  assert.equal(savedRows.rows.length, 2);
+  assert.equal(savedRows.rows[0].kind, "PERCENT");
+  assert.equal(Number(savedRows.rows[0].percent), 50);
+  assert.equal(savedRows.rows[1].kind, "BALANCE");
+  assert.equal(savedRows.rows[0].terms, "Net 30");
+  assert.equal(
+    savedRows.rows[0].amountCents + savedRows.rows[1].amountCents,
+    quoteTotal,
+    "the table must tie out to the quote total to the cent",
+  );
+  const paymentIds = savedRows.rows.map((r) => r.id);
+  await shot(page, "04-quote-payment-table");
+
+  log("re-saving without a reload keeps the same payment rows");
+  await table.getByTestId("row-terms").first().fill("Upon signature");
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment table saved", { exact: true }).waitFor();
+  const resaved = await sql(
+    `SELECT id, terms FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`,
+  );
+  assert.deepEqual(
+    resaved.rows.map((r) => r.id),
+    paymentIds,
+    "the rows were deleted and recreated instead of updated in place",
+  );
+  assert.equal(resaved.rows[0].terms, "Upon signature");
+
+  // A Balance row always absorbs whatever is left, so a table with one
+  // can never fail to tie out. To leave money unscheduled, both rows have
+  // to be fixed or percentage rows.
+  log("a table that doesn't tie out warns, but still saves");
+  await table.locator("[data-testid=payment-row]").nth(1).locator("select").first().selectOption("PERCENT");
+  await table.locator("[data-testid=payment-row]").nth(1).locator("input.num").first().fill("10");
+  await page.getByTestId("schedule-difference").waitFor();
+  assert.match(
+    await page.getByTestId("schedule-difference").innerText(),
+    /unscheduled/,
+    "50% + 10% should report the remaining 40% as unscheduled",
+  );
+  // Advisory, not blocking — a half-built table still has to be savable.
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment table saved", { exact: true }).waitFor();
+
+  log("a dollar amount over the total reports the overage");
+  await table.locator("[data-testid=payment-row]").nth(1).locator("select").first().selectOption("FIXED");
+  await table.locator("[data-testid=payment-row]").nth(1).locator("input.num").first().fill("999999");
+  await page.getByTestId("schedule-difference").waitFor();
+  assert.match(await page.getByTestId("schedule-difference").innerText(), /over/, "should read as over");
+
+  log("put it back to the baseline; it ties out exactly again");
+  await table.locator("[data-testid=payment-row]").nth(1).locator("select").first().selectOption("BALANCE");
+  await table.getByTestId("row-terms").first().fill("Net 30");
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment table saved", { exact: true }).waitFor();
+  assert.equal(await page.getByTestId("schedule-difference").count(), 0, "the baseline ties out exactly");
+  const restored = await sql(
+    `SELECT id, "amountCents" FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`,
+  );
+  assert.deepEqual(restored.rows.map((r) => r.id), paymentIds, "rows kept their ids throughout");
+  assert.equal(
+    restored.rows[0].amountCents + restored.rows[1].amountCents,
+    quoteTotal,
+    "back to tying out to the cent",
+  );
+
+  /* ---------------------------------------------------------------- *
    * The leak test: the supplier must not reach the customer's copy.
    * ---------------------------------------------------------------- */
   log("the supplier appears nowhere on the public quote");
@@ -342,7 +440,41 @@ let context;
     !html.includes(supplierCompany.rows[0].id),
     "the supplier's ID reached the customer's copy",
   );
+  log("the payment table prints on the customer's copy, with the term standing in for a missing date");
+  await publicPage.getByTestId("document-payments").waitFor();
+  const printed = await publicPage.getByTestId("document-payments").innerText();
+  assert.match(printed, /Deposit/, "the deposit row prints");
+  assert.match(printed, /Net 30/, "with no date picked, the term stands in");
+  assert.equal(
+    (await publicPage.getByTestId("document-payments-total").innerText()).replace(/\s/g, ""),
+    (await page.getByTestId("scheduled-total").innerText()).replace(/\s/g, ""),
+    "the printed total disagrees with the table",
+  );
+  // How a row was worked out is ours, not the customer's.
+  assert.ok(!printed.includes("%"), "a percentage reached the customer's copy");
   await shot(publicPage, "03-public-quote-no-supplier");
+
+  log("Hide from quote keeps it off the customer's copy entirely");
+  await page.getByTestId("hide-payment-table").check();
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment table saved", { exact: true }).waitFor();
+  await publicPage.reload();
+  await publicPage.getByText("Install labor").first().waitFor();
+  assert.equal(
+    await publicPage.getByTestId("document-payments").count(),
+    0,
+    "the payment table is still on the customer's copy after Hide",
+  );
+  const hiddenHtml = await publicPage.content();
+  assert.ok(!hiddenHtml.includes("Final Pay"), "the hidden rows were still shipped inside the page");
+  await shot(publicPage, "05-public-quote-hidden-table");
+
+  log("unhide it again");
+  await page.getByTestId("hide-payment-table").uncheck();
+  await page.getByTestId("save-schedule").click();
+  await page.getByText("Payment table saved", { exact: true }).waitFor();
+  await publicPage.reload();
+  await publicPage.getByTestId("document-payments").waitFor();
   await publicPage.close();
 
   console.log("\nAll steps passed.");

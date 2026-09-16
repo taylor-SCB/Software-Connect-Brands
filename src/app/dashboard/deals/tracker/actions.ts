@@ -406,11 +406,16 @@ const scheduleRowSchema = z.object({
   // Set for a row that already exists, so it keeps its id (and the
   // payments recorded on it) through a re-save; absent for a new row.
   id: z.string().trim().min(1).optional(),
+  // The editor's handle for the row, echoed back so a row created by this
+  // save can be told its stored id without relying on array position.
+  uid: z.number().int().optional(),
   label: z.string().trim().min(1, "Every payment needs a label").max(120),
   kind: z.enum(["PERCENT", "FIXED", "BALANCE"]),
   percent: z.number().min(0).max(100).nullable(),
   fixedCents: z.number().int().min(0).max(1_000_000_000).nullable(),
   dueOn: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A due date isn't valid")]),
+  // A label beside the date — "Net 30" — shown when no date is picked.
+  terms: z.string().trim().max(60).nullable().optional(),
 });
 
 // Saves the payment table. Rows the editor already had keep their ids —
@@ -423,7 +428,7 @@ export async function savePaymentSchedule(input: {
   contractId: string;
   paymentTerms: string;
   rows: z.infer<typeof scheduleRowSchema>[];
-}): Promise<ActionState> {
+}): Promise<ActionState & { saved?: { uid: number; id: string }[] }> {
   const { organizationId } = await requireSession();
 
   const parsed = z
@@ -482,6 +487,8 @@ export async function savePaymentSchedule(input: {
     }
   }
 
+  const saved: { uid: number; id: string }[] = [];
+
   await prisma.$transaction(async (tx) => {
     await tx.contract.updateMany({
       where: { id: parsed.data.contractId, organizationId },
@@ -493,23 +500,28 @@ export async function savePaymentSchedule(input: {
       });
     }
     for (const [position, row] of schedule.rows.entries()) {
+      const source = parsed.data.rows[position];
       const data = {
         label: row.label,
         kind: row.kind,
         percent: row.kind === "PERCENT" ? row.percent : null,
         amountCents: row.amountCents,
         dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
+        terms: source?.terms?.trim() || null,
         position,
       };
-      const id = parsed.data.rows[position]?.id;
+      const id = source?.id;
       if (id) {
         await tx.contractPayment.update({ where: { id }, data });
         // A lower amount can settle a row that was partly paid.
         await settleRow(tx, id);
+        if (source?.uid !== undefined) saved.push({ uid: source.uid, id });
       } else {
-        await tx.contractPayment.create({
+        const created = await tx.contractPayment.create({
           data: { ...data, contractId: parsed.data.contractId, organizationId },
+          select: { id: true },
         });
+        if (source?.uid !== undefined) saved.push({ uid: source.uid, id: created.id });
       }
     }
   });
@@ -520,7 +532,7 @@ export async function savePaymentSchedule(input: {
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/projects");
-  return { success: "Payment schedule saved" };
+  return { success: "Payment schedule saved", saved };
 }
 
 // Who signs for your company, editable on the contract page.

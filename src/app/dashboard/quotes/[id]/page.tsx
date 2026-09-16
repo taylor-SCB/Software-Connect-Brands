@@ -16,7 +16,10 @@ import {
 import { IconTrash, IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { LineItemsEditor } from "./line-items-editor";
+import { QuotePaymentTable } from "./quote-payment-table";
 import { QuoteMetaForm } from "./quote-meta-form";
+import { dateToIso, todayIso, quoteBaselineRows } from "@/lib/payments";
+import { computeQuoteTotals } from "@/lib/quote-math";
 import { setQuoteStatus, deleteQuote } from "../actions";
 
 // yyyy-mm-dd for <input type="date">, which only accepts that shape.
@@ -41,6 +44,7 @@ export default async function QuoteBuilderPage({
         contact: { select: { id: true, name: true, company: { select: { name: true } } } },
         deal: { select: { id: true, title: true, stage: true } },
         lineItems: { orderBy: { position: "asc" } },
+        payments: { orderBy: { position: "asc" } },
       },
     }),
     prisma.product.findMany({
@@ -73,6 +77,8 @@ export default async function QuoteBuilderPage({
   );
 
   const publicPath = `/q/${quote.publicToken}`;
+  const today = todayIso(timeZone);
+  const quoteTotalCents = computeQuoteTotals(quote.lineItems).totalCents;
 
   return (
     <div>
@@ -180,6 +186,43 @@ export default async function QuoteBuilderPage({
             }))}
             serviceTypes={serviceTypes}
             suppliers={suppliers}
+          />
+        </Card>
+
+        <Card lit>
+          <CardHeader
+            title="Payment table"
+            subtitle="Percent of the total or a fixed amount, with a term and a date. It prices against the lines as last saved, so save those first."
+          />
+          <QuotePaymentTable
+            quoteId={quote.id}
+            totalCents={quoteTotalCents}
+            paymentTerms={quote.paymentTerms ?? ""}
+            hidePaymentTable={quote.hidePaymentTable}
+            today={today}
+            initialRows={
+              // Nothing is written on a page load: an empty table starts
+              // from the baseline unsaved, so it is there to edit but only
+              // exists once someone saves it.
+              quote.payments.length > 0
+                ? quote.payments.map((payment) => ({
+                    id: payment.id,
+                    label: payment.label,
+                    kind: payment.kind,
+                    percent: payment.percent,
+                    amountCents: payment.amountCents,
+                    dueOn: dateToIso(payment.dueOn),
+                    terms: payment.terms ?? "",
+                  }))
+                : quoteBaselineRows().map((row) => ({
+                    label: row.label,
+                    kind: row.kind,
+                    percent: row.percent,
+                    amountCents: 0,
+                    dueOn: row.dueOn,
+                    terms: row.terms ?? "",
+                  }))
+            }
           />
         </Card>
 

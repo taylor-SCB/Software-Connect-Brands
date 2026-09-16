@@ -22,7 +22,7 @@ export type ContractDocumentData = {
   // when it isn't the contact's own company.
   company?: { name: string; logoUrl: string | null } | null;
   lineItems?: { id: string; name: string; description: string; quantity: number; unitPriceCents: number; tag: string }[];
-  payments?: { id: string; label: string; amountCents: number; dueOn: Date | null; paidAt: Date | null }[];
+  payments?: { id: string; label: string; amountCents: number; dueOn: Date | null; terms?: string | null; paidAt: Date | null }[];
   paymentTerms?: string | null;
   senderSignerName?: string | null;
 };
@@ -144,7 +144,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                     {payment.label}
                     {payment.paidAt && <span className="ml-2 text-xs text-[#047857]">Paid {formatDate(payment.paidAt, zone)}</span>}
                   </td>
-                  <td className="py-1.5 pr-2 text-[#6b7280]">{payment.dueOn ? formatDay(payment.dueOn) : "—"}</td>
+                  <td className="py-1.5 pr-2 text-[#6b7280]">{payment.dueOn ? formatDay(payment.dueOn) : payment.terms || "—"}</td>
                   <td className="py-1.5 text-right tabular-nums">{formatCents(payment.amountCents)}</td>
                 </tr>
               ))}
