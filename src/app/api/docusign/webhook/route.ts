@@ -7,33 +7,48 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // DocuSign sends envelope events with this structure
-    const envelopeStatus = body.envelopeStatus;
-    if (!envelopeStatus) {
+    // HelloSign sends events with this structure:
+    // { "event": { "event_type": "signature_request_signed", "data": { "signature_request": { "signature_request_id": "xxx" } } } }
+    const event = body.event;
+    if (!event || !event.event_type) {
       return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 });
     }
 
-    const envelopeId = envelopeStatus.envelopeId;
-    const status = envelopeStatus.status;
+    const eventType = event.event_type;
+    const signatureRequestId = event.data?.signature_request?.signature_request_id;
 
-    // Find the contract with this envelope ID
+    if (!signatureRequestId) {
+      return NextResponse.json({ error: "No signature request ID found" }, { status: 400 });
+    }
+
+    // Find the contract with this signature request ID (stored in docusignEnvelopeId field)
     const contract = await prisma.contract.findFirst({
-      where: { docusignEnvelopeId: envelopeId },
-      select: { id: true, organizationId: true },
+      where: { docusignEnvelopeId: signatureRequestId },
+      select: { id: true, organizationId: true, contact: { select: { email: true, name: true } } },
     });
 
     if (!contract) {
       return NextResponse.json({ error: "Contract not found" }, { status: 404 });
     }
 
-    // Update contract status based on envelope status
-    if (status === "completed") {
+    // Get organization to fetch HelloSign API key
+    const organization = await prisma.organization.findUnique({
+      where: { id: contract.organizationId },
+      select: { hellosignApiKey: true },
+    });
+
+    if (!organization?.hellosignApiKey) {
+      return NextResponse.json({ error: "Organization not configured for HelloSign" }, { status: 400 });
+    }
+
+    // Update contract status based on HelloSign event type
+    if (eventType === "signature_request_signed") {
       // Contract is signed
       try {
-        const signedPdf = await getSignedDocument(envelopeId);
+        const signedPdf = await getSignedDocument(signatureRequestId, organization.hellosignApiKey);
 
         // Convert to base64 for storage (or you could upload to cloud storage)
-        const pdfBase64 = Buffer.from(signedPdf).toString("base64");
+        const pdfBase64 = signedPdf.toString("base64");
         const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
 
         await prisma.contract.updateMany({
@@ -43,13 +58,11 @@ export async function POST(req: NextRequest) {
             signedAt: new Date(),
             docusignStatus: "completed",
             docusignSignedPdfUrl: pdfDataUrl,
-            // Extract signer info from the envelope if available
-            signerEmail: envelopeStatus.recipients?.[0]?.email,
-            signerName: envelopeStatus.recipients?.[0]?.name,
+            signerEmail: contract.contact.email,
+            signerName: contract.contact.name,
           },
         });
 
-        // Revalidate dashboard to show updated status
         revalidatePath(`/dashboard/contracts/${contract.id}`);
         revalidatePath("/dashboard/contracts");
       } catch (error) {
@@ -64,27 +77,19 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-    } else if (status === "declined" || status === "voided") {
-      // Contract was declined or voided
+    } else if (eventType === "signature_request_declined") {
+      // Contract was declined
       await prisma.contract.updateMany({
         where: { id: contract.id },
         data: {
           status: "DECLINED",
           declinedAt: new Date(),
-          docusignStatus: status,
+          docusignStatus: "declined",
         },
       });
 
       revalidatePath(`/dashboard/contracts/${contract.id}`);
       revalidatePath("/dashboard/contracts");
-    } else {
-      // Other statuses like "sent", "delivered", etc.
-      await prisma.contract.updateMany({
-        where: { id: contract.id },
-        data: {
-          docusignStatus: status,
-        },
-      });
     }
 
     return NextResponse.json({ success: true });

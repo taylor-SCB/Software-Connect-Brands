@@ -64,3 +64,39 @@ export async function updateBranding(
   revalidatePath("/dashboard", "layout");
   return { success: "Branding saved" };
 }
+
+const hellosignSchema = z.object({
+  hellosignApiKey: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || value.length > 10,
+      "HelloSign API key must be at least 10 characters",
+    ),
+});
+
+export async function updateHellosignApiKey(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const session = await requireAdminSession();
+  if (!session.allowed) {
+    return { error: "Only owners and admins can change integrations" };
+  }
+
+  const parsed = parseForm(hellosignSchema, {
+    hellosignApiKey: formData.get("hellosignApiKey") ?? undefined,
+  });
+  if (!parsed.ok) return { error: parsed.error };
+
+  await prisma.organization.update({
+    where: { id: session.organizationId },
+    data: {
+      hellosignApiKey: parsed.data.hellosignApiKey || null,
+    },
+  });
+
+  revalidatePath("/dashboard/settings");
+  return { success: "HelloSign integration updated" };
+}

@@ -1,7 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, CardHeader } from "@/components/ui";
-import { BrandingForm } from "./form";
+import { BrandingForm, HelloSignIntegrationForm } from "./form";
 
 export default async function SettingsPage() {
   const session = await requireSession();
@@ -12,11 +12,11 @@ export default async function SettingsPage() {
   const canEdit = session.role === "OWNER" || session.role === "ADMIN";
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl space-y-5">
       <PageHeader
         eyebrow="Workspace"
-        title="Branding"
-        subtitle="Your name and colors across the dashboard, quotes and contracts."
+        title="Settings"
+        subtitle="Configure branding, integrations, and e-signature options."
       />
 
       <Card lit>
@@ -34,6 +34,23 @@ export default async function SettingsPage() {
             logoUrl: organization.logoUrl,
             primaryColor: organization.primaryColor,
             timeZone: organization.timeZone,
+          }}
+          canEdit={canEdit}
+        />
+      </Card>
+
+      <Card lit>
+        <CardHeader
+          title="HelloSign integration"
+          subtitle={
+            canEdit
+              ? "Enable professional e-signatures for contracts. Customers can sign with their own HelloSign account."
+              : "Only owners and admins can configure integrations."
+          }
+        />
+        <HelloSignIntegrationForm
+          organization={{
+            hellosignApiKey: organization.hellosignApiKey,
           }}
           canEdit={canEdit}
         />

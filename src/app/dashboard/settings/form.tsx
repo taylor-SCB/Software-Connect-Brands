@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
 import { TIME_ZONES } from "@/lib/format";
-import { updateBranding } from "./actions";
+import { updateBranding, updateHellosignApiKey } from "./actions";
 import type { ActionState } from "@/lib/forms";
 
 const PRESETS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7"];
@@ -122,6 +122,89 @@ export function BrandingForm({
         <button type="submit" disabled={pending} className="btn btn-primary">
           {pending ? "Saving…" : "Save changes"}
         </button>
+      )}
+    </form>
+  );
+}
+
+export function HelloSignIntegrationForm({
+  organization,
+  canEdit,
+}: {
+  organization: {
+    hellosignApiKey: string | null;
+  };
+  canEdit: boolean;
+}) {
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(
+    updateHellosignApiKey,
+    {},
+  );
+  const [showKey, setShowKey] = useState(false);
+  const hasApiKey = !!organization.hellosignApiKey;
+
+  return (
+    <form action={formAction} className="space-y-5 p-5">
+      <div>
+        <label className="label" htmlFor="hellosignApiKey">
+          HelloSign API Key
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="hellosignApiKey"
+            name="hellosignApiKey"
+            type={showKey ? "text" : "password"}
+            placeholder="Enter your HelloSign API key"
+            defaultValue={organization.hellosignApiKey ?? ""}
+            disabled={!canEdit}
+            className="input flex-1"
+          />
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="btn btn-ghost btn-sm"
+            >
+              {showKey ? "Hide" : "Show"}
+            </button>
+          )}
+        </div>
+        <p className="faint mt-2 text-xs">
+          Your HelloSign API key enables professional e-signature capabilities for contracts.{" "}
+          <a
+            href="https://app.hellosign.com/account/api"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:no-underline"
+          >
+            Get your API key here
+          </a>
+          {hasApiKey && " — Currently configured"}
+        </p>
+      </div>
+
+      <FormError message={state?.error} />
+      <FormSuccess message={state?.success} />
+
+      {canEdit && (
+        <div className="flex gap-2">
+          <button type="submit" disabled={pending} className="btn btn-primary">
+            {pending ? "Saving…" : "Save API Key"}
+          </button>
+          {hasApiKey && (
+            <button
+              type="button"
+              onClick={() => {
+                const input = document.getElementById("hellosignApiKey") as HTMLInputElement;
+                if (input) input.value = "";
+                // The form will submit with empty value to clear the key
+              }}
+              className="btn btn-ghost"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       )}
     </form>
   );

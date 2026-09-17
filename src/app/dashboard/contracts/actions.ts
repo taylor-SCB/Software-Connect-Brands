@@ -246,9 +246,9 @@ export async function deleteContract(formData: FormData) {
   redirect("/dashboard/contracts");
 }
 
-/* --------------------- DocuSign Integration --------------------- */
+/* --------------------- HelloSign Integration --------------------- */
 
-export async function sendContractToDocuSign(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function sendContractToHelloSign(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
 
   const parsed = parseForm(
@@ -277,27 +277,38 @@ export async function sendContractToDocuSign(_prev: ActionState, formData: FormD
   if (contract.status === "SIGNED") return { error: "This contract is already signed" };
   if (!contract.contact.email) return { error: "Contact email is required" };
 
+  // Get organization to check for HelloSign API key
+  const organization = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { hellosignApiKey: true },
+  });
+
+  if (!organization?.hellosignApiKey) {
+    return { error: "HelloSign API key is not configured. Please add it in workspace settings." };
+  }
+
   try {
     const { sendContractForSigning } = await import("@/lib/docusign");
 
     // Build return URL for after signing
     const returnUrl = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/c/${contract.publicToken}?signed=true`;
 
-    const { envelopeId, signingUrl } = await sendContractForSigning(
+    const { requestId, signingUrl } = await sendContractForSigning(
       contract.body,
       contract.title,
       contract.contact.email,
       contract.contact.name,
       returnUrl,
+      organization.hellosignApiKey,
     );
 
-    // Store DocuSign envelope ID in database
+    // Store HelloSign request ID in database
     await prisma.contract.updateMany({
       where: { id: contract.id, organizationId },
       data: {
         status: "SENT",
         sentAt: new Date(),
-        docusignEnvelopeId: envelopeId,
+        docusignEnvelopeId: requestId,
         docusignStatus: "sent",
       },
     });
@@ -308,7 +319,7 @@ export async function sendContractToDocuSign(_prev: ActionState, formData: FormD
     // Return the signing URL so the frontend can redirect
     return { success: "ok", signingUrl };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to send contract to DocuSign";
+    const message = error instanceof Error ? error.message : "Failed to send contract to HelloSign";
     return { error: message };
   }
 }

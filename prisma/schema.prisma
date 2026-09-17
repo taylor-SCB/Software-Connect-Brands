@@ -28,6 +28,7 @@ model Organization {
   // sequential document numbers (QUO-1004, CON-1002...).
   nextQuoteNumber    Int @default(1000)
   nextContractNumber Int @default(1000)
+  hellosignApiKey    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

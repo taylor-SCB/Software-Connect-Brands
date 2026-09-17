@@ -1,180 +1,103 @@
-import jwt from "jsonwebtoken";
-import { ApiClient, EnvelopesApi, EnvelopeDefinition, Document, Signer, SignHere, Tabs } from "docusign-esign";
+// HelloSign API utilities for contract signing
+// Documentation: https://www.hellosign.com/api/reference
 
-const DOCUSIGN_INTEGRATION_KEY = process.env.DOCUSIGN_INTEGRATION_KEY;
-const DOCUSIGN_PRIVATE_KEY = process.env.DOCUSIGN_PRIVATE_KEY;
-const DOCUSIGN_ACCOUNT_ID = process.env.DOCUSIGN_ACCOUNT_ID;
-const DOCUSIGN_ENVIRONMENT = process.env.DOCUSIGN_ENVIRONMENT || "https://demo.docusign.net";
+const HELLOSIGN_API_URL = "https://api.hellosign.com/v3";
 
-if (!DOCUSIGN_INTEGRATION_KEY || !DOCUSIGN_PRIVATE_KEY || !DOCUSIGN_ACCOUNT_ID) {
-  throw new Error("Missing required DocuSign environment variables: DOCUSIGN_INTEGRATION_KEY, DOCUSIGN_PRIVATE_KEY, DOCUSIGN_ACCOUNT_ID");
-}
-
-// Cache for access token with expiry
-let cachedAccessToken: { token: string; expiresAt: number } | null = null;
-
-// Generate JWT token for DocuSign OAuth
-function generateJWT(): string {
-  const now = Math.floor(Date.now() / 1000);
-  const exp = now + 3600; // 1 hour
-
-  const payload = {
-    iss: DOCUSIGN_INTEGRATION_KEY,
-    sub: DOCUSIGN_ACCOUNT_ID,
-    aud: DOCUSIGN_ENVIRONMENT,
-    iat: now,
-    exp,
+interface HelloSignResponse {
+  signature_request?: {
+    signature_request_id: string;
+    status: string;
   };
-
-  return jwt.sign(payload, DOCUSIGN_PRIVATE_KEY, {
-    algorithm: "RS256",
-    header: { typ: "JWT" },
-  });
-}
-
-// Get access token from DocuSign
-async function getAccessToken(): Promise<string> {
-  // Return cached token if still valid
-  if (cachedAccessToken && cachedAccessToken.expiresAt > Date.now() + 60000) {
-    return cachedAccessToken.token;
-  }
-
-  const jwtToken = generateJWT();
-
-  const response = await fetch(`${DOCUSIGN_ENVIRONMENT}/oauth/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: jwtToken,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`DocuSign authentication failed: ${error}`);
-  }
-
-  const data = (await response.json()) as { access_token: string; expires_in: number };
-
-  cachedAccessToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
+  error?: {
+    error_msg: string;
   };
-
-  return data.access_token;
 }
 
-// Send contract for signing
+// Send contract for signing via HelloSign
 export async function sendContractForSigning(
   contractBody: string,
   contractTitle: string,
   recipientEmail: string,
   recipientName: string,
   returnUrl: string,
-): Promise<{ envelopeId: string; signingUrl: string }> {
-  const accessToken = await getAccessToken();
+  apiKey: string,
+): Promise<{ requestId: string; signingUrl: string }> {
+  if (!apiKey) {
+    throw new Error("HelloSign API key is required. Configure it in your workspace settings.");
+  }
 
-  const apiClient = new ApiClient();
-  apiClient.setBasePath(`${DOCUSIGN_ENVIRONMENT}/restapi`);
-  apiClient.addDefaultHeader("Authorization", `Bearer ${accessToken}`);
+  // HelloSign requires a file, we'll use the HTML version of the contract
+  const formData = new FormData();
+  formData.append("title", contractTitle);
+  formData.append("subject", `Please sign: ${contractTitle}`);
+  formData.append("message", `Please review and sign the attached contract.`);
 
-  const envelopesApi = new EnvelopesApi(apiClient);
+  // Add signer
+  formData.append("signers[0][email_address]", recipientEmail);
+  formData.append("signers[0][name]", recipientName);
 
-  // Create the envelope definition
-  const document = new Document();
-  document.documentBase64 = Buffer.from(contractBody).toString("base64");
-  document.name = contractTitle;
-  document.documentId = "1";
+  // Add contract as text (HelloSign will convert to PDF)
+  // For now, we'll create a simple text file representation
+  const blob = new Blob([contractBody], { type: "text/plain" });
+  formData.append("file[0]", blob, `${contractTitle}.txt`);
 
-  const signer = new Signer();
-  signer.email = recipientEmail;
-  signer.name = recipientName;
-  signer.recipientId = "1";
-  signer.routingOrder = "1";
+  // Set return URL after signing
+  formData.append("signing_redirect_url", returnUrl);
 
-  const signHere = new SignHere();
-  signHere.documentId = "1";
-  signHere.pageNumber = "1";
-  signHere.xPosition = "100";
-  signHere.yPosition = "100";
-
-  const tabs = new Tabs();
-  tabs.signHereTabs = [signHere];
-  signer.tabs = tabs;
-
-  const envelopeDefinition = new EnvelopeDefinition();
-  envelopeDefinition.emailSubject = `Please sign: ${contractTitle}`;
-  envelopeDefinition.documents = [document];
-  envelopeDefinition.recipients = {
-    signers: [signer],
-  };
-  envelopeDefinition.status = "sent";
-
-  // Send the envelope
-  const result = await envelopesApi.createEnvelope(DOCUSIGN_ACCOUNT_ID!, {
-    envelopeDefinition,
+  const response = await fetch(`${HELLOSIGN_API_URL}/signature_request/send`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    },
+    body: formData,
   });
 
-  // Get signing URL using embedded signing
-  const viewRequest = {
-    returnUrl,
-    userName: recipientName,
-    email: recipientEmail,
-    clientUserId: "1",
-  };
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`HelloSign API error: ${error.error?.error_msg || "Unknown error"}`);
+  }
 
-  const viewResult = await envelopesApi.createRecipientView(DOCUSIGN_ACCOUNT_ID!, result.envelopeId!, {
-    recipientViewRequest: viewRequest,
-  });
+  const data = (await response.json()) as HelloSignResponse;
+
+  if (!data.signature_request) {
+    throw new Error("Failed to create signature request with HelloSign");
+  }
 
   return {
-    envelopeId: result.envelopeId!,
-    signingUrl: viewResult.url!,
+    requestId: data.signature_request.signature_request_id,
+    signingUrl: `https://app.hellosign.com/sign/${data.signature_request.signature_request_id}`,
   };
 }
 
-// Get envelope status
-export async function getEnvelopeStatus(envelopeId: string): Promise<string> {
-  const accessToken = await getAccessToken();
+// Get signature request status
+export async function getSignatureStatus(requestId: string, apiKey: string): Promise<string> {
+  const response = await fetch(`${HELLOSIGN_API_URL}/signature_request/${requestId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    },
+  });
 
-  const apiClient = new ApiClient();
-  apiClient.setBasePath(`${DOCUSIGN_ENVIRONMENT}/restapi`);
-  apiClient.addDefaultHeader("Authorization", `Bearer ${accessToken}`);
+  if (!response.ok) {
+    throw new Error("Failed to get signature request status from HelloSign");
+  }
 
-  const envelopesApi = new EnvelopesApi(apiClient);
-  const result = await envelopesApi.getEnvelope(DOCUSIGN_ACCOUNT_ID!, envelopeId);
-
-  return result.status || "unknown";
+  const data = (await response.json()) as HelloSignResponse;
+  return data.signature_request?.status || "unknown";
 }
 
-// Get signed document
-export async function getSignedDocument(envelopeId: string): Promise<Buffer> {
-  const accessToken = await getAccessToken();
+// Download signed PDF
+export async function getSignedDocument(requestId: string, apiKey: string): Promise<Buffer> {
+  const response = await fetch(`${HELLOSIGN_API_URL}/signature_request/files/${requestId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    },
+  });
 
-  const apiClient = new ApiClient();
-  apiClient.setBasePath(`${DOCUSIGN_ENVIRONMENT}/restapi`);
-  apiClient.addDefaultHeader("Authorization", `Bearer ${accessToken}`);
+  if (!response.ok) {
+    throw new Error("Failed to download signed document from HelloSign");
+  }
 
-  const envelopesApi = new EnvelopesApi(apiClient);
-
-  // Get the combined document (all documents in the envelope)
-  const result = await envelopesApi.getDocument(DOCUSIGN_ACCOUNT_ID!, envelopeId, "combined");
-
-  return result as unknown as Buffer;
-}
-
-// Verify webhook signature (for webhook security)
-export function verifyWebhookSignature(
-  payload: string,
-  signature: string,
-  secret: string,
-): boolean {
-  const crypto = require("crypto");
-  const hmac = crypto.createHmac("sha256", secret);
-  hmac.update(payload);
-  const hash = hmac.digest("base64");
-  return hash === signature;
+  return Buffer.from(await response.arrayBuffer());
 }

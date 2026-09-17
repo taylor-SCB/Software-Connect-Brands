@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { ContractDocument } from "@/components/contract-document";
 import { IconDownload } from "@/components/icons";
-import { DocuSignSignForm } from "./docusign-sign-form";
+import { HelloSignForm } from "./docusign-sign-form";
+import { SignForm } from "./sign-form";
 
 export const metadata: Metadata = {
   title: "Contract",
@@ -28,6 +29,7 @@ export default async function PublicContractPage({
           logoUrl: true,
           primaryColor: true,
           timeZone: true,
+          hellosignApiKey: true,
         },
       },
       contact: { select: { name: true, company: true, email: true } },
@@ -68,7 +70,11 @@ export default async function PublicContractPage({
 
       {canSign && (
         <div className="no-print mx-auto mt-5 max-w-3xl">
-          <DocuSignSignForm contractId={contract.id} contractTitle={contract.title} />
+          {contract.organization.hellosignApiKey ? (
+            <HelloSignForm contractId={contract.id} contractTitle={contract.title} />
+          ) : (
+            <SignForm token={token} />
+          )}
         </div>
       )}
 
