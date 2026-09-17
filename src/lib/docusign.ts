@@ -2,13 +2,12 @@ import jwt from "jsonwebtoken";
 import { ApiClient, EnvelopesApi, EnvelopeDefinition, Document, Signer, SignHere, Tabs } from "docusign-esign";
 
 const DOCUSIGN_INTEGRATION_KEY = process.env.DOCUSIGN_INTEGRATION_KEY;
-const DOCUSIGN_SECRET_KEY = process.env.DOCUSIGN_SECRET_KEY;
 const DOCUSIGN_PRIVATE_KEY = process.env.DOCUSIGN_PRIVATE_KEY;
 const DOCUSIGN_ACCOUNT_ID = process.env.DOCUSIGN_ACCOUNT_ID;
 const DOCUSIGN_ENVIRONMENT = process.env.DOCUSIGN_ENVIRONMENT || "https://demo.docusign.net";
 
-if (!DOCUSIGN_INTEGRATION_KEY || !DOCUSIGN_SECRET_KEY || !DOCUSIGN_PRIVATE_KEY || !DOCUSIGN_ACCOUNT_ID) {
-  throw new Error("Missing required DocuSign environment variables");
+if (!DOCUSIGN_INTEGRATION_KEY || !DOCUSIGN_PRIVATE_KEY || !DOCUSIGN_ACCOUNT_ID) {
+  throw new Error("Missing required DocuSign environment variables: DOCUSIGN_INTEGRATION_KEY, DOCUSIGN_PRIVATE_KEY, DOCUSIGN_ACCOUNT_ID");
 }
 
 // Cache for access token with expiry
