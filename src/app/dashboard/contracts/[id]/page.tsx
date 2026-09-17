@@ -14,7 +14,7 @@ import {
 import { IconTrash, IconSend, IconExternal, IconDownload } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { ContractBodyForm } from "./body-form";
-import { setContractStatus, deleteContract } from "../actions";
+import { setContractStatus, deleteContract, sendContractToDocuSign } from "../actions";
 
 export default async function ContractDetailPage({
   params,
@@ -59,9 +59,8 @@ export default async function ContractDetailPage({
               PDF
             </a>
             {contract.status === "DRAFT" && (
-              <form action={setContractStatus}>
+              <form action={sendContractToDocuSign}>
                 <input type="hidden" name="contractId" value={contract.id} />
-                <input type="hidden" name="status" value="SENT" />
                 <button type="submit" className="btn btn-primary btn-sm">
                   <IconSend size={13} />
                   Send for signature
@@ -82,6 +81,18 @@ export default async function ContractDetailPage({
             <span className="font-semibold">{contract.signerName}</span> accepted this
             contract on{" "}
             {contract.signedAt ? formatDateTime(contract.signedAt, timeZone) : "—"}.
+          </p>
+        </Card>
+      )}
+
+      {contract.docusignEnvelopeId && (
+        <Card className="mb-5 p-4">
+          <p className="eyebrow mb-1">DocuSign Status</p>
+          <p className="text-sm">
+            Envelope ID: <span className="font-mono text-xs">{contract.docusignEnvelopeId}</span>
+          </p>
+          <p className="text-sm mt-1 capitalize">
+            Status: <span className="font-semibold">{contract.docusignStatus || "pending"}</span>
           </p>
         </Card>
       )}
