@@ -57,6 +57,10 @@ export default function SignupPage() {
                 type="email"
                 placeholder="you@company.com"
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="email"
                 required
                 className="input"
               />
