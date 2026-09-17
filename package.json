@@ -15,7 +15,9 @@
     "@prisma/client": "^7.10.0",
     "@sparticuz/chromium": "^149.0.0",
     "bcryptjs": "^3.0.3",
+    "docusign-esign": "^10.0.0",
     "dotenv": "^17.4.2",
+    "jsonwebtoken": "^9.0.3",
     "next": "16.3.4",
     "next-auth": "^5.0.0-beta.32",
     "pg": "^8.23.0",
@@ -28,6 +30,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

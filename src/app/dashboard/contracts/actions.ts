@@ -246,6 +246,73 @@ export async function deleteContract(formData: FormData) {
   redirect("/dashboard/contracts");
 }
 
+/* --------------------- DocuSign Integration --------------------- */
+
+export async function sendContractToDocuSign(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const { organizationId } = await requireSession();
+
+  const parsed = parseForm(
+    z.object({
+      contractId: idSchema,
+    }),
+    {
+      contractId: formData.get("contractId"),
+    },
+  );
+  if (!parsed.ok) return { error: parsed.error };
+
+  const contract = await prisma.contract.findFirst({
+    where: { id: parsed.data.contractId, organizationId },
+    select: {
+      id: true,
+      title: true,
+      body: true,
+      status: true,
+      contact: { select: { email: true, name: true } },
+      publicToken: true,
+    },
+  });
+
+  if (!contract) return { error: "Contract not found" };
+  if (contract.status === "SIGNED") return { error: "This contract is already signed" };
+  if (!contract.contact.email) return { error: "Contact email is required" };
+
+  try {
+    const { sendContractForSigning } = await import("@/lib/docusign");
+
+    // Build return URL for after signing
+    const returnUrl = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/c/${contract.publicToken}?signed=true`;
+
+    const { envelopeId, signingUrl } = await sendContractForSigning(
+      contract.body,
+      contract.title,
+      contract.contact.email,
+      contract.contact.name,
+      returnUrl,
+    );
+
+    // Store DocuSign envelope ID in database
+    await prisma.contract.updateMany({
+      where: { id: contract.id, organizationId },
+      data: {
+        status: "SENT",
+        sentAt: new Date(),
+        docusignEnvelopeId: envelopeId,
+        docusignStatus: "sent",
+      },
+    });
+
+    revalidatePath(`/dashboard/contracts/${contract.id}`);
+    revalidatePath("/dashboard/contracts");
+
+    // Return the signing URL so the frontend can redirect
+    return { success: "ok", signingUrl };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to send contract to DocuSign";
+    return { error: message };
+  }
+}
+
 /* --------------------- Customer-facing signature --------------------- */
 
 export async function signContract(_prev: ActionState, formData: FormData): Promise<ActionState> {

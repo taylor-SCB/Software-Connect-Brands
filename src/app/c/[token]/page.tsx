@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { ContractDocument } from "@/components/contract-document";
 import { IconDownload } from "@/components/icons";
-import { SignForm } from "./sign-form";
+import { DocuSignSignForm } from "./docusign-sign-form";
 
 export const metadata: Metadata = {
   title: "Contract",
@@ -68,7 +68,7 @@ export default async function PublicContractPage({
 
       {canSign && (
         <div className="no-print mx-auto mt-5 max-w-3xl">
-          <SignForm token={token} contactName={contract.contact.name} />
+          <DocuSignSignForm contractId={contract.id} contractTitle={contract.title} />
         </div>
       )}
 

@@ -293,6 +293,9 @@ model Contract {
   signerName     String?
   signerEmail    String?
   declinedAt     DateTime?
+  docusignEnvelopeId    String?
+  docusignStatus        String?
+  docusignSignedPdfUrl  String?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
