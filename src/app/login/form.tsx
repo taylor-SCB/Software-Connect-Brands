@@ -1,10 +1,11 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import { login } from "./actions";
 import { FormError } from "@/components/ui";
 
-export function LoginForm({ notice }: { notice?: string }) {
+export function LoginForm({ notice, canReset }: { notice?: string; canReset?: boolean }) {
   const [state, formAction, pending] = useActionState<
     { error?: string; kept?: Record<string, string> },
     FormData
@@ -62,6 +63,14 @@ export function LoginForm({ notice }: { notice?: string }) {
       <button type="submit" disabled={pending} className="btn btn-primary w-full">
         {pending ? "Logging in…" : "Log in"}
       </button>
+
+      {canReset && (
+        <p className="text-center">
+          <Link href="/forgot-password" className="link text-xs">
+            Forgot your password?
+          </Link>
+        </p>
+      )}
     </form>
   );
 }

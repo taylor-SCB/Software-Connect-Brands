@@ -149,8 +149,29 @@ model User {
   notes      Note[]
   activities Activity[]
   uploads    Upload[]
+  passwordResets PasswordReset[]
 
   @@index([organizationId])
+}
+
+// A "forgot password" link, waiting to be used.
+//
+// Only the SHA-256 of the token is stored, never the token itself: the
+// link goes out by email and lands in an inbox we do not control, so a
+// copy of this table must not be enough to walk into somebody's account.
+// Rows are kept after use rather than deleted, so a link that has already
+// been spent can say so instead of looking like it never existed.
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // Shared by contacts and companies: a lead is someone you are chasing, a
