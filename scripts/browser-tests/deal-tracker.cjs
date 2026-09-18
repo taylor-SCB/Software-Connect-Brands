@@ -433,7 +433,12 @@ async function anonymousStatus(browser, url) {
   assert.equal(await cpage.locator("[data-testid=document-total]").textContent(), "$250.00");
   assert.equal(await cpage.locator("[data-testid=document-payments] tbody tr").count(), 3);
   assert.match(await cpage.locator("[data-testid=document-payments]").textContent(), /Final payment Dec 15, 2026/);
-  assert.match(await cpage.textContent("body"), /Test Tracker Co · Taylor Test/, "signer under the provider line");
+  // The execution block names each side over its own signature line —
+  // "For Test Tracker Co" with the signer printed beneath — rather than
+  // running the two together on one line.
+  const execution = await cpage.textContent("body");
+  assert.match(execution, /For Test Tracker Co/i, "the provider's signature line names the company");
+  assert.match(execution, /Taylor Test/, "the provider's signer is printed under it");
   assert.ok(await cpage.locator(`img[src="${companyLogo}"]`).count() >= 1, "customer's own logo on their copy");
   await cpage.screenshot({ path: path.join(OUT, "08-customer-document.png"), fullPage: true });
   await cpage.fill("[name=signerName]", "Danny Ortiz");

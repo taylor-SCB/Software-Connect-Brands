@@ -109,15 +109,82 @@ export type MergeContext = Record<string, string | null>;
 
 const TOKEN_PATTERN = /\{\{\s*([a-z_]+)\s*\}\}/gi;
 
-// Replaces {{token}} occurrences. Unknown tokens and tokens with no value
-// are left visible rather than blanked, so a typo in a template or a
-// missing detail is obvious instead of silently producing an empty clause
-// in a legal document.
+// Only punctuation and spaces left on a line once its tokens went — a
+// line like "{{your_company_phone}} · {{your_company_email}}" with
+// neither filled in leaves " · " behind, which is worse than nothing.
+const SEPARATORS_ONLY = /^[\s·,;:|/\\\-–—()[\]]*$/;
+
+// A non-global twin of TOKEN_PATTERN: .test() on a /g regex carries
+// lastIndex between calls and would skip every other line.
+const HAS_TOKEN = /\{\{\s*[a-z_]+\s*\}\}/i;
+
+// Removing a value from the middle of a list leaves the punctuation that
+// was holding it: "Attn: Sam Rep · sam@acme.com · " when the phone is
+// blank. Only ever applied to a line that carried a token, so prose the
+// author wrote is never touched.
+function tidySeparators(line: string) {
+  return (
+    line
+      // A run of separators left by removed values collapses to one.
+      // Bullets and pipes want a space each side; a comma or semicolon
+      // wants one only after it.
+      .replace(/\s*([·|])(?:\s*[·|])+\s*/g, " $1 ")
+      .replace(/\s*([,;])(?:\s*[,;])+\s*/g, "$1 ")
+      // A separator stranded straight after a label: "Attn: · 555".
+      .replace(/([:—–-])\s*[·|,;]\s*/g, "$1 ")
+      // One left hanging at either end of the line.
+      .replace(/[\s·|,;]+$/, "")
+      .replace(/^([ \t]*)[·|,;]+[ \t]*/, "$1")
+      // Gaps the removals left behind, without eating indentation.
+      .replace(/(\S)[ \t]{2,}/g, "$1 ")
+  );
+}
+
+// Replaces {{token}} occurrences.
+//
+// A token with no value is REMOVED, and a line left holding nothing but
+// separators goes with it. This used to leave the token visible so a
+// missing detail would be obvious — good intention, wrong reader: the
+// body is frozen when the contract is created, so what "obvious" meant in
+// practice was a vendor opening an agreement addressed from
+// "{{your_company_address}}". A workspace that has not filled in its
+// address should send a document without that line, not one with the
+// template's plumbing showing.
+//
+// The sender is still told: unresolvedMergeKeys names what was dropped,
+// so the warning lands on the person who can fix it.
 export function renderMergeFields(body: string, context: MergeContext) {
-  return body.replace(TOKEN_PATTERN, (match, key: string) => {
-    const value = context[key.toLowerCase()];
-    return value ?? match;
-  });
+  const kept: string[] = [];
+
+  // Line by line against the ORIGINAL, so "did this line have a token"
+  // is known before anything is substituted — a value can itself contain
+  // newlines (a product list does), which makes the rendered text a
+  // different shape from the body it came from.
+  for (const line of body.split("\n")) {
+    const hadToken = HAS_TOKEN.test(line);
+    const rendered = line.replace(TOKEN_PATTERN, (_match, key: string) => {
+      return context[key.toLowerCase()] ?? "";
+    });
+    // A line that was only its tokens goes with them. A blank line the
+    // author wrote is spacing and stays.
+    if (hadToken && SEPARATORS_ONLY.test(rendered)) continue;
+    kept.push(hadToken ? tidySeparators(rendered) : rendered);
+  }
+
+  // Three blank lines in a row is a hole where something used to be.
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+// The fields a body asks for that this customer has no value for. Named so
+// the screen that is about to send the document can say which details are
+// missing, rather than the customer finding out.
+export function unresolvedMergeKeys(body: string, context: MergeContext): string[] {
+  const missing = new Set<string>();
+  for (const match of body.matchAll(TOKEN_PATTERN)) {
+    const key = match[1].toLowerCase();
+    if (!context[key]) missing.add(key);
+  }
+  return [...missing];
 }
 
 export type MergeSegment =

@@ -328,7 +328,15 @@ async function previewChips(page) {
   assert.ok(await page.locator("dl").getByText("None · residential").isVisible());
   const resiBody = await page.locator("#body").inputValue();
   assert.ok(resiBody.includes("Client: Resi Homeowner"));
-  assert.ok(resiBody.includes("{{client_email}}"), "a field with nothing to fill it stays visible rather than blank");
+  // A field with nothing to fill it takes itself out of the document. The
+  // owner was already told on the preview above, where client_email showed
+  // as "Missing Information"; leaving the raw token in the body meant the
+  // CUSTOMER read "{{client_email}}" on the agreement they signed.
+  assert.ok(
+    !resiBody.includes("{{client_email}}"),
+    "an unfilled merge field must not reach the body the customer reads",
+  );
+  assert.ok(!/\{\{/.test(resiBody), "no merge token of any kind survives into a generated contract");
 
   log("templates list shows the new type and the sender restriction");
   await page.goto(`${BASE}/dashboard/contracts/templates`);
