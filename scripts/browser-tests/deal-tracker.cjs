@@ -1,4 +1,4 @@
-/* Browser regression for the Deal Tracker, Settings sub-panes and uploads
+/* Browser regression for the Contract Coordinator, Settings sub-panes and uploads
  * (Sept 10, 2026).
  *
  * Covers: the six built-in templates a new workspace starts with; Settings
@@ -6,7 +6,7 @@
  * Company Information's five tiles (General with the shared logo, Branding
  * with a logo file upload, Company Users, Compliance and Marketing file
  * uploads with private downloads); company logo and contact photo uploads;
- * the Deal Tracker grid — prefilled Contract A, a typed-in new company and
+ * the Contract Coordinator grid — prefilled Contract A, a typed-in new company and
  * contact for Contract B, one row on both contracts, payment presets, "Your
  * Company Signer" — creating the contracts; the contract page's line items,
  * payment schedule editor and signer; the printed document's Items and
@@ -300,13 +300,13 @@ async function anonymousStatus(browser, url) {
   await page.getByText("Contact saved").waitFor();
   assert.match((await sql(`SELECT "imageUrl" FROM "Contact" WHERE id='ctc_tr'`)).rows[0].imageUrl, /^\/files\//);
 
-  /* ------------------------------ Deal Tracker ------------------------------ */
+  /* ------------------------------ Contract Coordinator ------------------------------ */
 
-  log("Deal Tracker under Pipeline is blank until a deal is picked");
+  log("Contract Coordinator under Pipeline is blank until a deal is picked");
   await page.goto(`${BASE}/dashboard/deals/tracker`);
-  await page.getByRole("heading", { name: "Deal Tracker" }).waitFor();
+  await page.getByRole("heading", { name: "Contract Coordinator" }).waitFor();
   await page.getByText("Pick a deal to start").waitFor();
-  assert.ok(await nav.getByRole("link", { name: "Deal Tracker" }).first().isVisible());
+  assert.ok(await nav.getByRole("link", { name: "Contract Coordinator" }).first().isVisible());
 
   log("the quote page's Split into contracts button lands on the tracker with the deal picked");
   await page.goto(`${BASE}/dashboard/quotes/quo_tr`);
@@ -475,11 +475,11 @@ async function anonymousStatus(browser, url) {
   const linked = (await sql(`SELECT count(*)::int AS n FROM "ContractLineItem" WHERE "quoteLineItemId" IS NOT NULL AND "contractId" IN ($1,$2)`, [a.id, b.id])).rows[0].n;
   assert.equal(linked, 3, "all three contract rows still point at their quote rows");
 
-  log("Contracts list shows who each one went to and its total; the Deal Tracker under Contracts is the same page");
+  log("Contracts list shows who each one went to and its total; the Contract Coordinator under Contracts is the same page");
   await page.goto(`${BASE}/dashboard/contracts`);
   const listRows = await page.locator("table tbody tr").allTextContents();
   assert.ok(listRows.some((r) => /Purchase Order.*ACME Supply.*\$50\.00/s.test(r)), `PO row lists ACME Supply and $50.00: ${listRows}`);
-  await page.getByRole("link", { name: "Deal Tracker" }).first().click();
+  await page.getByRole("link", { name: "Contract Coordinator" }).first().click();
   await page.waitForURL(/\/dashboard\/contracts\/tracker$/);
   await page.getByText("Pick a deal to start").waitFor();
 

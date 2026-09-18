@@ -152,8 +152,9 @@ Modern templates, tagged line items, tag totals grid), contracts
 "Who can send?", merge-field chips grouped by screen, a two-column
 Agreement | Customer Information layout with Preview, e-signature;
 Sept 10, 2026; six preloaded templates: Service Agreement, Change Order,
-Purchase Order, Sales Order, Invoice, Compliance Agreement), the **Deal
-Tracker** (Pipeline → Deal Tracker and Contracts → Deal Tracker, same page:
+Purchase Order, Sales Order, Invoice, Compliance Agreement), the **Contract
+Coordinator** (Pipeline → Contract Coordinator and Contracts → Contract
+Coordinator, same page; called the Deal Tracker until Sept 16, 2026:
 split a quote's rows into up to five contracts, each to its own company
 and contact with a template, payment terms and a payment preset; rows read
 Open / Sent / Signed / Cancelled; contracts get line items, a payment
@@ -215,7 +216,7 @@ are all blocking before the first paying customer.
   (a logged-in user can change their own under My Account). Everything else
   waiting on email is blocked behind this. That includes ratesheets:
   "Send to partner" makes a link to copy and text or email by hand, and
-  the Deal Tracker's "Copy reminder", which copies a nudge with the signing
+  the Contract Coordinator's "Copy reminder", which copies a nudge with the signing
   link and logs it; the app says so on the screen.
 - **"Link Distributor / Partner" is Coming Soon.** Public and
   Invite/Approve ratesheets are stored with their visibility but nobody in
@@ -237,7 +238,7 @@ are all blocking before the first paying customer.
   are paged and searched in the database (Sept 13, 2026, proven at
   200,000 contacts by `scripts/browser-tests/load-test.cjs`). Pipeline,
   Quotes, Contracts, Products and the dashboard still load everything,
-  and the **New quote, New contract and Deal Tracker pages still ship the
+  and the **New quote, New contract and Contract Coordinator pages still ship the
   whole contact list to the browser** for their pickers. Fine at demo
   scale; the next thing to fix for a workspace that has imported a big
   CRM. The Sept 14, 2026 pickers (crews, the event form, properties) cap
@@ -269,6 +270,19 @@ are all blocking before the first paying customer.
   has to stay open (about 5 to 10 minutes for 200,000 rows). A
   background job is the answer when a customer needs to walk away or
   schedule syncs; it needs file storage (Vercel Blob) and a queue.
+- **A supplier and its Company can end up unbridged, with no screen to
+  repair it.** They are matched by name, so renaming a company after the
+  pair was made leaves the next supplier of that name pointing at nothing.
+  Nothing breaks — a purchase order still goes to the right company, and
+  the Sept 16 audit fix stopped it crashing "Order materials" — but the
+  two records stop being one business until someone renames them to match.
+  A proper fix is a picker that links an existing supplier to an existing
+  company by hand.
+- **"Contract signer" on a quote is recorded but nothing downstream reads
+  it.** It is stored on the quote and shown back on the form; the
+  Contract Coordinator still fills its signer from the workspace owner.
+  Wiring it through is small and worth doing the next time contracts are
+  touched.
 - **A signed contract records only the name typed and the time.** Enough for
   ESIGN/UETA, thin if one is ever disputed — no IP address, no email
   confirmation.

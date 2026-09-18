@@ -148,7 +148,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             {project.dealId && (
               <Link href={`/dashboard/deals/tracker?dealId=${project.dealId}`} className="btn btn-ghost btn-sm">
                 <IconClock size={13} />
-                Deal Tracker
+                Contract Coordinator
               </Link>
             )}
           </div>

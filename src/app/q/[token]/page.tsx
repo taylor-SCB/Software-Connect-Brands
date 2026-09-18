@@ -20,9 +20,21 @@ export default async function PublicQuotePage({
 }) {
   const { token } = await params;
 
+  // Named field by field on purpose. This is the allow-list of what a
+  // customer may see, and it has to stay one: a line carries internal
+  // columns (what we pay, who we buy it from) that must never reach the
+  // page or the PDF taken from it.
   const quote = await prisma.quote.findUnique({
     where: { publicToken: token },
-    include: {
+    select: {
+      number: true,
+      title: true,
+      template: true,
+      status: true,
+      introNote: true,
+      terms: true,
+      validUntil: true,
+      createdAt: true,
       organization: {
         select: {
           id: true,
@@ -35,7 +47,26 @@ export default async function PublicQuotePage({
       contact: {
         select: { name: true, company: { select: { name: true, logoUrl: true } }, email: true, phone: true },
       },
-      lineItems: { orderBy: { position: "asc" } },
+      lineItems: {
+        orderBy: { position: "asc" },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          projectNotes: true,
+          quantity: true,
+          unitPriceCents: true,
+          tag: true,
+        },
+      },
+      paymentTerms: true,
+      hidePaymentTable: true,
+      payments: {
+        orderBy: { position: "asc" },
+        select: { id: true, label: true, amountCents: true, dueOn: true, terms: true },
+      },
+      // Only what is filled in on their account gets printed.
+      leadSalesRep: { select: { name: true, email: true, phone: true, title: true } },
     },
   });
 
@@ -60,7 +91,17 @@ export default async function PublicQuotePage({
           </span>
         </div>
       )}
-      <QuoteDocument quote={quote} />
+      {/* Hide from quote is honoured here rather than in CSS: hiding it in
+          the browser would still ship the numbers inside the page, and
+          .no-print only hides things on paper. */}
+      <QuoteDocument
+        quote={{
+          ...quote,
+          payments: quote.hidePaymentTable ? [] : quote.payments,
+          paymentTerms: quote.hidePaymentTable ? null : quote.paymentTerms,
+          salesRep: quote.leadSalesRep,
+        }}
+      />
 
       {/* Contractors need a file to drop into a bid package, not just a
           link — this is the primary action on a customer-facing quote. */}

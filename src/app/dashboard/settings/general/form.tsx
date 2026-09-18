@@ -8,7 +8,7 @@ import { updateCompanyInfo } from "../actions";
 import type { ActionState } from "@/lib/forms";
 
 // Your standard payment table. A new contract starts with these terms
-// and rows, on the Deal Tracker and the New contract page; the dates and
+// and rows, on the Contract Coordinator and the New contract page; the dates and
 // amounts can still be changed on any contract afterwards.
 function PaymentTablePreset({
   organization,

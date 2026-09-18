@@ -12,6 +12,7 @@ import { dollarsToCents, formatCents, moneyTooBig, MAX_MONEY_CENTS } from "@/lib
 import { refreshTotals, refreshProjectTotals, awardFromContract, DEFAULT_SCOPE_NAME } from "@/lib/projects";
 import { openItems } from "@/lib/close-out";
 import { ensureServiceType } from "@/lib/service-types";
+import { ensureDistributorTypeName } from "@/lib/distributors";
 import { advanceDealStage } from "@/lib/deals";
 import { computeSchedule, isoToDate, presetRows, todayIso, type SchedulePreset } from "@/lib/payments";
 import { contractTotalCents } from "@/lib/contracts";
@@ -588,6 +589,11 @@ export async function orderFromSupplier(
     },
   });
 
+  // Outside the transaction, and before the company is written: a company
+  // tagged with a type the pick list doesn't carry renders as an orphan
+  // and never appears in a picker that filters on the type.
+  const distributorTypeName = await ensureDistributorTypeName(organizationId);
+
   const contractId = await prisma.$transaction(async (tx) => {
     // The supplier as a company, made once and reused after that.
     let companyId = distributor.companyId;
@@ -604,13 +610,24 @@ export async function orderFromSupplier(
               organizationId,
               name: distributor.name,
               industries: ["Service Provider"],
-              companyTypes: ["Distributor"],
+              companyTypes: [distributorTypeName],
               status: "CUSTOMER",
             },
             select: { id: true },
           })
         ).id;
-      await tx.distributor.update({ where: { id: distributor.id }, data: { companyId } });
+      // Distributor.companyId is unique. If another distributor already
+      // holds this company — two suppliers whose names differ only by the
+      // company being renamed — claiming it here would throw and the
+      // purchase order would fail outright. The order is addressed to the
+      // right company either way; only the bridge is missing.
+      const claimed = await tx.distributor.findUnique({
+        where: { companyId },
+        select: { id: true },
+      });
+      if (!claimed) {
+        await tx.distributor.update({ where: { id: distributor.id }, data: { companyId } });
+      }
     }
 
     // Someone to address it to. The distributor's own contact if there is

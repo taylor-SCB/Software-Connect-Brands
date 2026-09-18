@@ -33,6 +33,10 @@ type Column = {
   direction: Direction;
   directionSet: boolean;
   paymentTerms: string;
+  // Start this contract's schedule from the quote's own payment table
+  // rather than a preset, so the customer is asked to pay what they were
+  // quoted. Default whenever the quote has a table.
+  fromQuote: boolean;
   preset: SchedulePreset;
   start: string;
   depositPercent: number;
@@ -40,6 +44,11 @@ type Column = {
   unit: InstallmentUnit;
   selected: string[];
 };
+
+// Sentinel in the Payment schedule dropdown for "carry the quote's own
+// table over" — not a preset, so SCHEDULE_PRESETS stays untouched and the
+// Settings default and the tracker's own copy of that list are unaffected.
+const FROM_QUOTE = "__quote__";
 
 function letter(index: number) {
   return String.fromCharCode(65 + index);
@@ -86,6 +95,7 @@ export function TrackerGrid({
       directionSet: false,
       // The Preset Payment Table from Settings → Company Information.
       paymentTerms: defaults.terms,
+      fromQuote: quote.payments.length > 0,
       preset: defaults.preset,
       start: today,
       depositPercent: defaults.depositPercent,
@@ -173,13 +183,17 @@ export function TrackerGrid({
         title: column.title || undefined,
         payable: column.direction === "out",
         paymentTerms: column.paymentTerms || undefined,
-        schedule: {
-          preset: column.preset,
-          start: column.start,
-          depositPercent: column.depositPercent,
-          count: column.count,
-          unit: column.unit,
-        },
+        // Left out when the quote's own table is carrying over; the
+        // server treats a missing schedule as "use the quote's".
+        schedule: column.fromQuote
+          ? undefined
+          : {
+              preset: column.preset,
+              start: column.start,
+              depositPercent: column.depositPercent,
+              count: column.count,
+              unit: column.unit,
+            },
         lineItemIds: column.selected,
       })),
     };
@@ -223,6 +237,7 @@ export function TrackerGrid({
                     column={column}
                     index={index}
                     pickers={pickers}
+                    quotePayments={quote.payments}
                     canRemove={columns.length > 1}
                     onChange={(changes) => patch(column.key, changes)}
                     onPickTemplate={(templateId) => pickTemplate(column, templateId)}
@@ -318,7 +333,7 @@ export function TrackerGrid({
                   <p className="faint text-xs">
                     {column.selected.length} {column.selected.length === 1 ? "row" : "rows"}
                   </p>
-                  <SchedulePreview column={column} totalCents={columnTotal(column)} />
+                  <SchedulePreview column={column} totalCents={columnTotal(column)} quotePayments={quote.payments} />
                 </td>
               ))}
               <td />
@@ -371,6 +386,7 @@ function ColumnHeader({
   column,
   index,
   pickers,
+  quotePayments,
   canRemove,
   onChange,
   onPickTemplate,
@@ -379,6 +395,7 @@ function ColumnHeader({
   column: Column;
   index: number;
   pickers: TrackerPickers;
+  quotePayments: TrackerQuote["payments"];
   canRemove: boolean;
   onChange: (changes: Partial<Column>) => void;
   onPickTemplate: (templateId: string) => Partial<Column>;
@@ -506,15 +523,24 @@ function ColumnHeader({
         <select
           id={id("preset")}
           className="select"
-          value={column.preset}
-          onChange={(event) => onChange({ preset: event.target.value as SchedulePreset })}
+          value={column.fromQuote ? FROM_QUOTE : column.preset}
+          onChange={(event) =>
+            onChange(
+              event.target.value === FROM_QUOTE
+                ? { fromQuote: true }
+                : { fromQuote: false, preset: event.target.value as SchedulePreset },
+            )
+          }
         >
+          {/* Offered, and picked by default, only when the quote has a
+              table of its own to carry over. */}
+          {quotePayments.length > 0 && <option value={FROM_QUOTE}>From the quote</option>}
           {(Object.keys(SCHEDULE_PRESET_LABELS) as SchedulePreset[]).map((preset) => (
             <option key={preset} value={preset}>{SCHEDULE_PRESET_LABELS[preset]}</option>
           ))}
         </select>
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          {column.preset === "DEPOSIT_BALANCE" && (
+          {!column.fromQuote && column.preset === "DEPOSIT_BALANCE" && (
             <label className="block text-xs">
               <span className="faint block">Deposit %</span>
               <input
@@ -528,7 +554,7 @@ function ColumnHeader({
               />
             </label>
           )}
-          {column.preset === "INSTALLMENTS" && (
+          {!column.fromQuote && column.preset === "INSTALLMENTS" && (
             <>
               <label className="block text-xs">
                 <span className="faint block">How many</span>
@@ -555,6 +581,7 @@ function ColumnHeader({
               </label>
             </>
           )}
+          {!column.fromQuote && (
           <label className="col-span-2 block text-xs">
             <span className="faint block">{column.preset === "FULL" ? "Due" : "First payment"}</span>
             <input
@@ -564,6 +591,7 @@ function ColumnHeader({
               onChange={(event) => onChange({ start: event.target.value })}
             />
           </label>
+          )}
         </div>
       </div>
 
@@ -584,14 +612,33 @@ function ColumnHeader({
 // What the column's payment rows will be, priced live against the
 // ticked rows, so the amounts and the final date are visible before the
 // contract exists.
-function SchedulePreview({ column, totalCents }: { column: Column; totalCents: number }) {
-  const rows = presetRows({
-    preset: column.preset,
-    start: column.start,
-    depositPercent: column.depositPercent,
-    count: column.count,
-    unit: column.unit,
-  });
+function SchedulePreview({
+  column,
+  totalCents,
+  quotePayments,
+}: {
+  column: Column;
+  totalCents: number;
+  quotePayments: TrackerQuote["payments"];
+}) {
+  // Percentages re-price against THIS contract's total, not the whole
+  // quote's — a quote can split into as many as five contracts.
+  const rows = column.fromQuote
+    ? quotePayments.map((row) => ({
+        label: row.label,
+        kind: row.kind,
+        percent: row.percent,
+        fixedCents: row.kind === "FIXED" ? row.amountCents : null,
+        dueOn: row.dueOn,
+        terms: row.terms,
+      }))
+    : presetRows({
+        preset: column.preset,
+        start: column.start,
+        depositPercent: column.depositPercent,
+        count: column.count,
+        unit: column.unit,
+      });
   const schedule = computeSchedule(rows, totalCents);
   if (totalCents === 0) return null;
   return (

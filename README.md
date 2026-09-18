@@ -215,7 +215,7 @@ there is nothing to fill it with. Generating resolves the fields once, so
 the customer reads and e-signs a frozen copy; the send button honours the
 template's sender list; signed contracts are locked from editing.
 
-**Deal Tracker** (under Pipeline and under Contracts — one page, two
+**Contract Coordinator** (under Pipeline and under Contracts — one page, two
 addresses) — turns a deal's quote into the contracts it actually needs.
 Pick a deal and the quote's rows appear down the side with a column for
 each contract (up to five): who it goes to (company and contact, existing

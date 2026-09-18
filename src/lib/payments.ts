@@ -19,6 +19,11 @@ export type ScheduleRowInput = {
   fixedCents: number | null;
   // yyyy-mm-dd or "".
   dueOn: string;
+  // "Net 30", "Upon signature". What the Due cell prints when no date has
+  // been picked; a picked date wins. Travels with the row — the maths
+  // below ignores it, and dueOn keeps its exact meaning, because the owed
+  // and overdue figures read that column directly in SQL.
+  terms?: string | null;
 };
 
 export type ScheduleRowComputed = ScheduleRowInput & { amountCents: number };
@@ -77,6 +82,35 @@ export const PAYMENT_TERM_OPTIONS = [
   "Net 60",
   "50% deposit, balance on completion",
   "Per payment schedule",
+] as const;
+
+// Offered per ROW, beside the date. Separate from PAYMENT_TERM_OPTIONS
+// above, which is the whole-document terms line and is hard-whitelisted
+// against every workspace's stored default — rewording that one stops
+// Company Information saving. Same capitalisation as that list on
+// purpose, so a document never shows "Net 30" in its header and "NET 30"
+// on a row. Free text is allowed; these are just the offered picks.
+export const ROW_TERM_OPTIONS = [
+  "Upon signature",
+  "Net 0",
+  "Net 15",
+  "Net 30",
+  "Net 45",
+  "Net 60",
+] as const;
+
+// Offered labels for a payment row. A DATALIST, never a <select>: rows
+// already say things like "Installment 1 of 3" and "Balance on
+// completion", and a select would silently rewrite every one of them on
+// the next save.
+export const PAYMENT_LABEL_OPTIONS = [
+  "Deposit",
+  "Ordering Materials",
+  "Start of Installation",
+  "Progress Payment",
+  "Substantial Completion",
+  "Retainage Release",
+  "Final Pay",
 ] as const;
 
 // Days implied by a Net term, for a default due date; null when the
@@ -149,6 +183,38 @@ export function presetRows(input: {
     fixedCents: null,
     dueOn: start ? shiftDate(start, index, unit) : "",
   }));
+}
+
+// What a quote's payment table starts as before anyone edits it: half at
+// signature, half at project close, both Net 30.
+//
+// Deliberately NOT a SCHEDULE_PRESET. The preset list is read by the
+// contract editor, the tracker's column picker, Settings, and a
+// hand-written copy of itself in src/lib/tracker.ts — adding to it would
+// change three screens nobody asked to change, and the copy would not
+// know the new name and would quietly fall back to "One payment".
+//
+// The second row is BALANCE rather than another 50%, so the table ties to
+// the cent on an odd total while still reading as half.
+export function quoteBaselineRows(): ScheduleRowInput[] {
+  return [
+    {
+      label: "Deposit — at signature",
+      kind: "PERCENT",
+      percent: 50,
+      fixedCents: null,
+      dueOn: "",
+      terms: "Net 30",
+    },
+    {
+      label: "Final Pay — at project close",
+      kind: "BALANCE",
+      percent: null,
+      fixedCents: null,
+      dueOn: "",
+      terms: "Net 30",
+    },
+  ];
 }
 
 // Today's date in a zone as yyyy-mm-dd, the shape <input type="date">

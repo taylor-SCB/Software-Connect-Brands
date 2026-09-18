@@ -43,7 +43,7 @@ export default async function ContractsPage() {
             </Link>
             <Link href="/dashboard/contracts/tracker" className="btn btn-ghost btn-sm">
               <IconClock size={13} />
-              Deal Tracker
+              Contract Coordinator
             </Link>
             <Link href="/dashboard/contracts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />

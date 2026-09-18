@@ -12,6 +12,7 @@ import { loadMergeContext } from "@/lib/merge-data";
 import { canUserSend, contractTotalCents, MAX_TRACKER_COLUMNS } from "@/lib/contracts";
 import {
   computeSchedule,
+  dateToIso,
   isoToDate,
   presetRows,
   type ScheduleRowInput,
@@ -90,6 +91,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         orderBy: { position: "asc" },
         include: { product: { select: { costCents: true } } },
       },
+      // The terms the customer was already shown. Each contract starts
+      // from these rather than a preset, so what was quoted is what gets
+      // sent unless someone deliberately changes it.
+      payments: { orderBy: { position: "asc" } },
     },
   });
   if (!quote) return { error: "That quote isn't on this deal" };
@@ -210,9 +215,16 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         position,
       }));
       const totalCents = contractTotalCents(lineItems);
+      // What the quote's own payment rows were priced against, so a fixed
+      // amount can carry over as the share of the deal it represents.
+      const quoteTotalCents = contractTotalCents(quote.lineItems);
 
-      // Payment schedule from the preset, priced against this contract's
-      // own total.
+      // A preset the person picked for this column wins — they asked for
+      // it here. Otherwise the quote's own table carries over, so the
+      // customer is asked to pay what they were quoted. Percentages
+      // re-price against this contract's total, not the whole quote's,
+      // since a quote can split into as many as five contracts.
+      const fromQuote = !column.schedule && quote.payments.length > 0;
       const scheduleInput: ScheduleRowInput[] = column.schedule
         ? presetRows({
             preset: column.schedule.preset,
@@ -221,15 +233,38 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
             count: column.schedule.count,
             unit: column.schedule.unit,
           })
-        : [];
+        : fromQuote
+          ? quote.payments.map((row) => ({
+              label: row.label,
+              // A fixed amount from the quote is a share of the WHOLE
+              // quote, so it carries as that share rather than as the
+              // number itself. A $5,000 deposit on a $10,000 quote must
+              // not land whole on a $2,000 slice of it: that made a
+              // deposit bigger than the contract and a negative balance
+              // row, printed on the document the customer signs.
+              kind: row.kind === "FIXED" && quoteTotalCents > 0 ? "PERCENT" : row.kind,
+              percent:
+                row.kind === "FIXED" && quoteTotalCents > 0
+                  ? (row.amountCents / quoteTotalCents) * 100
+                  : row.percent,
+              fixedCents: row.kind === "FIXED" && quoteTotalCents <= 0 ? row.amountCents : null,
+              dueOn: dateToIso(row.dueOn),
+              terms: row.terms,
+            }))
+          : [];
       const schedule = computeSchedule(scheduleInput, totalCents);
       const payments = schedule.rows.map((row, position) => ({
         organizationId,
         label: row.label,
         kind: row.kind,
         percent: row.kind === "PERCENT" ? row.percent : null,
-        amountCents: row.amountCents,
+        // Never below zero. The two sibling save paths refuse an
+        // over-total schedule outright; this one has no screen to refuse
+        // on, and a negative row would print on the signed document and
+        // then block every later edit of that contract's table.
+        amountCents: Math.max(0, row.amountCents),
         dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
+        terms: row.terms ?? null,
         position,
       }));
 
@@ -268,7 +303,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
           body: renderMergeFields(template.body, context),
           publicToken: publicToken(),
           senderSignerName: signerName,
-          paymentTerms,
+          paymentTerms: fromQuote ? paymentTerms ?? quote.paymentTerms : paymentTerms,
+          // Remembered so the schedule can say it came from the quote, and
+          // say so again if someone changes it afterwards.
+          scheduleFromQuote: fromQuote,
           lineItems: { create: lineItems },
           payments: { create: payments },
         },
@@ -406,11 +444,16 @@ const scheduleRowSchema = z.object({
   // Set for a row that already exists, so it keeps its id (and the
   // payments recorded on it) through a re-save; absent for a new row.
   id: z.string().trim().min(1).optional(),
+  // The editor's handle for the row, echoed back so a row created by this
+  // save can be told its stored id without relying on array position.
+  uid: z.number().int().optional(),
   label: z.string().trim().min(1, "Every payment needs a label").max(120),
   kind: z.enum(["PERCENT", "FIXED", "BALANCE"]),
   percent: z.number().min(0).max(100).nullable(),
   fixedCents: z.number().int().min(0).max(1_000_000_000).nullable(),
   dueOn: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A due date isn't valid")]),
+  // A label beside the date — "Net 30" — shown when no date is picked.
+  terms: z.string().trim().max(60).nullable().optional(),
 });
 
 // Saves the payment table. Rows the editor already had keep their ids —
@@ -423,7 +466,7 @@ export async function savePaymentSchedule(input: {
   contractId: string;
   paymentTerms: string;
   rows: z.infer<typeof scheduleRowSchema>[];
-}): Promise<ActionState> {
+}): Promise<ActionState & { saved?: { uid: number; id: string }[] }> {
   const { organizationId } = await requireSession();
 
   const parsed = z
@@ -442,10 +485,21 @@ export async function savePaymentSchedule(input: {
     select: {
       status: true,
       dealId: true,
+      scheduleFromQuote: true,
+      scheduleAmendedAt: true,
       lineItems: { select: { quantity: true, unitPriceCents: true } },
       payments: {
         orderBy: { position: "asc" },
-        select: { id: true, label: true, payments: { select: { amountCents: true } } },
+        select: {
+          id: true,
+          label: true,
+          kind: true,
+          percent: true,
+          amountCents: true,
+          dueOn: true,
+          terms: true,
+          payments: { select: { amountCents: true } },
+        },
       },
     },
   });
@@ -482,10 +536,34 @@ export async function savePaymentSchedule(input: {
     }
   }
 
+  const saved: { uid: number; id: string }[] = [];
+
+  // A schedule that came from the quote gets marked once it stops matching
+  // what the customer was quoted, so the difference is visible on the
+  // document rather than silent. Only the first change stamps it.
+  const changedFromQuote =
+    contract.scheduleFromQuote &&
+    !contract.scheduleAmendedAt &&
+    (contract.payments.length !== schedule.rows.length ||
+      schedule.rows.some((row, index) => {
+        const before = contract.payments[index];
+        if (!before) return true;
+        return (
+          before.label !== row.label ||
+          before.kind !== row.kind ||
+          before.amountCents !== row.amountCents ||
+          (before.terms ?? "") !== (parsed.data.rows[index]?.terms?.trim() || "") ||
+          dateToIso(before.dueOn) !== row.dueOn
+        );
+      }));
+
   await prisma.$transaction(async (tx) => {
     await tx.contract.updateMany({
       where: { id: parsed.data.contractId, organizationId },
-      data: { paymentTerms: parsed.data.paymentTerms || null },
+      data: {
+        paymentTerms: parsed.data.paymentTerms || null,
+        ...(changedFromQuote ? { scheduleAmendedAt: new Date() } : {}),
+      },
     });
     if (removed.length) {
       await tx.contractPayment.deleteMany({
@@ -493,23 +571,28 @@ export async function savePaymentSchedule(input: {
       });
     }
     for (const [position, row] of schedule.rows.entries()) {
+      const source = parsed.data.rows[position];
       const data = {
         label: row.label,
         kind: row.kind,
         percent: row.kind === "PERCENT" ? row.percent : null,
         amountCents: row.amountCents,
         dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
+        terms: source?.terms?.trim() || null,
         position,
       };
-      const id = parsed.data.rows[position]?.id;
+      const id = source?.id;
       if (id) {
         await tx.contractPayment.update({ where: { id }, data });
         // A lower amount can settle a row that was partly paid.
         await settleRow(tx, id);
+        if (source?.uid !== undefined) saved.push({ uid: source.uid, id });
       } else {
-        await tx.contractPayment.create({
+        const created = await tx.contractPayment.create({
           data: { ...data, contractId: parsed.data.contractId, organizationId },
+          select: { id: true },
         });
+        if (source?.uid !== undefined) saved.push({ uid: source.uid, id: created.id });
       }
     }
   });
@@ -520,7 +603,7 @@ export async function savePaymentSchedule(input: {
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/projects");
-  return { success: "Payment schedule saved" };
+  return { success: "Payment schedule saved", saved };
 }
 
 // Who signs for your company, editable on the contract page.

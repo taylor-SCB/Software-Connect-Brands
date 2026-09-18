@@ -233,6 +233,16 @@ export const SOFTWARE_RATE_LABELS: Record<SoftwareRateValue, string> = {
   PER_TERM: "Per Term",
 };
 
+// How the same three rates are worded on a quote line, where the question
+// is how the customer pays rather than how the catalog prices it. Separate
+// from SOFTWARE_RATE_LABELS on purpose: that one is printed on the Products
+// page and on partner ratesheets, so renaming it changes what partners see.
+export const SOFTWARE_BILLING_LABELS: Record<SoftwareRateValue, string> = {
+  PER_MONTH: "Monthly",
+  PER_YEAR: "Yearly",
+  PER_TERM: "Pay in Full",
+};
+
 export const SOFTWARE_TERM_NOUNS: Record<SoftwareRateValue, string> = {
   PER_MONTH: "month",
   PER_YEAR: "year",
@@ -270,7 +280,7 @@ export const DEFAULT_INDUSTRIES: { name: string; types: string[] }[] = [
   { name: "Small Business", types: [GENERAL_COMPANY_TYPE] },
   {
     name: "Service Provider",
-    types: ["Integrator", "Electrician", "Networks/ISP", "Access Control", "Door Hardware", "Gates"],
+    types: ["Integrator", "Electrician", "Networks/ISP", "Access Control", "Door Hardware", "Gates", "Distributor"],
   },
 ];
 
