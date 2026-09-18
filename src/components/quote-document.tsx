@@ -218,9 +218,14 @@ function LineItems({ quote, dark = false }: { quote: QuoteDocumentData; dark?: b
   );
 }
 
-// The money block: what each kind of work came to, then the one number
-// the reader is looking for, set in the workspace's own colour.
-function Totals({
+// What each kind of work came to, as bars, beside the one number the
+// reader is looking for. One component for both templates: the printed
+// quote and the dark one are the same document in different clothes, and
+// two copies of this drifted apart the moment one of them was improved.
+//
+// Backgrounds survive into the PDF — the renderer prints them — so the
+// tint on the total card is real on paper, not just on screen.
+function TagTotals({
   quote,
   totals,
   dark = false,
@@ -231,39 +236,88 @@ function Totals({
 }) {
   const brand = quote.organization.primaryColor;
   const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
-  const rule = dark ? "border-white/10" : "border-[#e5e7eb]";
-  const sub = dark ? "text-white/50" : "text-[#6b7280]";
   const software = softwareOverTerm(quote);
+  // Bars are relative to the biggest kind of work, not to the total, so a
+  // small category is still visible.
+  const maxTag = Math.max(...activeTags.map((tag) => totals.byTag[tag]), 1);
+
+  const label = dark ? "text-white/55" : "text-[#6b7280]";
+  const value = dark ? "text-white/80" : "text-[#111827]";
+  const faintLabel = dark ? "text-white/35" : "text-[#9ca3af]";
+  const faintValue = dark ? "text-white/55" : "text-[#6b7280]";
+  const track = dark ? "bg-white/8" : "bg-[#eef0f3]";
+  const hair = dark ? "bg-white/8" : "bg-[#eef0f3]";
 
   return (
-    <div className="mt-6 flex justify-end">
-      <div className="w-full max-w-[21rem]">
-        {activeTags.map((tag) => (
-          <div key={tag} className="py-1">
-            <div className={`flex items-baseline justify-between text-[0.8rem] ${sub}`}>
-              <span>{TAG_LABELS[tag]}</span>
-              <span className={NUM}>{formatCents(totals.byTag[tag])}</span>
-            </div>
-            {/* Software is the one tag whose subtotal is a period, not a
-                sum, so it carries what the whole term comes to. */}
-            {tag === "SOFTWARE" && software && (
-              <div className={`flex items-baseline justify-between text-[0.72rem] ${sub} opacity-75`}>
-                <span>{termLabel(software.months) ?? "over the term"}</span>
-                <span className={NUM}>{formatCents(software.totalCents)}</span>
+    <div className="mt-7 grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
+      {activeTags.length > 0 && (
+        <div>
+          <Eyebrow dark={dark}>Totals by tag</Eyebrow>
+          <div className="mt-2.5 space-y-2">
+            {activeTags.map((tag) => (
+              <div key={tag}>
+                <div className="flex items-center gap-3 text-[0.8rem]">
+                  <span className={`w-28 shrink-0 ${label}`}>{TAG_LABELS[tag]}</span>
+                  <span className={`h-1 flex-1 overflow-hidden rounded-full ${track}`}>
+                    <span
+                      className="block h-full rounded-full"
+                      style={{
+                        width: `${Math.max((totals.byTag[tag] / maxTag) * 100, 3)}%`,
+                        background: brand,
+                        printColorAdjust: "exact",
+                        WebkitPrintColorAdjust: "exact",
+                      }}
+                    />
+                  </span>
+                  <span className={`w-28 shrink-0 text-right ${value} ${NUM}`}>
+                    {formatCents(totals.byTag[tag])}
+                  </span>
+                </div>
+                {/* Software bills per period, so its bar is one period too.
+                    The line under it is what the customer is actually
+                    signing up to across the whole term. */}
+                {tag === "SOFTWARE" && software && (
+                  <div className="mt-1 flex items-center gap-3 text-[0.72rem]">
+                    <span className={`w-28 shrink-0 ${faintLabel}`}>
+                      {termLabel(software.months) ?? "Over the term"}
+                    </span>
+                    <span className={`h-px flex-1 ${hair}`} />
+                    <span className={`w-28 shrink-0 text-right ${faintValue} ${NUM}`}>
+                      {formatCents(software.totalCents)}
+                    </span>
+                  </div>
+                )}
               </div>
-            )}
+            ))}
           </div>
-        ))}
-        <div className={`mt-2 flex items-baseline justify-between border-t-2 pt-3 ${rule}`} style={{ borderTopColor: brand }}>
-          <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em]">Total</span>
-          <span
-            className={`text-[1.75rem] font-semibold leading-none ${NUM}`}
-            style={{ color: dark ? "#fff" : brand }}
-            data-testid="document-total"
-          >
-            {formatCents(totals.totalCents)}
-          </span>
         </div>
+      )}
+
+      <div
+        className="rounded-xl px-6 py-5 text-right sm:min-w-[15rem]"
+        style={{
+          background: dark
+            ? `linear-gradient(150deg, ${brand}33, ${brand}0d)`
+            : `linear-gradient(150deg, ${brand}1f, ${brand}08)`,
+          border: dark ? "none" : `1px solid ${brand}2e`,
+          printColorAdjust: "exact",
+          WebkitPrintColorAdjust: "exact",
+        }}
+      >
+        <p
+          className={`text-[0.6rem] font-semibold uppercase tracking-[0.14em] ${
+            dark ? "text-white/55" : "text-[#6b7280]"
+          }`}
+        >
+          Quote total
+        </p>
+        <p
+          className={`mt-1.5 text-[2rem] font-semibold leading-none ${NUM}`}
+          style={{ color: dark ? "#fff" : brand }}
+          data-testid="document-total"
+        >
+          {formatCents(totals.totalCents)}
+        </p>
       </div>
     </div>
   );
@@ -496,7 +550,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           <LineItems quote={quote} />
         </div>
 
-        <Totals quote={quote} totals={totals} />
+        <TagTotals quote={quote} totals={totals} />
 
         <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} />
 
@@ -523,11 +577,6 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
   const totals = getTotals(quote);
   const brand = quote.organization.primaryColor;
   const zone = quote.organization.timeZone;
-  const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
-  // Bars are relative to the biggest kind of work, not to the total, so a
-  // small category is still visible.
-  const maxTag = Math.max(...activeTags.map((tag) => totals.byTag[tag]), 1);
-  const software = softwareOverTerm(quote);
 
   return (
     <div
@@ -579,63 +628,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
       <div className="px-8 pb-10 text-white sm:px-12">
         <LineItems quote={quote} dark />
 
-        <div className="mt-7 grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
-          {activeTags.length > 0 && (
-            <div>
-              <Eyebrow dark>Totals by tag</Eyebrow>
-              <div className="mt-2.5 space-y-2">
-                {activeTags.map((tag) => (
-                  <div key={tag}>
-                    <div className="flex items-center gap-3 text-[0.8rem]">
-                      <span className="w-28 shrink-0 text-white/55">{TAG_LABELS[tag]}</span>
-                      <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/8">
-                        <span
-                          className="block h-full rounded-full"
-                          style={{
-                            width: `${Math.max((totals.byTag[tag] / maxTag) * 100, 3)}%`,
-                            background: brand,
-                          }}
-                        />
-                      </span>
-                      <span className={`w-28 shrink-0 text-right text-white/80 ${NUM}`}>
-                        {formatCents(totals.byTag[tag])}
-                      </span>
-                    </div>
-                    {/* Software bills per period, so its bar is one period
-                        too. The line under it is what the customer is
-                        actually signing up to across the whole term. */}
-                    {tag === "SOFTWARE" && software && (
-                      <div className="mt-1 flex items-center gap-3 text-[0.72rem]">
-                        <span className="w-28 shrink-0 text-white/35">
-                          {termLabel(software.months) ?? "Over the term"}
-                        </span>
-                        <span className="h-px flex-1 bg-white/8" />
-                        <span className={`w-28 shrink-0 text-right text-white/55 ${NUM}`}>
-                          {formatCents(software.totalCents)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div
-            className="rounded-xl px-6 py-5 text-right sm:min-w-[15rem]"
-            style={{ background: `linear-gradient(150deg, ${brand}33, ${brand}0d)` }}
-          >
-            <p className="text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-white/55">
-              Quote total
-            </p>
-            <p
-              className={`mt-1.5 text-[2rem] font-semibold leading-none text-white ${NUM}`}
-              data-testid="document-total"
-            >
-              {formatCents(totals.totalCents)}
-            </p>
-          </div>
-        </div>
+        <TagTotals quote={quote} totals={totals} dark />
 
         <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} dark />
 
