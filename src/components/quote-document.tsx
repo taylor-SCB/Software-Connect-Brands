@@ -5,7 +5,6 @@ import { formatCents, formatDate, formatDay } from "@/lib/format";
 import { computeQuoteTotals, lineTotalCents } from "@/lib/quote-math";
 import {
   LINE_ITEM_TAGS,
-  TAG_COLORS,
   TAG_LABELS,
   type LineItemTagValue,
 } from "@/lib/constants";
@@ -52,6 +51,140 @@ export type QuoteDocumentData = {
 
 // This type is the allow-list for what a customer may see. A line's
 // supplier and what it costs us are not on it, and must not be added.
+
+/* -------------------------------------------------------------------- */
+/* Shared pieces                                                         */
+/* -------------------------------------------------------------------- */
+
+// Money and quantities are set in the body face with tabular figures
+// rather than the mono stack: mono here carried a wide advance that made
+// every price look stretched and cheap on the printed page, which is the
+// single biggest reason the old document read as amateur.
+const NUM = "tabular-nums [font-variant-numeric:tabular-nums] tracking-normal";
+
+// One label style for every section, so the eye learns it once.
+function Eyebrow({
+  children,
+  dark = false,
+  accent,
+}: {
+  children: React.ReactNode;
+  dark?: boolean;
+  accent?: string;
+}) {
+  return (
+    <p
+      className={`text-[0.6rem] font-semibold uppercase tracking-[0.14em] ${
+        dark ? "text-white/45" : "text-[#9ca3af]"
+      }`}
+      style={accent ? { color: accent } : undefined}
+    >
+      {children}
+    </p>
+  );
+}
+
+function TagChip({ tag, dark = false }: { tag: string; dark?: boolean }) {
+  return (
+    <span
+      className={`ml-2 inline-block whitespace-nowrap rounded-full px-2 py-[0.1rem] align-middle text-[0.6rem] font-medium tracking-wide ${
+        dark ? "bg-white/10 text-white/65" : "bg-[#f3f4f6] text-[#6b7280]"
+      }`}
+    >
+      {TAG_LABELS[tag as LineItemTagValue]}
+    </span>
+  );
+}
+
+// The line items table. One column layout for both templates so a quote
+// reads the same whichever skin it is sent in — and, more to the point,
+// so Qty / Value / Total get real room instead of being squeezed into the
+// last third of the page while Item holds a half-page of white space.
+function LineItems({ quote, dark = false }: { quote: QuoteDocumentData; dark?: boolean }) {
+  const rule = dark ? "border-white/10" : "border-[#e5e7eb]";
+  const head = dark ? "text-white/45" : "text-[#9ca3af]";
+  const sub = dark ? "text-white/50" : "text-[#6b7280]";
+  const note = dark ? "text-white/35" : "text-[#9ca3af]";
+
+  return (
+    <table className="w-full text-[0.82rem]">
+      <colgroup>
+        <col style={{ width: "50%" }} />
+        <col style={{ width: "12%" }} />
+        <col style={{ width: "19%" }} />
+        <col style={{ width: "19%" }} />
+      </colgroup>
+      <thead>
+        <tr className={`border-b ${rule} text-left text-[0.6rem] uppercase tracking-[0.14em] ${head}`}>
+          <th className="pb-2 font-semibold">Item</th>
+          <th className="pb-2 pl-3 text-right font-semibold">Qty</th>
+          <th className="pb-2 pl-3 text-right font-semibold">Unit price</th>
+          <th className="pb-2 pl-3 text-right font-semibold">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {quote.lineItems.map((item) => (
+          <tr key={item.id} className={`border-b ${rule} align-top`}>
+            <td className="py-3 pr-4">
+              <span className="font-medium">{item.name}</span>
+              <TagChip tag={item.tag} dark={dark} />
+              {item.description && <p className={`mt-1 text-[0.75rem] leading-snug ${sub}`}>{item.description}</p>}
+              {item.projectNotes && (
+                <p className={`mt-0.5 text-[0.72rem] italic leading-snug ${note}`}>{item.projectNotes}</p>
+              )}
+            </td>
+            <td className={`py-3 pl-3 text-right ${NUM} ${sub}`}>{item.quantity}</td>
+            <td className={`py-3 pl-3 text-right ${NUM} ${sub}`}>{formatCents(item.unitPriceCents)}</td>
+            <td className={`py-3 pl-3 text-right font-medium ${NUM}`}>
+              {formatCents(lineTotalCents(item.quantity, item.unitPriceCents))}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// The money block: what each kind of work came to, then the one number
+// the reader is looking for, set in the workspace's own colour.
+function Totals({
+  quote,
+  totals,
+  dark = false,
+}: {
+  quote: QuoteDocumentData;
+  totals: ReturnType<typeof computeQuoteTotals>;
+  dark?: boolean;
+}) {
+  const brand = quote.organization.primaryColor;
+  const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
+  const rule = dark ? "border-white/10" : "border-[#e5e7eb]";
+  const sub = dark ? "text-white/50" : "text-[#6b7280]";
+
+  return (
+    <div className="mt-6 flex justify-end">
+      <div className="w-full max-w-[19rem]">
+        {activeTags.map((tag) => (
+          <div key={tag} className={`flex items-baseline justify-between py-1 text-[0.8rem] ${sub}`}>
+            <span>{TAG_LABELS[tag]}</span>
+            <span className={NUM}>{formatCents(totals.byTag[tag])}</span>
+          </div>
+        ))}
+        <div className={`mt-2 flex items-baseline justify-between border-t-2 pt-3 ${rule}`} style={{ borderTopColor: brand }}>
+          <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em]">Total</span>
+          <span
+            className={`text-[1.75rem] font-semibold leading-none ${NUM}`}
+            style={{ color: dark ? "#fff" : brand }}
+            data-testid="document-total"
+          >
+            {formatCents(totals.totalCents)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PaymentSchedule({
   payments,
   paymentTerms,
@@ -63,73 +196,91 @@ function PaymentSchedule({
 }) {
   if (!payments || payments.length === 0) return null;
   const total = payments.reduce((sum, payment) => sum + payment.amountCents, 0);
-  const muted = dark ? "text-white/55" : "text-[#6b7280]";
-  const faint = dark ? "text-white/40" : "text-[#9ca3af]";
-  const line = dark ? "border-white/8" : "border-[#e5e7eb]";
+  const rule = dark ? "border-white/10" : "border-[#e5e7eb]";
+  const head = dark ? "text-white/45" : "text-[#9ca3af]";
+  const sub = dark ? "text-white/50" : "text-[#6b7280]";
 
   return (
-    <div className={`mt-6 border-t ${line} pt-4`} data-testid="document-payments">
-      <p className={`text-[0.65rem] font-semibold uppercase tracking-widest ${faint}`}>
-        Payment schedule
-      </p>
-      {paymentTerms && <p className={`mt-1 text-xs ${muted}`}>Terms: {paymentTerms}</p>}
-      <table className="mt-2 w-full text-xs">
+    <section className="mt-9" data-testid="document-payments">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <Eyebrow dark={dark}>Payment schedule</Eyebrow>
+        {paymentTerms && <span className={`text-[0.75rem] ${sub}`}>{paymentTerms}</span>}
+      </div>
+      {/* Same column rhythm as the items table above, so the two read as
+          one document rather than two tables that happen to share a page. */}
+      <table className="w-full text-[0.82rem]">
+        <colgroup>
+          <col style={{ width: "50%" }} />
+          <col style={{ width: "31%" }} />
+          <col style={{ width: "19%" }} />
+        </colgroup>
         <thead>
-          <tr className={`border-b ${line} text-left ${faint}`}>
-            <th className="py-1.5 pr-2 font-medium">Payment</th>
-            <th className="py-1.5 pr-2 font-medium">Due</th>
-            <th className="py-1.5 text-right font-medium">Amount</th>
+          <tr className={`border-b ${rule} text-left text-[0.6rem] uppercase tracking-[0.14em] ${head}`}>
+            <th className="pb-2 font-semibold">Payment</th>
+            <th className="pb-2 pl-3 font-semibold">Due</th>
+            <th className="pb-2 pl-3 text-right font-semibold">Amount</th>
           </tr>
         </thead>
         <tbody>
           {payments.map((payment) => (
-            <tr key={payment.id} className={`border-b ${line}`}>
-              <td className="py-1.5 pr-2">{payment.label}</td>
+            <tr key={payment.id} className={`border-b ${rule}`}>
+              <td className="py-2.5 pr-4 font-medium">{payment.label}</td>
               {/* A picked date wins; otherwise the row's term stands in. */}
-              <td className={`py-1.5 pr-2 ${muted}`}>
+              <td className={`py-2.5 pl-3 ${sub}`}>
                 {payment.dueOn ? formatDay(payment.dueOn) : payment.terms || "—"}
               </td>
-              <td className="py-1.5 text-right tabular-nums">{formatCents(payment.amountCents)}</td>
+              <td className={`py-2.5 pl-3 text-right font-medium ${NUM}`}>{formatCents(payment.amountCents)}</td>
             </tr>
           ))}
         </tbody>
         <tfoot>
           <tr>
-            <td className="pt-2 font-semibold">Total</td>
+            <td className="pt-3 text-[0.7rem] font-semibold uppercase tracking-[0.14em]">Total</td>
             <td />
-            <td className="pt-2 text-right font-semibold tabular-nums" data-testid="document-payments-total">
+            <td
+              className={`pt-3 pl-3 text-right font-semibold ${NUM}`}
+              data-testid="document-payments-total"
+            >
               {formatCents(total)}
             </td>
           </tr>
         </tfoot>
       </table>
-    </div>
+    </section>
   );
 }
 
 function SalesRep({
   rep,
+  brand,
   dark = false,
 }: {
   rep: QuoteDocumentData["salesRep"];
+  brand: string;
   dark?: boolean;
 }) {
   if (!rep) return null;
-  const muted = dark ? "text-white/55" : "text-[#6b7280]";
-  const faint = dark ? "text-white/40" : "text-[#9ca3af]";
-  const line = dark ? "border-white/8" : "border-[#e5e7eb]";
+  const sub = dark ? "text-white/55" : "text-[#4b5563]";
+  const box = dark ? "border-white/10 bg-white/[0.03]" : "border-[#e5e7eb] bg-[#fafafa]";
 
   return (
-    <div className={`mt-6 border-t ${line} pt-4`} data-testid="document-rep">
-      <p className={`text-[0.65rem] font-semibold uppercase tracking-widest ${faint}`}>
-        Your contact
-      </p>
-      <p className="mt-1 text-xs font-semibold">{rep.name}</p>
-      {/* Each line only when that field is filled in on their account. */}
-      {rep.title && <p className={`text-xs ${muted}`}>{rep.title}</p>}
-      {rep.email && <p className={`text-xs ${muted}`}>{rep.email}</p>}
-      {rep.phone && <p className={`text-xs ${muted}`}>{rep.phone}</p>}
-    </div>
+    <section className={`mt-9 rounded-lg border px-5 py-4 ${box}`} data-testid="document-rep">
+      <Eyebrow dark={dark} accent={dark ? undefined : brand}>
+        Questions about this quote?
+      </Eyebrow>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+        <p className="text-[0.95rem] font-semibold">
+          {rep.name}
+          {/* Each line only when that field is filled in on their account. */}
+          {rep.title && <span className={`ml-2 text-[0.8rem] font-normal ${sub}`}>{rep.title}</span>}
+        </p>
+        <p className={`text-[0.82rem] ${sub}`}>
+          {rep.email}
+          {rep.email && rep.phone && <span className="px-2 opacity-40">·</span>}
+          {rep.phone}
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -151,169 +302,112 @@ function getTotals(quote: QuoteDocumentData) {
   );
 }
 
+function Logo({ quote, size = 44 }: { quote: QuoteDocumentData; size?: number }) {
+  if (quote.organization.logoUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={quote.organization.logoUrl}
+        alt=""
+        style={{ height: size, width: size }}
+        className="rounded-md object-contain"
+      />
+    );
+  }
+  return (
+    <div
+      style={{ height: size, width: size, background: quote.organization.primaryColor }}
+      className="flex items-center justify-center rounded-md text-base font-bold text-white"
+    >
+      {quote.organization.name.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------- */
 /* SIMPLE — printable, black on white, nothing to distract from numbers  */
 /* -------------------------------------------------------------------- */
 
 function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
   const totals = getTotals(quote);
-  const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
+  const brand = quote.organization.primaryColor;
+  const zone = quote.organization.timeZone;
 
   return (
-    <div className="mx-auto max-w-4xl bg-white p-8 text-[#111827] shadow-2xl sm:p-12 print:shadow-none">
-      <header className="flex flex-wrap items-start justify-between gap-6 border-b border-[#e5e7eb] pb-6">
-        <div className="flex items-center gap-3">
-          {quote.organization.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={quote.organization.logoUrl}
-              alt=""
-              className="h-11 w-11 rounded object-cover"
-            />
-          ) : (
-            <div
-              className="flex h-11 w-11 items-center justify-center rounded text-sm font-bold text-white"
-              style={{ background: quote.organization.primaryColor }}
-            >
-              {quote.organization.name.charAt(0).toUpperCase()}
+    <div className="mx-auto max-w-4xl bg-white text-[#111827] shadow-2xl print:shadow-none">
+      {/* The workspace's colour as a band across the top: the one place a
+          plain paper quote can carry a brand without fighting the type. */}
+      <div style={{ background: brand }} className="h-1.5 w-full" />
+
+      <div className="p-8 sm:p-12">
+        <header className="flex flex-wrap items-start justify-between gap-6">
+          <div className="flex items-center gap-3.5">
+            <Logo quote={quote} />
+            <div>
+              <p className="text-[1.05rem] font-semibold leading-tight">{quote.organization.name}</p>
+              <p className="mt-0.5 text-[0.75rem] text-[#6b7280]">Quotation</p>
             </div>
-          )}
+          </div>
+          <div className="text-right">
+            <p className={`text-[1.05rem] font-semibold leading-tight ${NUM}`}>QUO-{quote.number}</p>
+            <p className="mt-0.5 text-[0.75rem] text-[#6b7280]">
+              Issued {formatDate(quote.createdAt, zone)}
+            </p>
+            {quote.validUntil && (
+              <p className="text-[0.75rem] font-medium" style={{ color: brand }}>
+                Valid until {formatDate(quote.validUntil, zone)}
+              </p>
+            )}
+          </div>
+        </header>
+
+        <div className="mt-8 grid gap-6 border-y border-[#e5e7eb] py-5 sm:grid-cols-2">
           <div>
-            <p className="text-lg font-semibold">{quote.organization.name}</p>
-            <p className="text-xs text-[#6b7280]">Quotation</p>
+            <Eyebrow>Prepared for</Eyebrow>
+            <p className="mt-1.5 flex items-center gap-2 text-[0.95rem] font-semibold">
+              {quote.contact.company?.logoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={quote.contact.company.logoUrl} alt="" className="h-6 w-6 rounded object-contain" />
+              )}
+              {quote.contact.company?.name || quote.contact.name}
+            </p>
+            <div className="mt-0.5 text-[0.82rem] leading-relaxed text-[#4b5563]">
+              {quote.contact.company?.name && <p>{quote.contact.name}</p>}
+              {quote.contact.email && <p>{quote.contact.email}</p>}
+              {quote.contact.phone && <p>{quote.contact.phone}</p>}
+            </div>
+          </div>
+          <div className="sm:text-right">
+            <Eyebrow>Project</Eyebrow>
+            <p className="mt-1.5 text-[0.95rem] font-semibold">{quote.title}</p>
           </div>
         </div>
-        <div className="text-right text-xs text-[#6b7280]">
-          <p className="font-mono text-sm font-semibold text-[#111827]">
-            QUO-{quote.number}
-          </p>
-          <p className="mt-1">Issued {formatDate(quote.createdAt, quote.organization.timeZone)}</p>
-          {quote.validUntil && <p>Valid until {formatDate(quote.validUntil, quote.organization.timeZone)}</p>}
-        </div>
-      </header>
 
-      <div className="flex flex-wrap justify-between gap-6 py-6">
-        <div>
-          <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
-            Prepared for
+        {quote.introNote && (
+          <p className="mt-6 whitespace-pre-line text-[0.85rem] leading-relaxed text-[#374151]">
+            {quote.introNote}
           </p>
-          <p className="mt-1 flex items-center gap-2 font-medium">
-            {quote.contact.company?.logoUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={quote.contact.company.logoUrl} alt="" className="h-7 w-7 rounded object-cover" />
-            )}
-            {quote.contact.company?.name || quote.contact.name}
-          </p>
-          {quote.contact.company?.name && (
-            <p className="text-sm text-[#4b5563]">{quote.contact.name}</p>
-          )}
-          {quote.contact.email && (
-            <p className="text-sm text-[#4b5563]">{quote.contact.email}</p>
-          )}
-          {quote.contact.phone && (
-            <p className="text-sm text-[#4b5563]">{quote.contact.phone}</p>
-          )}
+        )}
+
+        <div className="mt-8">
+          <LineItems quote={quote} />
         </div>
-        <div className="max-w-sm text-right">
-          <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
-            Project
-          </p>
-          <p className="mt-1 font-medium">{quote.title}</p>
-        </div>
+
+        <Totals quote={quote} totals={totals} />
+
+        <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} />
+
+        {quote.terms && (
+          <section className="mt-9 border-t border-[#e5e7eb] pt-4">
+            <Eyebrow>Terms</Eyebrow>
+            <p className="mt-1.5 whitespace-pre-line text-[0.78rem] leading-relaxed text-[#4b5563]">
+              {quote.terms}
+            </p>
+          </section>
+        )}
+
+        <SalesRep rep={quote.salesRep} brand={brand} />
       </div>
-
-      {quote.introNote && (
-        <p className="mb-6 whitespace-pre-line border-l-2 border-[#e5e7eb] pl-4 text-sm leading-relaxed text-[#374151]">
-          {quote.introNote}
-        </p>
-      )}
-
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-[#d1d5db] text-left text-[0.65rem] uppercase tracking-widest text-[#6b7280]">
-            <th className="pb-2 font-semibold">Item</th>
-            <th className="pb-2 text-right font-semibold">Qty</th>
-            <th className="pb-2 text-right font-semibold">Value</th>
-            <th className="pb-2 text-right font-semibold">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {quote.lineItems.map((item) => (
-            <tr key={item.id} className="border-b border-[#f3f4f6] align-top">
-              <td className="py-3 pr-4">
-                <p className="font-medium">{item.name}</p>
-                {item.description && (
-                  <p className="mt-0.5 text-xs text-[#6b7280]">{item.description}</p>
-                )}
-                {item.projectNotes && (
-                  <p className="mt-0.5 text-xs italic text-[#9ca3af]">
-                    {item.projectNotes}
-                  </p>
-                )}
-                <span className="mt-1 inline-block rounded border border-[#e5e7eb] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-[#6b7280]">
-                  {TAG_LABELS[item.tag as LineItemTagValue]}
-                </span>
-              </td>
-              <td className="py-3 text-right font-mono tabular-nums">{item.quantity}</td>
-              <td className="py-3 text-right font-mono tabular-nums">
-                {formatCents(item.unitPriceCents)}
-              </td>
-              <td className="py-3 text-right font-mono font-medium tabular-nums">
-                {formatCents(lineTotalCents(item.quantity, item.unitPriceCents))}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div className="mt-6 flex flex-wrap justify-between gap-8">
-        <div className="min-w-56">
-          <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
-            Totals by tag
-          </p>
-          <table className="mt-2 text-sm">
-            <tbody>
-              {activeTags.map((tag) => (
-                <tr key={tag}>
-                  <td className="py-1 pr-6 text-[#4b5563]">{TAG_LABELS[tag]}</td>
-                  <td className="py-1 text-right font-mono tabular-nums">
-                    {formatCents(totals.byTag[tag])}
-                  </td>
-                </tr>
-              ))}
-              {activeTags.length === 0 && (
-                <tr>
-                  <td className="py-1 text-[#9ca3af]">—</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="min-w-56 text-right">
-          <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
-            Total
-          </p>
-          <p className="mt-1 font-mono text-3xl font-semibold tabular-nums" data-testid="document-total">
-            {formatCents(totals.totalCents)}
-          </p>
-        </div>
-      </div>
-
-      <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} />
-
-      {quote.terms && (
-        <footer className="mt-10 border-t border-[#e5e7eb] pt-4">
-          <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
-            Terms
-          </p>
-          <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-[#4b5563]">
-            {quote.terms}
-          </p>
-        </footer>
-      )}
-
-      <SalesRep rep={quote.salesRep} />
     </div>
   );
 }
@@ -325,172 +419,99 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
 function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
   const totals = getTotals(quote);
   const brand = quote.organization.primaryColor;
-  const maxTag = Math.max(...LINE_ITEM_TAGS.map((tag) => totals.byTag[tag]), 1);
+  const zone = quote.organization.timeZone;
+  const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
+  // Bars are relative to the biggest kind of work, not to the total, so a
+  // small category is still visible.
+  const maxTag = Math.max(...activeTags.map((tag) => totals.byTag[tag]), 1);
 
   return (
     <div
-      className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-[var(--border)]"
-      style={{ ["--brand" as string]: brand, background: "#0b0d13" }}
+      className="mx-auto max-w-4xl overflow-hidden rounded-2xl"
+      style={{ background: "#0b0d13" }}
     >
-      <header
-        className="doc-hero relative overflow-hidden px-8 py-10 sm:px-12"
-        style={{
-          background: `radial-gradient(700px 260px at 12% 0%, color-mix(in srgb, ${brand} 40%, transparent), transparent 70%), linear-gradient(180deg, rgb(255 255 255 / 0.06), transparent)`,
-        }}
+      <div
+        className="px-8 pb-10 pt-8 sm:px-12"
+        style={{ background: `linear-gradient(160deg, ${brand}26 0%, transparent 62%)` }}
       >
-        <div className="flex flex-wrap items-start justify-between gap-6">
-          <div className="flex items-center gap-3">
-            {quote.organization.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={quote.organization.logoUrl}
-                alt=""
-                className="h-12 w-12 rounded-xl border border-white/10 object-cover"
-              />
-            ) : (
-              <div
-                className="flex h-12 w-12 items-center justify-center rounded-xl text-base font-bold text-white"
-                style={{
-                  background: `linear-gradient(140deg, color-mix(in srgb, ${brand} 85%, white), ${brand})`,
-                  boxShadow: `0 10px 30px -10px ${brand}`,
-                }}
-              >
-                {quote.organization.name.charAt(0).toUpperCase()}
-              </div>
-            )}
+        <header className="flex flex-wrap items-start justify-between gap-6">
+          <div className="flex items-center gap-3.5">
+            <Logo quote={quote} />
             <div>
-              <p className="text-lg font-semibold text-white">
+              <p className="text-[1.05rem] font-semibold leading-tight text-white">
                 {quote.organization.name}
               </p>
-              <p className="text-xs text-white/50">Proposal</p>
+              <p className="mt-0.5 text-[0.75rem] text-white/50">Proposal</p>
             </div>
           </div>
           <div className="text-right">
-            <span
-              className="badge"
-              style={{
-                color: brand,
-                background: `color-mix(in srgb, ${brand} 16%, transparent)`,
-                borderColor: `color-mix(in srgb, ${brand} 35%, transparent)`,
-              }}
-            >
+            <p className={`text-[1.05rem] font-semibold leading-tight text-white ${NUM}`}>
               QUO-{quote.number}
-            </span>
-            <p className="mt-2 text-xs text-white/45">
-              Issued {formatDate(quote.createdAt, quote.organization.timeZone)}
             </p>
+            <p className="mt-0.5 text-[0.75rem] text-white/50">Issued {formatDate(quote.createdAt, zone)}</p>
             {quote.validUntil && (
-              <p className="text-xs text-white/45">
-                Valid until {formatDate(quote.validUntil, quote.organization.timeZone)}
+              <p className="text-[0.75rem] font-medium text-white/80">
+                Valid until {formatDate(quote.validUntil, zone)}
               </p>
             )}
           </div>
-        </div>
+        </header>
 
-        <h1 className="mt-8 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+        <h1 className="mt-9 text-[2.4rem] font-semibold leading-[1.1] tracking-tight text-white">
           {quote.title}
         </h1>
-        <p className="mt-2 text-sm text-white/55">
+        <p className="mt-2 text-[0.9rem] text-white/55">
           Prepared for {quote.contact.company?.name || quote.contact.name}
-          {quote.contact.company ? ` · ${quote.contact.name}` : ""}
+          {quote.contact.company?.name && ` · ${quote.contact.name}`}
         </p>
 
         {quote.introNote && (
-          <p className="mt-6 max-w-2xl whitespace-pre-line text-sm leading-relaxed text-white/70">
+          <p className="mt-5 max-w-2xl whitespace-pre-line text-[0.85rem] leading-relaxed text-white/60">
             {quote.introNote}
           </p>
         )}
-      </header>
+      </div>
 
-      <div className="px-4 pb-8 sm:px-8">
-        <div className="space-y-2">
-          {quote.lineItems.map((item) => {
-            const tag = item.tag as LineItemTagValue;
-            return (
-              <div
-                key={item.id}
-                className="doc-block flex flex-wrap items-start justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.03] p-4"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-medium text-white">{item.name}</p>
-                    <span
-                      className="badge"
-                      style={{
-                        color: TAG_COLORS[tag],
-                        background: `color-mix(in srgb, ${TAG_COLORS[tag]} 14%, transparent)`,
-                        borderColor: `color-mix(in srgb, ${TAG_COLORS[tag]} 32%, transparent)`,
-                      }}
-                    >
-                      {TAG_LABELS[tag]}
+      <div className="px-8 pb-10 text-white sm:px-12">
+        <LineItems quote={quote} dark />
+
+        <div className="mt-7 grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
+          {activeTags.length > 0 && (
+            <div>
+              <Eyebrow dark>Totals by tag</Eyebrow>
+              <div className="mt-2.5 space-y-1.5">
+                {activeTags.map((tag) => (
+                  <div key={tag} className="flex items-center gap-3 text-[0.8rem]">
+                    <span className="w-28 shrink-0 text-white/55">{TAG_LABELS[tag]}</span>
+                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/8">
+                      <span
+                        className="block h-full rounded-full"
+                        style={{
+                          width: `${Math.max((totals.byTag[tag] / maxTag) * 100, 3)}%`,
+                          background: brand,
+                        }}
+                      />
+                    </span>
+                    <span className={`w-24 shrink-0 text-right text-white/80 ${NUM}`}>
+                      {formatCents(totals.byTag[tag])}
                     </span>
                   </div>
-                  {item.description && (
-                    <p className="mt-1 text-xs text-white/55">{item.description}</p>
-                  )}
-                  {item.projectNotes && (
-                    <p className="mt-0.5 text-xs italic text-white/35">
-                      {item.projectNotes}
-                    </p>
-                  )}
-                </div>
-                <div className="text-right">
-                  <p className="font-mono text-sm font-semibold tabular-nums text-white">
-                    {formatCents(lineTotalCents(item.quantity, item.unitPriceCents))}
-                  </p>
-                  <p className="font-mono text-xs tabular-nums text-white/40">
-                    {item.quantity} × {formatCents(item.unitPriceCents)}
-                  </p>
-                </div>
+                ))}
               </div>
-            );
-          })}
-          {quote.lineItems.length === 0 && (
-            <p className="py-8 text-center text-xs text-white/35">
-              No line items on this quote yet.
-            </p>
-          )}
-        </div>
-
-        <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_auto]">
-          <div className="rounded-xl border border-white/8 bg-white/[0.02] p-4">
-            <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/40">
-              Totals by tag
-            </p>
-            <div className="mt-3 space-y-2">
-              {LINE_ITEM_TAGS.map((tag) => (
-                <div key={tag} className="flex items-center gap-3">
-                  <span className="w-28 shrink-0 text-xs text-white/60">
-                    {TAG_LABELS[tag]}
-                  </span>
-                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/5">
-                    <span
-                      className="block h-full rounded-full"
-                      style={{
-                        width: `${Math.max((totals.byTag[tag] / maxTag) * 100, 0)}%`,
-                        background: TAG_COLORS[tag],
-                      }}
-                    />
-                  </span>
-                  <span className="w-24 shrink-0 text-right font-mono text-xs tabular-nums text-white/75">
-                    {formatCents(totals.byTag[tag])}
-                  </span>
-                </div>
-              ))}
             </div>
-          </div>
+          )}
 
           <div
-            className="flex min-w-56 flex-col justify-center rounded-xl border p-5 text-right"
-            style={{
-              borderColor: `color-mix(in srgb, ${brand} 35%, transparent)`,
-              background: `linear-gradient(160deg, color-mix(in srgb, ${brand} 20%, transparent), transparent)`,
-            }}
+            className="rounded-xl px-6 py-5 text-right sm:min-w-[15rem]"
+            style={{ background: `linear-gradient(150deg, ${brand}33, ${brand}0d)` }}
           >
-            <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/50">
+            <p className="text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-white/55">
               Quote total
             </p>
-            <p className="mt-1 font-mono text-4xl font-semibold tabular-nums text-white" data-testid="document-total">
+            <p
+              className={`mt-1.5 text-[2rem] font-semibold leading-none text-white ${NUM}`}
+              data-testid="document-total"
+            >
               {formatCents(totals.totalCents)}
             </p>
           </div>
@@ -499,17 +520,15 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
         <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} dark />
 
         {quote.terms && (
-          <div className="mt-6 border-t border-white/8 pt-4">
-            <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/40">
-              Terms
-            </p>
-            <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-white/55">
+          <section className="mt-9 border-t border-white/10 pt-4">
+            <Eyebrow dark>Terms</Eyebrow>
+            <p className="mt-1.5 whitespace-pre-line text-[0.78rem] leading-relaxed text-white/55">
               {quote.terms}
             </p>
-          </div>
+          </section>
         )}
 
-        <SalesRep rep={quote.salesRep} dark />
+        <SalesRep rep={quote.salesRep} brand={brand} dark />
       </div>
     </div>
   );
