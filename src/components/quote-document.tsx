@@ -2,11 +2,15 @@
 // midnight UTC, and a zone-aware format would print the day before for
 // anyone west of it.
 import { formatCents, formatDate, formatDay } from "@/lib/format";
-import { computeQuoteTotals, lineTotalCents } from "@/lib/quote-math";
+import { computeQuoteTotals, lineTotalCents, termTotalCents } from "@/lib/quote-math";
 import {
   LINE_ITEM_TAGS,
   TAG_LABELS,
+  UNIT_LABELS,
+  SOFTWARE_BILLING_LABELS,
   type LineItemTagValue,
+  type UnitOfMeasureValue,
+  type SoftwareRateValue,
 } from "@/lib/constants";
 
 export type QuoteDocumentData = {
@@ -23,6 +27,7 @@ export type QuoteDocumentData = {
     logoUrl: string | null;
     primaryColor: string;
     timeZone: string;
+    website: string | null;
   };
   contact: {
     name: string;
@@ -38,6 +43,12 @@ export type QuoteDocumentData = {
     quantity: number;
     unitPriceCents: number;
     tag: string;
+    // How a software line is counted, how it bills and for how long. The
+    // customer is entitled to all three: the amount beside the line is one
+    // period, and without the term it reads as the whole deal.
+    unitOfMeasure: string | null;
+    softwareRate: string | null;
+    softwareTermMonths: number | null;
   }[];
   // What the customer is asked to pay and when. Not fetched at all when
   // the quote is set to hide it, so the numbers never reach the page.
@@ -61,6 +72,49 @@ export type QuoteDocumentData = {
 // every price look stretched and cheap on the printed page, which is the
 // single biggest reason the old document read as amateur.
 const NUM = "tabular-nums [font-variant-numeric:tabular-nums] tracking-normal";
+
+// What the software on this quote comes to over its whole term, and how
+// long that term is when every software line agrees on one. The amount
+// beside a software line is a single period — per month, per year — so
+// without this the customer is reading a fraction of what they are
+// committing to. Kept separate from the quote total, which stays the sum
+// of the line amounts exactly as every other line is counted.
+function softwareOverTerm(quote: QuoteDocumentData) {
+  const lines = quote.lineItems.filter(
+    (item) => item.tag === "SOFTWARE" && item.softwareRate && item.softwareTermMonths,
+  );
+  if (lines.length === 0) return null;
+
+  const totalCents = lines.reduce(
+    (sum, item) =>
+      sum + (termTotalCents(item.quantity, item.unitPriceCents, item.softwareRate, item.softwareTermMonths) ?? 0),
+    0,
+  );
+  const terms = new Set(lines.map((item) => item.softwareTermMonths));
+  // Only name the term when every software line runs the same one.
+  const months = terms.size === 1 ? [...terms][0] : null;
+  return { totalCents, months };
+}
+
+function termLabel(months: number | null | undefined) {
+  if (!months) return null;
+  if (months % 12 === 0) {
+    const years = months / 12;
+    return `${years}-year term`;
+  }
+  return `${months}-month term`;
+}
+
+// "Per Device · Monthly · 36-month term" under a software line's name.
+function softwareSpec(item: QuoteDocumentData["lineItems"][number]) {
+  if (item.tag !== "SOFTWARE") return null;
+  const parts = [
+    item.unitOfMeasure ? UNIT_LABELS[item.unitOfMeasure as UnitOfMeasureValue] : null,
+    item.softwareRate ? SOFTWARE_BILLING_LABELS[item.softwareRate as SoftwareRateValue] : null,
+    termLabel(item.softwareTermMonths),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
 
 // One label style for every section, so the eye learns it once.
 function Eyebrow({
@@ -123,23 +177,42 @@ function LineItems({ quote, dark = false }: { quote: QuoteDocumentData; dark?: b
         </tr>
       </thead>
       <tbody>
-        {quote.lineItems.map((item) => (
-          <tr key={item.id} className={`border-b ${rule} align-top`}>
-            <td className="py-3 pr-4">
-              <span className="font-medium">{item.name}</span>
-              <TagChip tag={item.tag} dark={dark} />
-              {item.description && <p className={`mt-1 text-[0.75rem] leading-snug ${sub}`}>{item.description}</p>}
-              {item.projectNotes && (
-                <p className={`mt-0.5 text-[0.72rem] italic leading-snug ${note}`}>{item.projectNotes}</p>
-              )}
-            </td>
-            <td className={`py-3 pl-3 text-right ${NUM} ${sub}`}>{item.quantity}</td>
-            <td className={`py-3 pl-3 text-right ${NUM} ${sub}`}>{formatCents(item.unitPriceCents)}</td>
-            <td className={`py-3 pl-3 text-right font-medium ${NUM}`}>
-              {formatCents(lineTotalCents(item.quantity, item.unitPriceCents))}
-            </td>
-          </tr>
-        ))}
+        {quote.lineItems.map((item) => {
+          const spec = softwareSpec(item);
+          const overTerm = termTotalCents(
+            item.quantity,
+            item.unitPriceCents,
+            item.softwareRate,
+            item.softwareTermMonths,
+          );
+          const perPeriod = lineTotalCents(item.quantity, item.unitPriceCents);
+          return (
+            <tr key={item.id} className={`border-b ${rule} align-top`}>
+              <td className="py-3 pr-4">
+                <span className="font-medium">{item.name}</span>
+                <TagChip tag={item.tag} dark={dark} />
+                {spec && <p className={`mt-1 text-[0.72rem] leading-snug ${sub}`}>{spec}</p>}
+                {item.description && <p className={`mt-1 text-[0.75rem] leading-snug ${sub}`}>{item.description}</p>}
+                {item.projectNotes && (
+                  <p className={`mt-0.5 text-[0.72rem] italic leading-snug ${note}`}>{item.projectNotes}</p>
+                )}
+              </td>
+              <td className={`py-3 pl-3 text-right ${NUM} ${sub}`}>{item.quantity}</td>
+              <td className={`py-3 pl-3 text-right ${NUM} ${sub}`}>{formatCents(item.unitPriceCents)}</td>
+              <td className={`py-3 pl-3 text-right font-medium ${NUM}`}>
+                {formatCents(perPeriod)}
+                {/* The amount above is one billing period. Saying so, and
+                    what the term comes to, stops a customer reading a
+                    monthly figure as the whole commitment. */}
+                {overTerm !== null && overTerm !== perPeriod && (
+                  <span className={`mt-0.5 block text-[0.7rem] font-normal leading-snug ${sub}`}>
+                    {formatCents(overTerm)} over term
+                  </span>
+                )}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -160,14 +233,25 @@ function Totals({
   const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
   const rule = dark ? "border-white/10" : "border-[#e5e7eb]";
   const sub = dark ? "text-white/50" : "text-[#6b7280]";
+  const software = softwareOverTerm(quote);
 
   return (
     <div className="mt-6 flex justify-end">
-      <div className="w-full max-w-[19rem]">
+      <div className="w-full max-w-[21rem]">
         {activeTags.map((tag) => (
-          <div key={tag} className={`flex items-baseline justify-between py-1 text-[0.8rem] ${sub}`}>
-            <span>{TAG_LABELS[tag]}</span>
-            <span className={NUM}>{formatCents(totals.byTag[tag])}</span>
+          <div key={tag} className="py-1">
+            <div className={`flex items-baseline justify-between text-[0.8rem] ${sub}`}>
+              <span>{TAG_LABELS[tag]}</span>
+              <span className={NUM}>{formatCents(totals.byTag[tag])}</span>
+            </div>
+            {/* Software is the one tag whose subtotal is a period, not a
+                sum, so it carries what the whole term comes to. */}
+            {tag === "SOFTWARE" && software && (
+              <div className={`flex items-baseline justify-between text-[0.72rem] ${sub} opacity-75`}>
+                <span>{termLabel(software.months) ?? "over the term"}</span>
+                <span className={NUM}>{formatCents(software.totalCents)}</span>
+              </div>
+            )}
           </div>
         ))}
         <div className={`mt-2 flex items-baseline justify-between border-t-2 pt-3 ${rule}`} style={{ borderTopColor: brand }}>
@@ -250,36 +334,55 @@ function PaymentSchedule({
   );
 }
 
+// Strips the scheme so a website reads as a brand rather than a URL.
+function tidyWebsite(url: string) {
+  return url.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
+
 function SalesRep({
   rep,
-  brand,
+  organization,
   dark = false,
 }: {
   rep: QuoteDocumentData["salesRep"];
-  brand: string;
+  organization: QuoteDocumentData["organization"];
   dark?: boolean;
 }) {
-  if (!rep) return null;
+  const website = organization.website?.trim();
+  // The card is worth printing for the website alone: a quote with no rep
+  // named should still tell the customer where the company lives.
+  if (!rep && !website) return null;
+
   const sub = dark ? "text-white/55" : "text-[#4b5563]";
+  const faint = dark ? "text-white/40" : "text-[#6b7280]";
   const box = dark ? "border-white/10 bg-white/[0.03]" : "border-[#e5e7eb] bg-[#fafafa]";
 
   return (
     <section className={`mt-9 rounded-lg border px-5 py-4 ${box}`} data-testid="document-rep">
-      <Eyebrow dark={dark} accent={dark ? undefined : brand}>
+      <Eyebrow dark={dark} accent={dark ? undefined : organization.primaryColor}>
         Questions about this quote?
       </Eyebrow>
       <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
-        <p className="text-[0.95rem] font-semibold">
-          {rep.name}
-          {/* Each line only when that field is filled in on their account. */}
-          {rep.title && <span className={`ml-2 text-[0.8rem] font-normal ${sub}`}>{rep.title}</span>}
-        </p>
-        <p className={`text-[0.82rem] ${sub}`}>
-          {rep.email}
-          {rep.email && rep.phone && <span className="px-2 opacity-40">·</span>}
-          {rep.phone}
-        </p>
+        {rep && (
+          <>
+            <p className="text-[0.95rem] font-semibold">
+              {rep.name}
+              {/* Each line only when that field is filled in on their account. */}
+              {rep.title && <span className={`ml-2 text-[0.8rem] font-normal ${sub}`}>{rep.title}</span>}
+            </p>
+            <p className={`text-[0.82rem] ${sub}`}>
+              {rep.email}
+              {rep.email && rep.phone && <span className="px-2 opacity-40">·</span>}
+              {rep.phone}
+            </p>
+          </>
+        )}
       </div>
+      {website && (
+        <p className={`mt-2 border-t pt-2 text-[0.8rem] ${faint} ${dark ? "border-white/10" : "border-[#e5e7eb]"}`}>
+          {organization.name} · {tidyWebsite(website)}
+        </p>
+      )}
     </section>
   );
 }
@@ -406,7 +509,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           </section>
         )}
 
-        <SalesRep rep={quote.salesRep} brand={brand} />
+        <SalesRep rep={quote.salesRep} organization={quote.organization} />
       </div>
     </div>
   );
@@ -424,6 +527,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
   // Bars are relative to the biggest kind of work, not to the total, so a
   // small category is still visible.
   const maxTag = Math.max(...activeTags.map((tag) => totals.byTag[tag]), 1);
+  const software = softwareOverTerm(quote);
 
   return (
     <div
@@ -479,22 +583,38 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
           {activeTags.length > 0 && (
             <div>
               <Eyebrow dark>Totals by tag</Eyebrow>
-              <div className="mt-2.5 space-y-1.5">
+              <div className="mt-2.5 space-y-2">
                 {activeTags.map((tag) => (
-                  <div key={tag} className="flex items-center gap-3 text-[0.8rem]">
-                    <span className="w-28 shrink-0 text-white/55">{TAG_LABELS[tag]}</span>
-                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/8">
-                      <span
-                        className="block h-full rounded-full"
-                        style={{
-                          width: `${Math.max((totals.byTag[tag] / maxTag) * 100, 3)}%`,
-                          background: brand,
-                        }}
-                      />
-                    </span>
-                    <span className={`w-24 shrink-0 text-right text-white/80 ${NUM}`}>
-                      {formatCents(totals.byTag[tag])}
-                    </span>
+                  <div key={tag}>
+                    <div className="flex items-center gap-3 text-[0.8rem]">
+                      <span className="w-28 shrink-0 text-white/55">{TAG_LABELS[tag]}</span>
+                      <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/8">
+                        <span
+                          className="block h-full rounded-full"
+                          style={{
+                            width: `${Math.max((totals.byTag[tag] / maxTag) * 100, 3)}%`,
+                            background: brand,
+                          }}
+                        />
+                      </span>
+                      <span className={`w-28 shrink-0 text-right text-white/80 ${NUM}`}>
+                        {formatCents(totals.byTag[tag])}
+                      </span>
+                    </div>
+                    {/* Software bills per period, so its bar is one period
+                        too. The line under it is what the customer is
+                        actually signing up to across the whole term. */}
+                    {tag === "SOFTWARE" && software && (
+                      <div className="mt-1 flex items-center gap-3 text-[0.72rem]">
+                        <span className="w-28 shrink-0 text-white/35">
+                          {termLabel(software.months) ?? "Over the term"}
+                        </span>
+                        <span className="h-px flex-1 bg-white/8" />
+                        <span className={`w-28 shrink-0 text-right text-white/55 ${NUM}`}>
+                          {formatCents(software.totalCents)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -528,7 +648,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
           </section>
         )}
 
-        <SalesRep rep={quote.salesRep} brand={brand} dark />
+        <SalesRep rep={quote.salesRep} organization={quote.organization} dark />
       </div>
     </div>
   );

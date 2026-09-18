@@ -42,6 +42,7 @@ export default async function PublicQuotePage({
           logoUrl: true,
           primaryColor: true,
           timeZone: true,
+          website: true,
         },
       },
       contact: {
@@ -57,6 +58,9 @@ export default async function PublicQuotePage({
           quantity: true,
           unitPriceCents: true,
           tag: true,
+          unitOfMeasure: true,
+          softwareRate: true,
+          softwareTermMonths: true,
         },
       },
       paymentTerms: true,
