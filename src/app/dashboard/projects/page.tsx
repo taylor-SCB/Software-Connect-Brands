@@ -132,7 +132,7 @@ export default async function ProjectsPage({
             body={
               q || stages.length
                 ? "Try a different search, or turn on Show finished."
-                : "A job lands here the moment a customer signs. You can also record one signed on paper from the Deal Tracker."
+                : "A job lands here the moment a customer signs. You can also record one signed on paper from the Contract Coordinator."
             }
           />
         ) : (

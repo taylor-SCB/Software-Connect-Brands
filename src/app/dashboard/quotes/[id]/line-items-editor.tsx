@@ -1,17 +1,26 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { saveLineItems, type LineItemInput } from "../actions";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
-import { computeQuoteTotals, lineTotalCents } from "@/lib/quote-math";
+import { computeQuoteTotals, lineTotalCents, termTotalCents } from "@/lib/quote-math";
 import {
   LINE_ITEM_TAGS,
   TAG_LABELS,
   TAG_COLORS,
+  UNIT_GROUPS,
+  UNIT_LABELS,
+  SOFTWARE_RATES,
+  SOFTWARE_BILLING_LABELS,
+  tagHasUnits,
+  unitGroupsForTag,
   type LineItemTagValue,
+  type UnitOfMeasureValue,
+  type SoftwareRateValue,
 } from "@/lib/constants";
 import { IconPlus, IconTrash } from "@/components/icons";
 import { FormError, FormSuccess } from "@/components/ui";
+import { SupplierCell, type SupplierOption } from "./supplier-cell";
 
 export type EditorProduct = {
   id: string;
@@ -20,6 +29,9 @@ export type EditorProduct = {
   unitPriceCents: number;
   defaultTag: string;
   serviceType: string | null;
+  unitOfMeasure: string | null;
+  softwareRate: string | null;
+  softwareTerm: number | null;
 };
 
 export type EditorLine = {
@@ -34,6 +46,10 @@ export type EditorLine = {
   unitPriceCents: number;
   tag: string;
   serviceType: string | null;
+  supplierCompanyId: string | null;
+  unitOfMeasure: string | null;
+  softwareRate: string | null;
+  softwareTermMonths: number | null;
 };
 
 // Quantity and price live as strings while the user types so a partially
@@ -50,12 +66,38 @@ type Row = {
   tag: LineItemTagValue;
   // Which kind of work the row is, when the quote is split that way.
   serviceType: string;
+  // Who we buy it from. Never leaves the workspace.
+  supplierCompanyId: string | null;
+  unitOfMeasure: string;
+  softwareRate: string;
+  // Typed as two boxes and stored as one number of months.
+  termYearsInput: string;
+  termMonthsInput: string;
+  // Whether saving the quote should also put this line in the catalog.
+  // Only ever offered for a line typed by hand that has never been saved.
+  saveAsProduct: boolean;
 };
 
 let uidCounter = 0;
 const nextUid = () => `row-${(uidCounter += 1)}`;
 
+function splitTerm(months: number | null | undefined) {
+  if (!months || months <= 0) return { years: "", months: "" };
+  return {
+    years: Math.floor(months / 12) ? String(Math.floor(months / 12)) : "",
+    months: months % 12 ? String(months % 12) : "",
+  };
+}
+
+function rowTermMonths(row: Row) {
+  const years = Number.parseInt(row.termYearsInput, 10);
+  const months = Number.parseInt(row.termMonthsInput, 10);
+  const total = (Number.isFinite(years) ? years : 0) * 12 + (Number.isFinite(months) ? months : 0);
+  return total > 0 ? total : null;
+}
+
 function toRow(line: EditorLine): Row {
+  const term = splitTerm(line.softwareTermMonths);
   return {
     uid: nextUid(),
     id: line.id ?? null,
@@ -67,6 +109,16 @@ function toRow(line: EditorLine): Row {
     unitPriceInput: centsToDollarInput(line.unitPriceCents),
     tag: line.tag as LineItemTagValue,
     serviceType: line.serviceType ?? "",
+    supplierCompanyId: line.supplierCompanyId,
+    unitOfMeasure: line.unitOfMeasure ?? "",
+    softwareRate: line.softwareRate ?? "",
+    termYearsInput: term.years,
+    termMonthsInput: term.months,
+    // Off for anything loaded from the database. A line typed by hand and
+    // already saved comes back with productId null too, so productId alone
+    // is not a reliable "typed by hand" signal — it would re-offer the tick
+    // on every visit to an old quote.
+    saveAsProduct: false,
   };
 }
 
@@ -84,6 +136,7 @@ export function LineItemsEditor({
   initialLines,
   products,
   serviceTypes,
+  suppliers,
   readOnly = false,
 }: {
   quoteId: string;
@@ -91,9 +144,14 @@ export function LineItemsEditor({
   products: EditorProduct[];
   // The workspace's kinds of work, for splitting the quote by scope.
   serviceTypes: string[];
+  // Companies tagged Distributor, plus any already linked to a line here.
+  suppliers: SupplierOption[];
   readOnly?: boolean;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
+  // Grows when someone adds a distributor from inside a row, so every row's
+  // picker sees it without a page reload.
+  const [supplierOptions, setSupplierOptions] = useState<SupplierOption[]>(suppliers);
   // Off until it is wanted: a one-trade business never sees the column.
   // On by itself when the quote already has a service type on a row.
   const [splitByService, setSplitByService] = useState(() =>
@@ -102,6 +160,9 @@ export function LineItemsEditor({
   const [dirty, setDirty] = useState(false);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
+  // Set by any edit made while a save is in flight, so finishing that save
+  // doesn't clear "Unsaved changes" on work it never sent.
+  const editedDuringSave = useRef(false);
 
   const totals = useMemo(
     () =>
@@ -118,11 +179,19 @@ export function LineItemsEditor({
   function mutate(next: Row[]) {
     setRows(next);
     setDirty(true);
+    editedDuringSave.current = true;
     setState({});
   }
 
+  // Applied to whatever the rows are NOW, not to the array captured when
+  // the handler was created. Adding a supplier is a server round trip, and
+  // its callback fires long after: mapping a stale array there replaced the
+  // whole table and threw away anything typed while it ran.
   function updateRow(uid: string, patch: Partial<Row>) {
-    mutate(rows.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+    setRows((current) => current.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+    setDirty(true);
+    editedDuringSave.current = true;
+    setState({});
   }
 
   function addBlankLine() {
@@ -139,6 +208,13 @@ export function LineItemsEditor({
         unitPriceInput: "0.00",
         tag: "MATERIALS",
         serviceType: "",
+        supplierCompanyId: null,
+        unitOfMeasure: "",
+        softwareRate: "",
+        termYearsInput: "",
+        termMonthsInput: "",
+        // Typed once, kept forever — the default Taylor asked for.
+        saveAsProduct: true,
       },
     ]);
   }
@@ -146,6 +222,13 @@ export function LineItemsEditor({
   function addProductLine(productId: string) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
+    const term = splitTerm(
+      product.softwareRate === "PER_MONTH"
+        ? product.softwareTerm
+        : product.softwareRate === "PER_YEAR" && product.softwareTerm
+          ? product.softwareTerm * 12
+          : product.softwareTerm,
+    );
     mutate([
       ...rows,
       {
@@ -160,8 +243,39 @@ export function LineItemsEditor({
         tag: product.defaultTag as LineItemTagValue,
         // The catalog already knows what kind of work it is.
         serviceType: product.serviceType ?? "",
+        supplierCompanyId: null,
+        unitOfMeasure: product.unitOfMeasure ?? "",
+        softwareRate: product.softwareRate ?? "",
+        termYearsInput: term.years,
+        termMonthsInput: term.months,
+        // It is already in the catalog; that is where it came from.
+        saveAsProduct: false,
       },
     ]);
+  }
+
+  // Changing the tag changes which units are legal, so a unit left over
+  // from the old tag has to go — the server would null it anyway, and the
+  // row would keep showing something nobody can see the source of.
+  function changeTag(uid: string, tag: LineItemTagValue) {
+    const row = rows.find((item) => item.uid === uid);
+    if (!row) return;
+    const stillLegal =
+      row.unitOfMeasure &&
+      unitGroupsForTag(tag).some((group) =>
+        (UNIT_GROUPS[group] as readonly string[]).includes(row.unitOfMeasure),
+      );
+    updateRow(uid, {
+      tag,
+      unitOfMeasure: stillLegal ? row.unitOfMeasure : "",
+      ...(tag === "SOFTWARE" ? {} : { softwareRate: "", termYearsInput: "", termMonthsInput: "" }),
+    });
+  }
+
+  function addSupplierOption(option: SupplierOption) {
+    setSupplierOptions((current) =>
+      current.some((item) => item.id === option.id) ? current : [...current, option],
+    );
   }
 
   function removeRow(uid: string) {
@@ -171,6 +285,7 @@ export function LineItemsEditor({
   function save() {
     const payload: LineItemInput[] = rows.map((row) => ({
       id: row.id,
+      uid: row.uid,
       productId: row.productId,
       name: row.name.trim(),
       description: row.description.trim(),
@@ -179,6 +294,13 @@ export function LineItemsEditor({
       unitPriceCents: rowUnitCents(row),
       tag: row.tag,
       serviceType: splitByService ? row.serviceType.trim() || null : null,
+      supplierCompanyId: row.supplierCompanyId,
+      // The select only ever holds a value from the lists above or "", and
+      // the server re-checks the pairing against the tag regardless.
+      unitOfMeasure: (row.unitOfMeasure || null) as UnitOfMeasureValue | null,
+      softwareRate: row.tag === "SOFTWARE" ? ((row.softwareRate || null) as SoftwareRateValue | null) : null,
+      softwareTermMonths: row.tag === "SOFTWARE" ? rowTermMonths(row) : null,
+      saveAsProduct: row.saveAsProduct && !row.id && !row.productId,
     }));
 
     const blank = payload.findIndex((line) => line.name.length === 0);
@@ -187,10 +309,27 @@ export function LineItemsEditor({
       return;
     }
 
+    editedDuringSave.current = false;
     startTransition(async () => {
       const result = await saveLineItems(quoteId, payload);
-      setState(result);
-      if (!result.error) setDirty(false);
+      setState({ error: result.error, success: result.success });
+      if (result.error) return;
+
+      // Take on the ids the save just handed back, matched by uid rather
+      // than position: a row added or deleted mid-save shifts the array,
+      // and writing an id onto the wrong row deletes a live one next time.
+      const savedByUid = new Map((result.lines ?? []).map((line) => [line.uid, line]));
+      setRows((current) =>
+        current.map((row) => {
+          const saved = savedByUid.get(row.uid);
+          // saveAsProduct goes off once the row is stored: it is an
+          // offer made about a brand-new line, not a standing setting.
+          return saved
+            ? { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false }
+            : row;
+        }),
+      );
+      if (!editedDuringSave.current) setDirty(false);
     });
   }
 
@@ -205,6 +344,10 @@ export function LineItemsEditor({
             onChange={(event) => {
               setSplitByService(event.target.checked);
               setDirty(true);
+              // Same as any row edit: a save already in flight was built
+              // before this, so finishing it must not clear "Unsaved
+              // changes" on a toggle it never sent.
+              editedDuringSave.current = true;
             }}
             data-testid="split-by-service-type"
           />
@@ -222,6 +365,8 @@ export function LineItemsEditor({
               <th className="w-32 text-right">Value</th>
               <th className="w-32 text-right">Total</th>
               <th className="w-44">Tag</th>
+              {/* Internal. Never rendered on the customer's copy. */}
+              <th className="w-44">Supplier / Contractor</th>
               {splitByService && <th className="w-44">Service type</th>}
               {!readOnly && <th className="w-10" />}
             </tr>
@@ -229,7 +374,7 @@ export function LineItemsEditor({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={(readOnly ? 5 : 6) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
+                <td colSpan={(readOnly ? 6 : 7) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
                   No line items yet. Add one from your catalog or start a blank line.
                 </td>
               </tr>
@@ -237,6 +382,15 @@ export function LineItemsEditor({
 
             {rows.map((row, index) => {
               const total = lineTotalCents(rowQuantity(row), rowUnitCents(row));
+              const termTotal =
+                row.tag === "SOFTWARE"
+                  ? termTotalCents(
+                      rowQuantity(row),
+                      rowUnitCents(row),
+                      row.softwareRate || null,
+                      rowTermMonths(row),
+                    )
+                  : null;
               return (
                 <tr key={row.uid} className="align-top">
                   <td>
@@ -272,6 +426,97 @@ export function LineItemsEditor({
                       disabled={readOnly}
                       className="input input-sm mt-1 border-transparent bg-transparent text-xs italic text-[var(--text-faint)]"
                     />
+
+                    {/* Only for a brand-new hand-typed line. A line that
+                        was typed and already saved comes back with no
+                        product id too, so this would otherwise re-offer
+                        itself on every visit to an old quote. */}
+                    {!readOnly && row.id === null && row.productId === null && (
+                      <label className="mt-1.5 flex items-center gap-1.5 text-[0.68rem]">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5"
+                          checked={row.saveAsProduct}
+                          onChange={(event) =>
+                            updateRow(row.uid, { saveAsProduct: event.target.checked })
+                          }
+                          aria-label={`Line ${index + 1} save as product`}
+                          data-testid="save-as-product"
+                        />
+                        <span className="muted">Save as product?</span>
+                      </label>
+                    )}
+
+                    {tagHasUnits(row.tag) && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        <select
+                          value={row.unitOfMeasure}
+                          onChange={(event) =>
+                            updateRow(row.uid, { unitOfMeasure: event.target.value })
+                          }
+                          aria-label={`Line ${index + 1} unit`}
+                          disabled={readOnly}
+                          className="select input-sm !h-7 !py-0 !text-[0.68rem]"
+                          data-testid="line-unit"
+                        >
+                          <option value="">Unit…</option>
+                          {unitGroupsForTag(row.tag).flatMap((group) =>
+                            (UNIT_GROUPS[group] as readonly string[]).map((unit) => (
+                              <option key={unit} value={unit}>
+                                {UNIT_LABELS[unit as UnitOfMeasureValue]}
+                              </option>
+                            )),
+                          )}
+                        </select>
+
+                        {row.tag === "SOFTWARE" && (
+                          <>
+                            <select
+                              value={row.softwareRate}
+                              onChange={(event) =>
+                                updateRow(row.uid, { softwareRate: event.target.value })
+                              }
+                              aria-label={`Line ${index + 1} billing`}
+                              disabled={readOnly}
+                              className="select input-sm !h-7 !py-0 !text-[0.68rem]"
+                              data-testid="line-billing"
+                            >
+                              {/* Blank first, so a line with no rate set
+                                  doesn't display one it never had and then
+                                  write it on the next save. */}
+                              <option value="">Billing…</option>
+                              {SOFTWARE_RATES.map((rate) => (
+                                <option key={rate} value={rate}>
+                                  {SOFTWARE_BILLING_LABELS[rate as SoftwareRateValue]}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              value={row.termYearsInput}
+                              onChange={(event) =>
+                                updateRow(row.uid, { termYearsInput: event.target.value })
+                              }
+                              inputMode="numeric"
+                              placeholder="yr"
+                              aria-label={`Line ${index + 1} term years`}
+                              disabled={readOnly}
+                              className="input input-sm num !h-7 !w-11 !py-0 !text-[0.68rem]"
+                            />
+                            <input
+                              value={row.termMonthsInput}
+                              onChange={(event) =>
+                                updateRow(row.uid, { termMonthsInput: event.target.value })
+                              }
+                              inputMode="numeric"
+                              placeholder="mo"
+                              aria-label={`Line ${index + 1} term months`}
+                              disabled={readOnly}
+                              className="input input-sm num !h-7 !w-11 !py-0 !text-[0.68rem]"
+                            />
+                          </>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td>
                     <input
@@ -299,13 +544,22 @@ export function LineItemsEditor({
                   </td>
                   <td className="num pt-3 text-right font-medium">
                     {formatCents(total)}
+                    {/* What the line comes to over its whole term, so the
+                        unit, the billing period and the term can be checked
+                        against each other. Not part of the quote total. */}
+                    {termTotal !== null && termTotal !== total && (
+                      <span
+                        className="faint block text-[0.68rem] font-normal"
+                        data-testid="line-term-total"
+                      >
+                        {formatCents(termTotal)} term
+                      </span>
+                    )}
                   </td>
                   <td>
                     <select
                       value={row.tag}
-                      onChange={(event) =>
-                        updateRow(row.uid, { tag: event.target.value as LineItemTagValue })
-                      }
+                      onChange={(event) => changeTag(row.uid, event.target.value as LineItemTagValue)}
                       aria-label={`Line ${index + 1} tag`}
                       disabled={readOnly}
                       className="select input-sm"
@@ -317,6 +571,16 @@ export function LineItemsEditor({
                         </option>
                       ))}
                     </select>
+                  </td>
+                  <td>
+                    <SupplierCell
+                      value={row.supplierCompanyId}
+                      options={supplierOptions}
+                      onChange={(companyId) => updateRow(row.uid, { supplierCompanyId: companyId })}
+                      onOptionAdded={addSupplierOption}
+                      label={`Line ${index + 1} supplier`}
+                      disabled={readOnly}
+                    />
                   </td>
                   {splitByService && (
                     <td>

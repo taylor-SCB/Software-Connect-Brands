@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, optionalText, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
+import { linkDistributorCompany } from "@/lib/distributors";
 import {
   LINE_ITEM_TAGS,
   TAG_LABELS,
@@ -186,13 +187,12 @@ async function resolveProductInput(
   if (input.distributorId === NEW_OPTION) {
     const name = input.newDistributorName?.trim();
     if (!name) return { ok: false, error: "Type the distributor's name" };
-    const distributor = await prisma.distributor.upsert({
-      where: { organizationId_name: { organizationId, name } },
-      create: { organizationId, name },
-      update: {},
-      select: { id: true },
-    });
-    distributorId = distributor.id;
+    // Makes the matching Company too, so a distributor added here can be
+    // picked as a line's Supplier / Contractor on a quote. Adding only the
+    // Distributor record leaves the business invisible to the CRM side.
+    const linked = await linkDistributorCompany(organizationId, name);
+    if (!linked) return { ok: false, error: "Type the distributor's name" };
+    distributorId = linked.distributorId;
   } else if (input.distributorId) {
     const distributor = await prisma.distributor.findFirst({
       where: { id: input.distributorId, organizationId },

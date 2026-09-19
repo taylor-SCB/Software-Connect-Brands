@@ -9,7 +9,7 @@ import { FILL_BATCH_SIZE, type EnrichCounts } from "@/lib/enrich";
 import type { Prisma } from "@/generated/prisma/client";
 
 // "Fill in missing" on the Companies list: for companies already in the
-// workspace (created bare by the Deal Tracker, a contact form or an
+// workspace (created bare by the Contract Coordinator, a contact form or an
 // earlier import), tag the untagged and copy a phone or website up from
 // their people. The browser drives it in batches, like Import CSV.
 

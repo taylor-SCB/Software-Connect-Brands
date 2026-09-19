@@ -95,10 +95,22 @@ export async function loadMergeContext(input: {
           )?.id ?? null
         : null;
 
+  // Named field by field for the same reason as the public quote page:
+  // these lines get baked into a contract body the other side signs, so
+  // only what belongs on a customer's document is read.
   const quote = quoteId
     ? await prisma.quote.findFirst({
         where: { id: quoteId, organizationId, ...(deal ? { dealId: deal.id } : {}) },
-        include: { lineItems: { orderBy: { position: "asc" } } },
+        select: {
+          number: true,
+          title: true,
+          validUntil: true,
+          terms: true,
+          lineItems: {
+            orderBy: { position: "asc" },
+            select: { name: true, quantity: true, unitPriceCents: true, tag: true },
+          },
+        },
       })
     : null;
 

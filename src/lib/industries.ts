@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_INDUSTRIES, GENERAL_COMPANY_TYPE } from "@/lib/constants";
 import { TAG_SEPARATOR } from "@/lib/tag-separator";
+import { ensureDistributorType } from "@/lib/distributors";
 
 export type IndustryPickList = { name: string; types: string[] }[];
 
@@ -32,6 +33,19 @@ export async function getIndustryPickList(organizationId: string): Promise<Indus
     }
     industries = await loadPickList(organizationId);
   }
+
+  // Distributor joined the defaults after workspaces already existed, and
+  // the seed above only runs for an empty list. Top it up for everyone
+  // else — an in-memory check that costs nothing once it is there.
+  try {
+    if (await ensureDistributorType(organizationId, industries)) {
+      industries = await loadPickList(organizationId);
+    }
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    industries = await loadPickList(organizationId);
+  }
+
   return industries;
 }
 

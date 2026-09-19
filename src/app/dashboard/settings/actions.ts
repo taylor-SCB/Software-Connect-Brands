@@ -132,7 +132,7 @@ const companyInfoSchema = z.object({
   description: z.string().trim().max(4000, "Keep the description under 4,000 characters").optional(),
   history: z.string().trim().max(4000, "Keep the history under 4,000 characters").optional(),
   // The Preset Payment Table: what a new contract's payment rows and
-  // terms start as, on the Deal Tracker and the New contract page.
+  // terms start as, on the Contract Coordinator and the New contract page.
   defaultPaymentTerms: z.enum(PAYMENT_TERM_OPTIONS).optional(),
   defaultPaymentPreset: z.enum(SCHEDULE_PRESETS).optional(),
   defaultDepositPercent: z.coerce.number().int().min(1, "A deposit is at least 1%").max(99, "A deposit is under 100%").optional(),

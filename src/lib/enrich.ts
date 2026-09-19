@@ -15,7 +15,11 @@ function normalizeWebsite(value: string | null) {
 }
 
 export const UNCATEGORIZED_INDUSTRY = "Uncategorized";
-export const DISTRIBUTOR_COMPANY_TYPE = "Distributor";
+// Declared in its own file so importing it never drags Prisma into a
+// client bundle. Re-exported here so everything that reads it from the
+// auto-tagging vocabulary keeps working.
+export { DISTRIBUTOR_COMPANY_TYPE } from "@/lib/distributor-type";
+import { DISTRIBUTOR_COMPANY_TYPE } from "@/lib/distributor-type";
 
 // Names must match DEFAULT_INDUSTRIES exactly so a suggestion lands on
 // the pick-list row the workspace already has, not a lookalike.
@@ -354,7 +358,7 @@ export function suggestionVocabularyProblems(): string[] {
       problems.push(`industry "${tags.industry}" is not a default`);
       continue;
     }
-    if (!types.includes(tags.companyType) && tags.companyType !== DISTRIBUTOR_COMPANY_TYPE) {
+    if (!types.includes(tags.companyType)) {
       problems.push(`type "${tags.companyType}" is not under ${tags.industry}`);
     }
   }

@@ -150,6 +150,10 @@ model User {
   activities Activity[]
   uploads    Upload[]
   passwordResets PasswordReset[]
+  // Quotes this person leads or signs. Both SetNull, unlike the three
+  // above — a quote must outlive the person who owned it.
+  leadQuotes   Quote[] @relation("QuoteLeadRep")
+  signerQuotes Quote[] @relation("QuoteContractSigner")
 
   @@index([organizationId])
 }
@@ -228,6 +232,8 @@ model Company {
   crews       Crew[]
   events      CalendarEvent[]
   properties  Property[]
+  // Quote lines we buy from this company. Internal to the workspace.
+  supplierQuoteLines QuoteLineItem[] @relation("QuoteLineSupplier")
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -485,6 +491,25 @@ model Quote {
   status         QuoteStatus   @default(DRAFT)
   introNote      String        @default("")
   terms          String        @default("")
+  // The one-line terms shown above the payment table ("Net 30"), as
+  // Contract.paymentTerms is. The free-text `terms` above stays the fine
+  // print and is still what {{quote_terms}} merges into a contract body.
+  paymentTerms   String?
+  // Ticked to keep the payment table off the customer's copy. Honoured in
+  // the query that builds that copy, not in CSS: hiding it in the browser
+  // would still ship the numbers inside the page.
+  hidePaymentTable Boolean     @default(false)
+  // Who owns the deal, who signs it, and who else is on it. All three are
+  // SetNull on purpose: every other User relation in this file cascades,
+  // and cascading here would delete the quote along with the person.
+  leadSalesRepId   String?
+  leadSalesRep     User?       @relation("QuoteLeadRep", fields: [leadSalesRepId], references: [id], onDelete: SetNull)
+  contractSignerId String?
+  contractSigner   User?       @relation("QuoteContractSigner", fields: [contractSignerId], references: [id], onDelete: SetNull)
+  // Ids of other workspace users on this deal. A plain array rather than
+  // a join table so updateQuoteMeta can keep writing through updateMany
+  // with organizationId in the WHERE clause.
+  teamUserIds      String[]    @default([])
   validUntil     DateTime?
   publicToken    String        @unique
   sentAt         DateTime?
@@ -493,12 +518,15 @@ model Quote {
   updatedAt      DateTime      @updatedAt
 
   lineItems QuoteLineItem[]
+  payments  QuotePayment[]
   contracts Contract[]
 
   @@unique([organizationId, number])
   @@index([organizationId])
   @@index([contactId])
   @@index([dealId])
+  @@index([leadSalesRepId])
+  @@index([contractSignerId])
 }
 
 model QuoteLineItem {
@@ -515,6 +543,19 @@ model QuoteLineItem {
   quantity       Float       @default(1)
   unitPriceCents Int         @default(0)
   tag            LineItemTag
+  // Who we buy this line from. Internal: never selected onto the public
+  // quote page, the PDF taken from it, or the text merged into a contract
+  // body — the same footing as what a line costs us.
+  supplierCompanyId String?
+  supplierCompany   Company? @relation("QuoteLineSupplier", fields: [supplierCompanyId], references: [id], onDelete: SetNull)
+  // How the line is counted, and for a software line how it bills and for
+  // how long. Descriptive: the term is printed beside the line and never
+  // multiplies the line total, which stays quantity × price.
+  unitOfMeasure  UnitOfMeasure?
+  softwareRate   SoftwareRate?
+  // Plain months, unlike Product.softwareTerm which counts periods of
+  // whatever softwareRate says. Typed as years + months and stored flat.
+  softwareTermMonths Int?
   // Optional: which kind of work this row belongs to, from the
   // workspace's service-type list. Only shown once "Split by service
   // type" is turned on, so a one-trade business never sees it.
@@ -528,6 +569,36 @@ model QuoteLineItem {
   contractLines ContractLineItem[]
 
   @@index([quoteId])
+  @@index([supplierCompanyId])
+}
+
+// What the customer is asked to pay and when. Deliberately NOT a copy of
+// ContractPayment: no paidAt, no invoice number or token, no Payment
+// children. A quote is a promise and a contract is money — nothing should
+// be able to record a payment against a quote, and none of the owed
+// figures in src/lib/money.ts can ever see one of these rows.
+model QuotePayment {
+  id             String      @id @default(cuid())
+  quoteId        String
+  quote          Quote       @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  // Carried so a row can be looked up with the workspace in the WHERE
+  // clause, exactly as ContractPayment does.
+  organizationId String?
+  label          String
+  kind           PaymentKind @default(PERCENT)
+  // Whole percent for PERCENT rows (50 = 50%); unused otherwise.
+  percent        Float?
+  amountCents    Int         @default(0)
+  dueOn          DateTime?   @db.Date
+  // "Net 30", "Upon Signature". What the Due cell prints when no date has
+  // been picked; a picked date wins and is printed as-is.
+  terms          String?
+  position       Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([quoteId])
+  @@index([organizationId])
 }
 
 // The pick list behind a template's "Type" (Service Agreement, Change
@@ -684,6 +755,13 @@ model Contract {
   // "Net 30", "Due on receipt"... free text so a workspace can write its
   // own. The dated rows live in `payments`.
   paymentTerms     String?
+  // Set when this contract's payment rows were seeded from its quote's
+  // table rather than from a preset, and when someone first changed them
+  // afterwards. Together they are what puts "Amended from original quote"
+  // on the schedule, so the difference from what the customer was quoted
+  // is visible rather than silent.
+  scheduleFromQuote Boolean          @default(false)
+  scheduleAmendedAt DateTime?
   // Reminders are copied out by hand today (no email is sent). Counting
   // them is what lets the tracker say "reminded twice, last on Sep 12".
   reminderCount    Int               @default(0)
@@ -757,6 +835,10 @@ model ContractPayment {
   percent        Float?
   amountCents    Int         @default(0)
   dueOn          DateTime?   @db.Date
+  // "Net 30", "Upon Signature". What the Due cell prints when no date has
+  // been picked. Purely a label: dueOn keeps its exact meaning, because
+  // the owed and overdue figures in src/lib/money.ts read it in raw SQL.
+  terms          String?
   // When the row was settled: set the moment the payments recorded on it
   // add up to amountCents, cleared when a payment is removed below that.
   // Written only by settleRow in src/lib/money.ts, never by hand.

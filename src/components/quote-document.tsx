@@ -1,4 +1,7 @@
-import { formatCents, formatDate } from "@/lib/format";
+// formatDay forces UTC: a due date is a DATE column that comes back as
+// midnight UTC, and a zone-aware format would print the day before for
+// anyone west of it.
+import { formatCents, formatDate, formatDay } from "@/lib/format";
 import { computeQuoteTotals, lineTotalCents } from "@/lib/quote-math";
 import {
   LINE_ITEM_TAGS,
@@ -37,7 +40,98 @@ export type QuoteDocumentData = {
     unitPriceCents: number;
     tag: string;
   }[];
+  // What the customer is asked to pay and when. Not fetched at all when
+  // the quote is set to hide it, so the numbers never reach the page.
+  // Deliberately without percent or kind: how a row was worked out is
+  // ours, the amount is theirs.
+  paymentTerms?: string | null;
+  payments?: { id: string; label: string; amountCents: number; dueOn: Date | null; terms: string | null }[];
+  // Who to call about it. Only the fields filled in on their account.
+  salesRep?: { name: string; email: string | null; phone: string | null; title: string | null } | null;
 };
+
+// This type is the allow-list for what a customer may see. A line's
+// supplier and what it costs us are not on it, and must not be added.
+function PaymentSchedule({
+  payments,
+  paymentTerms,
+  dark = false,
+}: {
+  payments: QuoteDocumentData["payments"];
+  paymentTerms?: string | null;
+  dark?: boolean;
+}) {
+  if (!payments || payments.length === 0) return null;
+  const total = payments.reduce((sum, payment) => sum + payment.amountCents, 0);
+  const muted = dark ? "text-white/55" : "text-[#6b7280]";
+  const faint = dark ? "text-white/40" : "text-[#9ca3af]";
+  const line = dark ? "border-white/8" : "border-[#e5e7eb]";
+
+  return (
+    <div className={`mt-6 border-t ${line} pt-4`} data-testid="document-payments">
+      <p className={`text-[0.65rem] font-semibold uppercase tracking-widest ${faint}`}>
+        Payment schedule
+      </p>
+      {paymentTerms && <p className={`mt-1 text-xs ${muted}`}>Terms: {paymentTerms}</p>}
+      <table className="mt-2 w-full text-xs">
+        <thead>
+          <tr className={`border-b ${line} text-left ${faint}`}>
+            <th className="py-1.5 pr-2 font-medium">Payment</th>
+            <th className="py-1.5 pr-2 font-medium">Due</th>
+            <th className="py-1.5 text-right font-medium">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {payments.map((payment) => (
+            <tr key={payment.id} className={`border-b ${line}`}>
+              <td className="py-1.5 pr-2">{payment.label}</td>
+              {/* A picked date wins; otherwise the row's term stands in. */}
+              <td className={`py-1.5 pr-2 ${muted}`}>
+                {payment.dueOn ? formatDay(payment.dueOn) : payment.terms || "—"}
+              </td>
+              <td className="py-1.5 text-right tabular-nums">{formatCents(payment.amountCents)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td className="pt-2 font-semibold">Total</td>
+            <td />
+            <td className="pt-2 text-right font-semibold tabular-nums" data-testid="document-payments-total">
+              {formatCents(total)}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function SalesRep({
+  rep,
+  dark = false,
+}: {
+  rep: QuoteDocumentData["salesRep"];
+  dark?: boolean;
+}) {
+  if (!rep) return null;
+  const muted = dark ? "text-white/55" : "text-[#6b7280]";
+  const faint = dark ? "text-white/40" : "text-[#9ca3af]";
+  const line = dark ? "border-white/8" : "border-[#e5e7eb]";
+
+  return (
+    <div className={`mt-6 border-t ${line} pt-4`} data-testid="document-rep">
+      <p className={`text-[0.65rem] font-semibold uppercase tracking-widest ${faint}`}>
+        Your contact
+      </p>
+      <p className="mt-1 text-xs font-semibold">{rep.name}</p>
+      {/* Each line only when that field is filled in on their account. */}
+      {rep.title && <p className={`text-xs ${muted}`}>{rep.title}</p>}
+      {rep.email && <p className={`text-xs ${muted}`}>{rep.email}</p>}
+      {rep.phone && <p className={`text-xs ${muted}`}>{rep.phone}</p>}
+    </div>
+  );
+}
 
 export function QuoteDocument({ quote }: { quote: QuoteDocumentData }) {
   return quote.template === "MODERN" ? (
@@ -200,11 +294,13 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Total
           </p>
-          <p className="mt-1 font-mono text-3xl font-semibold tabular-nums">
+          <p className="mt-1 font-mono text-3xl font-semibold tabular-nums" data-testid="document-total">
             {formatCents(totals.totalCents)}
           </p>
         </div>
       </div>
+
+      <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} />
 
       {quote.terms && (
         <footer className="mt-10 border-t border-[#e5e7eb] pt-4">
@@ -216,6 +312,8 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           </p>
         </footer>
       )}
+
+      <SalesRep rep={quote.salesRep} />
     </div>
   );
 }
@@ -392,11 +490,13 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
             <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/50">
               Quote total
             </p>
-            <p className="mt-1 font-mono text-4xl font-semibold tabular-nums text-white">
+            <p className="mt-1 font-mono text-4xl font-semibold tabular-nums text-white" data-testid="document-total">
               {formatCents(totals.totalCents)}
             </p>
           </div>
         </div>
+
+        <PaymentSchedule payments={quote.payments} paymentTerms={quote.paymentTerms} dark />
 
         {quote.terms && (
           <div className="mt-6 border-t border-white/8 pt-4">
@@ -408,6 +508,8 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
             </p>
           </div>
         )}
+
+        <SalesRep rep={quote.salesRep} dark />
       </div>
     </div>
   );
