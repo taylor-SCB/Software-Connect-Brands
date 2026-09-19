@@ -3,7 +3,8 @@
 import { AuthError } from "next-auth";
 import bcrypt from "bcryptjs";
 import { signIn } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { findLoginUser } from "@/lib/login-user";
+import { keepFields } from "@/lib/forms";
 
 const STATUS_MESSAGES: Record<string, string> = {
   PENDING:
@@ -23,10 +24,9 @@ async function explainFailure(email: unknown, password: unknown) {
   const generic = "Invalid email or password";
   if (typeof email !== "string" || typeof password !== "string") return generic;
 
-  const user = await prisma.user.findUnique({
-    where: { email: email.trim().toLowerCase() },
-    select: { passwordHash: true, organization: { select: { status: true } } },
-  });
+  // The same case-insensitive match the sign-in itself uses, so this
+  // explanation can never disagree with the decision it is explaining.
+  const user = await findLoginUser(email);
   if (!user) return generic;
 
   // The password still has to be right. Otherwise anyone typing an email
@@ -37,7 +37,10 @@ async function explainFailure(email: unknown, password: unknown) {
   return STATUS_MESSAGES[user.organization.status] ?? generic;
 }
 
-export async function login(_prevState: { error?: string }, formData: FormData) {
+export async function login(
+  _prevState: { error?: string; kept?: Record<string, string> },
+  formData: FormData,
+) {
   const email = formData.get("email");
   const password = formData.get("password");
 
@@ -46,7 +49,14 @@ export async function login(_prevState: { error?: string }, formData: FormData) 
     return { error: undefined };
   } catch (error) {
     if (error instanceof AuthError) {
-      return { error: await explainFailure(email, password) };
+      // Hand the address back. React empties a form whose action is a
+      // server function, so a refused attempt used to wipe the boxes and
+      // leave someone on a phone retyping their whole email address every
+      // time. The password is deliberately not kept.
+      return {
+        error: await explainFailure(email, password),
+        kept: keepFields(formData, ["email"]),
+      };
     }
     // A successful sign-in redirects by throwing; that must propagate.
     throw error;

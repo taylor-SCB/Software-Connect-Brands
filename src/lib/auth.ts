@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { findLoginUser } from "@/lib/login-user";
 import { authConfig } from "@/lib/auth.config";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -18,10 +19,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials?.password as string | undefined;
         if (!email || !password) return null;
 
-        const user = await prisma.user.findUnique({
-          where: { email },
-          include: { organization: { select: { status: true } } },
-        });
+        // Matched without regard to case: see findLoginUser. An exact
+        // lookup here locked people out of their own workspace when a
+        // phone capitalised the address for them.
+        const user = await findLoginUser(email);
         if (!user) return null;
 
         const valid = await bcrypt.compare(password, user.passwordHash);
