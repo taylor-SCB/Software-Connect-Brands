@@ -124,7 +124,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
         aria-modal="true"
         aria-label="Import CSV"
         onClick={(event) => event.stopPropagation()}
-        className="card card-lit flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden"
+        className="card card-lit popover flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
           <div>

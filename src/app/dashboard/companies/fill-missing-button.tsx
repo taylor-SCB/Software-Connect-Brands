@@ -92,7 +92,7 @@ function FillDialog({ onClose }: { onClose: () => void }) {
         aria-modal="true"
         aria-label="Fill in missing"
         onClick={(event) => event.stopPropagation()}
-        className="card card-lit flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden"
+        className="card card-lit popover flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
           <div>

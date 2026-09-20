@@ -301,7 +301,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirteen** are checked in at
+suite, and the delete-confirmation suite. **Seventeen** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -309,10 +309,20 @@ contacts suite (Sept 9, 2026), the 21-step contracts suite and the
 the 17-step contacts import + filters + favorites suite and the
 200,000-row load test (both Sept 13, 2026; the load test seeds in SQL,
 takes several minutes, and must stay under its 2-second page budget),
-and from Sept 14, 2026 the 8-step company enrichment suite, the 24-step
+from Sept 14, 2026 the 8-step company enrichment suite, the 24-step
 money + payments suite, the 23-step projects core suite, the 22-step
 project money suite, the 30-step crews + time suite, the 35-step calendar
-suite and the 25-step properties + close out suite.
+suite and the 25-step properties + close out suite, the login-case and
+password-reset suites (Sept 18, 2026), and the 11-step overlay
+readability suite (Sept 20, 2026).
+
+`password-reset.cjs` is the one suite that needs more than a database:
+the login screen only offers the link when email is switched on, so the
+**server** has to be started with `RESEND_API_KEY`, `EMAIL_FROM` and
+`RESEND_ENDPOINT=http://localhost:3999/emails` in `.env`. Fake values are
+right — the suite catches the message on :3999 and nothing leaves the
+machine. Without them the suite fails on the first step, which looks like
+a bug in the app and is not one.
 
 Each signs up its own workspace and scopes its lookups to it, so they can
 run back to back; still run them one at a time. **Scope every SQL lookup
@@ -349,6 +359,17 @@ the state object instead. And React empties a form whose action is a
 server function, including when that function refuses, so an action that
 can refuse has to hand the typed values back (`keepFields` in
 `src/lib/forms.ts`).
+
+**Anything that floats over other content must be opaque.** The app's
+look is glass — `.card` is about 4% white with a blur behind it — which
+is right for a panel sitting on the page background and wrong for
+anything covering words. Every search dropdown, filter menu and dialog
+was drawn on `.card`, so the fields underneath read straight through the
+panel and neither layer could be made out (Sept 20, 2026). They now also
+carry `.popover`, which paints the solid `--overlay` colour. A new
+floating panel gets that class; a one-off hex on a single dialog is how
+the app drifts back apart, and `overlay-readability.cjs` fails if one
+appears.
 
 Standing up that Postgres in a fresh session: the binaries are at
 `/usr/lib/postgresql/16/bin`; `initdb` into a short path such as

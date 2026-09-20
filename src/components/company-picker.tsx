@@ -102,7 +102,7 @@ export function CompanyPicker({
       {open && results.length > 0 && (
         <ul
           role="listbox"
-          className="card absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto py-1 shadow-xl"
+          className="card popover absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto py-1"
         >
           {results.map((company) => (
             <li key={company.id}>

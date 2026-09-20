@@ -290,7 +290,7 @@ function Dropdown({
         <IconChevronDown size={12} className="opacity-70" />
       </button>
       {open && (
-        <div className="card absolute left-0 top-full z-30 mt-1 w-64 py-1 shadow-xl">{children(() => setOpen(false))}</div>
+        <div className="card popover absolute left-0 top-full z-30 mt-1 w-64 py-1">{children(() => setOpen(false))}</div>
       )}
     </div>
   );
