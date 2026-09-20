@@ -360,7 +360,10 @@ async function anonymousStatus(browser, url) {
   await swRow.getByLabel("Scheduling software quantity").fill("3");
   await swRow.getByLabel("Scheduling software unit price").fill("20.00");
   await swRow.getByLabel("Scheduling software discount", { exact: true }).fill("10");
+  // Tab once lands on the %/$ picker beside the box, which is not
+  // leaving the cell; the save happens on the way out of the cell.
   await swRow.getByLabel("Scheduling software discount", { exact: true }).press("Tab");
+  await swRow.getByLabel("Scheduling software discount type").press("Tab");
   assert.match(await swRow.locator("[data-testid=line-total]").textContent(), /\$54\.00/, "3 × $20 less 10%");
   await until(
     async () => (await sql(`SELECT "discountCents" FROM "QuoteLineItem" WHERE id='qli_tr3'`)).rows[0].discountCents === 600,
