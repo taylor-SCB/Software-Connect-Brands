@@ -77,7 +77,7 @@ export function LinkRatesheetButton({
             role="dialog"
             aria-modal="true"
             aria-labelledby="link-ratesheet-title"
-            className="card card-lit max-h-[92vh] w-full max-w-2xl overflow-y-auto bg-[#0e1017] p-5 shadow-2xl"
+            className="card card-lit popover max-h-[92vh] w-full max-w-2xl overflow-y-auto p-5"
           >
             <div className="flex items-start justify-between gap-3">
               <div>

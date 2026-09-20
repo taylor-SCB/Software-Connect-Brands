@@ -16,10 +16,18 @@
   --border: rgb(255 255 255 / 0.075);
   --border-strong: rgb(255 255 255 / 0.15);
 
+  /* Opaque surface for anything that floats ON TOP of other content —
+     dropdown lists, filter menus, dialogs. Glass reads well as a panel
+     sitting on the page background and is unreadable over words: the text
+     underneath shows through and neither layer can be read. Overlays use
+     this instead. */
+  --overlay: #15181f;
+  --overlay-border: rgb(255 255 255 / 0.14);
+
   /* Type */
   --text: #e9ebf2;
-  --text-dim: #9aa2b4;
-  --text-faint: #667085;
+  --text-dim: #a4adc0;
+  --text-faint: #7e889c;
 
   /* Accent — overridden per organization at runtime with their brand
      color, so every tenant's install looks like their own product. */
@@ -135,6 +143,23 @@
     border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
     transform: translateY(-1px);
     box-shadow: 0 12px 40px -18px color-mix(in srgb, var(--brand) 60%, transparent);
+  }
+
+  /* Every panel that floats over other content: the search dropdowns, the
+     list filter menus, every dialog. Must come after .card in this file —
+     a dialog is written "card card-lit popover" and the background here is
+     what has to win. Opaque on purpose; backdrop-filter is cancelled
+     because a blur behind a see-through panel still leaves the words
+     underneath legible, which is the bug this fixes. */
+  .popover {
+    position: relative;
+    background: var(--overlay);
+    border: 1px solid var(--overlay-border);
+    backdrop-filter: none;
+    box-shadow:
+      0 1px 0 0 rgb(255 255 255 / 0.05) inset,
+      0 24px 60px -18px rgb(0 0 0 / 0.85),
+      0 4px 14px -4px rgb(0 0 0 / 0.6);
   }
 
   /* ---------- Typography ---------- */
@@ -286,8 +311,8 @@
     align-items: center;
     justify-content: center;
     padding: 1rem;
-    background: rgb(0 0 0 / 0.6);
-    backdrop-filter: blur(6px);
+    background: rgb(0 0 0 / 0.72);
+    backdrop-filter: blur(8px);
   }
 
   /* ---------- Forms ---------- */
@@ -304,8 +329,8 @@
   .textarea {
     width: 100%;
     border-radius: 10px;
-    background: rgb(255 255 255 / 0.035);
-    border: 1px solid var(--border);
+    background-color: rgb(255 255 255 / 0.06);
+    border: 1px solid var(--border-strong);
     padding: 0.5rem 0.7rem;
     font-size: 0.85rem;
     color: var(--text);
@@ -323,12 +348,12 @@
   .textarea:focus {
     outline: none;
     border-color: color-mix(in srgb, var(--brand) 55%, transparent);
-    background: rgb(255 255 255 / 0.055);
+    background-color: rgb(255 255 255 / 0.085);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
   }
   .select {
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%239aa2b4'%3E%3Cpath d='M4.5 6.5 8 10l3.5-3.5z'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23a4adc0'%3E%3Cpath d='M4.5 6.5 8 10l3.5-3.5z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.5rem center;
     background-size: 1rem;
@@ -336,7 +361,7 @@
   }
   /* Native dropdown popups are OS-rendered; force readable colors. */
   .select option {
-    background: #12141b;
+    background: var(--overlay);
     color: var(--text);
   }
   .textarea {

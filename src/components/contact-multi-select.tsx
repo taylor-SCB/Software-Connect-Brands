@@ -76,7 +76,7 @@ export function ContactMultiSelect({ current }: { current: PickableContact }) {
             aria-modal="true"
             aria-label="Include multiple contacts"
             onClick={(event) => event.stopPropagation()}
-            className="card card-lit flex max-h-[80vh] w-full max-w-md flex-col"
+            className="card card-lit popover flex max-h-[80vh] w-full max-w-md flex-col"
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
               <div>
