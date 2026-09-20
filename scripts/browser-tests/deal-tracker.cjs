@@ -508,6 +508,11 @@ async function anonymousStatus(browser, url) {
   assert.ok(reminded.lastReminderAt);
   await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
   assert.match(await page.locator("[data-testid=tracker-row][data-line-id=qli_tr1]").textContent(), new RegExp(`CON-${a.number} · Sent`));
+  // With a Sales Order out for signature the Job card points at it rather
+  // than offering a handshake award the server would refuse.
+  assert.match(await page.locator("[data-testid=job-card]").textContent(), new RegExp(`CON-${a.number} is out for the customer's signature`));
+  assert.equal(await page.locator("[data-testid=award-without-paperwork]").count(), 0);
+  assert.ok(await page.locator("[data-testid=job-sent-contract]").isVisible());
   assert.match(await page.locator("[data-testid=tracker-contract]").filter({ hasText: "Sales Order" }).textContent(), /1 sent/);
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_tr'`)).rows[0].stage, "CONTRACT_SENT");
 

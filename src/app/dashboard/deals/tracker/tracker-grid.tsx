@@ -516,7 +516,16 @@ export function TrackerGrid({
                       data-testid="line-price"
                     />
                   </td>
-                  <td className="align-top" onBlur={() => void saveRow(row.id)}>
+                  {/* Saves when focus leaves the cell, not when it hops
+                      from the box to the %/$ picker beside it — that
+                      would write "50%" to the quote on the way to "$50". */}
+                  <td
+                    className="align-top"
+                    onBlur={(event) => {
+                      if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+                      void saveRow(row.id);
+                    }}
+                  >
                     <DiscountInput
                       id={`line-${row.id}-discount`}
                       label={`${row.name} discount`}

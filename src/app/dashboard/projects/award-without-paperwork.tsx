@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { FormError } from "@/components/ui";
-import { IconHardHat } from "@/components/icons";
+import Link from "next/link";
+import { IconHardHat, IconSignature } from "@/components/icons";
 import { formatCents } from "@/lib/format";
 import { lineNetCents } from "@/lib/quote-math";
 import { PAYMENT_TERM_OPTIONS, computeSchedule, type ScheduleRowInput } from "@/lib/payments";
@@ -47,10 +48,15 @@ export function AwardWithoutPaperwork({
   quote,
   today,
   defaults,
+  sentContract = null,
 }: {
   dealId: string;
   // The quote the coordinator is showing. Null when the deal has none.
   quote: AwardQuote | null;
+  // A Money-in contract already out for signature. The server refuses a
+  // handshake award while one is out, so the card says what to do
+  // instead rather than offering a form that will be refused.
+  sentContract?: { id: string; number: number; title: string } | null;
   // Today in the workspace's own clock, from the server. Reading the
   // browser's UTC clock prefilled tomorrow's date from 7pm Central
   // onward, and accepting it — the natural thing, since it looks like a
@@ -165,12 +171,19 @@ export function AwardWithoutPaperwork({
             <p className="eyebrow">Job</p>
             <p className="text-base font-semibold">Not a job yet</p>
             <p className="faint text-xs">
-              It becomes one the moment the customer signs a Money-in contract below. Won it on a handshake?
-              Award it here and the job starts now.
+              {sentContract
+                ? `CON-${sentContract.number} is out for the customer's signature. The job starts the moment they sign it — or, if they said yes another way, use Mark signed on that contract.`
+                : "It becomes one the moment the customer signs a Money-in contract below. Won it on a handshake? Award it here and the job starts now."}
             </p>
           </div>
         </div>
-        {!open && (
+        {sentContract && (
+          <Link href={`/dashboard/contracts/${sentContract.id}`} className="btn btn-ghost btn-sm" data-testid="job-sent-contract">
+            <IconSignature size={13} />
+            Open CON-{sentContract.number}
+          </Link>
+        )}
+        {!sentContract && !open && (
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -189,7 +202,9 @@ export function AwardWithoutPaperwork({
         <div className="space-y-4 border-t border-[var(--border)] p-5" data-testid="award-form">
           <p className="muted text-sm">
             Records the quote as an agreement the customer said yes to — a signed Sales Order, marked signed
-            offline — so the job can be tracked. Everything below can still be edited on the contract afterwards.
+            offline — so the job can be tracked. The rows and the discount are what the job is awarded at, so
+            check them here; the payment table can still be edited on the contract afterwards, and anything
+            else changes with a change order.
           </p>
 
           <div className="grid gap-3 sm:grid-cols-3">

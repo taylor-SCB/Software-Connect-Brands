@@ -174,6 +174,11 @@ export async function DealTrackerPage({
                 dealId={deal.id}
                 today={today}
                 defaults={pickers.paymentDefaults}
+                sentContract={
+                  deal.contracts
+                    .filter((contract) => !contract.payable && contract.status === "SENT")
+                    .map((contract) => ({ id: contract.id, number: contract.number, title: contract.title }))[0] ?? null
+                }
                 quote={
                   quote
                     ? {
