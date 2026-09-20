@@ -439,7 +439,11 @@ export function ScheduleRowsEditor({
                     )}
                     {row.kind === "BALANCE" && <span className="faint">what is left</span>}
                   </td>
-                  <td className="num text-right font-medium" data-testid="schedule-amount">
+                  <td
+                    className={`num text-right font-medium ${amount < 0 ? "text-[var(--danger)]" : ""}`}
+                    data-testid="schedule-amount"
+                    data-negative={amount < 0 ? "1" : "0"}
+                  >
                     {formatCents(amount)}
                   </td>
                   <td>

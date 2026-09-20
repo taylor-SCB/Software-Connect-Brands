@@ -409,7 +409,10 @@ async function anonymousStatus(browser, url) {
   log("a table whose fixed rows add up to more than the contract is refused, not stored with a $0 balance");
   await previewB.getByLabel("Payment 1 type").selectOption("FIXED");
   await previewB.getByLabel("Payment 1 amount").fill("80");
-  assert.match(await colB.locator("[data-testid=schedule-difference]").textContent(), /\$30\.00 over/);
+  // The balance row goes negative rather than the table reading "over",
+  // and is drawn in red for it.
+  assert.deepEqual(await previewB.locator("[data-testid=schedule-amount]").allTextContents(), ["$80.00", "-$30.00"]);
+  assert.equal(await previewB.locator("[data-testid=schedule-amount]").nth(1).getAttribute("data-negative"), "1");
   await page.locator("[data-testid=create-contracts]").click();
   await page.getByText(/Contract B: the fixed payments add up to more than the contract total/).waitFor();
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contract" WHERE "organizationId"=$1`, [org])).rows[0].n, 0, "nothing was created");
