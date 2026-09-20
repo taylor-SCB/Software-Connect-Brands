@@ -4,7 +4,7 @@ import { useMemo, useRef, useState, useTransition } from "react";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
 import { lineGrossCents, lineTotalCents } from "@/lib/quote-math";
 import { MAX_TRACKER_COLUMNS } from "@/lib/contracts";
-import { PAYMENT_TERM_OPTIONS, type ScheduleRowInput } from "@/lib/payments";
+import { PAYMENT_TERM_OPTIONS, computeSchedule, type ScheduleRowInput } from "@/lib/payments";
 import { DIRECTION_LABEL, directionForType, type Direction } from "@/lib/direction";
 import { TagBadge, Badge, FormError, StatusBadge } from "@/components/ui";
 import { IconPlus, IconX, IconSignature } from "@/components/icons";
@@ -342,6 +342,18 @@ export function TrackerGrid({
       if (outcomes.some((outcome) => outcome === false)) {
         setError("A row's price didn't save. Fix it above and try again.");
         return;
+      }
+      // The same refusal the server gives, without the round trip: a
+      // table whose fixed rows add up to more than the contract.
+      for (const [index, column] of columns.entries()) {
+        if (column.selected.length === 0) continue;
+        const over = computeSchedule(rowsToInputs(column.schedule), columnTotal(column)).rows.some(
+          (row) => row.amountCents < 0,
+        );
+        if (over) {
+          setError(`Contract ${letter(index)}: the fixed payments add up to more than the contract total. Fix the schedule on its card.`);
+          return;
+        }
       }
       const payload: SplitInput = {
         dealId,

@@ -37,7 +37,12 @@ export async function repriceQuotePayments(tx: Prisma.TransactionClient, quoteId
   );
   for (const [index, row] of repriced.rows.entries()) {
     const stored = payments[index];
-    if (!stored || stored.amountCents === row.amountCents) continue;
-    await tx.quotePayment.update({ where: { id: stored.id }, data: { amountCents: row.amountCents } });
+    // Never below zero: a fixed deposit bigger than the lines now come to
+    // would make the balance row negative, and that would print on the
+    // customer's copy. The quote page shows the table as "over" so the
+    // sender can put it right.
+    const amountCents = Math.max(0, row.amountCents);
+    if (!stored || stored.amountCents === amountCents) continue;
+    await tx.quotePayment.update({ where: { id: stored.id }, data: { amountCents } });
   }
 }

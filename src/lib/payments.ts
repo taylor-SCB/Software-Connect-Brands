@@ -185,6 +185,35 @@ export function presetRows(input: {
   }));
 }
 
+// A quote's own payment table as schedule rows for one slice of it. A
+// fixed amount from the quote is a share of the WHOLE quote, so it
+// carries as that share rather than as the number itself. A $5,000
+// deposit on a $10,000 quote must not land whole on a $2,000 slice of
+// it: that made a deposit bigger than the contract and a negative balance
+// row, printed on the document the customer signs. Full precision here;
+// the screens round what they show.
+export function quoteTableAsShares(
+  payments: {
+    label: string;
+    kind: PaymentKindValue;
+    percent: number | null;
+    amountCents: number;
+    dueOn: Date | string | null;
+    terms: string | null;
+  }[],
+  quoteTotalCents: number,
+): ScheduleRowInput[] {
+  return payments.map((row) => ({
+    label: row.label,
+    kind: row.kind === "FIXED" && quoteTotalCents > 0 ? "PERCENT" : row.kind,
+    percent:
+      row.kind === "FIXED" && quoteTotalCents > 0 ? (row.amountCents / quoteTotalCents) * 100 : row.percent,
+    fixedCents: row.kind === "FIXED" && quoteTotalCents <= 0 ? row.amountCents : null,
+    dueOn: typeof row.dueOn === "string" ? row.dueOn : dateToIso(row.dueOn),
+    terms: row.terms,
+  }));
+}
+
 // What a quote's payment table starts as before anyone edits it: half at
 // signature, half at project close, both Net 30.
 //

@@ -6,7 +6,7 @@ import { FormError } from "@/components/ui";
 import { IconHardHat } from "@/components/icons";
 import { formatCents, dollarsToCents } from "@/lib/format";
 import { lineNetCents } from "@/lib/quote-math";
-import { PAYMENT_TERM_OPTIONS, type ScheduleRowInput } from "@/lib/payments";
+import { PAYMENT_TERM_OPTIONS, computeSchedule, type ScheduleRowInput } from "@/lib/payments";
 import {
   ScheduleRowsEditor,
   initialFillState,
@@ -109,6 +109,11 @@ export function AwardWithoutPaperwork({
   function submit() {
     start(async () => {
       setError(undefined);
+      // The same refusal the server gives, without the round trip.
+      if (computeSchedule(rowsToInputs(schedule), totalCents).rows.some((row) => row.amountCents < 0)) {
+        setError("The fixed payments add up to more than the job total. Fix the schedule.");
+        return;
+      }
       const result = await awardWithoutPaperwork(dealId, {
         signerName: name,
         signedOn,
@@ -121,6 +126,7 @@ export function AwardWithoutPaperwork({
             : { percent: null, cents: dollarsToCents(discount.input) },
         paymentTerms: terms,
         schedule: rowsToInputs(schedule).map((row) => ({ ...row, terms: row.terms ?? null })),
+        scheduleFromQuote: fill.fill === "__quote__",
       });
       if (result?.error) {
         setError(result.error);

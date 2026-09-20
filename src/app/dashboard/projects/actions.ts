@@ -16,9 +16,9 @@ import { ensureDistributorTypeName } from "@/lib/distributors";
 import { advanceDealStage } from "@/lib/deals";
 import {
   computeSchedule,
-  dateToIso,
   isoToDate,
   presetRows,
+  quoteTableAsShares,
   todayIso,
   type SchedulePreset,
   type ScheduleRowInput,
@@ -281,6 +281,8 @@ const awardSchema = z.object({
   discount: discountInputSchema.optional(),
   paymentTerms: z.string().trim().max(120).optional(),
   schedule: z.array(newScheduleRowSchema).max(60).optional(),
+  // True when the rows above are the quote's own table, untouched.
+  scheduleFromQuote: z.boolean().optional(),
 });
 
 export type AwardInput = Omit<z.infer<typeof awardSchema>, "dealId">;
@@ -406,32 +408,36 @@ export async function awardWithoutPaperwork(
   const discount = resolveDiscount(parsed.data.discount ?? { percent: null, cents: 0 }, subtotalCents);
   const totalCents = contractTotalCents(lineItems, discount.discountCents);
 
-  // The rows written on the form win. Left out, the quote's own table
-  // carries over when it has one (a fixed amount as the share of the
-  // quote it was), else the workspace's preset, dated from the day it
-  // was agreed.
+  // Where the payment rows come from: the quote's own table, untouched,
+  // carries over exactly as the quote had it (a fixed amount as the share
+  // of the quote it was); otherwise the rows written on the form win; a
+  // form that sends neither gets the quote's table, else the workspace's
+  // preset dated from the day it was agreed.
   const quoteTotalCents = quote ? contractSubtotalCents(quote.lineItems) : 0;
+  const hasQuoteTable = Boolean(quote && quote.payments.length > 0);
+  const fromQuote = parsed.data.schedule
+    ? Boolean(parsed.data.scheduleFromQuote) && hasQuoteTable
+    : hasQuoteTable && !parsed.data.preset;
   const preset = (parsed.data.preset ?? organization.defaultPaymentPreset) as SchedulePreset;
-  const scheduleInput: ScheduleRowInput[] = parsed.data.schedule
-    ? parsed.data.schedule
-    : quote && quote.payments.length > 0 && !parsed.data.preset
-      ? quote.payments.map((row) => ({
-          label: row.label,
-          kind: row.kind === "FIXED" && quoteTotalCents > 0 ? "PERCENT" : row.kind,
-          percent:
-            row.kind === "FIXED" && quoteTotalCents > 0 ? (row.amountCents / quoteTotalCents) * 100 : row.percent,
-          fixedCents: row.kind === "FIXED" && quoteTotalCents <= 0 ? row.amountCents : null,
-          dueOn: dateToIso(row.dueOn),
-          terms: row.terms,
-        }))
-      : presetRows({
-          preset,
-          start: parsed.data.signedOn,
-          depositPercent: organization.defaultDepositPercent,
-          count: organization.defaultInstallmentCount,
-          unit: "MONTH",
-        });
+  const scheduleInput: ScheduleRowInput[] =
+    fromQuote && quote
+      ? quoteTableAsShares(quote.payments, quoteTotalCents)
+      : parsed.data.schedule
+        ? parsed.data.schedule
+        : presetRows({
+            preset,
+            start: parsed.data.signedOn,
+            depositPercent: organization.defaultDepositPercent,
+            count: organization.defaultInstallmentCount,
+            unit: "MONTH",
+          });
   const schedule = computeSchedule(scheduleInput, totalCents);
+  // Rows written by hand have a screen to be refused on: an over-total
+  // table is refused rather than stored with a $0 balance that bills the
+  // customer more than the job was awarded for.
+  if (parsed.data.schedule && !fromQuote && schedule.rows.some((row) => row.amountCents < 0)) {
+    return { error: "The fixed payments add up to more than the job total" };
+  }
   const paymentTerms = parsed.data.paymentTerms || quote?.paymentTerms || organization.defaultPaymentTerms;
 
   const contractId = await prisma.$transaction(async (tx) => {
@@ -497,6 +503,9 @@ export async function awardWithoutPaperwork(
         paymentTerms,
         discountCents: discount.discountCents,
         discountPercent: discount.discountPercent,
+        // Remembered so the contract page can say the table came from
+        // the quote, and flag a later change to it.
+        scheduleFromQuote: fromQuote,
         lineItems: { create: lineItems },
         payments: { create: payments },
       },

@@ -406,6 +406,17 @@ async function anonymousStatus(browser, url) {
   assert.deepEqual(await previewB.locator("[data-testid=schedule-amount]").allTextContents(), ["$20.00", "$30.00"], "40% then the balance");
   await shot(page, "05-tracker-grid");
 
+  log("a table whose fixed rows add up to more than the contract is refused, not stored with a $0 balance");
+  await previewB.getByLabel("Payment 1 type").selectOption("FIXED");
+  await previewB.getByLabel("Payment 1 amount").fill("80");
+  assert.match(await colB.locator("[data-testid=schedule-difference]").textContent(), /\$30\.00 over/);
+  await page.locator("[data-testid=create-contracts]").click();
+  await page.getByText(/Contract B: the fixed payments add up to more than the contract total/).waitFor();
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contract" WHERE "organizationId"=$1`, [org])).rows[0].n, 0, "nothing was created");
+  await previewB.getByLabel("Payment 1 type").selectOption("PERCENT");
+  await previewB.getByLabel("Payment 1 percent").fill("40");
+  assert.deepEqual(await previewB.locator("[data-testid=schedule-amount]").allTextContents(), ["$20.00", "$30.00"]);
+
   log("Create 2 contracts: both exist, the new company and contact were made, tile sits on both, software stays open");
   await page.locator("[data-testid=create-contracts]").click();
   await page.waitForURL(/created=2/);

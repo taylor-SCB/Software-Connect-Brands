@@ -82,9 +82,11 @@ export function inputsToRows(inputs: ScheduleRowInput[]): ScheduleRow[] {
   }));
 }
 
-// "33.33" rather than "33.333333333", "50" rather than "50.00".
+// "33.33" rather than "33.333333333", "50" rather than "50.00". Four
+// places, so a fixed amount carried over from the quote as a share still
+// comes to the same cent on the contract it lands on.
 function trimPercent(percent: number) {
-  return String(Math.round(percent * 100) / 100);
+  return String(Math.round(percent * 10000) / 10000);
 }
 
 function spread(start: string, index: number, every: QuickFillState["every"]): string {
