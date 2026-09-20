@@ -107,6 +107,19 @@ export function AwardWithoutPaperwork({
     quickFillRows(fill, { quoteRows, quoteTotalCents, totalCents: 0 }),
   );
 
+  // A table still on "From the quote" follows the quote: a price edited
+  // inline in the grid above moves the quote's total, and with it the
+  // share a fixed deposit on the quote's table is worth. Adjusted during
+  // render, the same way the coordinator's cards do it.
+  const quoteShape = JSON.stringify({ quoteRows, quoteTotalCents });
+  const [seenQuoteShape, setSeenQuoteShape] = useState(quoteShape);
+  if (seenQuoteShape !== quoteShape) {
+    setSeenQuoteShape(quoteShape);
+    if (fill.fill === "__quote__") {
+      setSchedule(quickFillRows(fill, { quoteRows, quoteTotalCents, totalCents: 0 }));
+    }
+  }
+
   const subtotalCents = openRows
     .filter((row) => selected.includes(row.id))
     .reduce((sum, row) => sum + lineNetCents(row), 0);
