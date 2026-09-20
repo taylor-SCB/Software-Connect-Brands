@@ -231,11 +231,12 @@ ticked onto it, a **discount on the whole contract** (% or $, on top of
 any line discounts, with Subtotal / Discount / Total shown live) and its
 **payment schedule** — a real table where every row has its own label,
 type (% of total, a fixed amount, or the balance), value and due date,
-with quick fills that write rows you can then edit: Pay in full, Deposit +
+with quick fills that write rows you can then edit — the same three
+names as the Preset Payment Table in Settings: One payment, Deposit +
 balance (the deposit as a % or $, its own due date, an optional balance
-date), Split into payments (how many, every week / 2 weeks / month /
-year, from a first date) and From the quote when the quote carries a
-payment table. A hand edit turns the quick fill to *Custom*. **Money
+date), Installments (how many, every week / 2 weeks / month / year, from
+a first date) — plus From the quote when the quote carries a payment
+table. A hand edit turns the quick fill to *Custom*. **Money
 in** is the customer paying you (a Sales Order, a Change Order); **Money
 out** is you paying a supplier (a Purchase Order). It follows the
 template until you set it yourself, and it decides what counts as owed to

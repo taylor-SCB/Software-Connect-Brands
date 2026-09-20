@@ -467,8 +467,8 @@ async function anonymousStatus(browser, url) {
     ["Balance on completion", "BALANCE", 11250, null],
   ]);
   assert.deepEqual(await payRows(b.id), [
-    ["Payment 1 of 2", "PERCENT", 2000, "2026-11-01"],
-    ["Payment 2 of 2", "BALANCE", 3000, "2026-12-15"],
+    ["Installment 1 of 2", "PERCENT", 2000, "2026-11-01"],
+    ["Installment 2 of 2", "BALANCE", 3000, "2026-12-15"],
   ]);
 
   log("contract A's page: merged body has the discounted total and terms; line items read Subtotal / Discount / Total; payment editor, signer");

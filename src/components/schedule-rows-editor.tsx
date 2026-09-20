@@ -6,6 +6,7 @@ import {
   PAYMENT_KIND_LABELS,
   PAYMENT_LABEL_OPTIONS,
   ROW_TERM_OPTIONS,
+  SCHEDULE_PRESET_LABELS,
   addDays,
   computeSchedule,
   shiftDate,
@@ -146,7 +147,7 @@ export function quickFillRows(
     const each = Math.floor(10000 / count) / 100;
     return inputsToRows(
       Array.from({ length: count }, (_, index) => ({
-        label: `Payment ${index + 1} of ${count}`,
+        label: `Installment ${index + 1} of ${count}`,
         kind: index === count - 1 ? ("BALANCE" as const) : ("PERCENT" as const),
         percent: index === count - 1 ? null : each,
         fixedCents: null,
@@ -247,9 +248,11 @@ export function ScheduleRowsEditor({
             aria-label="Quick fill"
           >
             {quoteRows && quoteRows.length > 0 && <option value="__quote__">From the quote</option>}
-            <option value="FULL">Pay in full</option>
-            <option value="DEPOSIT_BALANCE">Deposit + balance</option>
-            <option value="INSTALLMENTS">Split into payments</option>
+            {/* The same three names Settings → General uses for the
+                Preset Payment Table, so nothing reads differently here. */}
+            <option value="FULL">{SCHEDULE_PRESET_LABELS.FULL}</option>
+            <option value="DEPOSIT_BALANCE">{SCHEDULE_PRESET_LABELS.DEPOSIT_BALANCE}</option>
+            <option value="INSTALLMENTS">{SCHEDULE_PRESET_LABELS.INSTALLMENTS}</option>
             <option value={CUSTOM_FILL}>Custom</option>
           </select>
         </label>

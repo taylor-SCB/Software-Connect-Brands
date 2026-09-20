@@ -163,8 +163,9 @@ copy-and-log reminders; Sept 10, 2026; **reworked Sept 20, 2026**: the
 quote's rows run across the top with editable quantity / price / line
 discount that save straight back to the quote, each contract is a card
 below with a whole-contract discount and a payment schedule written row
-by row — % or $ or balance, its own date — with quick fills for pay in
-full, deposit + balance, split into N and from the quote; a **Job** card
+by row — % or $ or balance, its own date — with quick fills named as in
+Settings (One payment, Deposit + balance, Installments) plus From the
+quote; a **Job** card
 above the rows names PRJ-n or offers **Award without paperwork** as a
 full form with rows, discount and schedule), **discounts** (Sept 20,
 2026: per line on the quote, copied onto contract rows; per contract on
