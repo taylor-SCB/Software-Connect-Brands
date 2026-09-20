@@ -191,7 +191,12 @@ export function ScheduleRowsEditor({
   function fill(changes: Partial<QuickFillState>) {
     const next = { ...fillState, ...changes };
     onFillChange(next);
-    if (next.fill === CUSTOM_FILL) return;
+    // Picking Custom keeps the rows as they are but they are custom from
+    // here on: the parent must stop treating them as the quote's table.
+    if (next.fill === CUSTOM_FILL) {
+      onChange(rows, CUSTOM_FILL);
+      return;
+    }
     onChange(quickFillRows(next, { quoteRows, quoteTotalCents, totalCents }), next.fill);
   }
 
