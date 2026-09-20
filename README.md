@@ -255,7 +255,9 @@ no email is sent yet), with Edit, Cancel (frees the rows) and Reopen.
 they have signed for underneath it; purchase orders are money going the
 other way and are not in either number. Above the rows a **Job** card
 says in plain words whether the deal is a job yet: PRJ-n with a link once
-it is, or the way to award it on a handshake (below).
+it is, the Sales Order already out for signature when there is one (the
+job starts when it is signed, or with Mark signed), or the way to award
+it on a handshake (below).
 
 **Discounts** (Sept 20, 2026) live in two places and only two. A **line
 discount** belongs to the quote line — typed on the quote's line editor
