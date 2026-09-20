@@ -401,9 +401,11 @@ export async function updateQuoteLine(
 
   const line = await prisma.quoteLineItem.findFirst({
     where: { id: input.lineItemId, quote: { organizationId, dealId: input.dealId } },
-    select: { id: true, quoteId: true },
+    select: { id: true, quoteId: true, cancelledAt: true },
   });
   if (!line) return { error: "That row isn't on this deal's quote. Reload and try again." };
+  // A cancelled row stays priced exactly as the customer saw it.
+  if (line.cancelledAt) return { error: "That row is cancelled. Restore it before changing its price." };
 
   const discount = resolveDiscount(
     { percent: input.discountPercent, cents: input.discountCents },

@@ -401,6 +401,13 @@ async function signAs(browser, token, name) {
     "audit fix: the agreement date is today where the business is, not in UTC",
   );
   await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);
+  // The payment dates follow the day they agreed, as they always did.
+  await page.locator("[data-testid=award-date]").fill("2026-09-13");
+  assert.equal(
+    await page.locator("[data-testid=award-schedule]").getByLabel("Payment 1 due date").inputValue(),
+    "2026-09-13",
+    "a quick fill is re-dated from the day they agreed",
+  );
   await page.locator("[data-testid=award-signer]").fill("Dana Ruiz");
   await page.locator("[data-testid=award-note]").fill("agreed on site");
   // The full form: the row is listed and ticked, a discount on the whole

@@ -16,7 +16,7 @@ import {
   type QuickFillState,
   type ScheduleRow,
 } from "@/components/schedule-rows-editor";
-import { DiscountInput, discountFromInput, type DiscountState } from "@/components/discount-input";
+import { DiscountInput, discountFromInput, discountPayload, type DiscountState } from "@/components/discount-input";
 import type { TrackerPickers, TrackerQuote } from "@/lib/tracker";
 import { createSplitContracts, setQuoteLineCancelled, updateQuoteLine, type SplitInput } from "./actions";
 
@@ -224,6 +224,26 @@ export function TrackerGrid({
 
   const rowsById = useMemo(() => new Map(quote.lineItems.map((item) => [item.id, item])), [quote.lineItems]);
 
+  // A card still on "From the quote" follows the quote: an inline price
+  // edit moves the quote's total, and with it the share a fixed deposit
+  // on the quote's table is worth, so the preview is re-filled to match
+  // what the server will store. Done as state adjusted during render
+  // (React's pattern for reacting to a changed prop) rather than in an
+  // effect, so there is no frame showing the stale rows.
+  const quoteShape = JSON.stringify({ quoteRows, quoteTotalCents });
+  const [seenQuoteShape, setSeenQuoteShape] = useState(quoteShape);
+  if (seenQuoteShape !== quoteShape) {
+    setSeenQuoteShape(quoteShape);
+    setColumns((all) =>
+      all.map((column) =>
+        column.fill.fill === "__quote__"
+          ? { ...column, schedule: quickFillRows(column.fill, { quoteRows, quoteTotalCents, totalCents: 0 }) }
+          : column,
+      ),
+    );
+  }
+
+
   function patch(key: number, changes: Partial<Column>) {
     setColumns((all) => all.map((column) => (column.key === key ? { ...column, ...changes } : column)));
   }
@@ -321,6 +341,10 @@ export function TrackerGrid({
         });
         return true;
       })
+      .catch(() => {
+        editRow(lineId, { status: "error", error: "Couldn't save that row — check your connection and try again" });
+        return false;
+      })
       .finally(() => {
         inFlight.current.delete(promise);
       });
@@ -369,10 +393,7 @@ export function TrackerGrid({
           title: column.title || undefined,
           payable: column.direction === "out",
           paymentTerms: column.paymentTerms || undefined,
-          discount:
-            column.discount.mode === "percent"
-              ? { percent: Number.parseFloat(column.discount.input) || 0, cents: 0 }
-              : { percent: null, cents: dollarsToCents(column.discount.input) },
+          discount: discountPayload(column.discount),
           schedule: rowsToInputs(column.schedule).map((row) => ({ ...row, terms: row.terms ?? null })),
           scheduleFromQuote: column.scheduleFromQuote,
           lineItemIds: column.selected,
@@ -503,6 +524,7 @@ export function TrackerGrid({
                       onChange={(discount) => editRow(row.id, { discount })}
                       baseCents={lineGrossCents(value.quantity, value.unitPriceCents)}
                       compact
+                      disabled={row.cancelled}
                     />
                   </td>
                   <td className="num whitespace-nowrap text-right align-top font-medium" data-testid="line-total">

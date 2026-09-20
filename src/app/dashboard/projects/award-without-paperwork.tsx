@@ -4,10 +4,11 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { FormError } from "@/components/ui";
 import { IconHardHat } from "@/components/icons";
-import { formatCents, dollarsToCents } from "@/lib/format";
+import { formatCents } from "@/lib/format";
 import { lineNetCents } from "@/lib/quote-math";
 import { PAYMENT_TERM_OPTIONS, computeSchedule, type ScheduleRowInput } from "@/lib/payments";
 import {
+  CUSTOM_FILL,
   ScheduleRowsEditor,
   initialFillState,
   quickFillRows,
@@ -15,7 +16,7 @@ import {
   type QuickFillState,
   type ScheduleRow,
 } from "@/components/schedule-rows-editor";
-import { DiscountInput, discountFromInput, type DiscountState } from "@/components/discount-input";
+import { DiscountInput, discountFromInput, discountPayload, type DiscountState } from "@/components/discount-input";
 import type { PaymentDefaults } from "@/lib/tracker";
 import { awardWithoutPaperwork } from "./actions";
 
@@ -66,7 +67,11 @@ export function AwardWithoutPaperwork({
   const [signedOn, setSignedOn] = useState(today);
   const [note, setNote] = useState("");
   const openRows = useMemo(() => (quote?.lineItems ?? []).filter((row) => !row.cancelled), [quote]);
-  const [selected, setSelected] = useState<string[]>(() => openRows.map((row) => row.id));
+  // Every open row is in unless someone unticks it. Kept as the rows left
+  // OUT rather than the rows in, so a row cancelled or restored in the
+  // grid above comes and goes here on its own instead of going stale.
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const selected = openRows.filter((row) => !excluded.includes(row.id)).map((row) => row.id);
   const [discount, setDiscount] = useState<DiscountState>({ input: "", mode: "percent" });
   const [terms, setTerms] = useState(quote?.paymentTerms || defaults.terms);
 
@@ -103,7 +108,18 @@ export function AwardWithoutPaperwork({
   const totalCents = subtotalCents - resolvedDiscount.discountCents;
 
   function toggle(lineId: string) {
-    setSelected((all) => (all.includes(lineId) ? all.filter((id) => id !== lineId) : [...all, lineId]));
+    setExcluded((all) => (all.includes(lineId) ? all.filter((id) => id !== lineId) : [...all, lineId]));
+  }
+
+  // The payment dates start from the day they agreed, as the old form's
+  // preset did; a quick fill is re-dated when that day changes, a
+  // hand-written table is left alone.
+  function changeSignedOn(value: string) {
+    setSignedOn(value);
+    if (fill.fill === CUSTOM_FILL || !value) return;
+    const next = { ...fill, start: value };
+    setFill(next);
+    setSchedule(quickFillRows(next, { quoteRows, quoteTotalCents, totalCents: 0 }));
   }
 
   function submit() {
@@ -120,10 +136,7 @@ export function AwardWithoutPaperwork({
         note,
         quoteId: quote?.id,
         lineItemIds: selected,
-        discount:
-          discount.mode === "percent"
-            ? { percent: Number.parseFloat(discount.input) || 0, cents: 0 }
-            : { percent: null, cents: dollarsToCents(discount.input) },
+        discount: discountPayload(discount),
         paymentTerms: terms,
         schedule: rowsToInputs(schedule).map((row) => ({ ...row, terms: row.terms ?? null })),
         scheduleFromQuote: fill.fill === "__quote__",
@@ -196,7 +209,7 @@ export function AwardWithoutPaperwork({
               <input
                 type="date"
                 value={signedOn}
-                onChange={(event) => setSignedOn(event.target.value)}
+                onChange={(event) => changeSignedOn(event.target.value)}
                 className="input"
                 aria-label="When they agreed"
                 data-testid="award-date"

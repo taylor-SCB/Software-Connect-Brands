@@ -448,6 +448,10 @@ async function anonymousStatus(browser, url) {
   assert.match(await tileRow.textContent(), new RegExp(`CON-${a.number} · Draft.*CON-${b.number} · Draft`, "s"));
   assert.match(await page.locator("[data-testid=tracker-row][data-line-id=qli_tr3]").textContent(), /Open/);
   assert.equal(await page.locator("[data-testid=tracker-contract]").count(), 2);
+  // The grid comes back clean: no ticks left over to make the same
+  // contracts again on a second click.
+  assert.equal(await page.locator("[data-testid=tracker-lines] input[type=checkbox]:checked").count(), 0, "no ticks survive a create");
+  assert.ok(await page.locator("[data-testid=create-contracts]").isDisabled(), "nothing to create until rows are ticked again");
   await shot(page, "06-tracker-after-create");
 
   log("the payment rows were priced against each contract's own discounted total, dates as written");
@@ -541,6 +545,8 @@ async function anonymousStatus(browser, url) {
   await softwareRow.locator("[data-testid=cancel-row]").click();
   await softwareRow.getByText("Cancelled").waitFor();
   assert.ok(await softwareRow.getByRole("checkbox").first().isDisabled(), "a cancelled row can't be ticked");
+  assert.ok(await softwareRow.getByLabel("Scheduling software discount", { exact: true }).isDisabled(), "nor re-priced");
+  assert.ok(await softwareRow.getByLabel("Scheduling software unit price").isDisabled());
   assert.ok((await sql(`SELECT "cancelledAt" FROM "QuoteLineItem" WHERE id='qli_tr3'`)).rows[0].cancelledAt);
   await softwareRow.locator("[data-testid=restore-row]").click();
   await softwareRow.getByText("Open").waitFor();

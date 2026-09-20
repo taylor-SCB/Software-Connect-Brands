@@ -223,8 +223,12 @@ export async function DealTrackerPage({
                 }
               />
               <div className="p-5">
+                {/* Keyed on the contract count too: creating contracts lands
+                    back here with the rows now on paperwork, and the grid
+                    must start clean rather than keep the ticks that would
+                    make the same contracts again on a second click. */}
                 <TrackerGrid
-                  key={quote.id}
+                  key={`${quote.id}:${deal.contracts.length}`}
                   dealId={deal.id}
                   quote={quote}
                   dealContact={{ id: deal.contact.id, companyId: deal.contact.companyId }}

@@ -8,6 +8,17 @@ import { resolveDiscount } from "@/lib/quote-math";
 // mode; `discountFromInput` turns them into cents against a base.
 export type DiscountState = { input: string; mode: "percent" | "cents" };
 
+// What to send the server for a typed discount: clamped the same way the
+// screen clamps it, so what was shown is what is asked for.
+export function discountPayload(state: DiscountState): { percent: number | null; cents: number } {
+  if (state.mode === "percent") {
+    const typed = Number.parseFloat(state.input);
+    return { percent: Number.isFinite(typed) ? Math.min(Math.max(typed, 0), 100) : 0, cents: 0 };
+  }
+  const dollars = Number.parseFloat(state.input.replace(/[^0-9.]/g, ""));
+  return { percent: null, cents: Number.isFinite(dollars) ? Math.max(0, Math.round(dollars * 100)) : 0 };
+}
+
 export function discountFromInput(state: DiscountState, baseCents: number) {
   const typed = Number.parseFloat(state.input);
   if (state.mode === "percent") {
@@ -25,6 +36,7 @@ export function DiscountInput({
   id,
   label,
   compact = false,
+  disabled = false,
 }: {
   state: DiscountState;
   onChange: (state: DiscountState) => void;
@@ -32,6 +44,7 @@ export function DiscountInput({
   id: string;
   label: string;
   compact?: boolean;
+  disabled?: boolean;
 }) {
   const resolved = discountFromInput(state, baseCents);
   return (
@@ -45,6 +58,7 @@ export function DiscountInput({
         value={state.input}
         onChange={(event) => onChange({ ...state, input: event.target.value })}
         aria-label={label}
+        disabled={disabled}
       />
       <select
         id={`${id}Mode`}
@@ -52,6 +66,7 @@ export function DiscountInput({
         value={state.mode}
         onChange={(event) => onChange({ ...state, mode: event.target.value as DiscountState["mode"] })}
         aria-label={`${label} type`}
+        disabled={disabled}
       >
         <option value="percent">%</option>
         <option value="cents">$</option>
