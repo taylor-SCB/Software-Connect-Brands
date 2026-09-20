@@ -2,6 +2,8 @@
 // client components need. Kept out of actions.ts because a "use server"
 // file may only export async functions.
 
+import { lineNetCents } from "@/lib/quote-math";
+
 // The value the Type dropdown sends when "+ Add new type" is picked; the
 // typed name then arrives in `newType`.
 export const NEW_TYPE_VALUE = "__new__";
@@ -33,16 +35,22 @@ export function formatAddress(input: {
   return parts.length ? parts.join(", ") : null;
 }
 
-// What a contract is worth: the sum of its own rows. A contract made the
-// classic way (whole template, no split) has no rows and no total of its
-// own — its numbers come from the quote.
+// What a contract is worth: the sum of its own rows, each net of its own
+// discount, less the discount on the contract as a whole. A contract made
+// the classic way (whole template, no split) has no rows and no total of
+// its own — its numbers come from the quote.
 export function contractTotalCents(
-  lineItems: { quantity: number; unitPriceCents: number }[],
+  lineItems: { quantity: number; unitPriceCents: number; discountCents?: number | null }[],
+  discountCents = 0,
 ): number {
-  return lineItems.reduce(
-    (sum, item) => sum + Math.round(item.quantity * item.unitPriceCents),
-    0,
-  );
+  return contractSubtotalCents(lineItems) - (Number.isFinite(discountCents) ? Math.round(discountCents) : 0);
+}
+
+// The rows before the contract-wide discount comes off.
+export function contractSubtotalCents(
+  lineItems: { quantity: number; unitPriceCents: number; discountCents?: number | null }[],
+): number {
+  return lineItems.reduce((sum, item) => sum + lineNetCents(item), 0);
 }
 
 // Statuses under which a contract still "holds" its rows on the deal

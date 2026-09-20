@@ -18,7 +18,7 @@
 
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { lineTotalCents } from "@/lib/quote-math";
+import { lineNetCents } from "@/lib/quote-math";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { paidCentsOf } from "@/lib/money";
 
@@ -38,7 +38,7 @@ async function nextProjectNumber(tx: Prisma.TransactionClient, organizationId: s
 
 /* ----------------------------- Apportioning ----------------------------- */
 
-type ApportionLine = { scopeId: string | null; quantity: number; unitPriceCents: number };
+type ApportionLine = { scopeId: string | null; quantity: number; unitPriceCents: number; discountCents?: number | null };
 
 // Splits one amount across the scopes a contract's rows belong to, in
 // proportion to what each scope's rows are worth. Rows with no scope (and
@@ -53,7 +53,7 @@ export function apportion(
   const byScope = new Map<string, number>();
   let total = 0;
   for (const line of lines) {
-    const value = lineTotalCents(line.quantity, line.unitPriceCents);
+    const value = lineNetCents(line);
     const key = line.scopeId ?? defaultScopeId;
     byScope.set(key, (byScope.get(key) ?? 0) + value);
     total += value;
@@ -102,11 +102,12 @@ const CONTRACT_FOR_AWARD = {
   companyId: true,
   contactId: true,
   dealId: true,
+  discountCents: true,
   company: { select: { id: true, name: true } },
   contact: { select: { id: true, name: true, companyId: true, company: { select: { id: true, name: true } } } },
   deal: { select: { id: true, title: true, valueCents: true, quotes: QUOTES_FOR_VALUE } },
   lineItems: {
-    select: { id: true, quantity: true, unitPriceCents: true, serviceType: true, scopeId: true },
+    select: { id: true, quantity: true, unitPriceCents: true, discountCents: true, serviceType: true, scopeId: true },
   },
 } satisfies Prisma.ContractSelect;
 
@@ -132,7 +133,15 @@ async function writeAwardRows(
   const byScope = new Map<string, number>();
   for (const line of contract.lineItems) {
     const key = line.scopeId ?? scopeIds.defaultScopeId;
-    byScope.set(key, (byScope.get(key) ?? 0) + lineTotalCents(line.quantity, line.unitPriceCents));
+    byScope.set(key, (byScope.get(key) ?? 0) + lineNetCents(line));
+  }
+  // A discount on the whole contract comes off each scope in proportion
+  // to what its rows are worth, so the scopes still add up to the
+  // contract's own total.
+  if (byScope.size > 0 && contract.discountCents) {
+    for (const [scopeId, share] of apportion(contract.lineItems, contract.discountCents, scopeIds.defaultScopeId)) {
+      byScope.set(scopeId, (byScope.get(scopeId) ?? 0) - share);
+    }
   }
 
   if (byScope.size === 0) {
@@ -396,7 +405,7 @@ export async function refreshTotals(
         select: {
           status: true,
           payable: true,
-          lineItems: { select: { scopeId: true, quantity: true, unitPriceCents: true, unitCostCents: true } },
+          lineItems: { select: { scopeId: true, quantity: true, unitPriceCents: true, discountCents: true, unitCostCents: true } },
           payments: { select: { amountCents: true, payments: { select: { amountCents: true } } } },
         },
       },

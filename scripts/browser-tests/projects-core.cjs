@@ -403,6 +403,18 @@ async function signAs(browser, token, name) {
   await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);
   await page.locator("[data-testid=award-signer]").fill("Dana Ruiz");
   await page.locator("[data-testid=award-note]").fill("agreed on site");
+  // The full form: the row is listed and ticked, a discount on the whole
+  // job, and the payment rows written out with a quick fill.
+  assert.equal(await page.locator("[data-testid=award-rows] input[type=checkbox]:checked").count(), 1);
+  assert.equal(await page.locator("[data-testid=award-subtotal]").textContent(), "$2,400.00");
+  await page.locator("#award-discount").fill("10");
+  assert.equal(await page.locator("[data-testid=award-total]").textContent(), "$2,160.00", "10% off the handshake");
+  await page.locator("#award-preset").selectOption("DEPOSIT_BALANCE");
+  await page.locator("#award-depositPercent").fill("25");
+  assert.deepEqual(
+    await page.locator("[data-testid=award-schedule] [data-testid=schedule-amount]").allTextContents(),
+    ["$540.00", "$1,620.00"],
+  );
   await page.locator("[data-testid=award-save]").click();
   await page.waitForURL(/\/dashboard\/projects\/[a-z0-9]+$/, { timeout: 20000 });
   const handshake = (await sql(
@@ -410,7 +422,15 @@ async function signAs(browser, token, name) {
       WHERE p."dealId"='deal_pj2'`,
   )).rows[0];
   assert.equal(handshake.number, 1001);
-  assert.equal(handshake.awardedCents, 240000);
+  assert.equal(handshake.awardedCents, 216000, "awarded is the discounted total");
+  const handshakePayments = (await sql(
+    `SELECT label, "amountCents" FROM "ContractPayment" WHERE "contractId"=(SELECT id FROM "Contract" WHERE "dealId"='deal_pj2') ORDER BY position`,
+  )).rows;
+  assert.deepEqual(handshakePayments.map((p) => [p.label, p.amountCents]), [["Deposit", 54000], ["Balance on completion", 162000]]);
+  assert.equal(
+    (await sql(`SELECT "discountCents" FROM "Contract" WHERE "dealId"='deal_pj2'`)).rows[0].discountCents,
+    24000,
+  );
   assert.equal(handshake.awardedOffline, true, "flagged as recorded by hand");
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_pj2'`)).rows[0].stage, "WON");
   const offline = (await sql(

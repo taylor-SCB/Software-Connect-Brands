@@ -50,7 +50,7 @@ export default async function DashboardPage() {
     }),
     prisma.quote.findMany({
       where: { organizationId, status: "SENT" },
-      select: { lineItems: { select: { quantity: true, unitPriceCents: true, tag: true } } },
+      select: { lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } } },
     }),
     prisma.contract.count({ where: { organizationId, status: "SENT" } }),
     prisma.contract.count({ where: { organizationId, status: "SIGNED" } }),

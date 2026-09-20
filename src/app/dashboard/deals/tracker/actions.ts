@@ -9,16 +9,21 @@ import { type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
 import { renderMergeFields } from "@/lib/merge";
 import { loadMergeContext } from "@/lib/merge-data";
-import { canUserSend, contractTotalCents, MAX_TRACKER_COLUMNS } from "@/lib/contracts";
+import { canUserSend, contractSubtotalCents, contractTotalCents, MAX_TRACKER_COLUMNS } from "@/lib/contracts";
 import {
   computeSchedule,
   dateToIso,
   isoToDate,
   presetRows,
+  type SchedulePreset,
   type ScheduleRowInput,
 } from "@/lib/payments";
 import { formatCents } from "@/lib/format";
 import { paidCentsOf, settleRow } from "@/lib/money";
+import { lineGrossCents, resolveDiscount } from "@/lib/quote-math";
+import { repriceQuotePayments } from "@/lib/quote-payments";
+import { loadPaymentDefaults } from "@/lib/tracker";
+import { discountInputSchema, newScheduleRowSchema } from "@/lib/schedule-input";
 import { refreshTotals, refreshTotalsForContract, refreshProjectTotals, syncProjectScopes } from "@/lib/projects";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -47,15 +52,14 @@ const columnSchema = z.object({
   // customer pays us). The grid defaults it from the template's type.
   payable: z.boolean(),
   paymentTerms: z.string().trim().max(120).optional(),
-  schedule: z
-    .object({
-      preset: z.enum(["FULL", "DEPOSIT_BALANCE", "INSTALLMENTS"]),
-      start: z.string().trim().optional(),
-      depositPercent: z.number().min(1).max(99).optional(),
-      count: z.number().int().min(2).max(60).optional(),
-      unit: z.enum(["MONTH", "YEAR"]).optional(),
-    })
-    .optional(),
+  // Money off the whole contract, after each row's own discount.
+  discount: discountInputSchema.optional(),
+  // The payment rows as written on the card. Left out by an older client,
+  // the quote's own table carries over, else the workspace's preset.
+  schedule: z.array(newScheduleRowSchema).max(60).optional(),
+  // True when the rows above are the quote's own table, untouched, so the
+  // contract can say so and flag a later change.
+  scheduleFromQuote: z.boolean().optional(),
   lineItemIds: z.array(z.string().trim().min(1)).max(200),
 });
 
@@ -69,6 +73,27 @@ const splitSchema = z.object({
 });
 
 export type SplitInput = z.infer<typeof splitSchema>;
+
+// The quote's own payment table as schedule rows for one slice of it. A
+// fixed amount from the quote is a share of the WHOLE quote, so it
+// carries as that share rather than as the number itself. A $5,000
+// deposit on a $10,000 quote must not land whole on a $2,000 slice of
+// it: that made a deposit bigger than the contract and a negative
+// balance row, printed on the document the customer signs.
+function quoteScheduleRows(
+  payments: { label: string; kind: "PERCENT" | "FIXED" | "BALANCE"; percent: number | null; amountCents: number; dueOn: Date | null; terms: string | null }[],
+  quoteTotalCents: number,
+): ScheduleRowInput[] {
+  return payments.map((row) => ({
+    label: row.label,
+    kind: row.kind === "FIXED" && quoteTotalCents > 0 ? "PERCENT" : row.kind,
+    percent:
+      row.kind === "FIXED" && quoteTotalCents > 0 ? (row.amountCents / quoteTotalCents) * 100 : row.percent,
+    fixedCents: row.kind === "FIXED" && quoteTotalCents <= 0 ? row.amountCents : null,
+    dueOn: dateToIso(row.dueOn),
+    terms: row.terms,
+  }));
+}
 
 // Turns the grid into contracts: one per column that has at least one
 // row ticked. Companies and contacts typed as new are created on the
@@ -109,6 +134,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
     select: { id: true, name: true, type: true, body: true, allUsersCanSend: true, senderUserIds: true },
   });
   const templateById = new Map(templates.map((template) => [template.id, template]));
+  const defaults = await loadPaymentDefaults(organizationId);
 
   type Plan = {
     label: string;
@@ -206,6 +232,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         description: line.description,
         quantity: line.quantity,
         unitPriceCents: line.unitPriceCents,
+        // The line's own discount travels with its price: the contract
+        // asks for what the quote line comes to.
+        discountCents: line.discountCents,
+        discountPercent: line.discountPercent,
         tag: line.tag,
         // Copied like the tag is, so the job's budget can split itself by
         // scope of work and show the expected cost, and neither changes
@@ -214,44 +244,35 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         unitCostCents: line.product ? line.product.costCents : null,
         position,
       }));
-      const totalCents = contractTotalCents(lineItems);
+      // The whole-contract discount is worked out here against the rows
+      // as stored, and capped at the subtotal, so no contract can total
+      // less than nothing.
+      const subtotalCents = contractSubtotalCents(lineItems);
+      const discount = resolveDiscount(column.discount ?? { percent: null, cents: 0 }, subtotalCents);
+      const totalCents = contractTotalCents(lineItems, discount.discountCents);
       // What the quote's own payment rows were priced against, so a fixed
       // amount can carry over as the share of the deal it represents.
-      const quoteTotalCents = contractTotalCents(quote.lineItems);
+      const quoteTotalCents = contractSubtotalCents(quote.lineItems);
 
-      // A preset the person picked for this column wins — they asked for
-      // it here. Otherwise the quote's own table carries over, so the
-      // customer is asked to pay what they were quoted. Percentages
-      // re-price against this contract's total, not the whole quote's,
-      // since a quote can split into as many as five contracts.
-      const fromQuote = !column.schedule && quote.payments.length > 0;
+      // The rows written on the card win — they were asked for here.
+      // Left out, the quote's own table carries over so the customer is
+      // asked to pay what they were quoted, else the workspace's preset.
+      // Percentages re-price against this contract's total, not the
+      // whole quote's, since a quote can split into as many as five.
+      const fromQuote = column.schedule
+        ? Boolean(column.scheduleFromQuote) && quote.payments.length > 0
+        : quote.payments.length > 0;
       const scheduleInput: ScheduleRowInput[] = column.schedule
-        ? presetRows({
-            preset: column.schedule.preset,
-            start: column.schedule.start ?? "",
-            depositPercent: column.schedule.depositPercent,
-            count: column.schedule.count,
-            unit: column.schedule.unit,
-          })
-        : fromQuote
-          ? quote.payments.map((row) => ({
-              label: row.label,
-              // A fixed amount from the quote is a share of the WHOLE
-              // quote, so it carries as that share rather than as the
-              // number itself. A $5,000 deposit on a $10,000 quote must
-              // not land whole on a $2,000 slice of it: that made a
-              // deposit bigger than the contract and a negative balance
-              // row, printed on the document the customer signs.
-              kind: row.kind === "FIXED" && quoteTotalCents > 0 ? "PERCENT" : row.kind,
-              percent:
-                row.kind === "FIXED" && quoteTotalCents > 0
-                  ? (row.amountCents / quoteTotalCents) * 100
-                  : row.percent,
-              fixedCents: row.kind === "FIXED" && quoteTotalCents <= 0 ? row.amountCents : null,
-              dueOn: dateToIso(row.dueOn),
-              terms: row.terms,
-            }))
-          : [];
+        ? column.schedule
+        : quote.payments.length > 0
+          ? quoteScheduleRows(quote.payments, quoteTotalCents)
+          : presetRows({
+              preset: defaults.preset as SchedulePreset,
+              start: "",
+              depositPercent: defaults.depositPercent,
+              count: defaults.installmentCount,
+              unit: "MONTH",
+            });
       const schedule = computeSchedule(scheduleInput, totalCents);
       const payments = schedule.rows.map((row, position) => ({
         organizationId,
@@ -279,6 +300,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         quoteId: quote.id,
         contractNumber: `CON-${number}`,
         lineItems,
+        discountCents: discount.discountCents,
         payments: payments.map((payment) => ({
           label: payment.label,
           amountCents: payment.amountCents,
@@ -304,6 +326,8 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
           publicToken: publicToken(),
           senderSignerName: signerName,
           paymentTerms: fromQuote ? paymentTerms ?? quote.paymentTerms : paymentTerms,
+          discountCents: discount.discountCents,
+          discountPercent: discount.discountPercent,
           // Remembered so the schedule can say it came from the quote, and
           // say so again if someone changes it afterwards.
           scheduleFromQuote: fromQuote,
@@ -339,6 +363,65 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/projects");
   redirect(`${input.returnTo}?dealId=${input.dealId}&quoteId=${input.quoteId}&created=${created.length}`);
+}
+
+/* ---------------------------- Pricing a quote row ---------------------------- */
+
+const quoteLineEditSchema = z.object({
+  dealId: idSchema,
+  lineItemId: idSchema,
+  quantity: z.number().finite().min(0, "Quantity can't be negative").max(1_000_000),
+  unitPriceCents: z.number().int().min(-100_000_000).max(100_000_000),
+  discountPercent: z.number().min(0).max(100).nullable(),
+  discountCents: z.number().int().min(0).max(1_000_000_000),
+});
+
+export type QuoteLineEdit = z.infer<typeof quoteLineEditSchema>;
+
+// Prices a row from the Contract Coordinator: the quantity, the unit price
+// and the line's own discount, written straight back onto the quote so the
+// quote page and the customer's copy say the same thing. The quote's
+// payment rows are re-priced in the same breath. Contracts already made
+// from the row keep their own copy of it, as they always have.
+export async function updateQuoteLine(
+  raw: QuoteLineEdit,
+): Promise<ActionState & { line?: { id: string; quantity: number; unitPriceCents: number; discountCents: number; discountPercent: number | null } }> {
+  const { organizationId } = await requireSession();
+  const parsed = quoteLineEditSchema.safeParse(raw);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the row" };
+  const input = parsed.data;
+
+  const line = await prisma.quoteLineItem.findFirst({
+    where: { id: input.lineItemId, quote: { organizationId, dealId: input.dealId } },
+    select: { id: true, quoteId: true },
+  });
+  if (!line) return { error: "That row isn't on this deal's quote. Reload and try again." };
+
+  const discount = resolveDiscount(
+    { percent: input.discountPercent, cents: input.discountCents },
+    lineGrossCents(input.quantity, input.unitPriceCents),
+  );
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const updated = await tx.quoteLineItem.update({
+      where: { id: line.id },
+      data: {
+        quantity: input.quantity,
+        unitPriceCents: input.unitPriceCents,
+        discountCents: discount.discountCents,
+        discountPercent: discount.discountPercent,
+      },
+      select: { id: true, quantity: true, unitPriceCents: true, discountCents: true, discountPercent: true },
+    });
+    await repriceQuotePayments(tx, line.quoteId);
+    await tx.quote.update({ where: { id: line.quoteId }, data: { updatedAt: new Date() } });
+    return updated;
+  });
+
+  revalidateDeal(input.dealId);
+  revalidatePath(`/dashboard/quotes/${line.quoteId}`);
+  revalidatePath("/dashboard/quotes");
+  return { success: "Saved", line: saved };
 }
 
 /* ------------------------------- Row state ------------------------------- */
@@ -487,7 +570,8 @@ export async function savePaymentSchedule(input: {
       dealId: true,
       scheduleFromQuote: true,
       scheduleAmendedAt: true,
-      lineItems: { select: { quantity: true, unitPriceCents: true } },
+      discountCents: true,
+      lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true } },
       payments: {
         orderBy: { position: "asc" },
         select: {
@@ -505,7 +589,7 @@ export async function savePaymentSchedule(input: {
   });
   if (!contract) return { error: "Contract not found" };
 
-  const totalCents = contractTotalCents(contract.lineItems);
+  const totalCents = contractTotalCents(contract.lineItems, contract.discountCents);
   const schedule = computeSchedule(parsed.data.rows, totalCents);
   if (schedule.rows.some((row) => row.amountCents < 0)) {
     return { error: "The fixed amounts add up to more than the contract total" };

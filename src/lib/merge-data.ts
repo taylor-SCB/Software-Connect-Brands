@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { formatCents, formatDate } from "@/lib/format";
-import { computeQuoteTotals } from "@/lib/quote-math";
+import { computeQuoteTotals, lineTotalCents } from "@/lib/quote-math";
 import { dealValueCents, QUOTES_FOR_VALUE, pickPrimaryQuote } from "@/lib/deals";
 import { DEAL_STAGE_LABELS, type DealStageValue } from "@/lib/constants";
 import type { MergeContext } from "@/lib/merge";
@@ -23,7 +23,9 @@ export async function loadMergeContext(input: {
   // not the contact's own company (a purchase order to a supplier), the
   // rows split onto this contract, its payment schedule and who signs.
   companyId?: string | null;
-  lineItems?: { name: string; quantity: number; unitPriceCents: number; tag: string }[];
+  lineItems?: { name: string; quantity: number; unitPriceCents: number; tag: string; discountCents?: number | null }[];
+  // Money off the whole contract, after the rows' own discounts.
+  discountCents?: number | null;
   payments?: { label: string; amountCents: number; dueOn: Date | null }[];
   paymentTerms?: string | null;
   signerName?: string | null;
@@ -108,7 +110,7 @@ export async function loadMergeContext(input: {
           terms: true,
           lineItems: {
             orderBy: { position: "asc" },
-            select: { name: true, quantity: true, unitPriceCents: true, tag: true },
+            select: { name: true, quantity: true, unitPriceCents: true, discountCents: true, tag: true },
           },
         },
       })
@@ -123,7 +125,9 @@ export async function loadMergeContext(input: {
   // Product and total fields read from the contract's own rows when it
   // has them (a split), otherwise from the whole quote.
   const items = input.lineItems?.length ? input.lineItems : quote?.lineItems ?? [];
-  const contractTotalCents = items.length ? computeQuoteTotals(items).totalCents : totals?.totalCents ?? null;
+  const contractTotalCents = items.length
+    ? computeQuoteTotals(items).totalCents - (input.lineItems?.length ? input.discountCents ?? 0 : 0)
+    : totals?.totalCents ?? null;
 
   const scheduleRows: ScheduleRowInput[] = (input.payments ?? []).map((row) => ({
     label: row.label,
@@ -209,12 +213,13 @@ export async function loadMergeContext(input: {
   };
 }
 
-function itemLines(items: { name: string; quantity: number; unitPriceCents: number }[]) {
+function itemLines(items: { name: string; quantity: number; unitPriceCents: number; discountCents?: number | null }[]) {
   return items
-    .map(
-      (item) =>
-        `${trimQuantity(item.quantity)} × ${item.name} @ ${formatCents(item.unitPriceCents)} = ${formatCents(Math.round(item.quantity * item.unitPriceCents))}`,
-    )
+    .map((item) => {
+      const discount = item.discountCents ?? 0;
+      const off = discount ? ` less ${formatCents(discount)} discount` : "";
+      return `${trimQuantity(item.quantity)} × ${item.name} @ ${formatCents(item.unitPriceCents)}${off} = ${formatCents(lineTotalCents(item.quantity, item.unitPriceCents, discount))}`;
+    })
     .join("\n");
 }
 

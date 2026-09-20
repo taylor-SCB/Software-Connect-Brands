@@ -560,7 +560,7 @@ let context;
   // The preview only renders once the column is worth something.
   await page.getByTestId("schedule-preview").first().waitFor();
   assert.match(
-    await page.getByTestId("schedule-preview").first().textContent(),
+    await page.getByTestId("schedule-preview").first().getByLabel("Payment 1 label").inputValue(),
     /Deposit/,
     "the preview should show the quote's rows, not a preset's",
   );

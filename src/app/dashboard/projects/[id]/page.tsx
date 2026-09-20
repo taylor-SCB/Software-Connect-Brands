@@ -7,7 +7,7 @@ import { getTimeZone } from "@/lib/organization";
 import { getServiceTypes } from "@/lib/service-types";
 import { leftCents, DEFAULT_SCOPE_NAME } from "@/lib/projects";
 import { TAG_LABELS, LINE_ITEM_TAGS, type LineItemTagValue } from "@/lib/constants";
-import { lineTotalCents } from "@/lib/quote-math";
+import { lineNetCents } from "@/lib/quote-math";
 import { PageHeader, Card, CardHeader, StatTile, StatusBadge, Meter, Badge } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
 import { IconClock } from "@/components/icons";
@@ -83,6 +83,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               name: true,
               quantity: true,
               unitPriceCents: true,
+              discountCents: true,
               tag: true,
               contract: { select: { id: true, number: true, type: true, payable: true, status: true } },
             },
@@ -376,6 +377,7 @@ type Line = {
   name: string;
   quantity: number;
   unitPriceCents: number;
+  discountCents: number;
   tag: string;
   contract: { id: string; number: number; type: string; payable: boolean; status: string };
 };
@@ -384,7 +386,7 @@ function tagTotals(lines: Line[]) {
   const totals = new Map<string, number>();
   for (const line of lines) {
     if (line.contract.payable) continue;
-    totals.set(line.tag, (totals.get(line.tag) ?? 0) + lineTotalCents(line.quantity, line.unitPriceCents));
+    totals.set(line.tag, (totals.get(line.tag) ?? 0) + lineNetCents(line));
   }
   return LINE_ITEM_TAGS.filter((tag) => (totals.get(tag) ?? 0) !== 0).map((tag) => ({
     tag: tag as LineItemTagValue,
@@ -426,10 +428,11 @@ export function ScopeLines({
               )}
               {" · "}
               {line.quantity} × {formatCents(line.unitPriceCents)}
+              {line.discountCents ? ` − ${formatCents(line.discountCents)} discount` : ""}
             </p>
           </div>
           <span className="num text-sm font-medium">
-            {formatCents(lineTotalCents(line.quantity, line.unitPriceCents))}
+            {formatCents(lineNetCents(line))}
           </span>
         </li>
       ))}

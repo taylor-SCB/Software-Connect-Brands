@@ -217,33 +217,68 @@ template's sender list; signed contracts are locked from editing.
 
 **Contract Coordinator** (under Pipeline and under Contracts — one page, two
 addresses) — turns a deal's quote into the contracts it actually needs.
-Pick a deal and the quote's rows appear down the side with a column for
-each contract (up to five): who it goes to (company and contact, existing
+Pick a deal and the quote's rows run across the top of the page, **priced
+and editable**: change a quantity, unit price or line discount (as a % or
+in dollars) right there and it saves back to the quote the moment you
+leave the box, so the quote page and the customer's copy say the same
+thing (a contract already made from a row keeps the price it was made
+with). Each row has a tick box under every contract (up to five) and each
+contract is a **card** below the rows (Sept 20, 2026 layout — they used to
+hang off the right edge): who it goes to (company and contact, existing
 or typed in new — Contract A is prefilled from the deal), which template,
-**which way the money goes**, payment terms and a payment preset (one
-payment, deposit + balance, or installments by month or year). **Money
+**which way the money goes**, payment terms, an optional title, the rows
+ticked onto it, a **discount on the whole contract** (% or $, on top of
+any line discounts, with Subtotal / Discount / Total shown live) and its
+**payment schedule** — a real table where every row has its own label,
+type (% of total, a fixed amount, or the balance), value and due date,
+with quick fills that write rows you can then edit: Pay in full, Deposit +
+balance (the deposit as a % or $, its own due date, an optional balance
+date), Split into payments (how many, every week / 2 weeks / month /
+year, from a first date) and From the quote when the quote carries a
+payment table. A hand edit turns the quick fill to *Custom*. **Money
 in** is the customer paying you (a Sales Order, a Change Order); **Money
 out** is you paying a supplier (a Purchase Order). It follows the
 template until you set it yourself, and it decides what counts as owed to
 you: only a Money-in signature wins the deal, and a supplier accepting a
-purchase order changes nothing on the pipeline. Tick a row under every contract it belongs
-on — the same materials line can sit on the customer's Sales Order *and*
+purchase order changes nothing on the pipeline. A row can sit on several
+contracts — the same materials line on the customer's Sales Order *and*
 the supplier's Purchase Order — and an unticked row stays **Open** on the
 deal; rows can be cancelled and restored. "Your Company Signer" is
-prefilled with the owner. Creating writes one contract per column with its
-own line items, total and dated payment schedule, and the rows then read
-CON-1004 · Sent / Signed. Below the grid every contract on the deal shows
+prefilled with the owner. Creating writes one contract per card with its
+own line items (each carrying its line discount), its discount, its total
+and the payment rows exactly as written, and the rows then read
+CON-1004 · Sent / Signed. Below, every contract on the deal shows
 sent and signed dates, total, paid-of-total and next due, reminders sent
 (a reminder is copied to the clipboard with the signing link and logged —
 no email is sent yet), with Edit, Cancel (frees the rows) and Reopen.
 **Outstanding** is what customers still owe on the deal, with the part
 they have signed for underneath it; purchase orders are money going the
-other way and are not in either number.
+other way and are not in either number. Above the rows a **Job** card
+says in plain words whether the deal is a job yet: PRJ-n with a link once
+it is, or the way to award it on a handshake (below).
 
-A contract's page shows its line items, a payment table that recalculates
-(percent, fixed or balance rows; presets; final payment date), and the
-signer; the customer's copy prints the Items and Payment Schedule tables
-under the agreement, with the recipient's logo.
+**Discounts** (Sept 20, 2026) live in two places and only two. A **line
+discount** belongs to the quote line — typed on the quote's line editor
+(the Discount column, % or $) or inline on the Contract Coordinator — and
+is copied onto every contract row made from that line, the way the price
+is. A **contract discount** belongs to one contract, typed on its card (or
+on the handshake award), and is never written back to the quote: a quote
+that splits into a customer's Sales Order and a supplier's Purchase Order
+can carry a different discount on each. A discount is worked out on the
+server against the real subtotal, capped so nothing totals below zero,
+and the percent it was typed as is kept so a later change to the line
+re-prices it. The quote's page and customer copy print each line's
+saving and Subtotal / Discount / Total; a contract's page and the
+customer's copy print the line discounts and the contract discount the
+same way; `{{contract_total}}` merges the discounted figure; a job's
+Awarded is the discounted contract total, shared across its scopes in
+proportion to their rows.
+
+A contract's page shows its line items with Subtotal / Discount / Total
+when there is a discount, a payment table that recalculates (percent,
+fixed or balance rows; presets; final payment date), and the signer; the
+customer's copy prints the Items and Payment Schedule tables under the
+agreement, with the recipient's logo.
 
 **Payments** (Sept 14, 2026) — **Record payment** on any row of a payment
 table takes an amount, a date, how it was paid and a reference, and
@@ -264,10 +299,16 @@ the amounts, and offers to archive instead.
 agreement, the app makes one: **PRJ-1000**, with the customer, the date
 and a budget already in it. Nothing is typed. A supplier accepting a
 purchase order does not make a job, because that is a cost, not a win.
-For a job won on a handshake, **Award without paperwork** on the Deal
-Tracker writes the Sales Order the quote already implies, records who
-agreed to it and when, and starts the job. An agreement signed before
-jobs were tracked gets a **Track this as a job** button on its page.
+For a job won on a handshake, **Award without paperwork** on the Job card
+of the Contract Coordinator (Sept 20, 2026: a plain button on a card of
+its own, no longer a link hidden in a stat tile) opens a full form: who
+agreed and when, a note, which of the quote's open rows they agreed to
+(all of them by default), a discount on the whole job, payment terms and
+the same editable payment schedule the contract cards use, with the
+awarded total shown live. Awarding writes the Sales Order those rows
+imply, marked signed offline, and starts the job. An agreement signed
+before jobs were tracked gets a **Track this as a job** button on its
+page.
 
 The budget is four numbers. **Awarded** is what the customer agreed to,
 from the signed agreement and any change since. **Spent** is what has

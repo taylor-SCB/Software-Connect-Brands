@@ -6,13 +6,18 @@
  * Company Information's five tiles (General with the shared logo, Branding
  * with a logo file upload, Company Users, Compliance and Marketing file
  * uploads with private downloads); company logo and contact photo uploads;
- * the Contract Coordinator grid — prefilled Contract A, a typed-in new company and
- * contact for Contract B, one row on both contracts, payment presets, "Your
- * Company Signer" — creating the contracts; the contract page's line items,
- * payment schedule editor and signer; the printed document's Items and
- * Payment schedule tables; sending, reminders, signing; cancelling and
- * restoring a row; cancelling and reopening a contract; and a quote edit
- * keeping its rows linked.
+ * the Contract Coordinator — the rows table across the top with a contract
+ * card below it (Sept 20, 2026 layout), a row priced inline and saved to
+ * the quote with a line discount, prefilled Contract A with a discount on
+ * the whole contract and a deposit + balance quick fill, a typed-in new
+ * company and contact for Contract B with a split-into-payments fill that
+ * is then edited by hand, one row on both contracts, "Your Company Signer"
+ * — creating the contracts; the contract page's line items with
+ * Subtotal / Discount / Total, payment schedule editor and signer; the
+ * printed document's Items (with the discount) and Payment schedule
+ * tables; sending, reminders, signing and the Job card naming the job;
+ * cancelling and restoring a row; cancelling and reopening a contract; and
+ * a quote edit keeping its rows linked and its discount.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -68,6 +73,16 @@ async function sql(text, params) {
     return await client.query(text, params);
   } finally {
     await client.end();
+  }
+}
+// Polls until a check passes, for a save that lands a moment after the
+// screen already shows the new number.
+async function until(check, what, timeout = 8000) {
+  const started = Date.now();
+  for (;;) {
+    if (await check()) return;
+    if (Date.now() - started > timeout) throw new Error(`Timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
 }
 async function login(page, password = PASSWORD) {
@@ -316,6 +331,11 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.locator("[data-testid=tracker-row]").count(), 3);
   assert.equal(await page.locator("[data-testid=tracker-row]").filter({ hasText: "Open" }).count(), 3, "every row starts open");
 
+  log("the Job card says the deal is not a job yet and offers Award without paperwork in plain sight");
+  const jobCard = page.locator("[data-testid=job-card]");
+  assert.match(await jobCard.textContent(), /Not a job yet/);
+  assert.ok(await jobCard.locator("[data-testid=award-without-paperwork]").isVisible());
+
   log("Contract A is prefilled with the deal's company, contact and a Sales Order; the signer is the owner");
   const colA = page.locator("[data-testid=column-header]").nth(0);
   // Fields are addressed by their own ids (col-<key>-<field>), not by
@@ -328,14 +348,45 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.locator("#signerName").inputValue(), "Taylor Test");
   assert.ok(await page.locator("[data-testid=create-contracts]").isDisabled(), "nothing ticked yet");
 
-  log("tick labor and tile on A with a 50% deposit; add Contract B to a new supplier company and contact, Purchase Order, tile only");
+  log("Contract A's card sits below the rows table and uses the width, not a sliver off the right edge");
+  const linesTable = page.locator("[data-testid=tracker-lines]");
+  const tableBox = await linesTable.boundingBox();
+  const cardBox = await colA.boundingBox();
+  assert.ok(cardBox.y >= tableBox.y + tableBox.height - 1, "the card is under the rows, not beside them");
+  assert.ok(cardBox.width >= tableBox.width * 0.9, `the card spans the width (${cardBox.width}px of ${tableBox.width}px)`);
+
+  log("price the software row inline — 3 × $20.00 with 10% off — it saves to the quote and re-prices the row");
+  const swRow = page.locator("[data-testid=tracker-row][data-line-id=qli_tr3]");
+  await swRow.getByLabel("Scheduling software quantity").fill("3");
+  await swRow.getByLabel("Scheduling software unit price").fill("20.00");
+  await swRow.getByLabel("Scheduling software discount", { exact: true }).fill("10");
+  await swRow.getByLabel("Scheduling software discount", { exact: true }).press("Tab");
+  assert.match(await swRow.locator("[data-testid=line-total]").textContent(), /\$54\.00/, "3 × $20 less 10%");
+  await until(
+    async () => (await sql(`SELECT "discountCents" FROM "QuoteLineItem" WHERE id='qli_tr3'`)).rows[0].discountCents === 600,
+    "the software row to save to the quote",
+  );
+  const priced = (await sql(`SELECT quantity, "unitPriceCents", "discountCents", "discountPercent" FROM "QuoteLineItem" WHERE id='qli_tr3'`)).rows[0];
+  assert.deepEqual(priced, { quantity: 3, unitPriceCents: 2000, discountCents: 600, discountPercent: 10 });
+  await swRow.locator("[data-testid=line-saved]").waitFor();
+
+  log("tick labor and tile on A; 10% off the whole of Contract A; deposit + balance with the deposit due Oct 1");
   await page.getByRole("checkbox", { name: "Put Demo labor on Contract A" }).check();
   await page.getByRole("checkbox", { name: "Put Tile on Contract A" }).check();
+  assert.equal(await page.locator("[data-testid=column-subtotal]").nth(0).textContent(), "$250.00");
+  await page.locator("#col-1-discount").fill("10");
+  assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$225.00", "10% off $250");
   await page.locator("#col-1-preset").selectOption("DEPOSIT_BALANCE");
-  await colA.locator("input[type=date]").fill("2026-10-01");
-  assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$250.00");
-  assert.match(await page.locator("[data-testid=schedule-preview]").nth(0).textContent(), /Deposit\$125\.002026-10-01Balance on completion\$125\.00/);
+  await colA.getByLabel("Deposit due").fill("2026-10-01");
+  const previewA = colA.locator("[data-testid=schedule-preview]");
+  assert.deepEqual(await previewA.locator("[data-testid=schedule-amount]").allTextContents(), ["$112.50", "$112.50"], "half of the discounted total each");
+  assert.equal(await previewA.getByLabel("Payment 1 label").inputValue(), "Deposit");
+  assert.equal(await previewA.getByLabel("Payment 1 due date").inputValue(), "2026-10-01");
+  assert.equal(await previewA.getByLabel("Payment 2 label").inputValue(), "Balance on completion");
+
+  log("add Contract B to a new supplier company and contact, Purchase Order, tile only; split into 2 monthly payments, then edit a row by hand");
   await page.locator("[data-testid=add-column]").click();
+  const colB = page.locator("[data-testid=column-header]").nth(1);
   await page.locator("#col-2-company").selectOption("__new__");
   await page.getByLabel("New company for Contract B").fill("ACME Supply");
   await page.getByLabel("New contact for Contract B").fill("Sue Rep");
@@ -343,6 +394,16 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.locator("#col-2-direction").inputValue(), "out", "a Purchase Order is money going out");
   await page.getByRole("checkbox", { name: "Put Tile on Contract B" }).check();
   assert.equal(await page.locator("[data-testid=column-total]").nth(1).textContent(), "$50.00");
+  await page.locator("#col-2-preset").selectOption("INSTALLMENTS");
+  await page.locator("#col-2-count").fill("2");
+  await colB.getByLabel("First payment").fill("2026-11-01");
+  const previewB = colB.locator("[data-testid=schedule-preview]");
+  assert.deepEqual(await previewB.locator("[data-testid=schedule-amount]").allTextContents(), ["$25.00", "$25.00"]);
+  assert.equal(await previewB.getByLabel("Payment 2 due date").inputValue(), "2026-12-01", "a month after the first");
+  await previewB.getByLabel("Payment 1 percent").fill("40");
+  await previewB.getByLabel("Payment 2 due date").fill("2026-12-15");
+  assert.equal(await page.locator("#col-2-preset").inputValue(), "__custom__", "a hand edit makes the table custom");
+  assert.deepEqual(await previewB.locator("[data-testid=schedule-amount]").allTextContents(), ["$20.00", "$30.00"], "40% then the balance");
   await shot(page, "05-tracker-grid");
 
   log("Create 2 contracts: both exist, the new company and contact were made, tile sits on both, software stays open");
@@ -350,7 +411,7 @@ async function anonymousStatus(browser, url) {
   await page.waitForURL(/created=2/);
   await page.getByText("2 contracts created").waitFor();
   const contracts = (await sql(
-    `SELECT c.id, c.number, c.title, c.type, c.status, c."senderSignerName", c."paymentTerms", co.name AS company, ct.name AS contact,
+    `SELECT c.id, c.number, c.title, c.type, c.status, c."senderSignerName", c."paymentTerms", c."discountCents", c."discountPercent", co.name AS company, ct.name AS contact,
             (SELECT count(*)::int FROM "ContractLineItem" l WHERE l."contractId"=c.id) AS lines,
             (SELECT count(*)::int FROM "ContractPayment" p WHERE p."contractId"=c.id) AS payments
      FROM "Contract" c LEFT JOIN "Company" co ON co.id=c."companyId" JOIN "Contact" ct ON ct.id=c."contactId"
@@ -360,12 +421,12 @@ async function anonymousStatus(browser, url) {
   assert.equal(contracts.length, 2);
   const [a, b] = contracts;
   assert.deepEqual(
-    { title: a.title, type: a.type, status: a.status, signer: a.senderSignerName, terms: a.paymentTerms, company: a.company, contact: a.contact, lines: a.lines, payments: a.payments },
-    { title: "Sales Order", type: "Sales Order", status: "DRAFT", signer: "Taylor Test", terms: "Net 30", company: "Palmetto Roofing", contact: "Danny Ortiz", lines: 2, payments: 2 },
+    { title: a.title, type: a.type, status: a.status, signer: a.senderSignerName, terms: a.paymentTerms, company: a.company, contact: a.contact, lines: a.lines, payments: a.payments, discountCents: a.discountCents, discountPercent: a.discountPercent },
+    { title: "Sales Order", type: "Sales Order", status: "DRAFT", signer: "Taylor Test", terms: "Net 30", company: "Palmetto Roofing", contact: "Danny Ortiz", lines: 2, payments: 2, discountCents: 2500, discountPercent: 10 },
   );
   assert.deepEqual(
-    { title: b.title, type: b.type, company: b.company, contact: b.contact, lines: b.lines, payments: b.payments },
-    { title: "Purchase Order", type: "Purchase Order", company: "ACME Supply", contact: "Sue Rep", lines: 1, payments: 1 },
+    { title: b.title, type: b.type, company: b.company, contact: b.contact, lines: b.lines, payments: b.payments, discountCents: b.discountCents },
+    { title: "Purchase Order", type: "Purchase Order", company: "ACME Supply", contact: "Sue Rep", lines: 1, payments: 2, discountCents: 0 },
   );
   const sue = (await sql(`SELECT ct."companyId" FROM "Contact" ct WHERE ct.name='Sue Rep' AND ct."organizationId"=$1`, [org])).rows[0];
   assert.ok(sue.companyId, "Sue Rep was filed under ACME Supply");
@@ -375,25 +436,33 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.locator("[data-testid=tracker-contract]").count(), 2);
   await shot(page, "06-tracker-after-create");
 
-  log("the payment rows were priced against each contract's own total");
-  const payA = (await sql(`SELECT label, kind, "amountCents", "dueOn" FROM "ContractPayment" WHERE "contractId"=$1 ORDER BY position`, [a.id])).rows;
-  assert.deepEqual(payA.map((p) => [p.label, p.kind, p.amountCents, p.dueOn ? new Date(p.dueOn).toISOString().slice(0, 10) : null]), [
-    ["Deposit", "PERCENT", 12500, "2026-10-01"],
-    ["Balance on completion", "BALANCE", 12500, null],
+  log("the payment rows were priced against each contract's own discounted total, dates as written");
+  const payRows = async (id) =>
+    (await sql(`SELECT label, kind, "amountCents", "dueOn" FROM "ContractPayment" WHERE "contractId"=$1 ORDER BY position`, [id])).rows.map(
+      (p) => [p.label, p.kind, p.amountCents, p.dueOn ? new Date(p.dueOn).toISOString().slice(0, 10) : null],
+    );
+  assert.deepEqual(await payRows(a.id), [
+    ["Deposit", "PERCENT", 11250, "2026-10-01"],
+    ["Balance on completion", "BALANCE", 11250, null],
   ]);
-  const payB = (await sql(`SELECT "amountCents" FROM "ContractPayment" WHERE "contractId"=$1`, [b.id])).rows;
-  assert.equal(payB[0].amountCents, 5000);
+  assert.deepEqual(await payRows(b.id), [
+    ["Payment 1 of 2", "PERCENT", 2000, "2026-11-01"],
+    ["Payment 2 of 2", "BALANCE", 3000, "2026-12-15"],
+  ]);
 
-  log("contract A's page: merged body has the total and terms, line items table, payment editor, signer");
+  log("contract A's page: merged body has the discounted total and terms; line items read Subtotal / Discount / Total; payment editor, signer");
   await page.goto(`${BASE}/dashboard/contracts/${a.id}`);
   await page.getByRole("heading", { name: "Sales Order" }).waitFor();
   const bodyText = await page.locator("#body").inputValue();
-  assert.match(bodyText, /ORDER TOTAL: \$250\.00/);
+  assert.match(bodyText, /ORDER TOTAL: \$225\.00/, "the merge field is the total after the discount");
   assert.match(bodyText, /PAYMENT TERMS: Net 30/);
   assert.match(bodyText, /123 Main St, Suite 4, Austin, TX 78701/, "your address merged from Company Information");
-  assert.equal(await page.locator("[data-testid=contract-total]").textContent(), "$250.00");
+  assert.equal(await page.locator("[data-testid=contract-subtotal]").textContent(), "$250.00");
+  assert.equal(await page.locator("[data-testid=contract-discount]").textContent(), "−$25.00");
+  assert.match(await page.locator("[data-testid=contract-line-items] tfoot").textContent(), /10% off the subtotal/);
+  assert.equal(await page.locator("[data-testid=contract-total]").textContent(), "$225.00");
   assert.equal(await page.locator("[data-testid=payment-row]").count(), 2);
-  assert.equal(await page.locator("[data-testid=scheduled-total]").textContent(), "$250.00");
+  assert.equal(await page.locator("[data-testid=scheduled-total]").textContent(), "$225.00");
   assert.equal(await page.locator("[name=senderSignerName]").inputValue(), "Taylor Test");
   await shot(page, "07-contract-page");
 
@@ -404,7 +473,7 @@ async function anonymousStatus(browser, url) {
   await page.locator("[data-testid=apply-preset]").click();
   assert.equal(await page.locator("[data-testid=payment-row]").count(), 3);
   const amounts = await page.locator("[data-testid=payment-amount]").allTextContents();
-  assert.deepEqual(amounts, ["$83.33", "$83.33", "$83.34"], "balance row takes the rounding cent");
+  assert.deepEqual(amounts, ["$74.99", "$74.99", "$75.02"], "33.33% twice of the discounted total, the balance row taking the rounding cents");
   assert.match(await page.locator("[data-testid=payment-schedule] tfoot").textContent(), /final payment 2026-12-15/);
   assert.equal(await page.locator("[data-testid=schedule-difference]").count(), 0, "adds up exactly");
   await page.locator("[data-testid=save-schedule]").click();
@@ -430,7 +499,9 @@ async function anonymousStatus(browser, url) {
   const cpage = await customer.newPage();
   await cpage.goto(`${BASE}/c/${tokenA}`);
   await cpage.locator("[data-testid=document-items]").waitFor();
-  assert.equal(await cpage.locator("[data-testid=document-total]").textContent(), "$250.00");
+  assert.equal(await cpage.locator("[data-testid=document-subtotal]").textContent(), "$250.00");
+  assert.equal(await cpage.locator("[data-testid=document-discount]").textContent(), "−$25.00");
+  assert.equal(await cpage.locator("[data-testid=document-total]").textContent(), "$225.00");
   assert.equal(await cpage.locator("[data-testid=document-payments] tbody tr").count(), 3);
   assert.match(await cpage.locator("[data-testid=document-payments]").textContent(), /Final payment Dec 15, 2026/);
   assert.match(await cpage.textContent("body"), /Test Tracker Co · Taylor Test/, "signer under the provider line");
@@ -443,6 +514,12 @@ async function anonymousStatus(browser, url) {
   await customer.close();
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [a.id])).rows[0].status, "SIGNED");
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_tr'`)).rows[0].stage, "WON");
+
+  log("signing made the job: the Job card names PRJ-1000 and the budget is the discounted total");
+  await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
+  assert.match(await page.locator("[data-testid=job-card]").textContent(), /PRJ-1000/);
+  assert.match(await page.locator("[data-testid=tracker-project]").textContent(), /PRJ-1000/);
+  assert.equal((await sql(`SELECT "awardedCents" FROM "Project" WHERE "dealId"='deal_tr'`)).rows[0].awardedCents, 22500);
 
   log("cancel the software row, then restore it");
   await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
@@ -467,13 +544,17 @@ async function anonymousStatus(browser, url) {
   await page.locator("[data-testid=tracker-contract][data-status=DRAFT]").waitFor();
   assert.match(await page.locator("[data-testid=tracker-row][data-line-id=qli_tr2]").textContent(), new RegExp(`CON-${b.number} · Draft`));
 
-  log("editing the quote's lines keeps the rows the contracts point at");
+  log("the quote page shows the discount priced from the coordinator; editing the lines keeps the rows the contracts point at and the discount");
   await page.goto(`${BASE}/dashboard/quotes/quo_tr`);
+  assert.equal(await page.getByLabel("Line 3 discount", { exact: true }).inputValue(), "10");
+  assert.equal(await page.getByLabel("Line 3 discount type").inputValue(), "percent");
+  assert.equal(await page.locator("[data-testid=quote-total]").textContent(), "$304.00", "200 + 50 + 54");
   await page.getByLabel("Line 2 quantity").fill("2");
   await page.getByRole("button", { name: /Save line items/ }).click();
   await page.getByText("Line items saved").waitFor();
   const linked = (await sql(`SELECT count(*)::int AS n FROM "ContractLineItem" WHERE "quoteLineItemId" IS NOT NULL AND "contractId" IN ($1,$2)`, [a.id, b.id])).rows[0].n;
   assert.equal(linked, 3, "all three contract rows still point at their quote rows");
+  assert.equal((await sql(`SELECT "discountCents" FROM "QuoteLineItem" WHERE id='qli_tr3'`)).rows[0].discountCents, 600, "the line discount survived the quote save");
 
   log("Contracts list shows who each one went to and its total; the Contract Coordinator under Contracts is the same page");
   await page.goto(`${BASE}/dashboard/contracts`);

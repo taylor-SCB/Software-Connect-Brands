@@ -428,6 +428,14 @@
   .table-hover tbody tr:hover {
     background: rgb(255 255 255 / 0.03);
   }
+  /* A table of inputs inside a card — the payment rows on a Contract
+     Coordinator card — where the usual cell padding would push the last
+     column off the edge. */
+  .table-tight thead th,
+  .table-tight tbody td,
+  .table-tight tfoot td {
+    padding: 0.4rem 0.45rem;
+  }
 
   /* ---------- Nav ---------- */
   .nav-item {

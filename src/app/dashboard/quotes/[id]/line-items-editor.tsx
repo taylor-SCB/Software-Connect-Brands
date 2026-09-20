@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { saveLineItems, type LineItemInput } from "../actions";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
-import { computeQuoteTotals, lineTotalCents, termTotalCents } from "@/lib/quote-math";
+import { computeQuoteTotals, lineGrossCents, lineTotalCents, resolveDiscount, termTotalCents } from "@/lib/quote-math";
 import {
   LINE_ITEM_TAGS,
   TAG_LABELS,
@@ -44,6 +44,10 @@ export type EditorLine = {
   projectNotes: string;
   quantity: number;
   unitPriceCents: number;
+  // Money off this line, already in cents, and the percent it was typed
+  // as when it was a percent.
+  discountCents: number;
+  discountPercent: number | null;
   tag: string;
   serviceType: string | null;
   supplierCompanyId: string | null;
@@ -63,6 +67,9 @@ type Row = {
   projectNotes: string;
   quantityInput: string;
   unitPriceInput: string;
+  // The discount as typed, and whether it is a percent or dollars off.
+  discountInput: string;
+  discountMode: "percent" | "cents";
   tag: LineItemTagValue;
   // Which kind of work the row is, when the quote is split that way.
   serviceType: string;
@@ -107,6 +114,13 @@ function toRow(line: EditorLine): Row {
     projectNotes: line.projectNotes,
     quantityInput: String(line.quantity),
     unitPriceInput: centsToDollarInput(line.unitPriceCents),
+    discountInput:
+      line.discountPercent !== null
+        ? String(line.discountPercent)
+        : line.discountCents
+          ? centsToDollarInput(line.discountCents)
+          : "",
+    discountMode: line.discountPercent !== null || !line.discountCents ? "percent" : "cents",
     tag: line.tag as LineItemTagValue,
     serviceType: line.serviceType ?? "",
     supplierCompanyId: line.supplierCompanyId,
@@ -129,6 +143,16 @@ function rowQuantity(row: Row) {
 
 function rowUnitCents(row: Row) {
   return dollarsToCents(row.unitPriceInput);
+}
+
+// The typed discount worked out against the line as it stands now.
+function rowDiscount(row: Row) {
+  const typed = Number.parseFloat(row.discountInput);
+  const gross = lineGrossCents(rowQuantity(row), rowUnitCents(row));
+  if (row.discountMode === "percent") {
+    return resolveDiscount({ percent: Number.isFinite(typed) ? typed : null, cents: 0 }, gross);
+  }
+  return resolveDiscount({ percent: null, cents: dollarsToCents(row.discountInput) }, gross);
 }
 
 export function LineItemsEditor({
@@ -170,6 +194,7 @@ export function LineItemsEditor({
         rows.map((row) => ({
           quantity: rowQuantity(row),
           unitPriceCents: rowUnitCents(row),
+          discountCents: rowDiscount(row).discountCents,
           tag: row.tag,
         })),
       ),
@@ -206,6 +231,8 @@ export function LineItemsEditor({
         projectNotes: "",
         quantityInput: "1",
         unitPriceInput: "0.00",
+        discountInput: "",
+        discountMode: "percent",
         tag: "MATERIALS",
         serviceType: "",
         supplierCompanyId: null,
@@ -240,6 +267,8 @@ export function LineItemsEditor({
         projectNotes: "",
         quantityInput: "1",
         unitPriceInput: centsToDollarInput(product.unitPriceCents),
+        discountInput: "",
+        discountMode: "percent",
         tag: product.defaultTag as LineItemTagValue,
         // The catalog already knows what kind of work it is.
         serviceType: product.serviceType ?? "",
@@ -292,6 +321,8 @@ export function LineItemsEditor({
       projectNotes: row.projectNotes.trim(),
       quantity: rowQuantity(row),
       unitPriceCents: rowUnitCents(row),
+      discountPercent: rowDiscount(row).discountPercent,
+      discountCents: rowDiscount(row).discountCents,
       tag: row.tag,
       serviceType: splitByService ? row.serviceType.trim() || null : null,
       supplierCompanyId: row.supplierCompanyId,
@@ -363,6 +394,7 @@ export function LineItemsEditor({
               <th className="w-[42%]">Product</th>
               <th className="w-24 text-right">Qty</th>
               <th className="w-32 text-right">Value</th>
+              <th className="w-36 text-right">Discount</th>
               <th className="w-32 text-right">Total</th>
               <th className="w-44">Tag</th>
               {/* Internal. Never rendered on the customer's copy. */}
@@ -374,14 +406,15 @@ export function LineItemsEditor({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={(readOnly ? 6 : 7) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
+                <td colSpan={(readOnly ? 7 : 8) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
                   No line items yet. Add one from your catalog or start a blank line.
                 </td>
               </tr>
             )}
 
             {rows.map((row, index) => {
-              const total = lineTotalCents(rowQuantity(row), rowUnitCents(row));
+              const discount = rowDiscount(row);
+              const total = lineTotalCents(rowQuantity(row), rowUnitCents(row), discount.discountCents);
               const termTotal =
                 row.tag === "SOFTWARE"
                   ? termTotalCents(
@@ -542,6 +575,35 @@ export function LineItemsEditor({
                       className="input input-sm num text-right"
                     />
                   </td>
+                  <td>
+                    <div className="flex items-center justify-end gap-1">
+                      <input
+                        value={row.discountInput}
+                        onChange={(event) => updateRow(row.uid, { discountInput: event.target.value })}
+                        inputMode="decimal"
+                        placeholder="0"
+                        aria-label={`Line ${index + 1} discount`}
+                        disabled={readOnly}
+                        className="input input-sm num w-20 text-right"
+                        data-testid="line-discount"
+                      />
+                      <select
+                        value={row.discountMode}
+                        onChange={(event) => updateRow(row.uid, { discountMode: event.target.value as Row["discountMode"] })}
+                        aria-label={`Line ${index + 1} discount type`}
+                        disabled={readOnly}
+                        className="select input-sm !w-14 !px-1.5"
+                      >
+                        <option value="percent">%</option>
+                        <option value="cents">$</option>
+                      </select>
+                    </div>
+                    {discount.discountCents > 0 && (
+                      <p className="num mt-1 text-right text-[0.68rem] text-[var(--ok)]" data-testid="line-discount-cents">
+                        −{formatCents(discount.discountCents)}
+                      </p>
+                    )}
+                  </td>
                   <td className="num pt-3 text-right font-medium">
                     {formatCents(total)}
                     {/* What the line comes to over its whole term, so the
@@ -658,11 +720,19 @@ export function LineItemsEditor({
         <FormError message={state.error} />
         <FormSuccess message={state.success} />
 
-        <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.03)] px-4 py-3">
-          <span className="text-sm font-semibold">Quote total</span>
-          <span className="num text-xl font-semibold">
-            {formatCents(totals.totalCents)}
-          </span>
+        <div className="rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.03)] px-4 py-3">
+          {totals.discountCents > 0 && (
+            <div className="faint mb-1 flex items-center justify-between text-xs" data-testid="quote-discount-line">
+              <span>Subtotal {formatCents(totals.grossCents)}</span>
+              <span className="num text-[var(--ok)]">Discounts −{formatCents(totals.discountCents)}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold">Quote total</span>
+            <span className="num text-xl font-semibold" data-testid="quote-total">
+              {formatCents(totals.totalCents)}
+            </span>
+          </div>
         </div>
 
         {/* Tag rollup — always adds up to the quote total above. */}

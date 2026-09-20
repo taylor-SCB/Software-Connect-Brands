@@ -5,7 +5,7 @@ import { DEAL_STAGES, OPEN_DEAL_STAGES, type DealStageValue } from "@/lib/consta
 type QuoteForValue = {
   status: string;
   updatedAt: Date;
-  lineItems: { quantity: number; unitPriceCents: number; tag: string }[];
+  lineItems: { quantity: number; unitPriceCents: number; tag: string; discountCents?: number | null }[];
 };
 
 export type DealWithQuotes = {
@@ -48,7 +48,7 @@ export const QUOTES_FOR_VALUE = {
   select: {
     status: true,
     updatedAt: true,
-    lineItems: { select: { quantity: true, unitPriceCents: true, tag: true } },
+    lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
   },
 } as const;
 

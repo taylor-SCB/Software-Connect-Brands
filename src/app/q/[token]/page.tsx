@@ -56,6 +56,7 @@ export default async function PublicQuotePage({
           projectNotes: true,
           quantity: true,
           unitPriceCents: true,
+          discountCents: true,
           tag: true,
         },
       },

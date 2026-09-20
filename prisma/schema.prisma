@@ -542,6 +542,12 @@ model QuoteLineItem {
   projectNotes   String      @default("")
   quantity       Float       @default(1)
   unitPriceCents Int         @default(0)
+  // Money off this one line, in cents, already worked out. When it was
+  // typed as a percent that percent is kept too, so a later change to
+  // the quantity or price re-prices the discount instead of freezing it.
+  // The line's total is quantity × price − discountCents, everywhere.
+  discountCents   Int        @default(0)
+  discountPercent Float?
   tag            LineItemTag
   // Who we buy this line from. Internal: never selected onto the public
   // quote page, the PDF taken from it, or the text merged into a contract
@@ -755,6 +761,11 @@ model Contract {
   // "Net 30", "Due on receipt"... free text so a workspace can write its
   // own. The dated rows live in `payments`.
   paymentTerms     String?
+  // Money off the whole contract, after the rows' own discounts. In
+  // cents, already worked out; the percent it was typed as is kept so the
+  // screens can show it back. The contract total is the rows less this.
+  discountCents    Int               @default(0)
+  discountPercent  Float?
   // Set when this contract's payment rows were seeded from its quote's
   // table rather than from a preset, and when someone first changed them
   // afterwards. Together they are what puts "Amended from original quote"
@@ -796,6 +807,10 @@ model ContractLineItem {
   description     String         @default("")
   quantity        Float          @default(1)
   unitPriceCents  Int            @default(0)
+  // Copied from the quote row when the contract is made, like the price
+  // is, so the contract keeps reading the same after the quote changes.
+  discountCents   Int            @default(0)
+  discountPercent Float?
   tag             LineItemTag
   // Copied from the quote row, like the tag is, so the contract keeps
   // reading the same after the quote is edited.
