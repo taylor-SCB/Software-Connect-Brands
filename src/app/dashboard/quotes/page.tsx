@@ -18,7 +18,7 @@ export default async function QuotesPage() {
     include: {
       contact: { select: { id: true, name: true, company: { select: { name: true } } } },
       deal: { select: { id: true, title: true } },
-      lineItems: { select: { quantity: true, unitPriceCents: true, tag: true } },
+      lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
     },
   });
 

@@ -17,8 +17,9 @@ import {
 } from "@/lib/constants";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
-import { computeSchedule, dateToIso, isoToDate } from "@/lib/payments";
-import { computeQuoteTotals } from "@/lib/quote-math";
+import { computeSchedule, isoToDate } from "@/lib/payments";
+import { repriceQuotePayments } from "@/lib/quote-payments";
+import { computeQuoteTotals, lineGrossCents, resolveDiscount } from "@/lib/quote-math";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -197,6 +198,11 @@ const lineItemSchema = z.object({
   projectNotes: z.string().max(2000).optional(),
   quantity: z.number().finite().min(0, "Quantity can't be negative").max(1_000_000),
   unitPriceCents: z.number().int().min(-100_000_000).max(100_000_000),
+  // Money off this line: typed as a percent (kept, so it re-prices when
+  // the line changes) or as a fixed amount. Resolved to cents here, never
+  // taken from the browser as a finished number.
+  discountPercent: z.number().min(0).max(100).nullable().optional(),
+  discountCents: z.number().int().min(0).max(1_000_000_000).nullable().optional(),
   // Enforced here as well as in the UI: the tag totals grid only
   // reconciles with the quote total if every line carries a tag.
   tag: z.enum(LINE_ITEM_TAGS, { message: "Every line needs a tag" }),
@@ -288,6 +294,16 @@ export async function saveLineItems(
     parsed.data.map((item) => item.id).filter((id): id is string => Boolean(id) && existingIds.has(id as string)),
   );
 
+  // Each line's discount worked out against the line as it will be
+  // stored, capped at the line itself.
+  const resolved = parsed.data.map((item) => ({
+    ...item,
+    discount: resolveDiscount(
+      { percent: item.discountPercent ?? null, cents: item.discountCents ?? 0 },
+      lineGrossCents(item.quantity, item.unitPriceCents),
+    ),
+  }));
+
   // Interactive rather than the array form: the array form builds every
   // promise before the transaction opens, so a row cannot use an id
   // created earlier in the same save.
@@ -303,7 +319,7 @@ export async function saveLineItems(
     const madeThisSave = new Map<string, string>();
 
     const saved: SavedLine[] = [];
-    for (const [index, item] of parsed.data.entries()) {
+    for (const [index, item] of resolved.entries()) {
       // A unit that doesn't belong to the row's tag is dropped rather than
       // stored: the Products form enforces the same pairing and would
       // refuse to re-save a row carrying a mismatched one.
@@ -381,6 +397,8 @@ export async function saveLineItems(
         projectNotes: item.projectNotes ?? "",
         quantity: item.quantity,
         unitPriceCents: item.unitPriceCents,
+        discountCents: item.discount.discountCents,
+        discountPercent: item.discount.discountPercent,
         tag: item.tag,
         serviceType: item.serviceType || null,
         supplierCompanyId:
@@ -401,44 +419,8 @@ export async function saveLineItems(
     }
 
     // The payment rows are priced against the lines, so changing the lines
-    // has to re-price them in the same breath. Without this the stored
-    // amounts stay frozen while the quote total moves, and the customer's
-    // copy prints a total and a payment schedule that disagree — the
-    // sender never sees it, because their own table recomputes live.
-    const payments = await tx.quotePayment.findMany({
-      where: { quoteId: quote.id },
-      orderBy: { position: "asc" },
-      select: { id: true, label: true, kind: true, percent: true, amountCents: true, dueOn: true, terms: true },
-    });
-    if (payments.length > 0) {
-      const totalCents = computeQuoteTotals(
-        parsed.data.map((item) => ({
-          quantity: item.quantity,
-          unitPriceCents: item.unitPriceCents,
-          tag: item.tag,
-        })),
-      ).totalCents;
-      const repriced = computeSchedule(
-        payments.map((row) => ({
-          label: row.label,
-          kind: row.kind,
-          percent: row.percent,
-          // A fixed amount is a number the sender typed; it stays put.
-          fixedCents: row.kind === "FIXED" ? row.amountCents : null,
-          dueOn: dateToIso(row.dueOn),
-          terms: row.terms,
-        })),
-        totalCents,
-      );
-      for (const [index, row] of repriced.rows.entries()) {
-        const stored = payments[index];
-        if (!stored || stored.amountCents === row.amountCents) continue;
-        await tx.quotePayment.update({
-          where: { id: stored.id },
-          data: { amountCents: row.amountCents },
-        });
-      }
-    }
+    // has to re-price them in the same breath.
+    await repriceQuotePayments(tx, quote.id);
 
     await tx.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } });
     return saved;
@@ -493,7 +475,7 @@ export async function saveQuotePaymentSchedule(input: {
     where: { id: parsed.data.quoteId, organizationId },
     select: {
       id: true,
-      lineItems: { select: { quantity: true, unitPriceCents: true, tag: true } },
+      lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
       payments: { orderBy: { position: "asc" }, select: { id: true } },
     },
   });

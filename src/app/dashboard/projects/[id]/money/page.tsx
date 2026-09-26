@@ -1,3 +1,4 @@
+import { contractTotalCents } from "@/lib/contracts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
@@ -50,7 +51,8 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
           amends: { select: { number: true } },
           company: { select: { id: true, name: true } },
           contact: { select: { id: true, name: true } },
-          lineItems: { select: { quantity: true, unitPriceCents: true } },
+          discountCents: true,
+          lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true } },
           payments: {
             orderBy: [{ dueOn: "asc" }, { position: "asc" }],
             select: {
@@ -278,10 +280,7 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
           {changeOrders.length > 0 && (
             <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
               {changeOrders.map((contract) => {
-                const total = contract.lineItems.reduce(
-                  (sum, line) => sum + Math.round(line.quantity * line.unitPriceCents),
-                  0,
-                );
+                const total = contractTotalCents(contract.lineItems, contract.discountCents);
                 return (
                   <li key={contract.id} className="px-5 py-3" data-testid="change-order-row">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">

@@ -1,6 +1,7 @@
 import { formatDate, formatDateTime, formatDay, formatCents } from "@/lib/format";
 import { TAG_LABELS, type LineItemTagValue } from "@/lib/constants";
-import { contractTotalCents } from "@/lib/contracts";
+import { contractSubtotalCents, contractTotalCents } from "@/lib/contracts";
+import { lineNetCents } from "@/lib/quote-math";
 
 export type ContractDocumentData = {
   number: number;
@@ -21,7 +22,19 @@ export type ContractDocumentData = {
   // Set by the deal tracker: the business the document is addressed to
   // when it isn't the contact's own company.
   company?: { name: string; logoUrl: string | null } | null;
-  lineItems?: { id: string; name: string; description: string; quantity: number; unitPriceCents: number; tag: string }[];
+  lineItems?: {
+    id: string;
+    name: string;
+    description: string;
+    quantity: number;
+    unitPriceCents: number;
+    tag: string;
+    discountCents?: number;
+    discountPercent?: number | null;
+  }[];
+  // Money off the whole contract, after the rows' own discounts.
+  discountCents?: number;
+  discountPercent?: number | null;
   payments?: { id: string; label: string; amountCents: number; dueOn: Date | null; terms?: string | null; paidAt: Date | null }[];
   paymentTerms?: string | null;
   senderSignerName?: string | null;
@@ -35,7 +48,11 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
   const recipientName = recipient?.name || contract.contact.name;
   const lineItems = contract.lineItems ?? [];
   const payments = contract.payments ?? [];
-  const totalCents = contractTotalCents(lineItems);
+  const contractDiscount = contract.discountCents ?? 0;
+  const subtotalCents = contractSubtotalCents(lineItems);
+  const totalCents = contractTotalCents(lineItems, contractDiscount);
+  const anyLineDiscount = lineItems.some((item) => (item.discountCents ?? 0) > 0);
+  const anyDiscount = anyLineDiscount || contractDiscount > 0;
   const zone = contract.organization.timeZone;
   const lastDue = payments.map((p) => p.dueOn).filter((d): d is Date => Boolean(d)).sort((a, b) => a.getTime() - b.getTime()).at(-1) ?? null;
   return (
@@ -99,6 +116,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                 <th className="py-1.5 pr-2 font-semibold">Category</th>
                 <th className="py-1.5 pr-2 text-right font-semibold">Qty</th>
                 <th className="py-1.5 pr-2 text-right font-semibold">Unit</th>
+                {anyLineDiscount && <th className="py-1.5 pr-2 text-right font-semibold">Discount</th>}
                 <th className="py-1.5 text-right font-semibold">Amount</th>
               </tr>
             </thead>
@@ -112,13 +130,35 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                   <td className="py-1.5 pr-2 text-[#6b7280]">{TAG_LABELS[item.tag as LineItemTagValue] ?? item.tag}</td>
                   <td className="py-1.5 pr-2 text-right tabular-nums">{item.quantity}</td>
                   <td className="py-1.5 pr-2 text-right tabular-nums">{formatCents(item.unitPriceCents)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatCents(Math.round(item.quantity * item.unitPriceCents))}</td>
+                  {anyLineDiscount && (
+                    <td className="py-1.5 pr-2 text-right tabular-nums text-[#047857]">
+                      {(item.discountCents ?? 0) > 0 ? `−${formatCents(item.discountCents ?? 0)}` : ""}
+                      {(item.discountCents ?? 0) > 0 && item.discountPercent != null && (
+                        <span className="block text-xs text-[#6b7280]">{item.discountPercent}% off</span>
+                      )}
+                    </td>
+                  )}
+                  <td className="py-1.5 text-right tabular-nums">{formatCents(lineNetCents(item))}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
+              {anyDiscount && (
+                <tr>
+                  <td colSpan={anyLineDiscount ? 5 : 4} className="pt-2 text-right text-[#6b7280]">Subtotal</td>
+                  <td className="pt-2 text-right tabular-nums" data-testid="document-subtotal">{formatCents(subtotalCents)}</td>
+                </tr>
+              )}
+              {contractDiscount > 0 && (
+                <tr>
+                  <td colSpan={anyLineDiscount ? 5 : 4} className="pt-1 text-right text-[#6b7280]">
+                    Discount{contract.discountPercent != null ? ` (${contract.discountPercent}%)` : ""}
+                  </td>
+                  <td className="pt-1 text-right tabular-nums text-[#047857]" data-testid="document-discount">−{formatCents(contractDiscount)}</td>
+                </tr>
+              )}
               <tr>
-                <td colSpan={4} className="pt-2 text-right font-semibold">Total</td>
+                <td colSpan={anyLineDiscount ? 5 : 4} className="pt-2 text-right font-semibold">Total</td>
                 <td className="pt-2 text-right text-base font-semibold tabular-nums" data-testid="document-total">{formatCents(totalCents)}</td>
               </tr>
             </tfoot>

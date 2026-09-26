@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { formatCents, dollarsToCents } from "@/lib/format";
-import { lineTotalCents } from "@/lib/quote-math";
+import { lineNetCents } from "@/lib/quote-math";
 import { Card, CardHeader, Meter, Badge, FormError } from "@/components/ui";
 import { IconTrash } from "@/components/icons";
 import { adjustAward, deleteScope, moveLineToScope, updateScope } from "../actions";
@@ -14,6 +14,7 @@ type Line = {
   name: string;
   quantity: number;
   unitPriceCents: number;
+  discountCents: number;
   tag: string;
   contract: { id: string; number: number; type: string; payable: boolean; status: string };
 };
@@ -267,8 +268,9 @@ export function ScopeCard({
                             </>
                           )}
                           {" · "}
-                          {line.quantity} × {formatCents(line.unitPriceCents)} ={" "}
-                          {formatCents(lineTotalCents(line.quantity, line.unitPriceCents))}
+                          {line.quantity} × {formatCents(line.unitPriceCents)}
+                          {line.discountCents ? ` − ${formatCents(line.discountCents)}` : ""} ={" "}
+                          {formatCents(lineNetCents(line))}
                         </p>
                       </div>
                       {scopeOptions.length > 1 && (

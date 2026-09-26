@@ -39,6 +39,9 @@ export type QuoteDocumentData = {
     quantity: number;
     unitPriceCents: number;
     tag: string;
+    // Money off this line, already in cents. Shown as a saving on the
+    // customer's copy; how it was typed is not their business.
+    discountCents?: number;
   }[];
   // What the customer is asked to pay and when. Not fetched at all when
   // the quote is set to hide it, so the numbers never reach the page.
@@ -146,6 +149,7 @@ function getTotals(quote: QuoteDocumentData) {
     quote.lineItems.map((item) => ({
       quantity: item.quantity,
       unitPriceCents: item.unitPriceCents,
+      discountCents: item.discountCents ?? 0,
       tag: item.tag,
     })),
   );
@@ -259,7 +263,12 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
                 {formatCents(item.unitPriceCents)}
               </td>
               <td className="py-3 text-right font-mono font-medium tabular-nums">
-                {formatCents(lineTotalCents(item.quantity, item.unitPriceCents))}
+                {formatCents(lineTotalCents(item.quantity, item.unitPriceCents, item.discountCents ?? 0))}
+                {(item.discountCents ?? 0) > 0 && (
+                  <span className="block text-xs font-normal text-[#047857]" data-testid="document-line-discount">
+                    −{formatCents(item.discountCents ?? 0)} off
+                  </span>
+                )}
               </td>
             </tr>
           ))}
@@ -291,6 +300,11 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
         </div>
 
         <div className="min-w-56 text-right">
+          {totals.discountCents > 0 && (
+            <p className="mb-2 text-xs text-[#6b7280]" data-testid="document-discount">
+              Subtotal {formatCents(totals.grossCents)} · Discount −{formatCents(totals.discountCents)}
+            </p>
+          )}
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Total
           </p>
@@ -436,10 +450,15 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
                 </div>
                 <div className="text-right">
                   <p className="font-mono text-sm font-semibold tabular-nums text-white">
-                    {formatCents(lineTotalCents(item.quantity, item.unitPriceCents))}
+                    {formatCents(lineTotalCents(item.quantity, item.unitPriceCents, item.discountCents ?? 0))}
                   </p>
                   <p className="font-mono text-xs tabular-nums text-white/40">
                     {item.quantity} × {formatCents(item.unitPriceCents)}
+                    {(item.discountCents ?? 0) > 0 && (
+                      <span className="text-emerald-300" data-testid="document-line-discount">
+                        {" "}− {formatCents(item.discountCents ?? 0)} off
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -487,6 +506,11 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
               background: `linear-gradient(160deg, color-mix(in srgb, ${brand} 20%, transparent), transparent)`,
             }}
           >
+            {totals.discountCents > 0 && (
+              <p className="mb-2 text-xs text-white/55" data-testid="document-discount">
+                Subtotal {formatCents(totals.grossCents)} · Discount −{formatCents(totals.discountCents)}
+              </p>
+            )}
             <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/50">
               Quote total
             </p>

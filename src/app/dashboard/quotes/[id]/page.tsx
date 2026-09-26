@@ -180,6 +180,8 @@ export default async function QuoteBuilderPage({
               projectNotes: item.projectNotes,
               quantity: item.quantity,
               unitPriceCents: item.unitPriceCents,
+              discountCents: item.discountCents,
+              discountPercent: item.discountPercent,
               tag: item.tag,
               serviceType: item.serviceType,
               supplierCompanyId: item.supplierCompanyId,

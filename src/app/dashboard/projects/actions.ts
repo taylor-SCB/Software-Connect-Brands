@@ -14,8 +14,18 @@ import { openItems } from "@/lib/close-out";
 import { ensureServiceType } from "@/lib/service-types";
 import { ensureDistributorTypeName } from "@/lib/distributors";
 import { advanceDealStage } from "@/lib/deals";
-import { computeSchedule, isoToDate, presetRows, todayIso, type SchedulePreset } from "@/lib/payments";
-import { contractTotalCents } from "@/lib/contracts";
+import {
+  computeSchedule,
+  isoToDate,
+  presetRows,
+  quoteTableAsShares,
+  todayIso,
+  type SchedulePreset,
+  type ScheduleRowInput,
+} from "@/lib/payments";
+import { contractSubtotalCents, contractTotalCents } from "@/lib/contracts";
+import { resolveDiscount } from "@/lib/quote-math";
+import { discountInputSchema, newScheduleRowSchema } from "@/lib/schedule-input";
 import { loadMergeContext } from "@/lib/merge-data";
 import { renderMergeFields } from "@/lib/merge";
 import { publicToken } from "@/lib/tokens";
@@ -256,23 +266,39 @@ export async function adjustAward(
 
 /* ------------------------- Awarding without paperwork ------------------------- */
 
+const awardSchema = z.object({
+  dealId: idSchema,
+  signerName: z.string().trim().min(2, "Who agreed to it?").max(120),
+  signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the date it was agreed"),
+  note: z.string().trim().max(500).optional(),
+  // The older, smaller form: a preset for the payment rows. Kept so
+  // nothing that calls it the old way breaks; the rows below win.
+  preset: z.enum(["FULL", "DEPOSIT_BALANCE", "INSTALLMENTS"]).optional(),
+  // Which quote, and which of its rows, the handshake covered. Left out,
+  // every open row on the deal's primary quote.
+  quoteId: z.string().trim().optional(),
+  lineItemIds: z.array(z.string().trim().min(1)).max(200).optional(),
+  discount: discountInputSchema.optional(),
+  paymentTerms: z.string().trim().max(120).optional(),
+  schedule: z.array(newScheduleRowSchema).max(60).optional(),
+  // True when the rows above are the quote's own table, untouched.
+  scheduleFromQuote: z.boolean().optional(),
+});
+
+export type AwardInput = Omit<z.infer<typeof awardSchema>, "dealId">;
+
 // For a job won on a handshake: writes the Sales Order the quote implies,
 // marks it signed on paper, and awards it. Keeps every project backed by
-// a signed agreement, so the budget always has one source.
+// a signed agreement, so the budget always has one source. The form can
+// say which rows were agreed, take a discount off the whole, and write
+// the payment rows out in full; left blank, it is every open row at the
+// workspace's usual terms.
 export async function awardWithoutPaperwork(
   dealId: string,
-  input: { signerName: string; signedOn: string; note?: string; preset?: SchedulePreset },
+  input: AwardInput,
 ): Promise<ActionState & { projectId?: string }> {
   const { organizationId, userId } = await requireSession();
-  const parsed = z
-    .object({
-      dealId: idSchema,
-      signerName: z.string().trim().min(2, "Who agreed to it?").max(120),
-      signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the date it was agreed"),
-      note: z.string().trim().max(500).optional(),
-      preset: z.enum(["FULL", "DEPOSIT_BALANCE", "INSTALLMENTS"]).optional(),
-    })
-    .safeParse({ dealId, ...input });
+  const parsed = awardSchema.safeParse({ dealId, ...input });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form" };
 
   const deal = await prisma.deal.findFirst({
@@ -288,6 +314,11 @@ export async function awardWithoutPaperwork(
           id: true,
           status: true,
           updatedAt: true,
+          paymentTerms: true,
+          payments: {
+            orderBy: { position: "asc" },
+            select: { label: true, kind: true, percent: true, amountCents: true, dueOn: true, terms: true },
+          },
           lineItems: {
             orderBy: { position: "asc" },
             select: {
@@ -296,6 +327,8 @@ export async function awardWithoutPaperwork(
               description: true,
               quantity: true,
               unitPriceCents: true,
+              discountCents: true,
+              discountPercent: true,
               tag: true,
               serviceType: true,
               cancelledAt: true,
@@ -317,8 +350,20 @@ export async function awardWithoutPaperwork(
     return { error: `CON-${standing.number} is already out — use Mark signed on it instead.` };
   }
 
-  const quote = pickPrimaryQuote(deal.quotes);
-  const rows = (quote?.lineItems ?? []).filter((line) => !line.cancelledAt);
+  // The quote named, if it is this deal's; otherwise the one the
+  // pipeline reads the deal's value from.
+  const quote =
+    (parsed.data.quoteId ? deal.quotes.find((candidate) => candidate.id === parsed.data.quoteId) : undefined) ??
+    pickPrimaryQuote(deal.quotes);
+  const openRows = (quote?.lineItems ?? []).filter((line) => !line.cancelledAt);
+  let rows = openRows;
+  if (parsed.data.lineItemIds) {
+    const wanted = new Set(parsed.data.lineItemIds);
+    rows = openRows.filter((line) => wanted.has(line.id));
+    if (rows.length !== wanted.size) {
+      return { error: "A ticked row is no longer open on the quote. Reload and try again." };
+    }
+  }
   if (rows.length === 0) return { error: "Write the quote first — there is nothing priced to award." };
 
   const template =
@@ -352,24 +397,48 @@ export async function awardWithoutPaperwork(
     description: line.description,
     quantity: line.quantity,
     unitPriceCents: line.unitPriceCents,
+    discountCents: line.discountCents,
+    discountPercent: line.discountPercent,
     tag: line.tag,
     serviceType: line.serviceType,
     unitCostCents: line.product ? line.product.costCents : null,
     position,
   }));
-  const totalCents = contractTotalCents(lineItems);
+  const subtotalCents = contractSubtotalCents(lineItems);
+  const discount = resolveDiscount(parsed.data.discount ?? { percent: null, cents: 0 }, subtotalCents);
+  const totalCents = contractTotalCents(lineItems, discount.discountCents);
 
+  // Where the payment rows come from: the quote's own table, untouched,
+  // carries over exactly as the quote had it (a fixed amount as the share
+  // of the quote it was); otherwise the rows written on the form win; a
+  // form that sends neither gets the quote's table, else the workspace's
+  // preset dated from the day it was agreed.
+  const quoteTotalCents = quote ? contractSubtotalCents(quote.lineItems) : 0;
+  const hasQuoteTable = Boolean(quote && quote.payments.length > 0);
+  const fromQuote = parsed.data.schedule
+    ? Boolean(parsed.data.scheduleFromQuote) && hasQuoteTable
+    : hasQuoteTable && !parsed.data.preset;
   const preset = (parsed.data.preset ?? organization.defaultPaymentPreset) as SchedulePreset;
-  const schedule = computeSchedule(
-    presetRows({
-      preset,
-      start: parsed.data.signedOn,
-      depositPercent: organization.defaultDepositPercent,
-      count: organization.defaultInstallmentCount,
-      unit: "MONTH",
-    }),
-    totalCents,
-  );
+  const scheduleInput: ScheduleRowInput[] =
+    fromQuote && quote
+      ? quoteTableAsShares(quote.payments, quoteTotalCents)
+      : parsed.data.schedule
+        ? parsed.data.schedule
+        : presetRows({
+            preset,
+            start: parsed.data.signedOn,
+            depositPercent: organization.defaultDepositPercent,
+            count: organization.defaultInstallmentCount,
+            unit: "MONTH",
+          });
+  const schedule = computeSchedule(scheduleInput, totalCents);
+  // Rows written by hand have a screen to be refused on: an over-total
+  // table is refused rather than stored with a $0 balance that bills the
+  // customer more than the job was awarded for.
+  if (parsed.data.schedule && !fromQuote && schedule.rows.some((row) => row.amountCents < 0)) {
+    return { error: "The fixed payments add up to more than the job total" };
+  }
+  const paymentTerms = parsed.data.paymentTerms || quote?.paymentTerms || organization.defaultPaymentTerms;
 
   const contractId = await prisma.$transaction(async (tx) => {
     const numbered = await tx.organization.update({
@@ -379,6 +448,19 @@ export async function awardWithoutPaperwork(
     });
     const number = numbered.nextContractNumber - 1;
 
+    const payments = schedule.rows.map((row, position) => ({
+      organizationId,
+      label: row.label,
+      kind: row.kind,
+      percent: row.kind === "PERCENT" ? row.percent : null,
+      // Never below zero: there is no screen to refuse an over-total
+      // schedule on, and a negative row would block every later edit.
+      amountCents: Math.max(0, row.amountCents),
+      dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
+      terms: row.terms ?? null,
+      position,
+    }));
+
     const context = await loadMergeContext({
       organizationId,
       contactId: deal.contactId,
@@ -386,7 +468,14 @@ export async function awardWithoutPaperwork(
       dealId: deal.id,
       quoteId: quote?.id ?? null,
       contractNumber: `CON-${number}`,
-      paymentTerms: organization.defaultPaymentTerms,
+      lineItems,
+      discountCents: discount.discountCents,
+      payments: payments.map((payment) => ({
+        label: payment.label,
+        amountCents: payment.amountCents,
+        dueOn: payment.dueOn,
+      })),
+      paymentTerms,
       signerName: owner?.name ?? null,
     });
 
@@ -411,19 +500,14 @@ export async function awardWithoutPaperwork(
         signedNote: parsed.data.note || "Awarded without paperwork",
         publicToken: publicToken(),
         senderSignerName: owner?.name ?? null,
-        paymentTerms: organization.defaultPaymentTerms,
+        paymentTerms,
+        discountCents: discount.discountCents,
+        discountPercent: discount.discountPercent,
+        // Remembered so the contract page can say the table came from
+        // the quote, and flag a later change to it.
+        scheduleFromQuote: fromQuote,
         lineItems: { create: lineItems },
-        payments: {
-          create: schedule.rows.map((row, position) => ({
-            organizationId,
-            label: row.label,
-            kind: row.kind,
-            percent: row.kind === "PERCENT" ? row.percent : null,
-            amountCents: row.amountCents,
-            dueOn: row.dueOn ? isoToDate(row.dueOn) : null,
-            position,
-          })),
-        },
+        payments: { create: payments },
       },
       select: { id: true },
     });
@@ -434,6 +518,8 @@ export async function awardWithoutPaperwork(
   const projectId = await awardFromContract(organizationId, contractId);
   if (projectId) revalidateProject(projectId);
   revalidatePath("/dashboard/contracts");
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath("/dashboard/contracts/tracker");
   return { success: "Awarded", projectId: projectId ?? undefined };
 }
 

@@ -20,7 +20,7 @@ export default async function ContractsPage() {
       include: {
         contact: { select: { id: true, name: true, company: { select: { name: true, logoUrl: true } } } },
         company: { select: { id: true, name: true, logoUrl: true } },
-        lineItems: { select: { quantity: true, unitPriceCents: true } },
+        lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true } },
       },
     }),
     prisma.contractTemplate.count({ where: { organizationId } }),
@@ -114,7 +114,7 @@ export default async function ContractsPage() {
                       <StatusBadge status={contract.status} />
                     </td>
                     <td className="num text-right">
-                      {contract.lineItems.length ? formatCents(contractTotalCents(contract.lineItems)) : <span className="faint">—</span>}
+                      {contract.lineItems.length ? formatCents(contractTotalCents(contract.lineItems, contract.discountCents)) : <span className="faint">—</span>}
                     </td>
                     <td className="faint text-xs">{formatDate(contract.createdAt, timeZone)}</td>
                   </tr>

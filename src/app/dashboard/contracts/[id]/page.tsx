@@ -6,7 +6,7 @@ import { getTimeZone } from "@/lib/organization";
 import { formatDate, formatDateTime, formatCents } from "@/lib/format";
 import { canUserSend, contractTotalCents } from "@/lib/contracts";
 import { dateToIso, todayIso } from "@/lib/payments";
-import { computeQuoteTotals } from "@/lib/quote-math";
+import { computeQuoteTotals, lineNetCents } from "@/lib/quote-math";
 import { LINE_ITEM_TAGS } from "@/lib/constants";
 import { DIRECTION_LABEL } from "@/lib/direction";
 import {
@@ -79,8 +79,11 @@ export default async function ContractDetailPage({
   // tracker, else the contact's own.
   const recipient = contract.company ?? contract.contact.company ?? null;
   const totals = computeQuoteTotals(contract.lineItems);
-  const totalCents = contractTotalCents(contract.lineItems);
+  const subtotalCents = totals.totalCents;
+  const totalCents = contractTotalCents(contract.lineItems, contract.discountCents);
   const activeTags = LINE_ITEM_TAGS.filter((tag) => totals.byTag[tag] !== 0);
+  const anyLineDiscount = contract.lineItems.some((item) => item.discountCents > 0);
+  const anyDiscount = anyLineDiscount || contract.discountCents > 0;
   const reminderMessage = `Hi ${contract.contact.name}, a quick reminder that ${contract.title} (CON-${contract.number}) is waiting for your signature. You can read and sign it here: {{link}}`;
 
   // "Who can send" from the template, enforced again in the action.
@@ -203,6 +206,7 @@ export default async function ContractDetailPage({
                       <th>Tag</th>
                       <th className="text-right">Qty</th>
                       <th className="text-right">Unit</th>
+                      {anyLineDiscount && <th className="text-right">Discount</th>}
                       <th className="text-right">Total</th>
                     </tr>
                   </thead>
@@ -216,16 +220,45 @@ export default async function ContractDetailPage({
                         <td><TagBadge tag={item.tag} /></td>
                         <td className="num text-right">{item.quantity}</td>
                         <td className="num text-right">{formatCents(item.unitPriceCents)}</td>
-                        <td className="num text-right font-medium">{formatCents(Math.round(item.quantity * item.unitPriceCents))}</td>
+                        {anyLineDiscount && (
+                          <td className="num text-right text-[var(--ok)]" data-testid="contract-line-discount">
+                            {item.discountCents > 0 ? `−${formatCents(item.discountCents)}` : ""}
+                            {item.discountPercent !== null && item.discountCents > 0 && (
+                              <span className="faint block text-xs">{item.discountPercent}% off</span>
+                            )}
+                          </td>
+                        )}
+                        <td className="num text-right font-medium">{formatCents(lineNetCents(item))}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
+                    {anyDiscount && (
+                      <tr>
+                        <td colSpan={anyLineDiscount ? 5 : 4} className="text-right text-xs">
+                          {activeTags.map((tag) => (
+                            <span key={tag} className="ml-3 faint">{tag.charAt(0) + tag.slice(1).toLowerCase().replace("_", " ")} {formatCents(totals.byTag[tag])}</span>
+                          ))}
+                          <span className="ml-4 font-semibold text-[var(--text)]">Subtotal</span>
+                        </td>
+                        <td className="num text-right font-medium" data-testid="contract-subtotal">{formatCents(subtotalCents)}</td>
+                      </tr>
+                    )}
+                    {contract.discountCents > 0 && (
+                      <tr>
+                        <td colSpan={anyLineDiscount ? 5 : 4} className="text-right text-xs">
+                          <span className="font-semibold text-[var(--text)]">Discount</span>
+                          {contract.discountPercent !== null && <span className="faint ml-2">{contract.discountPercent}% off the subtotal</span>}
+                        </td>
+                        <td className="num text-right font-medium text-[var(--ok)]" data-testid="contract-discount">−{formatCents(contract.discountCents)}</td>
+                      </tr>
+                    )}
                     <tr>
-                      <td colSpan={4} className="text-right text-xs">
-                        {activeTags.map((tag) => (
-                          <span key={tag} className="ml-3 faint">{tag.charAt(0) + tag.slice(1).toLowerCase().replace("_", " ")} {formatCents(totals.byTag[tag])}</span>
-                        ))}
+                      <td colSpan={anyLineDiscount ? 5 : 4} className="text-right text-xs">
+                        {!anyDiscount &&
+                          activeTags.map((tag) => (
+                            <span key={tag} className="ml-3 faint">{tag.charAt(0) + tag.slice(1).toLowerCase().replace("_", " ")} {formatCents(totals.byTag[tag])}</span>
+                          ))}
                         <span className="ml-4 font-semibold text-[var(--text)]">Total</span>
                       </td>
                       <td className="num text-right text-base font-semibold" data-testid="contract-total">{formatCents(totalCents)}</td>

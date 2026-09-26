@@ -82,7 +82,7 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           company: { select: { id: true, name: true, logoUrl: true } },
         },
       },
-      project: { select: { id: true, number: true, name: true, stage: true } },
+      project: { select: { id: true, number: true, name: true, stage: true, awardedAt: true } },
       quotes: {
         orderBy: { createdAt: "desc" },
         select: {
@@ -106,6 +106,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
               description: true,
               quantity: true,
               unitPriceCents: true,
+              discountCents: true,
+              discountPercent: true,
               tag: true,
               cancelledAt: true,
               contractLines: {
@@ -134,12 +136,13 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           declinedAt: true,
           publicToken: true,
           paymentTerms: true,
+          discountCents: true,
           reminderCount: true,
           lastReminderAt: true,
           senderSignerName: true,
           company: { select: { id: true, name: true, logoUrl: true } },
           contact: { select: { id: true, name: true, company: { select: { name: true, logoUrl: true } } } },
-          lineItems: { select: { quantity: true, unitPriceCents: true } },
+          lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true } },
           payments: {
             orderBy: { position: "asc" },
             select: {
@@ -189,6 +192,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
         description: item.description,
         quantity: item.quantity,
         unitPriceCents: item.unitPriceCents,
+        discountCents: item.discountCents,
+        discountPercent: item.discountPercent,
         tag: item.tag,
         cancelled: Boolean(item.cancelledAt),
         // Only contracts still standing count; a cancelled or declined
@@ -206,7 +211,7 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
       })),
     })),
     contracts: deal.contracts.map((contract) => {
-      const totalCents = contractTotalCents(contract.lineItems);
+      const totalCents = contractTotalCents(contract.lineItems, contract.discountCents);
       // Paid is what was actually recorded, partial payments included —
       // not the sum of rows that happen to be ticked.
       const paidCents = contract.payments.reduce((sum, row) => sum + paidCentsOf(row), 0);

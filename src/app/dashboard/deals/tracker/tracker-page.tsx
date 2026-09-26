@@ -3,12 +3,12 @@ import { requireSession } from "@/lib/session";
 import { getOrganization } from "@/lib/organization";
 import { loadTrackerDeal, loadTrackerDeals, loadTrackerPickers } from "@/lib/tracker";
 import { todayIso } from "@/lib/payments";
-import { formatCents } from "@/lib/format";
+import { formatCents, formatDate } from "@/lib/format";
 import { AwardWithoutPaperwork } from "@/app/dashboard/projects/award-without-paperwork";
 import { contractHoldsRows } from "@/lib/contracts";
 import { PageHeader, Card, CardHeader, EmptyState, StatusBadge, FormSuccess } from "@/components/ui";
 import { Avatar } from "@/components/avatar";
-import { IconClock, IconFileText } from "@/components/icons";
+import { IconClock, IconFileText, IconHardHat } from "@/components/icons";
 import { TrackerPicker } from "./tracker-picker";
 import { TrackerGrid } from "./tracker-grid";
 import { TrackerContracts } from "./tracker-contracts";
@@ -17,8 +17,9 @@ export type TrackerSearchParams = Promise<{ dealId?: string; quoteId?: string; c
 
 // The Contract Coordinator. Lives under Pipeline and under Contracts — same page,
 // two addresses — so it is one click away from either side of the job.
-// Blank until a deal is picked; then the split grid for its quote and
-// the contracts already made from it.
+// Blank until a deal is picked; then the deal's numbers, its job (or the
+// way to award one), the split grid for its quote and the contracts
+// already made from it.
 export async function DealTrackerPage({
   searchParams,
   basePath,
@@ -57,6 +58,7 @@ export async function DealTrackerPage({
   const signedOwedCents = incoming
     .filter((contract) => contract.status === "SIGNED")
     .reduce((sum, contract) => sum + contract.totalCents - contract.paidCents, 0);
+  const today = todayIso(organization.timeZone);
 
   return (
     <div>
@@ -89,7 +91,7 @@ export async function DealTrackerPage({
           <EmptyState
             icon={<IconClock size={20} />}
             title="Pick a deal to start"
-            body="The grid shows the quote's rows down the side and a column for each contract you want to send. Nothing is created until you say so."
+            body="The quote's rows run across the top with a tick column for each contract you want to send; each contract is a card below. Nothing is created until you say so."
           />
         </Card>
       ) : (
@@ -117,7 +119,7 @@ export async function DealTrackerPage({
                   </p>
                 </div>
               </div>
-              <dl className="grid grid-cols-2 gap-4 text-center sm:grid-cols-4">
+              <dl className="grid grid-cols-3 gap-6 text-center">
                 <div>
                   <dt className="eyebrow">Open rows</dt>
                   <dd className="num text-lg font-semibold">{openRows}</dd>
@@ -131,28 +133,73 @@ export async function DealTrackerPage({
                   <dd className="num text-lg font-semibold" data-testid="tracker-outstanding">{formatCents(outstandingCents)}</dd>
                   <dd className="faint num text-xs" data-testid="tracker-signed-owed">Signed: {formatCents(signedOwedCents)}</dd>
                 </div>
-                <div>
-                  <dt className="eyebrow">Job</dt>
-                  <dd className="text-sm font-semibold">
-                    {deal.project ? (
-                      <Link
-                        href={`/dashboard/projects/${deal.project.id}`}
-                        className="link num"
-                        data-testid="tracker-project"
-                      >
-                        PRJ-{deal.project.number}
-                      </Link>
-                    ) : (
-                      <AwardWithoutPaperwork
-                        dealId={deal.id}
-                        today={todayIso(organization.timeZone)}
-                        disabled={!quote}
-                      />
-                    )}
-                  </dd>
-                </div>
               </dl>
             </div>
+          </Card>
+
+          {/* The job this deal is, or the way to make it one. Its own card,
+              in plain words, so a handshake win is never hunted for. */}
+          <Card lit>
+            {deal.project ? (
+              <div className="flex flex-wrap items-center justify-between gap-4 p-5" data-testid="job-card">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl"
+                    style={{ background: "color-mix(in srgb, var(--brand) 14%, transparent)", color: "var(--brand)" }}
+                  >
+                    <IconHardHat size={20} />
+                  </div>
+                  <div>
+                    <p className="eyebrow">Job</p>
+                    <p className="text-base font-semibold">
+                      <Link href={`/dashboard/projects/${deal.project.id}`} className="link num" data-testid="tracker-project">
+                        PRJ-{deal.project.number}
+                      </Link>
+                      {" · "}
+                      {deal.project.name} <StatusBadge status={deal.project.stage} />
+                    </p>
+                    <p className="faint text-xs">
+                      Awarded {formatDate(deal.project.awardedAt, organization.timeZone)}. New paperwork made here lands on this job.
+                    </p>
+                  </div>
+                </div>
+                <Link href={`/dashboard/projects/${deal.project.id}`} className="btn btn-ghost btn-sm">
+                  <IconHardHat size={13} />
+                  Open the job
+                </Link>
+              </div>
+            ) : (
+              <AwardWithoutPaperwork
+                key={quote?.id ?? "none"}
+                dealId={deal.id}
+                today={today}
+                defaults={pickers.paymentDefaults}
+                sentContract={
+                  deal.contracts
+                    .filter((contract) => !contract.payable && contract.status === "SENT")
+                    .map((contract) => ({ id: contract.id, number: contract.number, title: contract.title }))[0] ?? null
+                }
+                quote={
+                  quote
+                    ? {
+                        id: quote.id,
+                        number: quote.number,
+                        paymentTerms: quote.paymentTerms,
+                        payments: quote.payments,
+                        lineItems: quote.lineItems.map((row) => ({
+                          id: row.id,
+                          name: row.name,
+                          quantity: row.quantity,
+                          unitPriceCents: row.unitPriceCents,
+                          discountCents: row.discountCents,
+                          tag: row.tag,
+                          cancelled: row.cancelled,
+                        })),
+                      }
+                    : null
+                }
+              />
+            )}
           </Card>
 
           {!quote ? (
@@ -172,7 +219,7 @@ export async function DealTrackerPage({
             <Card lit>
               <CardHeader
                 title={`Split QUO-${quote.number} · ${quote.title}`}
-                subtitle="Each column is one contract. Tick the rows that belong on it; a row can be on several. Untouched rows stay open on the deal."
+                subtitle="Tick each row under the contract it belongs on — a row can be on several — then fill in each contract's card below. Untouched rows stay open on the deal."
                 actions={
                   <Link href={`/dashboard/quotes/${quote.id}`} className="btn btn-ghost btn-sm">
                     <IconFileText size={13} />
@@ -181,13 +228,17 @@ export async function DealTrackerPage({
                 }
               />
               <div className="p-5">
+                {/* Keyed on the contract count too: creating contracts lands
+                    back here with the rows now on paperwork, and the grid
+                    must start clean rather than keep the ticks that would
+                    make the same contracts again on a second click. */}
                 <TrackerGrid
-                  key={quote.id}
+                  key={`${quote.id}:${deal.contracts.length}`}
                   dealId={deal.id}
                   quote={quote}
                   dealContact={{ id: deal.contact.id, companyId: deal.contact.companyId }}
                   pickers={pickers}
-                  today={todayIso(organization.timeZone)}
+                  today={today}
                   returnTo={basePath}
                 />
               </div>
