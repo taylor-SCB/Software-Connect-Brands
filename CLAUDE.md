@@ -136,6 +136,11 @@ Favorite Contacts / Companies and Contacts / Companies with Deals sub-panes
 in the sidebar, plus **Import CSV** on both lists (one file of any size,
 batched with a progress bar, companies auto-created from a bare name,
 re-import updates instead of doubling, template download; Sept 13, 2026;
+Sept 27, 2026: Mailing / Home / Person / Google "Address 1" City and
+State headers and "Organization Title" are recognised, Job Title beats
+Outlook's Mr./Ms. Title, a single Location column like "Austin, TX" is
+split into City and State, and the preview shows Title and City, State
+and names every column it is leaving out;
 a 26-finding bug audit the same day was fixed in full and its cases are in
 the browser suite),
 pipeline (Lead → Contacted → Quote Sent → Contract Sent → Won/Lost; every
@@ -365,7 +370,7 @@ added Sept 27, 2026), the 44-step quotes suite (Sept 15, 2026; line ids,
 Save as product, suppliers, software terms, the payment table, the
 customer's copy, the sales rep, and from Sept 27, 2026 the discount on
 the whole quote end to end),
-the 17-step contacts import + filters + favorites suite and the
+the 18-step contacts import + filters + favorites suite and the
 200,000-row load test (both Sept 13, 2026; the load test seeds in SQL,
 takes several minutes, and must stay under its 2-second page budget),
 from Sept 14, 2026 the 9-step company enrichment suite, the 28-step

@@ -5,7 +5,7 @@
 // batches are what keep each request small.
 
 import { parseCsvLines } from "@/lib/csv";
-import { normalizeState } from "@/lib/states";
+import { normalizeState, usStateCode } from "@/lib/states";
 import { CONTACT_STATUSES, type ContactStatusValue } from "@/lib/constants";
 
 export const IMPORT_BATCH_SIZE = 500;
@@ -20,6 +20,7 @@ export const CONTACT_CSV_COLUMNS = [
   "website",
   "city",
   "state",
+  "location",
   "birthday",
   "status",
   "companyName",
@@ -44,6 +45,7 @@ export const CONTACT_CSV_LABELS: Record<ContactCsvColumn, string> = {
   website: "Website",
   city: "City",
   state: "State",
+  location: "Location (City, State)",
   birthday: "Birthday",
   status: "Status",
   companyName: "Company Name",
@@ -64,7 +66,9 @@ export const TEMPLATE_HEADERS = [
   "Company Status", "Industry", "Company Type",
 ];
 
-// Header spellings people actually use. Exact matches win. A looser
+// Header spellings people actually use, best first: when two headers
+// both fit (Outlook's "Title" is Mr./Ms. and its "Job Title" is the job),
+// the one earlier in the list wins. Exact matches win. A looser
 // "contains" pass then mops up the rest, but only for the fields where a
 // partial header is unambiguous (an "E-mail 1 - Value" column is an email;
 // a "Contact owner" column is NOT a name), and never for a header carrying
@@ -83,12 +87,13 @@ const ALIASES: Record<ContactCsvColumn, string[]> = {
   name: ["name", "full name", "contact", "contact name", "person", "customer", "customer name", "lead", "lead name", "client", "client name"],
   firstName: ["first name", "first", "given name", "firstname", "fname"],
   lastName: ["last name", "last", "surname", "family name", "lastname", "lname"],
-  title: ["title", "job title", "position", "job", "occupation", "contact title"],
+  title: ["job title", "title", "position", "organization title", "organisation title", "contact title", "person title", "contact job title", "job", "occupation"],
   email: ["email", "e mail", "email address", "contact email", "primary email", "e mail address", "mail", "email 1", "e mail 1", "e mail 1 value", "email 1 value"],
   phone: ["phone", "phone number", "mobile", "cell", "cell phone", "mobile phone", "telephone", "contact phone", "direct", "direct phone", "primary phone", "tel", "phone 1", "phone 1 value", "mobile phone number"],
   website: ["website", "web", "url", "web site", "site", "linkedin", "contact website", "website 1", "website 1 value"],
-  city: ["city", "town", "contact city"],
-  state: ["state", "province", "st", "region", "contact state", "state province"],
+  city: ["city", "mailing city", "contact city", "person city", "home city", "address city", "address 1 city", "primary city", "physical city", "street city", "town"],
+  state: ["state", "mailing state", "mailing state province", "mailing province", "contact state", "person state", "home state", "address state", "address 1 state", "address 1 region", "state province", "state region", "state province region", "primary state", "physical state", "province", "st", "region"],
+  location: ["location", "city state", "city and state", "city st", "contact location", "person location", "home location", "locality"],
   birthday: ["birthday", "birth date", "date of birth", "dob", "birthdate", "born"],
   status: ["status", "contact status", "stage", "lead status", "type of contact"],
 };
@@ -106,12 +111,19 @@ const CONTAINS: Partial<Record<ContactCsvColumn, string[]>> = {
   companyType: ["company type", "account type", "business type"],
   firstName: ["first name", "given name"],
   lastName: ["last name", "surname", "family name"],
-  title: ["job title"],
+  title: ["job title", "title"],
+  city: ["city"],
+  state: ["state", "province"],
+  location: ["location"],
   email: ["email", "e mail"],
   phone: ["phone", "mobile", "cell", "telephone"],
   website: ["website", "web site"],
   birthday: ["birthday", "birth date", "date of birth"],
 };
+
+// These match whole words only, so "Real Estate" is not a State and
+// "Subtitle" is not a Title.
+const WHOLE_WORDS = new Set<ContactCsvColumn>(["title", "city", "state", "location"]);
 
 // A header carrying any of these is never a partial match: it describes
 // a label, a code, a different person, or a different thing entirely.
@@ -120,7 +132,7 @@ const DISQUALIFIERS = ["label", "phonetic", "middle", "owner", "source", "id", "
 const CLAIM_ORDER: ContactCsvColumn[] = [
   "companyName", "companyPhone", "companyEmail", "companyWebsite", "companyCity", "companyState", "companyStatus",
   "industry", "companyType", "firstName", "lastName", "name", "title", "email", "phone", "website", "city", "state",
-  "birthday", "status",
+  "location", "birthday", "status",
 ];
 
 function normalizeHeader(header: string) {
@@ -132,10 +144,13 @@ export function detectContactColumns(headers: string[]): Partial<Record<ContactC
   const used = new Set<number>();
   const result: Partial<Record<ContactCsvColumn, number>> = {};
   for (const column of CLAIM_ORDER) {
-    const index = normalized.findIndex((h, i) => !used.has(i) && ALIASES[column].includes(h));
-    if (index >= 0) {
-      result[column] = index;
-      used.add(index);
+    for (const alias of ALIASES[column]) {
+      const index = normalized.findIndex((h, i) => !used.has(i) && h === alias);
+      if (index >= 0) {
+        result[column] = index;
+        used.add(index);
+        break;
+      }
     }
   }
   for (const column of CLAIM_ORDER) {
@@ -146,6 +161,7 @@ export function detectContactColumns(headers: string[]): Partial<Record<ContactC
       if (used.has(i)) return false;
       const tokens = h.split(" ");
       if (tokens.some((token) => DISQUALIFIERS.includes(token))) return false;
+      if (WHOLE_WORDS.has(column)) return words.some((word) => ` ${h} `.includes(` ${word} `));
       return words.some((word) => h.includes(word));
     });
     if (index >= 0) {
@@ -255,6 +271,24 @@ export function splitList(raw: string): { values: string[]; note?: string } {
   return { values };
 }
 
+// One "Location" cell into a city and a state: "Austin, TX",
+// "Austin, Texas, United States", "Austin TX 78701". A lone word that is
+// not a state is taken as the city.
+export function parseLocation(raw: string): { city: string | null; state: string | null } {
+  const value = raw.trim().replace(/\s+/g, " ").replace(/[\s,]*\d{5}(-\d{4})?$/, "");
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1 && /^(usa?|u\.s\.a?\.?|united states( of america)?)$/i.test(parts[parts.length - 1])) parts.pop();
+  if (parts.length === 0) return { city: null, state: null };
+  if (parts.length > 1) {
+    return { city: parts[0].slice(0, 120), state: normalizeState(parts[1]) };
+  }
+  const only = parts[0];
+  if (usStateCode(only)) return { city: null, state: usStateCode(only) };
+  const tail = only.match(/^(.+?)\s+([A-Za-z]{2}\.?)$/);
+  if (tail && usStateCode(tail[2])) return { city: tail[1].slice(0, 120), state: usStateCode(tail[2]) };
+  return { city: only.slice(0, 120), state: null };
+}
+
 function cleanEmail(raw: string) {
   const value = raw.trim().toLowerCase();
   if (!value) return { email: null as string | null };
@@ -331,6 +365,9 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
     // Website, City, State and Status then describe the company, so a plain
     // companies sheet imports with everything filled in.
     const companyOnly = !name;
+    const location = parseLocation(cell("location"));
+    const city = cell("city").slice(0, 120) || location.city;
+    const state = normalizeState(cell("state")) ?? location.state;
     const industries = splitList(cell("industry"));
     if (industries.note) notes.push(industries.note);
     const companyTypes = splitList(cell("companyType"));
@@ -345,8 +382,8 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
         phone: cell("companyPhone").slice(0, 40) || (companyOnly ? cell("phone").slice(0, 40) : "") || null,
         email: companyEmail.email ?? bareEmail.email,
         website: cleanWebsite(cell("companyWebsite")) ?? (companyOnly ? cleanWebsite(cell("website")) : null),
-        city: cell("companyCity").slice(0, 120) || (companyOnly ? cell("city").slice(0, 120) : "") || null,
-        state: normalizeState(cell("companyState")) ?? (companyOnly ? normalizeState(cell("state")) : null),
+        city: cell("companyCity").slice(0, 120) || (companyOnly ? city : null) || null,
+        state: normalizeState(cell("companyState")) ?? (companyOnly ? state : null),
         status: companyStatus.status ?? (companyOnly ? status.status : null),
         industries: industries.values,
         companyTypes: companyTypes.values,
@@ -363,8 +400,8 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
       email: email.email,
       phone: cell("phone").slice(0, 40) || null,
       website: cleanWebsite(cell("website")),
-      city: cell("city").slice(0, 120) || null,
-      state: normalizeState(cell("state")),
+      city: city || null,
+      state,
       birthday: birthday.birthday,
       status: status.status,
       company,

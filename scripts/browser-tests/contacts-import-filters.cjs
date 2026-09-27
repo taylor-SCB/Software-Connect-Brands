@@ -438,6 +438,40 @@ async function rowCount(page, testId) {
   await page.getByTestId("filter-attn").click();
   await page.waitForURL(/fav=1.*attn=1|attn=1.*fav=1/);
 
+  log("import v2 (Sept 27, 2026): Mailing City / Mailing State and a Location column land in City and State, Job Title beats Outlook's Mr./Ms. Title, the preview shows Title and City, State and names the columns it leaves out");
+  const v2 = [
+    "Name,Title,Email,Mailing City,Mailing State,Favorite Color",
+    "Mia Mailing,Operations Manager,mia@mailing.test,Austin,texas,Blue",
+  ];
+  const v2Path = path.join(OUT, "mailing.csv");
+  fs.writeFileSync(v2Path, v2.join("\r\n") + "\r\n");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await page.getByTestId("import-csv").click();
+  await page.getByTestId("import-file").setInputFiles(v2Path);
+  await page.getByTestId("import-summary").waitFor();
+  const previewRow = page.locator("tr", { hasText: "Mia Mailing" });
+  assert.ok(await previewRow.getByText("Operations Manager").isVisible(), "preview shows the Title");
+  assert.ok(await previewRow.getByText("Austin, TX").isVisible(), "preview shows City, State");
+  assert.match(await page.getByTestId("import-unused").textContent(), /"Favorite Color"/, "unused column named");
+  await shot(page, "08b-import-v2-preview");
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 1 row").waitFor({ timeout: 60000 });
+  await page.getByTestId("import-done").click();
+  const mia = (await sql(`SELECT title, city, state FROM "Contact" WHERE email='mia@mailing.test' AND "organizationId"=$1`, [org])).rows[0];
+  assert.deepEqual({ ...mia }, { title: "Operations Manager", city: "Austin", state: "TX" }, "Mailing City / State imported");
+  const v2b = [
+    "Title,First Name,Last Name,Job Title,E-mail Address,Location",
+    'Mr.,Lou,Location,Site Lead,lou@location.test,"Dallas, Texas, United States"',
+  ];
+  fs.writeFileSync(v2Path, v2b.join("\r\n") + "\r\n");
+  await page.getByTestId("import-csv").click();
+  await page.getByTestId("import-file").setInputFiles(v2Path);
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 1 row").waitFor({ timeout: 60000 });
+  await page.getByTestId("import-done").click();
+  const lou = (await sql(`SELECT title, city, state FROM "Contact" WHERE email='lou@location.test' AND "organizationId"=$1`, [org])).rows[0];
+  assert.deepEqual({ ...lou }, { title: "Site Lead", city: "Dallas", state: "TX" }, "Job Title over Mr., Location split");
+
   log("mobile width: filter bar wraps, table scrolls, nothing overflows the page");
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(`${BASE}/dashboard/contacts`);
