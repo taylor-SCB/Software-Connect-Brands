@@ -112,6 +112,11 @@ async function login(page, who) {
   await page.fill("#add-user-email", MEMBER.email.toUpperCase());
   await page.fill("#add-user-title", "Estimator");
   await page.selectOption("#add-user-role", "MEMBER");
+  assert.equal(
+    await page.$eval("#add-user-role option", (option) => getComputedStyle(option).backgroundColor),
+    "rgb(21, 24, 31)",
+    "the role list is solid too",
+  );
   await page.click('button:has-text("Add and send invitation")');
   await page.waitForSelector(`text=Invitation sent to ${MEMBER.email}`, { timeout: 20000 });
   await waitForMail(1);
@@ -208,6 +213,10 @@ async function login(page, who) {
   await page.click('button:has-text("Email")');
   await page.waitForSelector('[data-testid="email-counter"]:has-text("0 of 40 sent today")', { timeout: 20000 });
   assert.match(await page.textContent('[data-testid="email-recipients"]'), /Alice Adams/);
+  // The open template list must be the solid overlay colour, not the
+  // see-through field colour it had on release day (Sept 27, 2026).
+  const optionBg = await page.$eval("#email-template option", (option) => getComputedStyle(option).backgroundColor);
+  assert.equal(optionBg, "rgb(21, 24, 31)", `template list background is ${optionBg}`);
   await page.selectOption("#email-template", { label: "Spring promo" });
   assert.equal(await page.inputValue("#email-subject"), "A spring offer for {{first_name}}");
   await page.click('button:has-text("Add Marketing File")');

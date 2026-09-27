@@ -48,7 +48,7 @@ export function AddUserForm() {
         </div>
         <div>
           <label className="label" htmlFor="add-user-role">Role</label>
-          <select id="add-user-role" name="role" className="input" defaultValue={state.kept?.role ?? "MEMBER"}>
+          <select id="add-user-role" name="role" className="select" defaultValue={state.kept?.role ?? "MEMBER"}>
             <option value="MEMBER">Member — everyday work, sends email</option>
             <option value="ADMIN">Admin — also users, settings and company files</option>
           </select>
@@ -128,7 +128,7 @@ export function UserRowActions({
             name="role"
             defaultValue={role}
             aria-label={`Role for ${name}`}
-            className="input input-sm !w-auto"
+            className="select input-sm !w-auto"
             disabled={pending}
             onChange={(event) => event.currentTarget.form?.requestSubmit()}
           >
