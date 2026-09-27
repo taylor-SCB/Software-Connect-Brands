@@ -98,12 +98,20 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
     for (let start = 0; start < plan.rows.length; start += IMPORT_BATCH_SIZE) {
       if (stopRef.current) break;
       const batch = plan.rows.slice(start, start + IMPORT_BATCH_SIZE).map((row) => ({ ...row, notes: undefined }));
-      let result: Awaited<ReturnType<typeof importContactsBatch>>;
-      try {
-        result = await importContactsBatch(batch);
-      } catch {
-        result = { error: "The connection dropped. Re-upload the same file to carry on where this left off." };
+      // A batch that fails is sent once more before the import stops. That
+      // is safe because a batch is idempotent: rows it already wrote are
+      // found and updated on the second go, never added twice.
+      let result: Awaited<ReturnType<typeof importContactsBatch>> | undefined;
+      for (let attempt = 0; attempt < 2 && !(result && !("error" in result)); attempt += 1) {
+        try {
+          result = await importContactsBatch(batch);
+        } catch {
+          result = {
+            error: `Rows ${(start + 1).toLocaleString()}–${Math.min(plan.rows.length, start + IMPORT_BATCH_SIZE).toLocaleString()} didn't go through. Re-upload the same file to carry on; rows already in are updated, not doubled.`,
+          };
+        }
       }
+      if (!result) break;
       if ("error" in result) {
         setPhase({ step: "finished", plan, done, totals, stopped: true, error: result.error });
         router.refresh();
