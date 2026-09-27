@@ -19,6 +19,7 @@ import { ListFilters } from "@/components/list-filters";
 import { Pagination } from "@/components/pagination";
 import { StarButton } from "@/components/star-button";
 import { ImportCsvButton } from "@/components/import-csv-button";
+import { EmailButton } from "@/components/email-composer";
 import { AutoPill } from "@/components/auto-pill";
 import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
@@ -112,6 +113,7 @@ export async function ContactsList({
         actions={
           <>
             <ImportCsvButton kind="contacts" />
+            <EmailButton />
             <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
               Add contact

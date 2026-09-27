@@ -23,7 +23,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // lookup here locked people out of their own workspace when a
         // phone capitalised the address for them.
         const user = await findLoginUser(email);
-        if (!user) return null;
+        // Taken off the account by its owner. Same answer as a wrong
+        // password: the login screen has nothing useful to add.
+        if (!user || user.removedAt) return null;
 
         const valid = await bcrypt.compare(password, user.passwordHash);
         if (!valid) return null;

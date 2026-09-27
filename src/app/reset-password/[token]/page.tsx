@@ -29,11 +29,17 @@ export default async function ResetPasswordPage({
     <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-12">
       <div className="fade-up w-full max-w-sm">
         <div className="card card-lit p-6">
-          <h1 className="page-title !text-2xl">Set a new password</h1>
+          <h1 className="page-title !text-2xl">
+            {found.ok && found.isInvite ? "Set your password" : "Set a new password"}
+          </h1>
 
           {found.ok ? (
             <>
-              <p className="muted mt-1 text-sm">Pick something you&apos;ll remember.</p>
+              <p className="muted mt-1 text-sm">
+                {found.isInvite
+                  ? "You've been added to the account. Pick a password to finish joining."
+                  : "Pick something you'll remember."}
+              </p>
               <ResetPasswordForm token={token} email={found.email} />
             </>
           ) : (

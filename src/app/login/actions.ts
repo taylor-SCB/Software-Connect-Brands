@@ -34,6 +34,10 @@ async function explainFailure(email: unknown, password: unknown) {
   // they're in.
   if (!(await bcrypt.compare(password, user.passwordHash))) return generic;
 
+  if (user.removedAt) {
+    return "This login was taken off its workspace. Ask the account owner if that's a mistake.";
+  }
+
   return STATUS_MESSAGES[user.organization.status] ?? generic;
 }
 

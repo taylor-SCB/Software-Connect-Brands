@@ -202,8 +202,23 @@ chips deciding what counts and cancelled work left out by default) and
 them blocking), per-workspace
 branding and time zone, Settings → My Account (title, mobile, avatar,
 change password) and Company Information (General, Branding with logo
-upload, Company Users, Compliance and Marketing file uploads), company
-logos and contact photos, and an operator console at `/admin` where signups
+upload, Company Users, Compliance and Marketing file uploads), **Company
+Users** (Sept 27, 2026: an owner or admin adds a teammate as Admin or
+Member and they get an emailed link to set their own password; role
+change, Resend invite, Remove and Restore — a removed user is kept, not
+deleted, because deleting a user cascades to their notes and activity,
+and cannot log in; a Member cannot manage users, settings, company files
+or templates), **email marketing** (Sept 27, 2026: one Email window
+opened from a contact, the Contacts list, any marketing file or any
+**Marketing Template** under Settings → Marketing; search and multi-pick
+contacts or "+ Add new contact", pick a template, attach marketing
+files; one individually addressed copy each, sent as the tenant's
+business name with replies to the sender, {{merge}} fields filled per
+person, the business address and an unsubscribe link at the foot, every
+send logged on the contact's Activity; **40 emails per user per day** in
+the workspace's time zone, with a counter in the window and on Company
+Users; unsubscribes at `/u/<token>` mark every contact with that address),
+company logos and contact photos, and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
@@ -228,10 +243,10 @@ are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
 
-- **No email is sent, ever.** No approval notice, no receipts, and **no
-  password reset** — a forgotten password today means editing the database
-  (a logged-in user can change their own under My Account). Everything else
-  waiting on email is blocked behind this. That includes ratesheets:
+- **Email goes out for three things only:** password reset, Company Users
+  invitations and email marketing (Sept 27, 2026). No approval notice, no
+  receipts, no invoices. Everything else waiting on email still is. That
+  includes ratesheets:
   "Send to partner" makes a link to copy and text or email by hand, and
   the Contract Coordinator's "Copy reminder", which copies a nudge with the signing
   link and logs it; the app says so on the screen.
@@ -311,9 +326,22 @@ are all blocking before the first paying customer.
 - **A signed contract records only the name typed and the time.** Enough for
   ESIGN/UETA, thin if one is ever disputed — no IP address, no email
   confirmation.
-- **"Who can send?" on a template can only list the workspace's one user.**
-  There is no way to invite a teammate yet, so the list is one name long
-  until team logins exist. The setting and its enforcement are built.
+- **Marketing email is sent from our address with the tenant's name on
+  it.** The From line reads the tenant's business name but the address
+  behind it is `EMAIL_FROM`, because only a domain verified with Resend may
+  send. Per-tenant sending domains are the future build Taylor agreed to.
+- **The email provider's own daily cap is shared by every tenant.** The
+  40-per-user allowance is ours; Resend's plan limit sits behind it and
+  covers every workspace plus resets and invitations. Check the plan
+  before a third or fourth sender goes live.
+- **A marketing send runs while the window is open.** Forty emails take
+  about half a minute, spaced for Resend's rate limit, inside a 60-second
+  route. Closing the tab mid-send can leave some sent without their
+  Activity line; a held slot frees itself after 15 minutes. A queue is the
+  answer for bigger lists, the same one the import needs.
+- **No opens, clicks or bounces are tracked,** and a template is plain
+  text (no images or layout). Attachments are the marketing files, at most
+  five and 10 MB together.
 
 ## Testing
 
@@ -326,7 +354,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Seventeen** are checked in at
+suite, and the delete-confirmation suite. **Eighteen** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -345,10 +373,12 @@ money + payments suite, the 26-step projects core suite (its handshake
 award now starts from the quote's own discount), the 22-step
 project money suite, the 34-step crews + time suite, the 43-step calendar
 suite and the 28-step properties + close out suite, the login-case and
-password-reset suites (Sept 18, 2026), and the 11-step overlay
-readability suite (Sept 20, 2026).
+password-reset suites (Sept 18, 2026), the 11-step overlay
+readability suite (Sept 20, 2026), and the 23-step email marketing +
+Company Users suite (Sept 27, 2026; needs the same fake email settings
+as `password-reset.cjs`).
 
-`password-reset.cjs` is the one suite that needs more than a database:
+`password-reset.cjs` and `email-marketing-users.cjs` are the suites that need more than a database:
 the login screen only offers the link when email is switched on, so the
 **server** has to be started with `RESEND_API_KEY`, `EMAIL_FROM` and
 `RESEND_ENDPOINT=http://localhost:3999/emails` in `.env`. Fake values are

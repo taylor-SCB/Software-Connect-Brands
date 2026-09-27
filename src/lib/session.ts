@@ -21,6 +21,7 @@ const currentUser = cache(async (userId: string) =>
       avatarUrl: true,
       isSuperAdmin: true,
       organizationId: true,
+      removedAt: true,
       organization: { select: { status: true } },
     },
   }),
@@ -37,7 +38,7 @@ export async function requireSession() {
 
   const user = await currentUser(session.user.id);
   // Deleted out from under a live session.
-  if (!user) redirect("/login");
+  if (!user || user.removedAt) redirect("/login");
   if (user.organization.status !== "ACTIVE") {
     redirect(`/login?status=${user.organization.status.toLowerCase()}`);
   }
