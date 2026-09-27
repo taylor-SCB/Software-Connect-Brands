@@ -359,7 +359,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Eighteen** are checked in at
+suite, and the delete-confirmation suite. **Nineteen** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -382,6 +382,17 @@ password-reset suites (Sept 18, 2026), the 11-step overlay
 readability suite (Sept 20, 2026), and the 23-step email marketing +
 Company Users suite (Sept 27, 2026; needs the same fake email settings
 as `password-reset.cjs`).
+
+**The local database is too fast to show timing bugs.** An 1,800-row
+import stopped after 500 on the live site (Sept 27, 2026) because one
+step ran a thousand writes in a single transaction and Prisma gives a
+transaction five seconds; locally that took a fraction of one. The live
+database is a few milliseconds away per round trip.
+`import-slow-db.cjs` runs the server through `slow-db-proxy.cjs`, which
+adds 8 ms each way (run instructions at the top of each). Anything that
+loops over hundreds of rows against the database gets run that way too,
+and never goes in one `$transaction` unless it truly must be
+all-or-nothing.
 
 `password-reset.cjs` and `email-marketing-users.cjs` are the suites that need more than a database:
 the login screen only offers the link when email is switched on, so the

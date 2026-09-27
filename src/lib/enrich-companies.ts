@@ -97,6 +97,8 @@ const needsSomething = (c: EnrichableCompany) => needsTags(c) || !c.phone || !c.
 
 type FilledField = "tagged" | "phonesFilled" | "websitesFilled";
 
+const WRITES_AT_ONCE = 8;
+
 // Fills the blanks on these companies from what the workspace already
 // has, and only the blanks: nothing a person typed is touched. Every
 // write keeps the company's updatedAt, so the lists stay in the order
@@ -215,10 +217,15 @@ export async function enrichCompanies(organizationId: string, companies: Enricha
       fields.push("websitesFilled");
     }
   }
-  if (writes.length > 0) {
-    const results = await prisma.$transaction(writes);
+  // Not one transaction: each write is already guarded on its own, and an
+  // import batch makes a thousand of them. Against the live database, a
+  // few milliseconds away, one transaction holding them all ran past
+  // Prisma's five-second limit and the import stopped (Sept 27, 2026).
+  // A few at a time, so a batch never takes every pooled connection.
+  for (let start = 0; start < writes.length; start += WRITES_AT_ONCE) {
+    const results = await Promise.all(writes.slice(start, start + WRITES_AT_ONCE));
     results.forEach((result, i) => {
-      counts[fields[i]] += result.count;
+      counts[fields[start + i]] += result.count;
     });
   }
   return counts;
