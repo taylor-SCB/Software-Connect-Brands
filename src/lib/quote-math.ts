@@ -75,25 +75,64 @@ export function termTotalCents(
   return Math.round(quantity * unitPriceCents * periods);
 }
 
-// The lines added up, net of each line's own discount. `grossCents` is
-// what they came to before any discount and `discountCents` the total
-// taken off, so a footer can print Subtotal / Discount / Total.
-export function computeQuoteTotals(lines: TotalableLine[]) {
+// A discount on the whole quote, as stored on the quote: the cents it
+// was last worked out to, and the percent it was typed as when it was.
+export type QuoteDiscount = {
+  discountCents?: number | null;
+  discountPercent?: number | null;
+};
+
+// What the whole-quote discount is worth against the lines' net
+// subtotal. Typed as a percent, it is re-priced from the percent here so
+// a stored figure can never disagree with the percent shown beside it;
+// typed as dollars, it is what was typed, capped at the subtotal so a
+// quote whose lines have since shrunk never prints a negative total (and
+// is worth the full amount again once the lines grow back).
+export function quoteDiscountCents(quote: QuoteDiscount | null | undefined, subtotalCents: number): number {
+  if (!quote) return 0;
+  const percent = quote.discountPercent;
+  if (percent !== null && percent !== undefined && Number.isFinite(percent)) {
+    return resolveDiscount({ percent, cents: 0 }, subtotalCents).discountCents;
+  }
+  return resolveDiscount({ percent: null, cents: quote.discountCents ?? 0 }, subtotalCents).discountCents;
+}
+
+// The lines added up, net of each line's own discount, less the discount
+// on the whole quote when one is passed. `grossCents` is what the lines
+// came to before any discount, `subtotalCents` what they come to after
+// their own discounts and before the quote's, and `discountCents` the
+// whole amount taken off, so a footer can print Subtotal / Discount /
+// Total from any of them and the figures always tie.
+//
+// `byTag` is net of the line discounts only: a discount on the whole
+// quote belongs to no one tag, so the tags add up to the subtotal.
+export function computeQuoteTotals(lines: TotalableLine[], quote?: QuoteDiscount | null) {
   const byTag = Object.fromEntries(
     LINE_ITEM_TAGS.map((tag) => [tag, 0]),
   ) as Record<LineItemTagValue, number>;
 
-  let totalCents = 0;
+  let subtotalCents = 0;
   let grossCents = 0;
 
   for (const line of lines) {
     const total = lineTotalCents(line.quantity, line.unitPriceCents, line.discountCents ?? 0);
-    totalCents += total;
+    subtotalCents += total;
     grossCents += lineGrossCents(line.quantity, line.unitPriceCents);
     if (line.tag in byTag) {
       byTag[line.tag as LineItemTagValue] += total;
     }
   }
 
-  return { totalCents, byTag, grossCents, discountCents: grossCents - totalCents };
+  const quoteDiscount = quoteDiscountCents(quote, subtotalCents);
+  const totalCents = subtotalCents - quoteDiscount;
+
+  return {
+    totalCents,
+    byTag,
+    grossCents,
+    subtotalCents,
+    lineDiscountCents: grossCents - subtotalCents,
+    quoteDiscountCents: quoteDiscount,
+    discountCents: grossCents - totalCents,
+  };
 }

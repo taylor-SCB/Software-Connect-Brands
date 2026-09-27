@@ -16,8 +16,13 @@
  * Subtotal / Discount / Total, payment schedule editor and signer; the
  * printed document's Items (with the discount) and Payment schedule
  * tables; sending, reminders, signing and the Job card naming the job;
- * cancelling and restoring a row; cancelling and reopening a contract; and
- * a quote edit keeping its rows linked and its discount.
+ * cancelling and restoring a row; cancelling and reopening a contract; a
+ * quote edit keeping its rows linked and its discount; and (Sept 27, 2026)
+ * a discount on the whole quote typed under the rows — saved to the quote,
+ * carried onto a money-in contract as the discount it starts with (a
+ * percent as the same percent, dollars as the ticked rows' share, nothing
+ * on a purchase order), re-priced by an inline row edit, and read back the
+ * same on the quote page, the customer's copy and the quotes list.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -591,6 +596,118 @@ async function anonymousStatus(browser, url) {
   await page.getByRole("link", { name: "Contract Coordinator" }).first().click();
   await page.waitForURL(/\/dashboard\/contracts\/tracker$/);
   await page.getByText("Pick a deal to start").waitFor();
+
+  /* ------------------------- A discount on the whole quote ------------------------- */
+
+  log("the coordinator's footer: Subtotal, a Discount on the whole quote box, Quote total; 10% typed there saves to the quote");
+  await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
+  await page.locator("[data-testid=tracker-grid]").waitFor();
+  const totals = page.locator("[data-testid=quote-totals]");
+  assert.equal(await totals.locator("[data-testid=quote-subtotal]").textContent(), "$354.00", "200 + 100 + 54");
+  assert.equal(await totals.locator("[data-testid=quote-total]").textContent(), "$354.00");
+  assert.equal(await page.locator("#quote-discount").inputValue(), "");
+  await page.locator("#quote-discount").fill("10");
+  assert.equal(await totals.locator("[data-testid=discount-cents]").textContent(), "−$35.40");
+  assert.equal(await totals.locator("[data-testid=quote-total]").textContent(), "$318.60");
+  // Tab once lands on the %/$ picker, which is not leaving the box; the
+  // save happens on the way out, as a row's discount does.
+  await page.locator("#quote-discount").press("Tab");
+  await page.locator("#quote-discountMode").press("Tab");
+  await totals.locator("[data-testid=quote-discount-saved]").waitFor();
+  const quoteDiscount = async () =>
+    (await sql(`SELECT "discountCents", "discountPercent" FROM "Quote" WHERE id='quo_tr'`)).rows[0];
+  assert.deepEqual(await quoteDiscount(), { discountCents: 3540, discountPercent: 10 });
+
+  log("a new money-in contract starts with the quote's 10% off, marked from the quote; a purchase order starts with none");
+  await page.getByRole("checkbox", { name: "Put Scheduling software on Contract A" }).check();
+  assert.equal(await page.locator("[data-testid=column-subtotal]").nth(0).textContent(), "$54.00");
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "10");
+  assert.equal(await page.locator("#col-1-discountMode").inputValue(), "percent");
+  assert.ok(await page.locator("[data-testid=column-discount-from-quote]").isVisible());
+  assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$48.60", "10% off $54");
+  await page.locator("#col-1-direction").selectOption("out");
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "", "a purchase order never carries the customer's discount");
+  assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$54.00");
+  await page.locator("#col-1-direction").selectOption("in");
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "10", "back to money in, back to the quote's discount");
+  await shot(page, "10-quote-discount");
+
+  log("create it: the contract's own discount is the quote's, and the quote keeps its own");
+  await page.locator("[data-testid=create-contracts]").click();
+  await page.waitForURL(/created=1/);
+  const c = (
+    await sql(`SELECT id, number, "discountCents", "discountPercent" FROM "Contract" WHERE "organizationId"=$1 ORDER BY number DESC LIMIT 1`, [org])
+  ).rows[0];
+  assert.deepEqual({ discountCents: c.discountCents, discountPercent: c.discountPercent }, { discountCents: 540, discountPercent: 10 }, "10% of $54");
+  assert.deepEqual(await quoteDiscount(), { discountCents: 3540, discountPercent: 10 }, "the quote's own discount is untouched");
+  assert.equal(await page.locator("#quote-discount").inputValue(), "10", "the footer box reads the quote's discount back");
+
+  log("typing over the prefilled discount takes it off the quote: it stays put when the direction changes; cleared stays cleared");
+  await page.getByRole("checkbox", { name: "Put Tile on Contract A" }).check();
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "10");
+  await page.locator("#col-1-discount").fill("5");
+  assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$95.00", "5% off $100");
+  assert.equal(await page.locator("[data-testid=column-discount-from-quote]").count(), 0);
+  await page.locator("#col-1-direction").selectOption("out");
+  await page.locator("#col-1-direction").selectOption("in");
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "5", "a typed discount is not written over");
+  await page.locator("#col-1-discount").fill("");
+  assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$100.00");
+  await page.locator("#col-1-direction").selectOption("out");
+  await page.locator("#col-1-direction").selectOption("in");
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "", "cleared stays cleared");
+
+  log("a dollar discount on the quote carries onto a money-in contract as the ticked rows' share of it");
+  await page.locator("#quote-discountMode").selectOption("cents");
+  await page.locator("#quote-discount").fill("35.40");
+  await page.locator("#quote-discount").press("Tab");
+  await page.locator("#quote-discountMode").press("Tab");
+  await totals.locator("[data-testid=quote-discount-saved]").waitFor();
+  assert.deepEqual(await quoteDiscount(), { discountCents: 3540, discountPercent: null });
+  await page.locator("[data-testid=add-column]").click();
+  await page.locator("#col-2-direction").selectOption("in");
+  await page.getByRole("checkbox", { name: "Put Tile on Contract B" }).check();
+  // Tile is $100 of the $354 quote, so it carries $10.00 of the $35.40.
+  assert.equal(await page.locator("#col-2-discount").inputValue(), "10.00");
+  assert.equal(await page.locator("#col-2-discountMode").inputValue(), "cents");
+  assert.equal(await page.locator("[data-testid=column-total]").nth(1).textContent(), "$90.00");
+
+  log("pricing a row inline re-prices a percent discount on the quote: the stored cents follow the lines");
+  await page.locator("#quote-discountMode").selectOption("percent");
+  await page.locator("#quote-discount").fill("10");
+  await page.locator("#quote-discount").press("Tab");
+  await page.locator("#quote-discountMode").press("Tab");
+  await totals.locator("[data-testid=quote-discount-saved]").waitFor();
+  assert.deepEqual(await quoteDiscount(), { discountCents: 3540, discountPercent: 10 });
+  // Software 3 × $20 less 10% ($54) becomes 4 × $20 less 10% ($72): the
+  // subtotal is $372 and 10% of it $37.20.
+  const swRowAgain = page.locator("[data-testid=tracker-row][data-line-id=qli_tr3]");
+  await swRowAgain.getByLabel("Scheduling software quantity").fill("4");
+  await swRowAgain.getByLabel("Scheduling software quantity").press("Tab");
+  await until(async () => (await quoteDiscount()).discountCents === 3720, "the quote's percent discount to re-price from the row edit");
+  assert.equal(await totals.locator("[data-testid=quote-subtotal]").textContent(), "$372.00");
+  assert.equal(await totals.locator("[data-testid=quote-total]").textContent(), "$334.80");
+
+  log("the quote page, the customer's copy and the quotes list all read the same discounted total");
+  await page.goto(`${BASE}/dashboard/quotes/quo_tr`);
+  assert.equal(await page.locator("#quote-discount").inputValue(), "10");
+  assert.match(await page.locator("[data-testid=quote-discount-line]").textContent(), /Items \$380\.00.*Line discounts −\$8\.00/);
+  assert.equal(await page.locator("[data-testid=quote-subtotal]").textContent(), "$372.00");
+  assert.equal(await page.locator("[data-testid=quote-total]").textContent(), "$334.80");
+  const customerQuote = await browser.newContext();
+  const qpage = await customerQuote.newPage();
+  await qpage.goto(`${BASE}/q/tok_quo_tr_0123456789`);
+  await qpage.locator("[data-testid=document-total]").waitFor();
+  const breakdown = qpage.locator("[data-testid=document-breakdown]");
+  assert.equal(await breakdown.locator("[data-testid=document-discount]").textContent(), "−$8.00", "the line discounts");
+  assert.equal(await breakdown.locator("[data-testid=document-subtotal]").textContent(), "$372.00");
+  assert.equal(await breakdown.locator("[data-testid=document-quote-discount]").textContent(), "−$37.20");
+  assert.match(await breakdown.textContent(), /Discount \(10%\)/);
+  assert.equal(await qpage.locator("[data-testid=document-total]").textContent(), "$334.80");
+  await qpage.screenshot({ path: path.join(OUT, "11-quote-discount-customer-copy.png"), fullPage: true });
+  await customerQuote.close();
+  await page.goto(`${BASE}/dashboard/quotes`);
+  assert.match(await page.locator("table tbody tr").filter({ hasText: "Kitchen quote" }).textContent(), /\$334\.80/);
 
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED · screenshots in ${OUT}`);

@@ -50,7 +50,11 @@ export default async function DashboardPage() {
     }),
     prisma.quote.findMany({
       where: { organizationId, status: "SENT" },
-      select: { lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } } },
+      select: {
+        discountCents: true,
+        discountPercent: true,
+        lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
+      },
     }),
     prisma.contract.count({ where: { organizationId, status: "SENT" } }),
     prisma.contract.count({ where: { organizationId, status: "SIGNED" } }),
@@ -71,7 +75,7 @@ export default async function DashboardPage() {
 
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
   const quotedValue = sentQuotes.reduce(
-    (sum, quote) => sum + computeQuoteTotals(quote.lineItems).totalCents,
+    (sum, quote) => sum + computeQuoteTotals(quote.lineItems, quote).totalCents,
     0,
   );
 

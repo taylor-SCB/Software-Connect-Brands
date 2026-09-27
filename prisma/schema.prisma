@@ -511,6 +511,14 @@ model Quote {
   // with organizationId in the WHERE clause.
   teamUserIds      String[]    @default([])
   validUntil     DateTime?
+  // A discount on the whole quote, under the line discounts: cents already
+  // worked out against the lines' net subtotal, plus the percent it was
+  // typed as (if it was) so a change to the lines re-prices it rather than
+  // freezing it. The quote total is the lines' net less this, everywhere.
+  // It is copied onto the money-in contracts split off the quote as their
+  // starting contract discount; a purchase order never carries it.
+  discountCents   Int          @default(0)
+  discountPercent Float?
   publicToken    String        @unique
   sentAt         DateTime?
   respondedAt    DateTime?

@@ -81,7 +81,7 @@ export default async function QuoteBuilderPage({
 
   const publicPath = `/q/${quote.publicToken}`;
   const today = todayIso(timeZone);
-  const quoteTotalCents = computeQuoteTotals(quote.lineItems).totalCents;
+  const quoteTotalCents = computeQuoteTotals(quote.lineItems, quote).totalCents;
 
   return (
     <div>
@@ -189,6 +189,7 @@ export default async function QuoteBuilderPage({
               softwareRate: item.softwareRate,
               softwareTermMonths: item.softwareTermMonths,
             }))}
+            initialDiscount={{ discountCents: quote.discountCents, discountPercent: quote.discountPercent }}
             serviceTypes={serviceTypes}
             suppliers={suppliers}
           />

@@ -16,9 +16,22 @@ import {
   type QuickFillState,
   type ScheduleRow,
 } from "@/components/schedule-rows-editor";
-import { DiscountInput, discountFromInput, discountPayload, type DiscountState } from "@/components/discount-input";
+import {
+  DiscountInput,
+  discountFromInput,
+  discountPayload,
+  discountProblem,
+  discountStateOf,
+  type DiscountState,
+} from "@/components/discount-input";
 import type { TrackerPickers, TrackerQuote } from "@/lib/tracker";
-import { createSplitContracts, setQuoteLineCancelled, updateQuoteLine, type SplitInput } from "./actions";
+import {
+  createSplitContracts,
+  setQuoteLineCancelled,
+  updateQuoteDiscount,
+  updateQuoteLine,
+  type SplitInput,
+} from "./actions";
 
 const NEW = "__new__";
 
@@ -35,8 +48,11 @@ type Column = {
   direction: Direction;
   directionSet: boolean;
   paymentTerms: string;
-  // Money off the whole contract, as typed.
+  // Money off the whole contract, as typed. While `discountAuto` is on
+  // the box follows the quote's own discount instead (see autoDiscount);
+  // it goes off the moment someone types in the box, and stays off.
   discount: DiscountState;
+  discountAuto: boolean;
   // The payment rows as written on the card, and the quick-fill controls
   // that last wrote them.
   schedule: ScheduleRow[];
@@ -57,6 +73,28 @@ type LineEdit = {
   status: "idle" | "saving" | "saved" | "error";
   error?: string;
 };
+
+// What a discount box asks the server for.
+type DiscountPayload = { percent: number | null; cents: number };
+
+// The discount on the whole quote as it is being edited here: the typed
+// box, what the quote last stored (in the shape the box sends, so a blur
+// with nothing changed is not a save), and how the save is going.
+type QuoteDiscountEdit = {
+  state: DiscountState;
+  sent: DiscountPayload;
+  status: "idle" | "saving" | "saved" | "error";
+  error?: string;
+};
+
+// Whether two typed discounts ask for the same thing: a percent as a
+// percent, dollars as dollars. The stored cents of a percent discount are
+// the server's working, not part of what was asked.
+function samePayload(a: DiscountPayload, b: DiscountPayload) {
+  return a.percent === b.percent && (a.percent !== null || a.cents === b.cents);
+}
+
+const NO_DISCOUNT: DiscountState = { input: "", mode: "percent" };
 
 function letter(index: number) {
   return String.fromCharCode(65 + index);
@@ -90,10 +128,7 @@ function editProblem(edit: LineEdit): string | null {
   if (!Number.isFinite(quantity) || quantity < 0) return "Quantity must be a number";
   const price = Number.parseFloat(edit.priceInput.replace(/[$,\s]/g, ""));
   if (edit.priceInput.trim() === "" || !Number.isFinite(price)) return "Unit price must be a number";
-  if (edit.discount.input.trim() !== "" && !Number.isFinite(Number.parseFloat(edit.discount.input.replace(/[$,\s]/g, "")))) {
-    return "Discount must be a number";
-  }
-  return null;
+  return discountProblem(edit.discount.input);
 }
 
 // What a row is worth right now, from the boxes rather than from the
@@ -170,9 +205,24 @@ export function TrackerGrid({
     const value = live.get(id);
     return value ? lineTotalCents(value.quantity, value.unitPriceCents, value.discountCents) : 0;
   };
-  // What the quote's own payment rows are priced against, so a fixed
-  // amount on the quote carries as the share of the quote it was.
-  const quoteTotalCents = quote.lineItems.reduce((sum, row) => sum + lineNet(row.id), 0);
+  // The rows added up, net of their own discounts: what the discount on
+  // the whole quote comes off.
+  const quoteSubtotalCents = quote.lineItems.reduce((sum, row) => sum + lineNet(row.id), 0);
+
+  // The discount on the whole quote, typed under the rows and saved to the
+  // quote when focus leaves the box, as a row's price is.
+  const [quoteDiscount, setQuoteDiscount] = useState<QuoteDiscountEdit>(() => ({
+    state: discountStateOf(quote),
+    sent: { percent: quote.discountPercent, cents: quote.discountCents },
+    status: "idle",
+  }));
+  // The discount save that is out right now, if one is.
+  const discountInFlight = useRef<Promise<boolean> | null>(null);
+  const quoteDiscountResolved = discountFromInput(quoteDiscount.state, quoteSubtotalCents);
+  // What the quote's own payment rows are priced against — the lines less
+  // the discount on the whole quote — so a fixed amount on the quote
+  // carries as the share of the quote it was.
+  const quoteTotalCents = quoteSubtotalCents - quoteDiscountResolved.discountCents;
 
   function blankColumn(key: number, first: boolean): Column {
     const templateId =
@@ -196,7 +246,8 @@ export function TrackerGrid({
       directionSet: false,
       // The Preset Payment Table from Settings → Company Information.
       paymentTerms: defaults.terms,
-      discount: { input: "", mode: "percent" },
+      discount: NO_DISCOUNT,
+      discountAuto: true,
       schedule: quickFillRows(fill, { quoteRows, quoteTotalCents, totalCents: 0 }),
       fill,
       scheduleFromQuote: fill.fill === "__quote__",
@@ -286,9 +337,31 @@ export function TrackerGrid({
     return column.selected.reduce((sum, id) => sum + lineNet(id), 0);
   }
 
+  // What a contract's discount starts as, until someone types in its box:
+  // the quote's own discount. Given as a percent, it carries as the same
+  // percent; given in dollars, as the ticked rows' share of them, so two
+  // Sales Orders split off one quote carry the whole discount between
+  // them and no more. A purchase order carries none — the discount was
+  // given to the customer, not by the supplier.
+  function autoDiscount(column: Column): DiscountState {
+    if (column.direction === "out" || quoteDiscountResolved.discountCents <= 0) return NO_DISCOUNT;
+    if (quoteDiscountResolved.discountPercent !== null) {
+      return { input: String(quoteDiscountResolved.discountPercent), mode: "percent" };
+    }
+    const subtotal = columnSubtotal(column);
+    if (subtotal <= 0 || quoteSubtotalCents <= 0) return { input: "", mode: "cents" };
+    const share = Math.round((quoteDiscountResolved.discountCents * subtotal) / quoteSubtotalCents);
+    return { input: share > 0 ? centsToDollarInput(share) : "", mode: "cents" };
+  }
+
+  // The discount the card shows and the contract is made with.
+  function columnDiscount(column: Column): DiscountState {
+    return column.discountAuto ? autoDiscount(column) : column.discount;
+  }
+
   function columnTotal(column: Column) {
     const subtotal = columnSubtotal(column);
-    return subtotal - discountFromInput(column.discount, subtotal).discountCents;
+    return subtotal - discountFromInput(columnDiscount(column), subtotal).discountCents;
   }
 
   /* ------------------------------ Row pricing ------------------------------ */
@@ -352,19 +425,74 @@ export function TrackerGrid({
     return promise;
   }
 
+  /* --------------------------- The quote's discount --------------------------- */
+
+  // Writes the discount box to the quote if it differs from what the quote
+  // last stored. Returns whether the quote is now in step with the box.
+  function saveQuoteDiscount(): Promise<boolean> {
+    const edit = quoteDiscount;
+    if (discountInFlight.current) {
+      // A save is already out. Still "saving" means nothing was typed
+      // since it left, so it carries what is in the box; otherwise let it
+      // land and look at the box again.
+      return edit.status === "saving" ? discountInFlight.current : discountInFlight.current.then(() => saveQuoteDiscount());
+    }
+    const problem = discountProblem(edit.state.input);
+    if (problem) {
+      setQuoteDiscount((current) => ({ ...current, status: "error", error: problem }));
+      return Promise.resolve(false);
+    }
+    const payload = discountPayload(edit.state);
+    if (samePayload(payload, edit.sent)) return Promise.resolve(true);
+
+    const sentState = edit.state;
+    setQuoteDiscount((current) => ({ ...current, status: "saving", error: undefined }));
+    const promise = updateQuoteDiscount({ dealId, quoteId: quote.id, discount: payload })
+      .then((result) => {
+        if (result.error || !result.discount) {
+          setQuoteDiscount((current) => ({ ...current, status: "error", error: result.error ?? "Couldn't save the discount" }));
+          return false;
+        }
+        // "Saved to quote" only while the box still holds what was sent.
+        setQuoteDiscount((current) => ({
+          ...current,
+          sent: payload,
+          status: current.state === sentState ? "saved" : current.status,
+        }));
+        return true;
+      })
+      .catch(() => {
+        setQuoteDiscount((current) => ({
+          ...current,
+          status: "error",
+          error: "Couldn't save the discount — check your connection and try again",
+        }));
+        return false;
+      })
+      .finally(() => {
+        inFlight.current.delete(promise);
+        discountInFlight.current = null;
+      });
+    discountInFlight.current = promise;
+    inFlight.current.add(promise);
+    return promise;
+  }
+
   /* -------------------------------- Creating -------------------------------- */
 
   function submit() {
     setError(undefined);
     startTransition(async () => {
-      // Anything typed into a row and not yet on the quote goes there
-      // first, so the contracts copy the price on screen, not the old one.
+      // Anything typed into a row, or into the quote's discount box, and
+      // not yet on the quote goes there first, so the contracts copy the
+      // price on screen, not the old one.
       const outcomes = await Promise.all([
         ...quote.lineItems.map((row) => saveRow(row.id)),
+        saveQuoteDiscount(),
         ...Array.from(inFlight.current),
       ]);
       if (outcomes.some((outcome) => outcome === false)) {
-        setError("A row's price didn't save. Fix it above and try again.");
+        setError("A price or discount didn't save. Fix it above and try again.");
         return;
       }
       // The same refusal the server gives, without the round trip: a
@@ -393,7 +521,7 @@ export function TrackerGrid({
           title: column.title || undefined,
           payable: column.direction === "out",
           paymentTerms: column.paymentTerms || undefined,
-          discount: discountPayload(column.discount),
+          discount: discountPayload(columnDiscount(column)),
           schedule: rowsToInputs(column.schedule).map((row) => ({ ...row, terms: row.terms ?? null })),
           scheduleFromQuote: column.scheduleFromQuote,
           lineItemIds: column.selected,
@@ -582,8 +710,8 @@ export function TrackerGrid({
               <td colSpan={4} className="faint text-xs">
                 {openCount} open · {cancelledCount} cancelled
               </td>
-              <td className="num text-right text-xs font-semibold" data-testid="quote-total">
-                {formatCents(quoteTotalCents)}
+              <td className="num text-right text-xs font-semibold" data-testid="lines-total">
+                {formatCents(quoteSubtotalCents)}
               </td>
               {columns.map((column) => (
                 <td key={column.key} className="num text-center text-xs font-semibold" data-testid="column-footer-total">
@@ -597,6 +725,50 @@ export function TrackerGrid({
             </tr>
           </tfoot>
         </table>
+      </div>
+
+      {/* --------------------------- The quote's total --------------------------- */}
+      <div
+        className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] px-4 py-3 text-sm"
+        data-testid="quote-totals"
+      >
+        <div className="flex items-center gap-2">
+          <span className="muted text-xs">Subtotal</span>
+          <span className="num" data-testid="quote-subtotal">{formatCents(quoteSubtotalCents)}</span>
+        </div>
+        {/* Saves when focus leaves the box and its %/$ picker, not when it
+            hops between the two — the same rule as a row's discount. */}
+        <div
+          className="flex flex-wrap items-center gap-2"
+          onBlur={(event) => {
+            if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+            void saveQuoteDiscount();
+          }}
+        >
+          <label className="muted text-xs" htmlFor="quote-discount">Discount on the whole quote</label>
+          <DiscountInput
+            id="quote-discount"
+            label="Discount on the whole quote"
+            state={quoteDiscount.state}
+            onChange={(state) => setQuoteDiscount((current) => ({ ...current, state, status: "idle", error: undefined }))}
+            baseCents={quoteSubtotalCents}
+          />
+          {quoteDiscount.status === "saving" && <span className="faint text-[0.68rem]">Saving…</span>}
+          {quoteDiscount.status === "saved" && (
+            <span className="text-[0.68rem] text-[var(--ok)]" data-testid="quote-discount-saved">Saved to quote</span>
+          )}
+          {quoteDiscount.status === "error" && (
+            <span className="text-[0.68rem] text-[var(--danger)]" role="alert">{quoteDiscount.error}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-semibold">Quote total</span>
+          <span className="num text-lg font-semibold" data-testid="quote-total">{formatCents(quoteTotalCents)}</span>
+        </div>
+        <p className="faint w-full text-right text-xs">
+          Saves to the quote: the quote page, the customer&apos;s copy and the pipeline read it. Each new money-in
+          contract below starts with it until you change its own box; a purchase order never carries it.
+        </p>
       </div>
 
       {/* ------------------------------ The cards ------------------------------ */}
@@ -622,6 +794,7 @@ export function TrackerGrid({
             pickers={pickers}
             rows={quote.lineItems}
             lineNet={lineNet}
+            discount={columnDiscount(column)}
             quoteRows={quoteRows}
             quoteTotalCents={quoteTotalCents}
             canRemove={columns.length > 1}
@@ -682,6 +855,7 @@ function ContractCard({
   pickers,
   rows,
   lineNet,
+  discount: discountState,
   quoteRows,
   quoteTotalCents,
   canRemove,
@@ -695,6 +869,8 @@ function ContractCard({
   pickers: TrackerPickers;
   rows: TrackerQuote["lineItems"];
   lineNet: (id: string) => number;
+  // The discount the card shows: the quote's own until someone types.
+  discount: DiscountState;
   quoteRows: ScheduleRowInput[] | null;
   quoteTotalCents: number;
   canRemove: boolean;
@@ -716,7 +892,7 @@ function ContractCard({
   const id = (name: string) => `col-${column.key}-${name}`;
   const name = `Contract ${letter(index)}`;
   const subtotalCents = column.selected.reduce((sum, lineId) => sum + lineNet(lineId), 0);
-  const discount = discountFromInput(column.discount, subtotalCents);
+  const discount = discountFromInput(discountState, subtotalCents);
   const totalCents = subtotalCents - discount.discountCents;
   const selectedRows = column.selected.map((lineId) => rows.find((row) => row.id === lineId)).filter((row) => row !== undefined);
 
@@ -876,12 +1052,17 @@ function ContractCard({
             <span className="num" data-testid="column-subtotal">{formatCents(subtotalCents)}</span>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="muted text-xs" htmlFor={id("discount")}>Discount on the whole contract</label>
+            <label className="muted text-xs" htmlFor={id("discount")}>
+              Discount on the whole contract
+              {column.discountAuto && discountState.input !== "" && (
+                <span className="faint ml-1.5" data-testid="column-discount-from-quote">· from the quote</span>
+              )}
+            </label>
             <DiscountInput
               id={id("discount")}
               label={`${name} discount`}
-              state={column.discount}
-              onChange={(discount) => onChange({ discount })}
+              state={discountState}
+              onChange={(discount) => onChange({ discount, discountAuto: false })}
               baseCents={subtotalCents}
             />
           </div>

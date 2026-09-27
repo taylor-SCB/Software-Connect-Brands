@@ -18,7 +18,8 @@ import {
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
 import { computeSchedule, isoToDate } from "@/lib/payments";
-import { repriceQuotePayments } from "@/lib/quote-payments";
+import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
+import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
 import { computeQuoteTotals, lineGrossCents, resolveDiscount } from "@/lib/quote-math";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -237,6 +238,11 @@ export type SavedLine = { uid: string | null; id: string; productId: string | nu
 export async function saveLineItems(
   quoteId: string,
   items: LineItemInput[],
+  // The discount on the whole quote, as typed: a percent (kept, so it
+  // re-prices when the lines change) or dollars off. Resolved against the
+  // lines here, never taken from the browser as a finished number. Left
+  // out by an older client, the stored one stays as it is.
+  discount?: DiscountInputValue,
 ): Promise<ActionState & { lines?: SavedLine[] }> {
   const { organizationId } = await requireSession();
 
@@ -247,6 +253,8 @@ export async function saveLineItems(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Check the line items" };
   }
+  const parsedDiscount = discountInputSchema.optional().safeParse(discount);
+  if (!parsedDiscount.success) return { error: "Check the discount on the whole quote" };
 
   const quote = await prisma.quote.findFirst({
     where: { id: id.data, organizationId },
@@ -310,6 +318,9 @@ export async function saveLineItems(
   let createdProducts = 0;
 
   const lines = await prisma.$transaction(async (tx) => {
+    // Serialises with the Contract Coordinator's inline row and discount
+    // saves on the same quote, so each prices against what the other stored.
+    await lockQuote(tx, quote.id);
     await tx.quoteLineItem.deleteMany({
       where: { quoteId: quote.id, id: { notIn: [...keptIds] } },
     });
@@ -418,8 +429,10 @@ export async function saveLineItems(
       saved.push({ uid: item.uid ?? null, id: row.id, productId: row.productId });
     }
 
-    // The payment rows are priced against the lines, so changing the lines
-    // has to re-price them in the same breath.
+    // The discount on the whole quote is worked out against the lines as
+    // just saved, and the payment rows are priced against the total after
+    // it, so changing the lines re-prices both in the same breath.
+    if (parsedDiscount.data) await applyQuoteDiscount(tx, quote.id, parsedDiscount.data);
     await repriceQuotePayments(tx, quote.id);
 
     await tx.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } });
@@ -475,6 +488,8 @@ export async function saveQuotePaymentSchedule(input: {
     where: { id: parsed.data.quoteId, organizationId },
     select: {
       id: true,
+      discountCents: true,
+      discountPercent: true,
       lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
       payments: { orderBy: { position: "asc" }, select: { id: true } },
     },
@@ -482,8 +497,8 @@ export async function saveQuotePaymentSchedule(input: {
   if (!quote) return { error: "Quote not found" };
 
   // Recomputed here and never taken from the browser: the quote's total is
-  // its lines, and nothing about it is stored.
-  const totalCents = computeQuoteTotals(quote.lineItems).totalCents;
+  // its lines less the discount on the whole, and is not stored anywhere.
+  const totalCents = computeQuoteTotals(quote.lineItems, quote).totalCents;
   const schedule = computeSchedule(parsed.data.rows, totalCents);
   if (schedule.rows.some((row) => row.amountCents < 0)) {
     return { error: "The fixed amounts add up to more than the quote total" };

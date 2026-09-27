@@ -5,8 +5,8 @@ import { useMemo, useState, useTransition } from "react";
 import { FormError } from "@/components/ui";
 import Link from "next/link";
 import { IconHardHat, IconSignature } from "@/components/icons";
-import { formatCents } from "@/lib/format";
-import { lineNetCents } from "@/lib/quote-math";
+import { centsToDollarInput, formatCents } from "@/lib/format";
+import { lineNetCents, quoteDiscountCents } from "@/lib/quote-math";
 import { PAYMENT_TERM_OPTIONS, computeSchedule, type ScheduleRowInput } from "@/lib/payments";
 import {
   CUSTOM_FILL,
@@ -25,6 +25,9 @@ export type AwardQuote = {
   id: string;
   number: number;
   paymentTerms: string | null;
+  // The discount on the whole quote, which the job's own starts from.
+  discountCents: number;
+  discountPercent: number | null;
   payments: { label: string; kind: "PERCENT" | "FIXED" | "BALANCE"; percent: number | null; amountCents: number; dueOn: string; terms: string | null }[];
   lineItems: {
     id: string;
@@ -78,7 +81,10 @@ export function AwardWithoutPaperwork({
   // grid above comes and goes here on its own instead of going stale.
   const [excluded, setExcluded] = useState<string[]>([]);
   const selected = openRows.filter((row) => !excluded.includes(row.id)).map((row) => row.id);
-  const [discount, setDiscount] = useState<DiscountState>({ input: "", mode: "percent" });
+  // The discount as typed here, or null while the box still follows the
+  // quote's own discount (see below). Typing in it — even clearing it —
+  // takes over for good.
+  const [typedDiscount, setTypedDiscount] = useState<DiscountState | null>(null);
   const [terms, setTerms] = useState(quote?.paymentTerms || defaults.terms);
 
   const quoteRows: ScheduleRowInput[] | null =
@@ -92,7 +98,11 @@ export function AwardWithoutPaperwork({
           terms: row.terms,
         }))
       : null;
-  const quoteTotalCents = (quote?.lineItems ?? []).reduce((sum, row) => sum + lineNetCents(row), 0);
+  // What the quote's own payment rows are priced against: every row, net
+  // of its own discount, less the discount on the whole quote.
+  const quoteSubtotalCents = (quote?.lineItems ?? []).reduce((sum, row) => sum + lineNetCents(row), 0);
+  const quoteDiscountOff = quoteDiscountCents(quote, quoteSubtotalCents);
+  const quoteTotalCents = quoteSubtotalCents - quoteDiscountOff;
 
   const [fill, setFill] = useState<QuickFillState>(() =>
     initialFillState({
@@ -123,6 +133,18 @@ export function AwardWithoutPaperwork({
   const subtotalCents = openRows
     .filter((row) => selected.includes(row.id))
     .reduce((sum, row) => sum + lineNetCents(row), 0);
+  // The job's discount starts as the quote's own, the way a Sales Order
+  // made on the coordinator does: a percent as the same percent, dollars
+  // as the ticked rows' share of them.
+  const autoDiscount: DiscountState =
+    !quote || quoteDiscountOff <= 0
+      ? { input: "", mode: "percent" }
+      : quote.discountPercent !== null
+        ? { input: String(quote.discountPercent), mode: "percent" }
+        : subtotalCents > 0 && quoteSubtotalCents > 0
+          ? { input: centsToDollarInput(Math.round((quoteDiscountOff * subtotalCents) / quoteSubtotalCents)), mode: "cents" }
+          : { input: "", mode: "cents" };
+  const discount = typedDiscount ?? autoDiscount;
   const resolvedDiscount = discountFromInput(discount, subtotalCents);
   const totalCents = subtotalCents - resolvedDiscount.discountCents;
 
@@ -284,12 +306,17 @@ export function AwardWithoutPaperwork({
                   <span className="num" data-testid="award-subtotal">{formatCents(subtotalCents)}</span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-                  <label className="muted text-xs" htmlFor="award-discount">Discount on the whole job</label>
+                  <label className="muted text-xs" htmlFor="award-discount">
+                    Discount on the whole job
+                    {typedDiscount === null && discount.input !== "" && (
+                      <span className="faint ml-1.5" data-testid="award-discount-from-quote">· from the quote</span>
+                    )}
+                  </label>
                   <DiscountInput
                     id="award-discount"
                     label="Discount on the whole job"
                     state={discount}
-                    onChange={setDiscount}
+                    onChange={setTypedDiscount}
                     baseCents={subtotalCents}
                   />
                 </div>

@@ -191,9 +191,11 @@ workspace's published sheet is marked *Coming Soon*.
 customer's deals, or **+ Add new deal**), with two templates, **Simple**
 (clean and printable) and **Modern** (branded dark layout). Every line item has the product name, a *product
 description* sub-note, a *project specific notes* sub-note, quantity, unit
-value, line total and a required tag. Under the table is the quote total,
-and under that a grid totalling every tag — labor, materials, software,
-project services, shipping and taxes. Marking a quote sent produces a
+value, line total, a discount (% or $) and a required tag. Under the table
+are Subtotal, a **Discount on the whole quote** box (% or $, Sept 27, 2026)
+and the Quote total, and under that a grid totalling every tag — labor,
+materials, software, project services, shipping and taxes — which adds up
+to the subtotal, before the discount on the whole quote. Marking a quote sent produces a
 public link the customer can open without an account.
 
 **Contracts** — reusable templates, each with a name, a type from a
@@ -222,14 +224,18 @@ and editable**: change a quantity, unit price or line discount (as a % or
 in dollars) right there and it saves back to the quote the moment you
 leave the box, so the quote page and the customer's copy say the same
 thing (a contract already made from a row keeps the price it was made
-with). Each row has a tick box under every contract (up to five) and each
+with). Under the rows a footer reads Subtotal, a **Discount on the whole
+quote** box (% or $) and Quote total; the box saves to the quote the same
+way (Sept 27, 2026). Each row has a tick box under every contract (up to five) and each
 contract is a **card** below the rows (Sept 20, 2026 layout — they used to
 hang off the right edge): who it goes to (company and contact, existing
 or typed in new — Contract A is prefilled from the deal), which template,
 **which way the money goes**, payment terms, an optional title, the rows
 ticked onto it, a **discount on the whole contract** (% or $, on top of
-any line discounts, with Subtotal / Discount / Total shown live) and its
-**payment schedule** — a real table where every row has its own label,
+any line discounts, with Subtotal / Discount / Total shown live; a
+money-in card starts with the quote's own discount, marked *from the
+quote*, until you type in its box, and a purchase order starts with none)
+and its **payment schedule** — a real table where every row has its own label,
 type (% of total, a fixed amount, or the balance), value and due date,
 with quick fills that write rows you can then edit — the same three
 names as the Preset Payment Table in Settings: One payment, Deposit +
@@ -260,18 +266,31 @@ it is, the Sales Order already out for signature when there is one (the
 job starts when it is signed, or with Mark signed), or the way to award
 it on a handshake (below).
 
-**Discounts** (Sept 20, 2026) live in two places and only two. A **line
-discount** belongs to the quote line — typed on the quote's line editor
-(the Discount column, % or $) or inline on the Contract Coordinator — and
-is copied onto every contract row made from that line, the way the price
-is. A **contract discount** belongs to one contract, typed on its card (or
-on the handshake award), and is never written back to the quote: a quote
-that splits into a customer's Sales Order and a supplier's Purchase Order
-can carry a different discount on each. A discount is worked out on the
-server against the real subtotal, capped so nothing totals below zero,
-and the percent it was typed as is kept so a later change to the line
-re-prices it. The quote's page and customer copy print each line's
-saving and Subtotal / Discount / Total; a contract's page and the
+**Discounts** (Sept 20 and 27, 2026) live in three places and only
+three. A **line discount** belongs to the quote line — typed on the
+quote's line editor (the Discount column, % or $) or inline on the
+Contract Coordinator — and is copied onto every contract row made from
+that line, the way the price is. A **quote discount** (Sept 27, 2026)
+belongs to the whole quote: typed under the lines on the quote page or in
+the Contract Coordinator's footer, % or $, it comes off the lines'
+subtotal after their own discounts, and it is what the quote page, the
+customer's copy, the quotes list, the pipeline's deal value, the
+dashboard and `{{quote_total}}` all read; the quote's payment table is
+priced against the total after it. A **contract discount** belongs to one
+contract, typed on its card (or on the handshake award), and is never
+written back to the quote: a quote that splits into a customer's Sales
+Order and a supplier's Purchase Order can carry a different discount on
+each. A money-in contract *starts* with the quote's discount — a percent
+as the same percent, dollars as its rows' share of them — until someone
+types in its box, and a purchase order starts with none, because the
+discount was given to the customer, not by the supplier. Every discount
+is worked out on the server against the real subtotal, capped so nothing
+totals below zero, and the percent it was typed as is kept so a later
+change to the lines re-prices it (a dollar discount stays as typed and is
+capped on the way out, so it is worth the full amount again once the
+lines grow back). The quote's page and customer copy print each line's
+saving and then Items / Line discounts / Subtotal / Discount / Total,
+each row only when there is something on it; a contract's page and the
 customer's copy print the line discounts and the contract discount the
 same way; `{{contract_total}}` merges the discounted figure; a job's
 Awarded is the discounted contract total, shared across its scopes in
@@ -306,7 +325,8 @@ For a job won on a handshake, **Award without paperwork** on the Job card
 of the Contract Coordinator (Sept 20, 2026: a plain button on a card of
 its own, no longer a link hidden in a stat tile) opens a full form: who
 agreed and when, a note, which of the quote's open rows they agreed to
-(all of them by default), a discount on the whole job, payment terms and
+(all of them by default), a discount on the whole job (started from the
+quote's own discount, marked *from the quote*), payment terms and
 the same editable payment schedule the contract cards use, with the
 awarded total shown live. Awarding writes the Sales Order those rows
 imply, marked signed offline, and starts the job. An agreement signed
@@ -550,7 +570,8 @@ for use everywhere else.
 
 Money is stored as integer cents everywhere, and line totals are rounded
 per line then summed as integers — that's what keeps the tag totals adding
-up to exactly the quote total.
+up to exactly the quote's subtotal (the quote total is that less the
+discount on the whole quote, which belongs to no one tag).
 
 ## Where to go next
 

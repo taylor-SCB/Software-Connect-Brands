@@ -6,7 +6,11 @@
  * the customer's copy; software unit, billing and term with the Term
  * Total readout; the quote's payment table, its percent/dollar tie-out
  * and Hide from Quote; the payment table and sales rep block printing on
- * the public quote; and Lead Sales Rep / Contract Signer / team members.
+ * the public quote; Lead Sales Rep / Contract Signer / team members; and
+ * (Sept 27, 2026) a discount on the whole quote — typed under the lines,
+ * capped and worked out on the server, re-pricing the payment table,
+ * printed on the customer's copy, read by the quotes list, the pipeline
+ * and {{quote_total}}, and carried onto a money-in contract.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
@@ -798,6 +802,150 @@ let context;
     "the carried schedule should tie out to this contract's own total",
   );
   await shot(page, "11-audit-split-no-negative");
+
+  /* ---------------------------------------------------------------- *
+   * A discount on the whole quote (Sept 27, 2026): typed on the quote
+   * page under the lines, worked out on the server and capped at the
+   * subtotal, re-pricing the payment table, printed on the customer's
+   * copy, read by the quotes list and the pipeline, merged by
+   * {{quote_total}}, and carried onto a money-in contract as the
+   * discount it starts with.
+   * ---------------------------------------------------------------- */
+  const fmt = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+  const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const lineSubtotal = async () =>
+    (
+      await sql(
+        `SELECT COALESCE(SUM(ROUND(quantity * "unitPriceCents") - "discountCents"),0)::int AS total
+           FROM "QuoteLineItem" WHERE "quoteId"='quo_qi'`,
+      )
+    ).rows[0].total;
+  const quoteDiscountRow = async () =>
+    (await sql(`SELECT "discountCents", "discountPercent" FROM "Quote" WHERE id='quo_qi'`)).rows[0];
+
+  log("a discount on the whole quote: 10% typed on the quote page saves to the quote, worked out on the server");
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi`);
+  const subtotalBefore = await lineSubtotal();
+  assert.equal(await page.getByTestId("quote-subtotal").textContent(), fmt(subtotalBefore));
+  assert.equal(await page.locator("#quote-discount").inputValue(), "", "no discount on the quote yet");
+  assert.deepEqual(await quoteDiscountRow(), { discountCents: 0, discountPercent: null });
+  await page.locator("#quote-discount").fill("10");
+  const tenOff = Math.round(subtotalBefore * 0.1);
+  assert.equal(await page.getByTestId("quote-totals").getByTestId("discount-cents").textContent(), `−${fmt(tenOff)}`);
+  assert.equal(await page.getByTestId("quote-total").textContent(), fmt(subtotalBefore - tenOff));
+  await saveLines(page);
+  assert.deepEqual(await quoteDiscountRow(), { discountCents: tenOff, discountPercent: 10 });
+
+  log("the saved payment table was re-priced against the discounted total: the fixed deposit stays, the balance shrinks");
+  const repriced = (
+    await sql(`SELECT kind, "amountCents" FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`)
+  ).rows;
+  assert.equal(repriced[0].kind, "FIXED");
+  assert.equal(repriced[0].amountCents, Math.round(bigTotal * 0.5), "a fixed amount is what was typed");
+  assert.equal(
+    repriced[0].amountCents + repriced[1].amountCents,
+    subtotalBefore - tenOff,
+    "the table ties out to the discounted total",
+  );
+  await page.reload();
+  assert.equal(await page.locator("#quote-discount").inputValue(), "10");
+  assert.equal(await page.locator("#quote-discountMode").inputValue(), "percent");
+  assert.equal(await page.getByTestId("quote-total").textContent(), fmt(subtotalBefore - tenOff));
+  await shot(page, "12-quote-discount");
+
+  log("the customer's copy prints Subtotal / Discount (10%) / Total, and its payment table ties to the total");
+  const copy = await context.newPage();
+  await copy.goto(`${BASE}/q/tok_quo_qi_0123456789`);
+  await copy.getByTestId("document-total").waitFor();
+  const breakdown = copy.getByTestId("document-breakdown");
+  assert.equal(await breakdown.getByTestId("document-subtotal").textContent(), fmt(subtotalBefore));
+  assert.equal(await breakdown.getByTestId("document-quote-discount").textContent(), `−${fmt(tenOff)}`);
+  assert.match(await breakdown.textContent(), /Discount \(10%\)/);
+  assert.equal(await breakdown.getByTestId("document-discount").count(), 0, "no line discounts here, so no Line discounts row");
+  assert.equal(await copy.getByTestId("document-total").textContent(), fmt(subtotalBefore - tenOff));
+  assert.equal(
+    (await copy.getByTestId("document-payments-total").innerText()).replace(/\s/g, ""),
+    fmt(subtotalBefore - tenOff).replace(/\s/g, ""),
+    "the payment table on the customer's copy ties to the discounted total",
+  );
+  await shot(copy, "13-quote-discount-customer-copy");
+  await copy.close();
+
+  log("the quotes list, the pipeline and the dashboard read the discounted total");
+  const discountedTotal = new RegExp(escapeRe(fmt(subtotalBefore - tenOff)));
+  const undiscountedTotal = new RegExp(escapeRe(fmt(subtotalBefore)));
+  await page.goto(`${BASE}/dashboard/quotes`);
+  assert.match(await page.locator("table tbody tr").filter({ hasText: "Rekey quote" }).textContent(), discountedTotal);
+  await page.goto(`${BASE}/dashboard/deals`);
+  await page.getByRole("heading", { name: "Pipeline" }).waitFor();
+  const pipelineText = await page.locator("main").textContent();
+  assert.match(pipelineText, discountedTotal, "the deal's value is the discounted quote total");
+  assert.doesNotMatch(pipelineText, undiscountedTotal, "the undiscounted figure is nowhere on the pipeline");
+  await page.goto(`${BASE}/dashboard`);
+  await page.getByText(/Welcome back/).waitFor();
+  assert.match(await page.locator("main").textContent(), discountedTotal, "the dashboard's quoted and open-deal figures follow");
+
+  log("{{quote_total}} merges the discounted total; a money-in contract made from the quote starts with the quote's discount");
+  await sql(
+    `UPDATE "ContractTemplate" SET body = body || E'\\nQUOTE TOTAL: {{quote_total}}' WHERE "organizationId"=$1 AND type='Sales Order'`,
+    [org],
+  );
+  await page.goto(`${BASE}/dashboard/contracts/tracker?dealId=deal_qi&quoteId=quo_qi`);
+  await page.getByTestId("tracker-grid").waitFor();
+  assert.equal(await page.getByTestId("quote-totals").getByTestId("quote-total").textContent(), fmt(subtotalBefore - tenOff));
+  assert.equal(await page.locator("#quote-discount").inputValue(), "10", "the coordinator's footer box reads the quote's discount back");
+  await page.getByRole("checkbox", { name: /^Put .* on Contract A$/ }).first().check();
+  assert.equal(await page.locator("#col-1-discount").inputValue(), "10", "Contract A starts with the quote's 10%");
+  assert.ok(await page.getByTestId("column-discount-from-quote").isVisible());
+  await page.getByTestId("create-contracts").click();
+  await page.waitForURL(/created=1/, { timeout: 30000 });
+  const newest = (
+    await sql(`SELECT id, "discountPercent" FROM "Contract" WHERE "organizationId"=$1 ORDER BY "createdAt" DESC LIMIT 1`, [org])
+  ).rows[0];
+  assert.equal(newest.discountPercent, 10, "the contract carries the quote's discount as its own");
+  await page.goto(`${BASE}/dashboard/contracts/${newest.id}`);
+  await page.locator("#body").waitFor();
+  assert.match(
+    await page.locator("#body").inputValue(),
+    new RegExp(`QUOTE TOTAL: ${escapeRe(fmt(subtotalBefore - tenOff))}`),
+    "{{quote_total}} is the total after the discount on the whole quote",
+  );
+
+  log("a dollar discount is capped at what the lines come to; clearing the box removes the discount");
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi`);
+  await page.locator("#quote-discountMode").selectOption("cents");
+  // Far more than the quote comes to, but inside what the server accepts
+  // as a number at all (a nine-figure dollar amount is refused outright).
+  await page.locator("#quote-discount").fill("999999");
+  const capSubtotal = await lineSubtotal();
+  assert.equal(
+    await page.getByTestId("quote-totals").getByTestId("discount-cents").textContent(),
+    `−${fmt(capSubtotal)}`,
+    "never more than the lines come to",
+  );
+  assert.equal(await page.getByTestId("quote-total").textContent(), "$0.00");
+  await saveLines(page);
+  // Stored as typed and capped on the way out, so the discount is worth
+  // the full amount again if the lines ever grow past it.
+  assert.deepEqual(await quoteDiscountRow(), { discountCents: 99999900, discountPercent: null });
+  await page.reload();
+  assert.equal(await page.locator("#quote-discount").inputValue(), "999999.00", "the box reads back what was typed");
+  assert.equal(await page.getByTestId("quote-total").textContent(), "$0.00");
+  await page.locator("#quote-discount").fill("");
+  assert.equal(await page.getByTestId("quote-total").textContent(), fmt(capSubtotal));
+  await saveLines(page);
+  assert.deepEqual(await quoteDiscountRow(), { discountCents: 0, discountPercent: null }, "an empty box is no discount, not a discount of $0");
+
+  log("a percent discount re-prices with the lines: the stored cents follow a line change");
+  await page.locator("#quote-discountMode").selectOption("percent");
+  await page.locator("#quote-discount").fill("10");
+  await saveLines(page);
+  await page.getByLabel("Line 2 quantity", { exact: true }).fill("8");
+  await saveLines(page);
+  const subtotalAfter = await lineSubtotal();
+  assert.notEqual(subtotalAfter, capSubtotal, "the line change moved the subtotal");
+  assert.deepEqual(await quoteDiscountRow(), { discountCents: Math.round(subtotalAfter * 0.1), discountPercent: 10 });
+  assert.equal(await page.getByTestId("quote-total").textContent(), fmt(subtotalAfter - Math.round(subtotalAfter * 0.1)));
 
   console.log("\nAll steps passed.");
   await context.close();

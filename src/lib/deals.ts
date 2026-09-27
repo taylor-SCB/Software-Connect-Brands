@@ -5,6 +5,9 @@ import { DEAL_STAGES, OPEN_DEAL_STAGES, type DealStageValue } from "@/lib/consta
 type QuoteForValue = {
   status: string;
   updatedAt: Date;
+  // The discount on the whole quote, under the lines' own.
+  discountCents?: number | null;
+  discountPercent?: number | null;
   lineItems: { quantity: number; unitPriceCents: number; tag: string; discountCents?: number | null }[];
 };
 
@@ -36,7 +39,7 @@ export function pickPrimaryQuote<T extends { status: string; updatedAt: Date }>(
 export function dealValueCents(deal: DealWithQuotes): number {
   const pick = pickPrimaryQuote(deal.quotes);
   if (!pick) return deal.valueCents;
-  return computeQuoteTotals(pick.lineItems).totalCents;
+  return computeQuoteTotals(pick.lineItems, pick).totalCents;
 }
 
 export function isOpenStage(stage: string) {
@@ -48,6 +51,8 @@ export const QUOTES_FOR_VALUE = {
   select: {
     status: true,
     updatedAt: true,
+    discountCents: true,
+    discountPercent: true,
     lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
   },
 } as const;

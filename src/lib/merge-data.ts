@@ -108,6 +108,8 @@ export async function loadMergeContext(input: {
           title: true,
           validUntil: true,
           terms: true,
+          discountCents: true,
+          discountPercent: true,
           lineItems: {
             orderBy: { position: "asc" },
             select: { name: true, quantity: true, unitPriceCents: true, discountCents: true, tag: true },
@@ -116,18 +118,29 @@ export async function loadMergeContext(input: {
       })
     : null;
 
-  const totals = quote ? computeQuoteTotals(quote.lineItems) : null;
+  // The quote's total, after its line discounts and the discount on the
+  // whole quote: what {{quote_total}} merges.
+  const totals = quote ? computeQuoteTotals(quote.lineItems, quote) : null;
   // The picked company wins over the contact's own: a PO goes to the
   // supplier even when the contact on it is the customer's foreman.
   const company = pickedCompany ?? contact?.company ?? null;
   const zone = organization.timeZone;
 
   // Product and total fields read from the contract's own rows when it
-  // has them (a split), otherwise from the whole quote.
+  // has them (a split, less the contract's own discount), otherwise from
+  // the whole quote — whose total is then the quote's discounted total.
   const items = input.lineItems?.length ? input.lineItems : quote?.lineItems ?? [];
-  const contractTotalCents = items.length
-    ? computeQuoteTotals(items).totalCents - (input.lineItems?.length ? input.discountCents ?? 0 : 0)
+  const contractTotalCents = input.lineItems?.length
+    ? computeQuoteTotals(input.lineItems).totalCents - (input.discountCents ?? 0)
     : totals?.totalCents ?? null;
+  // A contract with no rows of its own lists the whole quote's lines, so
+  // the quote's discount is written under them — otherwise the lines add
+  // up to more than {{quote_total}} on the page the customer signs.
+  const quoteDiscountLine =
+    !input.lineItems?.length && totals && totals.quoteDiscountCents > 0
+      ? `\nDiscount on the quote${quote?.discountPercent != null ? ` (${quote.discountPercent}%)` : ""}: −${formatCents(totals.quoteDiscountCents)}`
+      : "";
+  const itemList = items.length ? itemLines(items) + quoteDiscountLine : null;
 
   const scheduleRows: ScheduleRowInput[] = (input.payments ?? []).map((row) => ({
     label: row.label,
@@ -163,7 +176,7 @@ export async function loadMergeContext(input: {
 
     // Products
     product_names: items.length ? items.map((item) => item.name).join(", ") : null,
-    product_list: items.length ? itemLines(items) : null,
+    product_list: itemList,
 
     // Quotes
     quote_number: quote ? `QUO-${quote.number}` : null,
@@ -183,7 +196,7 @@ export async function loadMergeContext(input: {
     contract_number: input.contractNumber,
     date: formatDate(new Date(), zone),
     contract_total: contractTotalCents === null ? null : formatCents(contractTotalCents),
-    line_items: items.length ? itemLines(items) : null,
+    line_items: itemList,
     payment_terms: input.paymentTerms || null,
     payment_schedule: schedule
       ? schedule.rows

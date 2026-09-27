@@ -24,7 +24,7 @@ import {
   type ScheduleRowInput,
 } from "@/lib/payments";
 import { contractSubtotalCents, contractTotalCents } from "@/lib/contracts";
-import { resolveDiscount } from "@/lib/quote-math";
+import { computeQuoteTotals, resolveDiscount } from "@/lib/quote-math";
 import { discountInputSchema, newScheduleRowSchema } from "@/lib/schedule-input";
 import { loadMergeContext } from "@/lib/merge-data";
 import { renderMergeFields } from "@/lib/merge";
@@ -315,6 +315,9 @@ export async function awardWithoutPaperwork(
           status: true,
           updatedAt: true,
           paymentTerms: true,
+          // The discount on the whole quote, which the job's own starts from.
+          discountCents: true,
+          discountPercent: true,
           payments: {
             orderBy: { position: "asc" },
             select: { label: true, kind: true, percent: true, amountCents: true, dueOn: true, terms: true },
@@ -410,10 +413,11 @@ export async function awardWithoutPaperwork(
 
   // Where the payment rows come from: the quote's own table, untouched,
   // carries over exactly as the quote had it (a fixed amount as the share
-  // of the quote it was); otherwise the rows written on the form win; a
-  // form that sends neither gets the quote's table, else the workspace's
-  // preset dated from the day it was agreed.
-  const quoteTotalCents = quote ? contractSubtotalCents(quote.lineItems) : 0;
+  // of the quote it was — of the quote's total after its discount, which
+  // is what its rows were priced against); otherwise the rows written on
+  // the form win; a form that sends neither gets the quote's table, else
+  // the workspace's preset dated from the day it was agreed.
+  const quoteTotalCents = quote ? computeQuoteTotals(quote.lineItems, quote).totalCents : 0;
   const hasQuoteTable = Boolean(quote && quote.payments.length > 0);
   const fromQuote = parsed.data.schedule
     ? Boolean(parsed.data.scheduleFromQuote) && hasQuoteTable

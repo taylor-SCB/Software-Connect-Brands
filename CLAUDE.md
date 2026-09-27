@@ -170,7 +170,13 @@ above the rows names PRJ-n or offers **Award without paperwork** as a
 full form with rows, discount and schedule), **discounts** (Sept 20,
 2026: per line on the quote, copied onto contract rows; per contract on
 the contract only; printed as Subtotal / Discount / Total everywhere and
-flowing into Awarded), PDF export for both,
+flowing into Awarded; **Sept 27, 2026: a discount on the whole quote**,
+typed under the lines on the quote page or in the Contract Coordinator's
+footer, read by the customer's copy, the quotes list, the pipeline value,
+the dashboard and `{{quote_total}}`, re-pricing the quote's payment
+table, and the discount every new money-in contract and handshake award
+starts from — a purchase order never carries it, and a contract's own
+discount is still never written back to the quote), PDF export for both,
 **Owes you** under every Companies and Contacts row with a Balance card on
 their pages and an Owed to you tile on the dashboard, **invoices** (Send as
 invoice stamps INV-n and mints the page a customer opens at `/i/<token>`,
@@ -289,15 +295,14 @@ are all blocking before the first paying customer.
   two records stop being one business until someone renames them to match.
   A proper fix is a picker that links an existing supplier to an existing
   company by hand.
-- **A contract discount never reaches the quote.** A line discount typed
-  on the Contract Coordinator saves to the quote line (like a price
-  edit); a discount on the whole contract belongs to that contract only,
-  because one quote can split into a customer's Sales Order and a
-  supplier's Purchase Order with different discounts. So a deal's
-  pipeline value (from the quote) can read higher than the Sales Order
-  the customer signed. Taylor has not been asked whether the quote should
-  also carry a whole-quote discount; if he wants it, it is a Quote column
-  plus the same input on the quote page.
+- **A contract's own discount is never written back to the quote, by
+  design.** One quote can split into a customer's Sales Order and a
+  supplier's Purchase Order with different discounts, so a discount typed
+  only on a contract card stays on that contract, and a deal's pipeline
+  value (from the quote) then reads higher than that Sales Order. When the
+  discount is for the customer as a whole it belongs on the quote — the
+  whole-quote discount (Sept 27, 2026) — and every money-in contract starts
+  from it.
 - **"Contract signer" on a quote is recorded but nothing downstream reads
   it.** It is stored on the quote and shown back on the form; the
   Contract Coordinator still fills its signer from the workspace owner.
@@ -325,16 +330,21 @@ suite, and the delete-confirmation suite. **Seventeen** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
-32-step deal tracker + settings + uploads suite (both Sept 10, 2026; the
+40-step deal tracker + settings + uploads suite (both Sept 10, 2026; the
 tracker half rewritten Sept 20, 2026 for the card layout, inline pricing,
-discounts and written schedules),
+discounts and written schedules, and seven whole-quote discount steps
+added Sept 27, 2026), the 44-step quotes suite (Sept 15, 2026; line ids,
+Save as product, suppliers, software terms, the payment table, the
+customer's copy, the sales rep, and from Sept 27, 2026 the discount on
+the whole quote end to end),
 the 17-step contacts import + filters + favorites suite and the
 200,000-row load test (both Sept 13, 2026; the load test seeds in SQL,
 takes several minutes, and must stay under its 2-second page budget),
-from Sept 14, 2026 the 8-step company enrichment suite, the 24-step
-money + payments suite, the 23-step projects core suite, the 22-step
-project money suite, the 30-step crews + time suite, the 35-step calendar
-suite and the 25-step properties + close out suite, the login-case and
+from Sept 14, 2026 the 9-step company enrichment suite, the 28-step
+money + payments suite, the 26-step projects core suite (its handshake
+award now starts from the quote's own discount), the 22-step
+project money suite, the 34-step crews + time suite, the 43-step calendar
+suite and the 28-step properties + close out suite, the login-case and
 password-reset suites (Sept 18, 2026), and the 11-step overlay
 readability suite (Sept 20, 2026).
 
