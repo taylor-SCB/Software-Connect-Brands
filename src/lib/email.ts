@@ -24,6 +24,25 @@ export function isEmailConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+/**
+ * The sending address with a different display name in front of it.
+ *
+ * EMAIL_FROM is ours ("Software Connect Brands <no-reply@...>") and has to
+ * stay ours: only a domain verified with the provider may send. What the
+ * recipient reads first is the name, though, and on a tenant's email
+ * that must be the tenant's business, never ours. Quotes and angle
+ * brackets are stripped from the name so a business called
+ * `Acme "Best" <Painting>` cannot break the header.
+ */
+export function fromWithName(name: string) {
+  const configured = process.env.EMAIL_FROM ?? "";
+  const address = configured.match(/<([^>]+)>/)?.[1] ?? configured.trim();
+  const clean = name.replace(/["<>\r\n\\]/g, "").trim();
+  return clean ? `"${clean}" <${address}>` : configured;
+}
+
+export type EmailAttachment = { filename: string; content: Buffer };
+
 export type SendResult = { ok: true; id: string } | { ok: false; error: string };
 
 /**
@@ -35,6 +54,13 @@ export async function sendEmail(input: {
   subject: string;
   html: string;
   text: string;
+  /** Display name to send as; see fromWithName. Defaults to EMAIL_FROM as set. */
+  fromName?: string;
+  /** Where a reply lands: the person who sent it, not a no-reply box. */
+  replyTo?: string;
+  attachments?: EmailAttachment[];
+  /** Extra headers, e.g. List-Unsubscribe on marketing email. */
+  headers?: Record<string, string>;
 }): Promise<SendResult> {
   if (!isEmailConfigured()) {
     return { ok: false, error: "Email is not configured on this deployment." };
@@ -50,13 +76,25 @@ export async function sendEmail(input: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM,
+        from: input.fromName ? fromWithName(input.fromName) : process.env.EMAIL_FROM,
         to: [input.to],
         subject: input.subject,
         html: input.html,
         text: input.text,
+        ...(input.replyTo ? { reply_to: input.replyTo } : {}),
+        ...(input.headers ? { headers: input.headers } : {}),
+        ...(input.attachments?.length
+          ? {
+              attachments: input.attachments.map((file) => ({
+                filename: file.filename,
+                content: file.content.toString("base64"),
+              })),
+            }
+          : {}),
       }),
-      signal: AbortSignal.timeout(10_000),
+      // Longer with files on board: a few MB of attachments over a slow
+      // uplink takes more than the plain ten seconds.
+      signal: AbortSignal.timeout(input.attachments?.length ? 30_000 : 10_000),
     });
 
     if (!response.ok) {

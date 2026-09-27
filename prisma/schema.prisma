@@ -109,6 +109,8 @@ model Organization {
   calendarEvents      CalendarEvent[]
   projectTasks        ProjectTask[]
   properties          Property[]
+  marketingTemplates  MarketingTemplate[]
+  emailSends          EmailSend[]
 
   @@index([status])
 }
@@ -142,6 +144,11 @@ model User {
   // against the database, so no request can grant it to itself.
   isSuperAdmin         Boolean      @default(false)
   lastLoginAt          DateTime?
+  // Set when an owner or admin takes someone off the account. The row is
+  // kept rather than deleted: deleting a user cascades to every note and
+  // activity they ever logged, and a customer's history must not vanish
+  // because the person who wrote it left. A removed user cannot log in.
+  removedAt            DateTime?
   organizationId       String
   organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt            DateTime     @default(now())
@@ -154,6 +161,7 @@ model User {
   // above — a quote must outlive the person who owned it.
   leadQuotes   Quote[] @relation("QuoteLeadRep")
   signerQuotes Quote[] @relation("QuoteContractSigner")
+  emailSends   EmailSend[]
 
   @@index([organizationId])
 }
@@ -172,6 +180,10 @@ model PasswordReset {
   tokenHash String   @unique
   expiresAt DateTime
   usedAt    DateTime?
+  // An invitation from Company Users rather than a forgotten password.
+  // Same link, same page, but it lives for days rather than an hour and
+  // the page says "Set your password" to someone who never had one.
+  isInvite  Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([userId])
@@ -274,9 +286,13 @@ model Contact {
   // The yellow star; see Company.favorite.
   favorite       Boolean       @default(false)
   status         ContactStatus @default(LEAD)
+  // When they clicked "Unsubscribe" at the foot of a marketing email.
+  // Every send skips them from then on; the law (CAN-SPAM) requires it.
+  emailOptOutAt  DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  emailSends EmailSend[]
   deals      Deal[]
   notes      Note[]
   activities Activity[]
@@ -1581,5 +1597,65 @@ model Property {
 
   @@index([organizationId, name])
   @@index([companyId])
+  @@index([contactId])
+}
+
+// ------------------------------------------------------------------
+// Email marketing
+// ------------------------------------------------------------------
+
+// A saved email under Settings → Company Information → Marketing: a
+// subject and a body with {{merge}} fields, filled in per contact when it
+// is sent. Plain text by design — it reads the same on a phone, in
+// Outlook and in Gmail, and nobody has to learn an editor.
+model MarketingTemplate {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  subject        String
+  body           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  emailSends EmailSend[]
+
+  @@index([organizationId])
+}
+
+// PENDING is a slot held against today's allowance while the provider is
+// being called, so two tabs sending at once cannot both squeeze past it.
+enum EmailSendStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// One email to one person. The daily allowance is counted from these
+// (PENDING and SENT, never FAILED), and the unsubscribe link at the foot
+// of the message carries this row's token.
+model EmailSend {
+  id               String          @id @default(cuid())
+  organizationId   String
+  organization     Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // SetNull on both: a removed contact or user must not take the count of
+  // what was sent today down with it.
+  userId           String?
+  user             User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  contactId        String?
+  contact          Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  templateId       String?
+  template         MarketingTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  toEmail          String
+  subject          String
+  // File names only, for the record; the files themselves stay in Upload.
+  attachmentNames  String[]
+  status           EmailSendStatus @default(PENDING)
+  error            String?
+  providerId       String?
+  unsubscribeToken String          @unique
+  createdAt        DateTime        @default(now())
+
+  @@index([organizationId, userId, createdAt])
   @@index([contactId])
 }

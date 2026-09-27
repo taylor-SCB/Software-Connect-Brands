@@ -26,6 +26,7 @@ import {
   IconBuilding,
 } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
+import { EmailButton } from "@/components/email-composer";
 import { BalanceCard } from "@/components/balance-card";
 import { ProjectsCard } from "@/components/projects-card";
 import { UpcomingCard } from "@/components/upcoming-card";
@@ -128,6 +129,22 @@ export default async function ContactDetailPage({
           <>
             <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} size={18} />
             <StatusBadge status={contact.status} />
+            {contact.emailOptOutAt && (
+              <span className="badge text-[var(--warn)]" title={`Unsubscribed ${formatDate(contact.emailOptOutAt, timeZone)}`}>
+                Unsubscribed
+              </span>
+            )}
+            <EmailButton
+              recipients={[
+                {
+                  id: contact.id,
+                  name: contact.name,
+                  company: contact.company?.name ?? null,
+                  email: contact.email,
+                  optedOut: Boolean(contact.emailOptOutAt),
+                },
+              ]}
+            />
             <Link
               href={`/dashboard/quotes/new?contactId=${contact.id}`}
               className="btn btn-ghost btn-sm"

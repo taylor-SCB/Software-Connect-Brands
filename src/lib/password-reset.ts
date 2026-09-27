@@ -6,6 +6,10 @@ import { prisma } from "@/lib/prisma";
 // computer, short enough that an old email in an inbox is not a key.
 export const RESET_TTL_MINUTES = 60;
 
+// How long an invitation from Company Users lasts. A new teammate may not
+// open their email the same day; an owner can always send a fresh one.
+export const INVITE_TTL_DAYS = 7;
+
 // How many links one account may ask for in an hour. Stops the form being
 // used to spray somebody's inbox, and stops it being used as a way to find
 // out which addresses have accounts by watching how long a reply takes.
@@ -38,7 +42,7 @@ export async function createPasswordReset(
   email: string,
 ): Promise<{ token: string; user: { id: string; name: string; email: string } } | null> {
   const user = await prisma.user.findFirst({
-    where: { email: { equals: email.trim().toLowerCase(), mode: "insensitive" } },
+    where: { email: { equals: email.trim().toLowerCase(), mode: "insensitive" }, removedAt: null },
     select: { id: true, name: true, email: true },
     orderBy: { createdAt: "asc" },
   });
@@ -62,8 +66,34 @@ export async function createPasswordReset(
   return { token, user };
 }
 
+/**
+ * An invitation link for someone just added under Company Users. The
+ * same kind of row as a reset, so the same page and the same one-use,
+ * hashed-token rules apply; only the lifetime and the wording differ.
+ * Any earlier invite for them stops working, so only the newest email is
+ * ever live.
+ */
+export async function createInviteLink(userId: string): Promise<string> {
+  const token = newToken();
+  await prisma.$transaction([
+    prisma.passwordReset.updateMany({
+      where: { userId, usedAt: null, isInvite: true },
+      data: { usedAt: new Date() },
+    }),
+    prisma.passwordReset.create({
+      data: {
+        userId,
+        tokenHash: hashToken(token),
+        isInvite: true,
+        expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000),
+      },
+    }),
+  ]);
+  return token;
+}
+
 export type ResetLookup =
-  | { ok: true; resetId: string; userId: string; email: string }
+  | { ok: true; resetId: string; userId: string; email: string; isInvite: boolean }
   | { ok: false; reason: "unknown" | "used" | "expired" };
 
 /**
@@ -80,15 +110,17 @@ export async function findPasswordReset(token: string): Promise<ResetLookup> {
       userId: true,
       usedAt: true,
       expiresAt: true,
-      user: { select: { email: true } },
+      isInvite: true,
+      user: { select: { email: true, removedAt: true } },
     },
   });
 
-  if (!row) return { ok: false, reason: "unknown" };
+  // A link to a login that has since been taken off the account is dead.
+  if (!row || row.user.removedAt) return { ok: false, reason: "unknown" };
   if (row.usedAt) return { ok: false, reason: "used" };
   if (row.expiresAt.getTime() <= Date.now()) return { ok: false, reason: "expired" };
 
-  return { ok: true, resetId: row.id, userId: row.userId, email: row.user.email };
+  return { ok: true, resetId: row.id, userId: row.userId, email: row.user.email, isInvite: row.isInvite };
 }
 
 /**

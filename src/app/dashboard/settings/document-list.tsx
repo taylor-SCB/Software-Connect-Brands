@@ -2,6 +2,7 @@ import { formatDate } from "@/lib/format";
 import { Badge, EmptyState } from "@/components/ui";
 import { IconDownload, IconTrash, IconFileText } from "@/components/icons";
 import { fileUrl } from "@/lib/uploads";
+import { EmailButton } from "@/components/email-composer";
 import { deleteDocument } from "./actions";
 
 type Doc = {
@@ -29,10 +30,13 @@ export function DocumentList({
   canEdit,
   emptyTitle,
   emptyBody,
+  emailable = false,
 }: {
   documents: Doc[];
   timeZone: string;
   canEdit: boolean;
+  /** Marketing files get an Email button that opens the composer with the file attached. */
+  emailable?: boolean;
   emptyTitle: string;
   emptyBody: string;
 }) {
@@ -81,6 +85,7 @@ export function DocumentList({
                 <td className="faint num text-xs">{humanSize(doc.sizeBytes)}</td>
                 <td>
                   <div className="flex items-center justify-end gap-1">
+                    {emailable && <EmailButton fileId={doc.id} title={`Email ${doc.name}`} />}
                     <a href={fileUrl(doc.publicToken)} className="btn btn-ghost btn-sm" title="Download">
                       <IconDownload size={13} />
                     </a>

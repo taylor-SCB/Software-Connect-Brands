@@ -31,6 +31,7 @@ export async function findLoginUser(typed: string) {
     organizationId: true,
     role: true,
     isSuperAdmin: true,
+    removedAt: true,
     organization: { select: { status: true } },
   } as const;
 

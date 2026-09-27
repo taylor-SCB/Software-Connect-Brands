@@ -1,25 +1,10 @@
 "use server";
 
-import { headers } from "next/headers";
 import { createPasswordReset, RESET_TTL_MINUTES } from "@/lib/password-reset";
 import { isEmailConfigured, sendEmail } from "@/lib/email";
 import { keepFields } from "@/lib/forms";
+import { absoluteUrl } from "@/lib/app-url";
 
-function resetUrl(token: string) {
-  // The live site is the only address the app is ever reached on, but a
-  // preview build and a laptop both need this to point at themselves.
-  const configured = process.env.APP_URL;
-  if (configured) return `${configured.replace(/\/+$/, "")}/reset-password/${token}`;
-  return `/reset-password/${token}`;
-}
-
-async function absoluteResetUrl(token: string) {
-  if (process.env.APP_URL) return resetUrl(token);
-  const head = await headers();
-  const host = head.get("x-forwarded-host") ?? head.get("host") ?? "";
-  const proto = head.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  return `${proto}://${host}/reset-password/${token}`;
-}
 
 export async function requestPasswordReset(
   _prevState: { sent?: boolean; error?: string; kept?: Record<string, string> },
@@ -49,7 +34,7 @@ export async function requestPasswordReset(
   // same shape, no clue either way.
   if (!started) return { sent: true };
 
-  const url = await absoluteResetUrl(started.token);
+  const url = await absoluteUrl(`/reset-password/${started.token}`);
   const firstName = started.user.name.split(" ")[0] || "there";
 
   const result = await sendEmail({
