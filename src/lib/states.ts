@@ -29,3 +29,14 @@ export function normalizeState(value: string | null | undefined): string | null 
   if (upper.length === 2 && US_CODES.has(upper)) return upper;
   return trimmed.slice(0, 60);
 }
+
+// The two-letter code when the value is a US state ("Texas", "tx", "Tex."
+// is not one), otherwise null.
+export function usStateCode(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  const key = trimmed.toLowerCase().replace(/\.$/, "");
+  if (US_STATES[key]) return US_STATES[key];
+  const upper = trimmed.toUpperCase().replace(/\./g, "");
+  return upper.length === 2 && US_CODES.has(upper) ? upper : null;
+}

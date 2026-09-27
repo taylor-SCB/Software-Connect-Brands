@@ -155,7 +155,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
               />
               <p className="faint text-xs">
                 First row is headers. Only <strong>Name</strong> or <strong>Company Name</strong> is required; Title,
-                Email, Phone, Website, City, State, Birthday, Status, the company&apos;s details, Industry and Company
+                Email, Phone, Website, City, State (or one Location column like &quot;Austin, TX&quot;), Birthday, Status, the company&apos;s details, Industry and Company
                 Type are picked up when present. First name and Last name columns are joined.{" "}
                 <a href="/dashboard/contacts/import-template" download className="link">
                   Download the template
@@ -223,6 +223,10 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
 
 function Preview({ plan }: { plan: ContactImportPlan }) {
   const matched = CONTACT_CSV_COLUMNS.filter((column) => plan.columns[column] !== undefined);
+  // Headers nothing claimed, so a column the importer can't place is said
+  // out loud instead of silently dropped.
+  const claimed = new Set(Object.values(plan.columns));
+  const unused = plan.headers.filter((header, index) => header && !claimed.has(index));
   const rowsWithNotes = plan.rows.filter((row) => row.notes.length > 0);
   return (
     <div className="space-y-3">
@@ -236,6 +240,11 @@ function Preview({ plan }: { plan: ContactImportPlan }) {
       <p className="faint text-xs">
         Matched: {matched.map((column) => `${CONTACT_CSV_LABELS[column]} ← "${plan.headers[plan.columns[column]!]}"`).join(", ")}
       </p>
+      {unused.length > 0 && (
+        <p className="faint text-xs" data-testid="import-unused">
+          Not imported: {unused.map((header) => `"${header}"`).join(", ")}
+        </p>
+      )}
       <p className="faint text-xs">
         A company that already exists is reused and only its blank details are filled in. A contact whose email
         already exists is updated instead of added twice. A contact with no company counts as Individual / Personal.
@@ -245,22 +254,26 @@ function Preview({ plan }: { plan: ContactImportPlan }) {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Title</th>
+              <th>City, State</th>
               <th>Email</th>
               <th>Phone</th>
               <th>Company</th>
               <th>Industry · Type</th>
-              <th>State</th>
             </tr>
           </thead>
           <tbody>
             {plan.rows.slice(0, 6).map((row) => (
               <tr key={row.line}>
                 <td className="max-w-[12rem] truncate">{row.name ?? <span className="faint">(company only)</span>}</td>
+                <td className="max-w-[10rem] truncate text-xs">{row.title ?? "—"}</td>
+                <td className="whitespace-nowrap text-xs">
+                  {[row.city ?? row.company?.city, row.state ?? row.company?.state].filter(Boolean).join(", ") || "—"}
+                </td>
                 <td className="faint max-w-[12rem] truncate text-xs">{row.email ?? "—"}</td>
                 <td className="num text-xs">{row.phone ?? "—"}</td>
                 <td className="max-w-[12rem] truncate">{row.company?.name ?? <span className="faint">—</span>}</td>
                 <td className="text-xs">{[...(row.company?.industries ?? []), ...(row.company?.companyTypes ?? [])].join(", ") || "—"}</td>
-                <td className="text-xs">{row.state ?? row.company?.state ?? "—"}</td>
               </tr>
             ))}
           </tbody>
