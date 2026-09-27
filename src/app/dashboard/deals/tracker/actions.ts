@@ -21,8 +21,8 @@ import {
 } from "@/lib/payments";
 import { formatCents } from "@/lib/format";
 import { paidCentsOf, settleRow } from "@/lib/money";
-import { lineGrossCents, resolveDiscount } from "@/lib/quote-math";
-import { repriceQuotePayments } from "@/lib/quote-payments";
+import { computeQuoteTotals, lineGrossCents, resolveDiscount } from "@/lib/quote-math";
+import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
 import { loadPaymentDefaults } from "@/lib/tracker";
 import { discountInputSchema, newScheduleRowSchema } from "@/lib/schedule-input";
 import { refreshTotals, refreshTotalsForContract, refreshProjectTotals, syncProjectScopes } from "@/lib/projects";
@@ -116,9 +116,10 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const defaults = await loadPaymentDefaults(organizationId);
 
-  // What the quote's own payment rows were priced against, so a fixed
-  // amount can carry over as the share of the deal it represents.
-  const quoteTotalCents = contractSubtotalCents(quote.lineItems);
+  // What the quote's own payment rows were priced against — the lines
+  // less the discount on the whole quote — so a fixed amount can carry
+  // over as the share of the deal it represents.
+  const quoteTotalCents = computeQuoteTotals(quote.lineItems, quote).totalCents;
 
   type Plan = {
     label: string;
@@ -413,6 +414,8 @@ export async function updateQuoteLine(
   );
 
   const saved = await prisma.$transaction(async (tx) => {
+    // Serialises with a discount save or a line save on the same quote.
+    await lockQuote(tx, line.quoteId);
     const updated = await tx.quoteLineItem.update({
       where: { id: line.id },
       data: {
@@ -432,6 +435,47 @@ export async function updateQuoteLine(
   revalidatePath(`/dashboard/quotes/${line.quoteId}`);
   revalidatePath("/dashboard/quotes");
   return { success: "Saved", line: saved };
+}
+
+const quoteDiscountEditSchema = z.object({
+  dealId: idSchema,
+  quoteId: idSchema,
+  // As typed: a percent, or dollars off. Worked out on the server.
+  discount: discountInputSchema,
+});
+
+export type QuoteDiscountEdit = z.infer<typeof quoteDiscountEditSchema>;
+
+// The discount on the whole quote, typed under the rows on the Contract
+// Coordinator and written straight back onto the quote, the way an inline
+// price is: the quote page, the customer's copy and the pipeline all read
+// it from there. The quote's payment rows are re-priced in the same
+// breath. Contracts already made from the quote keep their own discount.
+export async function updateQuoteDiscount(
+  raw: QuoteDiscountEdit,
+): Promise<ActionState & { discount?: { discountCents: number; discountPercent: number | null } }> {
+  const { organizationId } = await requireSession();
+  const parsed = quoteDiscountEditSchema.safeParse(raw);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the discount" };
+  const input = parsed.data;
+
+  const quote = await prisma.quote.findFirst({
+    where: { id: input.quoteId, organizationId, dealId: input.dealId },
+    select: { id: true },
+  });
+  if (!quote) return { error: "That quote isn't on this deal. Reload and try again." };
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const discount = await applyQuoteDiscount(tx, quote.id, input.discount);
+    await repriceQuotePayments(tx, quote.id);
+    await tx.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } });
+    return discount;
+  });
+
+  revalidateDeal(input.dealId);
+  revalidatePath(`/dashboard/quotes/${quote.id}`);
+  revalidatePath("/dashboard/quotes");
+  return { success: "Saved", discount: saved };
 }
 
 /* ------------------------------- Row state ------------------------------- */

@@ -185,6 +185,8 @@ export async function DealTrackerPage({
                         id: quote.id,
                         number: quote.number,
                         paymentTerms: quote.paymentTerms,
+                        discountCents: quote.discountCents,
+                        discountPercent: quote.discountPercent,
                         payments: quote.payments,
                         lineItems: quote.lineItems.map((row) => ({
                           id: row.id,

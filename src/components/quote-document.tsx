@@ -43,6 +43,11 @@ export type QuoteDocumentData = {
     // customer's copy; how it was typed is not their business.
     discountCents?: number;
   }[];
+  // A discount on the whole quote, under the lines' own: the cents, and
+  // the percent it was typed as when it was one (printed beside it, as a
+  // customer expects to see the rate they were given).
+  discountCents?: number;
+  discountPercent?: number | null;
   // What the customer is asked to pay and when. Not fetched at all when
   // the quote is set to hide it, so the numbers never reach the page.
   // Deliberately without percent or kind: how a row was worked out is
@@ -152,6 +157,57 @@ function getTotals(quote: QuoteDocumentData) {
       discountCents: item.discountCents ?? 0,
       tag: item.tag,
     })),
+    { discountCents: quote.discountCents ?? 0, discountPercent: quote.discountPercent ?? null },
+  );
+}
+
+// How the total was reached, printed above it when anything came off:
+// Items / Line discounts when lines carry their own, then Subtotal /
+// Discount when the whole quote does, so the figures tie top to bottom.
+// Nothing at all when there is no discount — a plain quote stays plain.
+function TotalsBreakdown({
+  totals,
+  discountPercent,
+  dark = false,
+}: {
+  totals: ReturnType<typeof getTotals>;
+  discountPercent: number | null | undefined;
+  dark?: boolean;
+}) {
+  if (totals.lineDiscountCents <= 0 && totals.quoteDiscountCents <= 0) return null;
+  const muted = dark ? "text-white/55" : "text-[#6b7280]";
+  const saving = dark ? "text-emerald-300" : "text-[#047857]";
+  const label = `pr-4 text-left ${muted}`;
+  const amount = "text-right font-mono tabular-nums";
+  return (
+    <table className="mb-2 ml-auto text-xs" data-testid="document-breakdown">
+      <tbody>
+        {totals.lineDiscountCents > 0 && (
+          <>
+            <tr>
+              <td className={label}>Items</td>
+              <td className={`${amount} ${muted}`}>{formatCents(totals.grossCents)}</td>
+            </tr>
+            <tr>
+              <td className={label}>Line discounts</td>
+              <td className={`${amount} ${saving}`} data-testid="document-discount">−{formatCents(totals.lineDiscountCents)}</td>
+            </tr>
+          </>
+        )}
+        {totals.quoteDiscountCents > 0 && (
+          <>
+            <tr>
+              <td className={label}>Subtotal</td>
+              <td className={`${amount} ${muted}`} data-testid="document-subtotal">{formatCents(totals.subtotalCents)}</td>
+            </tr>
+            <tr>
+              <td className={label}>Discount{discountPercent != null ? ` (${discountPercent}%)` : ""}</td>
+              <td className={`${amount} ${saving}`} data-testid="document-quote-discount">−{formatCents(totals.quoteDiscountCents)}</td>
+            </tr>
+          </>
+        )}
+      </tbody>
+    </table>
   );
 }
 
@@ -278,7 +334,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
       <div className="mt-6 flex flex-wrap justify-between gap-8">
         <div className="min-w-56">
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
-            Totals by tag
+            Totals by tag{totals.quoteDiscountCents > 0 ? " · before discount" : ""}
           </p>
           <table className="mt-2 text-sm">
             <tbody>
@@ -300,11 +356,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
         </div>
 
         <div className="min-w-56 text-right">
-          {totals.discountCents > 0 && (
-            <p className="mb-2 text-xs text-[#6b7280]" data-testid="document-discount">
-              Subtotal {formatCents(totals.grossCents)} · Discount −{formatCents(totals.discountCents)}
-            </p>
-          )}
+          <TotalsBreakdown totals={totals} discountPercent={quote.discountPercent} />
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Total
           </p>
@@ -474,7 +526,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
         <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_auto]">
           <div className="rounded-xl border border-white/8 bg-white/[0.02] p-4">
             <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/40">
-              Totals by tag
+              Totals by tag{totals.quoteDiscountCents > 0 ? " · before discount" : ""}
             </p>
             <div className="mt-3 space-y-2">
               {LINE_ITEM_TAGS.map((tag) => (
@@ -506,11 +558,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
               background: `linear-gradient(160deg, color-mix(in srgb, ${brand} 20%, transparent), transparent)`,
             }}
           >
-            {totals.discountCents > 0 && (
-              <p className="mb-2 text-xs text-white/55" data-testid="document-discount">
-                Subtotal {formatCents(totals.grossCents)} · Discount −{formatCents(totals.discountCents)}
-              </p>
-            )}
+            <TotalsBreakdown totals={totals} discountPercent={quote.discountPercent} dark />
             <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-white/50">
               Quote total
             </p>

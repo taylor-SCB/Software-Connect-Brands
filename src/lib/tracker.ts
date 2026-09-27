@@ -92,6 +92,10 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           status: true,
           updatedAt: true,
           paymentTerms: true,
+          // The discount on the whole quote: typed under the rows here,
+          // and what a money-in contract's own discount starts from.
+          discountCents: true,
+          discountPercent: true,
           // The terms the customer was already shown, so a contract split
           // off this quote can start from them rather than a preset.
           payments: {
@@ -176,6 +180,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
       title: quote.title,
       status: quote.status,
       paymentTerms: quote.paymentTerms,
+      discountCents: quote.discountCents,
+      discountPercent: quote.discountPercent,
       // Dates travel as yyyy-mm-dd: this crosses to a client component,
       // and a Date would have to be serialised anyway.
       payments: quote.payments.map((row) => ({

@@ -24,7 +24,7 @@ export default async function QuotesPage() {
 
   const pipelineCents = quotes
     .filter((quote) => quote.status === "SENT")
-    .reduce((sum, quote) => sum + computeQuoteTotals(quote.lineItems).totalCents, 0);
+    .reduce((sum, quote) => sum + computeQuoteTotals(quote.lineItems, quote).totalCents, 0);
 
   return (
     <div>
@@ -74,7 +74,7 @@ export default async function QuotesPage() {
               </thead>
               <tbody>
                 {quotes.map((quote) => {
-                  const totals = computeQuoteTotals(quote.lineItems);
+                  const totals = computeQuoteTotals(quote.lineItems, quote);
                   return (
                     <tr key={quote.id}>
                       <td className="num faint text-xs">QUO-{quote.number}</td>

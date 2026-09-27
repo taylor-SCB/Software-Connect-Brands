@@ -21,6 +21,14 @@ import {
 import { IconPlus, IconTrash } from "@/components/icons";
 import { FormError, FormSuccess } from "@/components/ui";
 import { SupplierCell, type SupplierOption } from "./supplier-cell";
+import {
+  DiscountInput,
+  discountAsStored,
+  discountPayload,
+  discountProblem,
+  discountStateOf,
+  type DiscountState,
+} from "@/components/discount-input";
 
 export type EditorProduct = {
   id: string;
@@ -158,6 +166,7 @@ function rowDiscount(row: Row) {
 export function LineItemsEditor({
   quoteId,
   initialLines,
+  initialDiscount,
   products,
   serviceTypes,
   suppliers,
@@ -165,6 +174,9 @@ export function LineItemsEditor({
 }: {
   quoteId: string;
   initialLines: EditorLine[];
+  // The discount on the whole quote as stored: cents, and the percent it
+  // was typed as when it was one.
+  initialDiscount: { discountCents: number; discountPercent: number | null };
   products: EditorProduct[];
   // The workspace's kinds of work, for splitting the quote by scope.
   serviceTypes: string[];
@@ -181,6 +193,9 @@ export function LineItemsEditor({
   const [splitByService, setSplitByService] = useState(() =>
     initialLines.some((line) => Boolean(line.serviceType)),
   );
+  // Money off the whole quote, as typed, under the lines' own discounts.
+  // Saved with the lines, and worked out on the server against them.
+  const [quoteDiscount, setQuoteDiscount] = useState<DiscountState>(() => discountStateOf(initialDiscount));
   const [dirty, setDirty] = useState(false);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
@@ -197,9 +212,17 @@ export function LineItemsEditor({
           discountCents: rowDiscount(row).discountCents,
           tag: row.tag,
         })),
+        discountAsStored(quoteDiscount),
       ),
-    [rows],
+    [rows, quoteDiscount],
   );
+
+  function changeQuoteDiscount(next: DiscountState) {
+    setQuoteDiscount(next);
+    setDirty(true);
+    editedDuringSave.current = true;
+    setState({});
+  }
 
   function mutate(next: Row[]) {
     setRows(next);
@@ -339,10 +362,17 @@ export function LineItemsEditor({
       setState({ error: `Line ${blank + 1} needs a product name.` });
       return;
     }
+    // A word or a minus in the discount box would otherwise save as no
+    // discount at all, silently.
+    const discountIssue = discountProblem(quoteDiscount.input);
+    if (discountIssue) {
+      setState({ error: discountIssue.replace(/^Discount/, "The discount on the whole quote") });
+      return;
+    }
 
     editedDuringSave.current = false;
     startTransition(async () => {
-      const result = await saveLineItems(quoteId, payload);
+      const result = await saveLineItems(quoteId, payload, discountPayload(quoteDiscount));
       setState({ error: result.error, success: result.success });
       if (result.error) return;
 
@@ -720,14 +750,34 @@ export function LineItemsEditor({
         <FormError message={state.error} />
         <FormSuccess message={state.success} />
 
-        <div className="rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.03)] px-4 py-3">
-          {totals.discountCents > 0 && (
-            <div className="faint mb-1 flex items-center justify-between text-xs" data-testid="quote-discount-line">
-              <span>Subtotal {formatCents(totals.grossCents)}</span>
-              <span className="num text-[var(--ok)]">Discounts −{formatCents(totals.discountCents)}</span>
+        <div className="space-y-1.5 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.03)] px-4 py-3" data-testid="quote-totals">
+          {/* Items / Line discounts / Subtotal / Discount on the whole quote
+              / Quote total, each row only when there is something on it, so
+              the figures always tie top to bottom. */}
+          {totals.lineDiscountCents > 0 && (
+            <div className="faint flex items-center justify-between text-xs" data-testid="quote-discount-line">
+              <span>Items {formatCents(totals.grossCents)}</span>
+              <span className="num text-[var(--ok)]">Line discounts −{formatCents(totals.lineDiscountCents)}</span>
             </div>
           )}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between text-sm">
+            <span className="muted text-xs">Subtotal</span>
+            <span className="num" data-testid="quote-subtotal">{formatCents(totals.subtotalCents)}</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <label className="muted text-xs" htmlFor="quote-discount">
+              Discount on the whole quote
+            </label>
+            <DiscountInput
+              id="quote-discount"
+              label="Discount on the whole quote"
+              state={quoteDiscount}
+              onChange={changeQuoteDiscount}
+              baseCents={totals.subtotalCents}
+              disabled={readOnly}
+            />
+          </div>
+          <div className="flex items-center justify-between border-t border-[var(--border)] pt-2">
             <span className="text-sm font-semibold">Quote total</span>
             <span className="num text-xl font-semibold" data-testid="quote-total">
               {formatCents(totals.totalCents)}
@@ -735,9 +785,17 @@ export function LineItemsEditor({
           </div>
         </div>
 
-        {/* Tag rollup — always adds up to the quote total above. */}
+        {/* Tag rollup — adds up to the subtotal above. A discount on the
+            whole quote belongs to no one tag, so it is not shared out. */}
         <div>
-          <p className="eyebrow mb-2">Totals by tag</p>
+          <p className="eyebrow mb-2">
+            Totals by tag
+            {totals.quoteDiscountCents > 0 && (
+              <span className="faint ml-1.5 font-normal normal-case tracking-normal">
+                · before the discount on the whole quote
+              </span>
+            )}
+          </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {LINE_ITEM_TAGS.map((tag) => (
               <div

@@ -383,6 +383,9 @@ async function signAs(browser, token, name) {
     `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
      VALUES ('qli_pj5','quo_pj2','Paint and labor',1,240000,'LABOR',0)`,
   );
+  // The quote carries a 10% discount of its own (Sept 27, 2026), so the
+  // handshake form starts from it rather than making someone type it again.
+  await sql(`UPDATE "Quote" SET "discountCents"=24000, "discountPercent"=10 WHERE id='quo_pj2'`);
   // A workspace on Pacific time, where the browser's UTC clock reads
   // tomorrow from 5pm onward — the date prefilled here has to come from
   // the workspace's own clock instead.
@@ -414,7 +417,8 @@ async function signAs(browser, token, name) {
   // job, and the payment rows written out with a quick fill.
   assert.equal(await page.locator("[data-testid=award-rows] input[type=checkbox]:checked").count(), 1);
   assert.equal(await page.locator("[data-testid=award-subtotal]").textContent(), "$2,400.00");
-  await page.locator("#award-discount").fill("10");
+  assert.equal(await page.locator("#award-discount").inputValue(), "10", "the job's discount starts as the quote's own");
+  assert.ok(await page.locator("[data-testid=award-discount-from-quote]").isVisible(), "and says so");
   assert.equal(await page.locator("[data-testid=award-total]").textContent(), "$2,160.00", "10% off the handshake");
   await page.locator("#award-preset").selectOption("DEPOSIT_BALANCE");
   await page.locator("#award-depositPercent").fill("25");

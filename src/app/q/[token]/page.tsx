@@ -35,6 +35,9 @@ export default async function PublicQuotePage({
       terms: true,
       validUntil: true,
       createdAt: true,
+      // The discount on the whole quote and the rate it was given at.
+      discountCents: true,
+      discountPercent: true,
       organization: {
         select: {
           id: true,
