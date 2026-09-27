@@ -382,7 +382,7 @@ function EmailComposer({
                 </label>
                 <select
                   id="email-template"
-                  className="input"
+                  className="select"
                   value={templateId ?? ""}
                   onChange={(event) => applyTemplate(event.target.value)}
                 >
