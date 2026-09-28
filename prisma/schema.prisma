@@ -76,6 +76,12 @@ model Organization {
   // "Checks to Acme LLC, 12 Main St. Zelle: pay@acme.com" — printed on
   // the invoice a customer opens, since nothing here takes card payments.
   paymentInstructions     String        @default("")
+  // The follow-up rhythm (Settings → General, Sept 28, 2026): how many
+  // days after a quote or a contract goes out each follow-up lands on
+  // the calendar. [3] is one follow-up three days on; [2, 7, 14] is
+  // three of them. Empty means none.
+  quoteFollowUpDays       Int[]         @default([3])
+  contractFollowUpDays    Int[]         @default([3])
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 

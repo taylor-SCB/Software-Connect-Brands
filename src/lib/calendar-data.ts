@@ -29,6 +29,7 @@ const EVENT_SELECT = {
   ownerId: true,
   quoteId: true,
   contractId: true,
+  activityId: true,
   crew: { select: { name: true } },
   project: { select: { number: true, name: true } },
   scope: { select: { name: true } },
@@ -62,6 +63,7 @@ export function toEventView(event: {
   ownerId: string | null;
   quoteId: string | null;
   contractId: string | null;
+  activityId: string | null;
   crew: { name: string } | null;
   project: { number: number; name: string } | null;
   scope: { name: string } | null;
@@ -103,6 +105,7 @@ export function toEventView(event: {
     quoteNumber: event.quote?.number ?? null,
     contractId: event.contractId,
     contractNumber: event.contract?.number ?? null,
+    activityId: event.activityId,
   };
 }
 
@@ -188,12 +191,20 @@ export async function loadEvents(
 // whole history does not render on one screen.
 export const LOG_ROWS = 60;
 
+// The kinds of entry a person is meant to do something about, so one
+// whose day has gone by unticked is overdue rather than merely past. A
+// day of work (an install, a delivery) happened whether or not anybody
+// ticked it, so it stays in Previous.
+export const OVERDUE_TYPES = ["Call", "Meeting", "Email", "Text", "Quote due", "Quote follow up", "Contract follow up"];
+
 export async function loadLogs(organizationId: string, today: string, filters?: EventFilters) {
   const from = new Date(`${today}T00:00:00.000Z`);
   const where = { organizationId, ...filterWhere(filters) };
-  const [previous, upcoming] = await Promise.all([
+  const past = { startOn: { lt: from }, OR: [{ endOn: null }, { endOn: { lt: from } }] };
+  const overdueWhere = { doneAt: null, type: { in: OVERDUE_TYPES } };
+  const [previous, upcoming, overdue] = await Promise.all([
     prisma.calendarEvent.findMany({
-      where: { ...where, startOn: { lt: from }, OR: [{ endOn: null }, { endOn: { lt: from } }] },
+      where: { ...where, ...past, NOT: overdueWhere },
       orderBy: [{ startOn: "desc" }, { startTime: "desc" }],
       take: LOG_ROWS,
       select: EVENT_SELECT,
@@ -204,8 +215,29 @@ export async function loadLogs(organizationId: string, today: string, filters?: 
       take: LOG_ROWS,
       select: EVENT_SELECT,
     }),
+    // Oldest first: the one that has waited longest is at the top.
+    prisma.calendarEvent.findMany({
+      where: { ...where, ...past, ...overdueWhere },
+      orderBy: [{ startOn: "asc" }, { startTime: "asc" }],
+      take: LOG_ROWS,
+      select: EVENT_SELECT,
+    }),
   ]);
-  return { previous: previous.map(toEventView), upcoming: upcoming.map(toEventView) };
+  return {
+    previous: previous.map(toEventView),
+    upcoming: upcoming.map(toEventView),
+    overdue: overdue.map(toEventView),
+  };
+}
+
+// The team view: one row per teammate and per crew, for one week. The
+// same events as the week grid, with the crew list to name the rows.
+export async function loadCrewRows(organizationId: string) {
+  return prisma.crew.findMany({
+    where: { organizationId, active: true },
+    orderBy: [{ kind: "asc" }, { name: "asc" }],
+    select: { id: true, name: true, kind: true },
+  });
 }
 
 // Names for whatever the filters point at, so a chip can read "Harbor

@@ -509,6 +509,28 @@ The **Coming up** card on a contact, company or job leaves out anything
 already ticked done, so a quote that went out this morning does not push
 next month's walk-through off it; the calendar's log still shows both.
 
+**Five more, Sept 28, 2026.** An **Overdue** strip sits at the top of
+Upcoming in red: any call, meeting, email, text, quote due or follow-up
+whose day has gone by unticked, oldest first, counted in the header. It
+is still to do, so it is not in Previous either; a day of work (an
+install, a delivery) happened whether or not anybody ticked it and stays
+in Previous. **Ticking done asks how it went**: on any entry with a
+contact or company on it, Done opens a small box (which kind of touch,
+what happened) and "Log … and tick it" writes the line into the
+contact's history on the day the entry was for, one line per person
+expected; "Just tick it" keeps the old behaviour. Unticking an entry that
+was logged this way takes the line back out; a call logged from the form
+keeps its line whatever happens to the tick. The **Team** view, beside
+Month and Week, is one row per teammate and per crew across seven days
+with the week's load on each row ("4 things · 3 of 7 days", or "Free all
+week"); a cell opens that person's day. The **follow-up rhythm** lives in
+Settings → General: "Quote follow-ups" and "Contract follow-ups" as days
+after sending ("2, 7, 14" is three follow-ups, numbered 1 of 3), applied
+to the next thing sent. A **marketing send** is one Email entry on the
+sender's calendar ("Email · subject", with how many it went to), not one
+per recipient. And an activity with no clock on it reads **No time set**
+rather than All day, and sits at the bottom of its day.
+
 **Properties** (Sept 14, 2026) — **Projects → Properties** is a building at
 a time. A property manager with four towers wants the number per tower, not
 per job: what was awarded across every job there, what has been spent, what

@@ -10,6 +10,7 @@
 // again and re-dated, and it is why nothing here ever touches an event
 // somebody typed by hand — those have auto false and are never matched.
 
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { ensureEventType } from "@/lib/event-types";
 import { DEFAULT_TIME_ZONE } from "@/lib/format";
@@ -21,11 +22,21 @@ import { ACTIVITY_EVENT_TYPE, FOLLOW_UP_DAYS, type ActivityTypeValue } from "@/l
 // quietly fall back to the default zone and put a late-night signature
 // on the wrong day.
 async function zoneOf(organizationId: string) {
+  return (await settingsOf(organizationId)).timeZone;
+}
+
+// The zone plus the follow-up rhythm (Settings → General): how many days
+// after a quote or contract goes out each follow-up lands.
+async function settingsOf(organizationId: string) {
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
-    select: { timeZone: true },
+    select: { timeZone: true, quoteFollowUpDays: true, contractFollowUpDays: true },
   });
-  return organization?.timeZone ?? DEFAULT_TIME_ZONE;
+  return {
+    timeZone: organization?.timeZone ?? DEFAULT_TIME_ZONE,
+    quoteFollowUpDays: organization?.quoteFollowUpDays ?? [FOLLOW_UP_DAYS],
+    contractFollowUpDays: organization?.contractFollowUpDays ?? [FOLLOW_UP_DAYS],
+  };
 }
 
 // A moment as the yyyy-mm-dd the workspace's clock says it was. A quote
@@ -200,6 +211,56 @@ async function dropOpenMilestones(
   });
 }
 
+// The follow-ups for one quote or contract, one per day in the rhythm.
+// Open ones are rewritten from scratch each time (a re-send moves them);
+// one already ticked done is history and stays, and a day it already
+// covers is not written twice.
+async function putFollowUps(input: {
+  organizationId: string;
+  type: "Quote follow up" | "Contract follow up";
+  title: string;
+  notes: string;
+  sentOn: string;
+  days: number[];
+  today: string;
+  ownerId: string | null;
+  quoteId?: string;
+  contractId?: string;
+  who: { dealId?: string | null; contactId?: string | null; companyId?: string | null; projectId?: string | null };
+}) {
+  const source = input.quoteId ? { quoteId: input.quoteId } : { contractId: input.contractId };
+  await dropOpenMilestones(input.organizationId, source, [input.type]);
+  const kept = await prisma.calendarEvent.findMany({
+    where: { organizationId: input.organizationId, auto: true, type: input.type, ...source },
+    select: { startOn: true },
+  });
+  const covered = new Set(kept.map((row) => row.startOn.toISOString().slice(0, 10)));
+  const days = [...new Set(input.days)].sort((a, b) => a - b);
+  const type = (await ensureEventType(input.organizationId, input.type)) ?? input.type;
+  for (const [index, day] of days.entries()) {
+    const startOn = addDays(input.sentOn, day);
+    if (covered.has(startOn)) continue;
+    await prisma.calendarEvent.create({
+      data: {
+        organizationId: input.organizationId,
+        auto: true,
+        ownerId: input.ownerId,
+        type,
+        title: days.length > 1 ? `${input.title} (${index + 1} of ${days.length})` : input.title,
+        notes: input.notes,
+        startOn: isoToDate(startOn)!,
+        doneAt: startOn < input.today ? new Date() : null,
+        dealId: input.who.dealId ?? null,
+        contactId: input.who.contactId ?? null,
+        companyId: input.who.companyId ?? null,
+        projectId: input.who.projectId ?? null,
+        quoteId: input.quoteId ?? null,
+        contractId: input.contractId ?? null,
+      },
+    });
+  }
+}
+
 /* --------------------------------- Quotes --------------------------------- */
 
 // Called whenever a quote's status or expiry changes. Sent: "Quote sent"
@@ -230,7 +291,7 @@ export async function syncQuoteEvents(organizationId: string, quoteId: string, a
     return;
   }
 
-  const timeZone = await zoneOf(organizationId);
+  const { timeZone, quoteFollowUpDays } = await settingsOf(organizationId);
   const today = todayIso(timeZone);
   const sentOn = dayInZone(quote.sentAt ?? new Date(), timeZone);
   const ownerId = actorId ?? quote.leadSalesRepId ?? (await fallbackOwner(organizationId, { quoteId: quote.id }));
@@ -248,17 +309,17 @@ export async function syncQuoteEvents(organizationId: string, quoteId: string, a
     quoteId: quote.id,
     ...who,
   });
-  const followUpOn = addDays(sentOn, FOLLOW_UP_DAYS);
-  await putMilestone({
+  await putFollowUps({
     organizationId,
     type: "Quote follow up",
     title: `Follow up on quote · ${quote.contact.name}`,
     notes: label,
-    startOn: followUpOn,
+    sentOn,
+    days: quoteFollowUpDays,
+    today,
     ownerId,
-    done: followUpOn < today,
     quoteId: quote.id,
-    ...who,
+    who,
   });
   if (quote.validUntil) {
     const dueOn = quote.validUntil.toISOString().slice(0, 10);
@@ -305,7 +366,7 @@ export async function syncContractEvents(organizationId: string, contractId: str
   });
   if (!contract) return;
 
-  const timeZone = await zoneOf(organizationId);
+  const { timeZone, contractFollowUpDays } = await settingsOf(organizationId);
   const today = todayIso(timeZone);
   const label = `CON-${contract.number} ${contract.title}`;
   const who = {
@@ -330,17 +391,17 @@ export async function syncContractEvents(organizationId: string, contractId: str
       contractId: contract.id,
       ...who,
     });
-    const followUpOn = addDays(sentOn, FOLLOW_UP_DAYS);
-    await putMilestone({
+    await putFollowUps({
       organizationId,
       type: "Contract follow up",
       title: `Follow up on ${contract.payable ? "purchase order" : "contract"} · ${contract.contact.name}`,
       notes: label,
-      startOn: followUpOn,
+      sentOn,
+      days: contractFollowUpDays,
+      today,
       ownerId,
-      done: followUpOn < today,
       contractId: contract.id,
-      ...who,
+      who,
     });
     return;
   }
@@ -438,4 +499,152 @@ export async function scheduleActivityEvent(input: {
     select: { id: true },
   });
   return created.id;
+}
+
+/* ---------------------------- Marketing sends ---------------------------- */
+
+// One entry per marketing send, not one per recipient: forty emails in a
+// morning is one thing that happened, and each contact already has its
+// own line in their Activity.
+export async function recordMarketingSendEvent(input: {
+  organizationId: string;
+  userId: string;
+  subject: string;
+  sent: number;
+  attachmentNames: string[];
+  // The one recipient, when there was only one, so the entry is with them.
+  contact: { id: string; companyId: string | null } | null;
+}) {
+  const timeZone = await zoneOf(input.organizationId);
+  const type = (await ensureEventType(input.organizationId, "Email")) ?? "Email";
+  const now = new Date();
+  await prisma.calendarEvent.create({
+    data: {
+      organizationId: input.organizationId,
+      auto: true,
+      ownerId: input.userId,
+      type,
+      title: `Email · ${input.subject}`,
+      notes: `Marketing email to ${input.sent} ${input.sent === 1 ? "contact" : "contacts"}${
+        input.attachmentNames.length ? ` with ${input.attachmentNames.join(", ")}` : ""
+      }`,
+      startOn: isoToDate(dayInZone(now, timeZone))!,
+      startTime: timeInZone(now, timeZone),
+      doneAt: now,
+      contactId: input.contact?.id ?? null,
+      companyId: input.contact?.companyId ?? null,
+    },
+  });
+}
+
+/* ------------------------------ Ticking done ------------------------------ */
+
+// The activity type a calendar type reads back as when its day is ticked
+// done and logged: a Call is a call; a quote follow-up was most likely a
+// call too, and the box lets the person say otherwise.
+export function activityTypeFor(eventType: string): ActivityTypeValue {
+  const match = (Object.keys(ACTIVITY_EVENT_TYPE) as ActivityTypeValue[]).find(
+    (key) => ACTIVITY_EVENT_TYPE[key].toLowerCase() === eventType.toLowerCase(),
+  );
+  return match ?? "PHONE_CALL";
+}
+
+// Whether ticking this entry done can write a line in somebody's
+// history: it is with a contact or a company, and it has not been logged
+// already (a call logged from the form arrives on the calendar with its
+// history line attached).
+export function canLogOnDone(event: { contactId: string | null; companyId: string | null; activityId?: string | null }) {
+  return Boolean(event.contactId || event.companyId) && !event.activityId;
+}
+
+// Ticking a scheduled call done and saying how it went: the Activity
+// lines are written (one per contact — the one it was with plus anyone
+// expected — sharing a batch), the first is linked to the entry, and the
+// entry is done as of the day and time it was for.
+export async function logEventDone(input: {
+  organizationId: string;
+  userId: string;
+  eventId: string;
+  activityType: ActivityTypeValue;
+  note: string;
+}) {
+  const event = await prisma.calendarEvent.findFirst({
+    where: { id: input.eventId, organizationId: input.organizationId },
+    select: {
+      id: true,
+      title: true,
+      notes: true,
+      startOn: true,
+      startTime: true,
+      contactId: true,
+      companyId: true,
+      activityId: true,
+      projectId: true,
+      attendees: { select: { id: true } },
+    },
+  });
+  if (!event) return { error: "That day is no longer on the calendar" };
+  if (!canLogOnDone(event)) return { error: "This entry is not with anyone, so there is nobody to log it on" };
+
+  const timeZone = await zoneOf(input.organizationId);
+  const day = event.startOn.toISOString().slice(0, 10);
+  const today = todayIso(timeZone);
+  // When it happened: the time it was booked for, else now if it was
+  // today, else midday on its day.
+  const occurredAt = event.startTime
+    ? zonedMoment(day, event.startTime, timeZone)
+    : day === today
+      ? new Date()
+      : zonedMoment(day, "12:00", timeZone);
+  const body = input.note.trim() || event.notes.trim() || event.title;
+
+  const contactIds = [...new Set([event.contactId, ...event.attendees.map((row) => row.id)].filter((id): id is string => Boolean(id)))];
+  const rows = contactIds.length
+    ? contactIds.map((contactId) => ({ contactId, companyId: null as string | null }))
+    : [{ contactId: null as string | null, companyId: event.companyId }];
+  const batchId = rows.length > 1 ? randomUUID() : null;
+
+  const written = await prisma.$transaction(
+    rows.map((row) =>
+      prisma.activity.create({
+        data: {
+          organizationId: input.organizationId,
+          contactId: row.contactId,
+          companyId: row.companyId,
+          projectId: event.projectId,
+          userId: input.userId,
+          type: input.activityType,
+          body,
+          batchId,
+          occurredAt,
+        },
+        select: { id: true },
+      }),
+    ),
+  );
+  await prisma.calendarEvent.update({
+    where: { id: event.id },
+    data: { doneAt: occurredAt > new Date() ? new Date() : occurredAt, activityId: written[0].id },
+  });
+  return { ok: true as const, contactIds, companyId: event.companyId };
+}
+
+// Unticking an entry that was logged from the calendar takes that
+// history line back out. The link is cleared first: the Activity row
+// cascades to the entry, so deleting it first would delete the entry.
+export async function unlogEventDone(organizationId: string, eventId: string) {
+  const event = await prisma.calendarEvent.findFirst({
+    where: { id: eventId, organizationId },
+    select: { id: true, auto: true, activityId: true, activity: { select: { batchId: true } } },
+  });
+  if (!event) return;
+  // A call logged from the form is history first and a calendar entry
+  // second; unticking it is not how that line gets deleted.
+  if (!event.activityId || event.auto) return;
+  const batchId = event.activity?.batchId ?? null;
+  const activityId = event.activityId;
+  await prisma.calendarEvent.update({ where: { id: event.id }, data: { activityId: null } });
+  await prisma.activity.deleteMany({
+    where: { organizationId, ...(batchId ? { batchId } : { id: activityId }) },
+  });
 }

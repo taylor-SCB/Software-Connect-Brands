@@ -213,7 +213,12 @@ calendar on the day it happened with a **When** date and optional time,
 one dated ahead is scheduled instead of logged; marking a quote sent
 writes Quote sent, a follow-up three days on and Quote due, sending a
 contract writes Contract sent and its follow-up, signing writes Contract
-closed, and an answer takes the open follow-up off),
+closed, and an answer takes the open follow-up off; **Sept 28, 2026**: an
+Overdue strip at the top of Upcoming, Done opens a "How did it go?" box
+that logs the touch into the contact's history, a Team view with a row
+per teammate and crew and the week's load, the follow-up rhythm as day
+lists in Settings → General, one Email entry per marketing send, and
+"No time set" on untimed activities),
 **Properties** (a building at a time, rolling up the jobs at it, with stage
 chips deciding what counts and cancelled work left out by default) and
 **Close out** (one button, with the loose ends listed beside it and none of
@@ -298,24 +303,23 @@ are all blocking before the first paying customer.
   flags a crew double-booked on one day, but there is no "what is this
   crew's week" view and no capacity planning. Worth building once a
   customer runs more than two crews.
-- **The follow-up rhythm is one number for the whole app.** A quote's or
-  contract's follow-up lands three days after it goes out
-  (`FOLLOW_UP_DAYS` in `src/lib/constants.ts`). A per-workspace setting
-  is Taylor's call and a small build.
 - **A day has one owner, not a team.** "Whose calendar" is one teammate;
   two teammates at the same meeting is one owner and the other not on
   it. A many-to-many is the fix if a customer asks.
-- **Marketing sends do not land on the calendar.** Forty emails in one
-  send would be forty entries on one day; only the log form's calls,
-  emails, texts and meetings do. One entry per send is the sensible
-  next step.
 - **The calendar's Projects filter and form pickers are capped at 200
   open jobs, and the Contacts / Companies filters search the server
   past their first 200.** The Log columns show the 60 closest rows each
-  way and say so at the foot.
-- **Ticking a scheduled call done on the calendar does not log it.** The
-  event is struck through but nothing is written to the contact's
-  Activity; log it from their page when it has happened.
+  way (and up to 60 overdue) and say so at the foot.
+- **A changed follow-up rhythm applies to the next thing sent.**
+  Follow-ups already on the calendar stay where they are; re-sending the
+  quote or contract rewrites its open ones on the new rhythm.
+- **Activity Rules are not built yet** (Sept 28, 2026). Taylor's four
+  answers are on record: rules create the entry and fill the template
+  but a person sends; no external clock, the app's own scheduler runs
+  when the calendar is opened and untimed items read "No time set" at
+  the bottom of the day; Members edit their own entries and not an
+  Owner's or Admin's; social posts are reminders only, ticked or moved
+  like a follow-up.
 - **A subcontractor's hours default to tracked-only.** Their money comes
   from their purchase order, which is right, but a sub genuinely paid by
   the hour needs the per-entry tick each time — there is no per-crew
@@ -412,10 +416,13 @@ suite and the 28-step properties + close out suite, the login-case and
 password-reset suites (Sept 18, 2026), the 11-step overlay
 readability suite (Sept 20, 2026), the 23-step email marketing +
 Company Users suite (Sept 27, 2026; needs the same fake email settings
-as `password-reset.cjs`), and the 29-step Calendar v2 suite
-(`calendar-v2.cjs`, Sept 27, 2026: logged and scheduled calls, quote and
-contract milestones, the three layouts, the company view and the
-stacking filters, the owner picker, and the phone layout). A suite that
+as `password-reset.cjs`; from Sept 28, 2026 it also checks the one
+Email entry a marketing send leaves on the calendar), and the 37-step
+Calendar v2 suite (`calendar-v2.cjs`, Sept 27, 2026: logged and
+scheduled calls, quote and contract milestones, the three layouts, the
+company view and the stacking filters, the owner picker, and the phone
+layout; Sept 28: the follow-up rhythm, the Overdue strip, tick-to-log
+and untick, the Team view). A suite that
 seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the

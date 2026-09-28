@@ -140,7 +140,26 @@ const companyInfoSchema = z.object({
   // Printed on every invoice a customer opens, since nothing here takes
   // a card payment yet.
   paymentInstructions: z.string().trim().max(1000, "Keep this under 1,000 characters").optional(),
+  // The follow-up rhythm: "3, 7, 14" typed as text, parsed below.
+  quoteFollowUpDays: z.string().trim().max(120).optional(),
+  contractFollowUpDays: z.string().trim().max(120).optional(),
 });
+
+// "3, 7, 14" → [3, 7, 14]. Whole days from 0 to 365, at most ten, no
+// repeats, in order. Anything else is a readable refusal, not a 500.
+function parseFollowUpDays(raw: string | undefined, label: string): { ok: true; days: number[] } | { ok: false; error: string } {
+  const text = (raw ?? "").trim();
+  if (!text) return { ok: true, days: [] };
+  const days: number[] = [];
+  for (const part of text.split(/[,\s]+/).filter(Boolean)) {
+    if (!/^\d{1,3}$/.test(part)) return { ok: false, error: `${label}: use whole days, like "3, 7, 14"` };
+    const day = Number(part);
+    if (day > 365) return { ok: false, error: `${label}: keep each follow-up within a year` };
+    if (!days.includes(day)) days.push(day);
+  }
+  if (days.length > 10) return { ok: false, error: `${label}: at most ten follow-ups` };
+  return { ok: true, days: days.sort((a, b) => a - b) };
+}
 
 export async function updateCompanyInfo(
   _prev: ActionState,
@@ -171,8 +190,18 @@ export async function updateCompanyInfo(
     defaultDepositPercent: formData.get("defaultDepositPercent") ?? undefined,
     defaultInstallmentCount: formData.get("defaultInstallmentCount") ?? undefined,
     paymentInstructions: formData.get("paymentInstructions") ?? undefined,
+    quoteFollowUpDays: formData.get("quoteFollowUpDays") ?? undefined,
+    contractFollowUpDays: formData.get("contractFollowUpDays") ?? undefined,
   });
   if (!parsed.ok) return { error: parsed.error };
+
+  // A form that does not carry the rhythm fields (an older page) leaves
+  // the rhythm as it is.
+  const quoteDays = formData.get("quoteFollowUpDays") === null ? null : parseFollowUpDays(parsed.data.quoteFollowUpDays, "Quote follow-ups");
+  if (quoteDays && !quoteDays.ok) return { error: quoteDays.error };
+  const contractDays =
+    formData.get("contractFollowUpDays") === null ? null : parseFollowUpDays(parsed.data.contractFollowUpDays, "Contract follow-ups");
+  if (contractDays && !contractDays.ok) return { error: contractDays.error };
 
   // Same logo as Branding: one picture, two places to change it.
   const logo: { logoUrl?: string | null } = {};
@@ -205,6 +234,8 @@ export async function updateCompanyInfo(
       ...(parsed.data.defaultDepositPercent ? { defaultDepositPercent: parsed.data.defaultDepositPercent } : {}),
       ...(parsed.data.defaultInstallmentCount ? { defaultInstallmentCount: parsed.data.defaultInstallmentCount } : {}),
       paymentInstructions: parsed.data.paymentInstructions ?? "",
+      ...(quoteDays?.ok ? { quoteFollowUpDays: quoteDays.days } : {}),
+      ...(contractDays?.ok ? { contractFollowUpDays: contractDays.days } : {}),
       ...logo,
     },
   });

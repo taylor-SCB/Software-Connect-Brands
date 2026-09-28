@@ -10,7 +10,8 @@ import { isoToDate, todayIso, addDays } from "@/lib/payments";
 import { cleanTime, eventDays, MAX_EVENT_DAYS } from "@/lib/calendar";
 import { formatDay } from "@/lib/format";
 import { ensureEventType } from "@/lib/event-types";
-import { INSTALL_EVENT_TYPE } from "@/lib/constants";
+import { ACTIVITY_TYPES, INSTALL_EVENT_TYPE } from "@/lib/constants";
+import { logEventDone, unlogEventDone } from "@/lib/calendar-auto";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a day");
@@ -247,16 +248,54 @@ export async function setEventDone(eventId: string, done: boolean): Promise<Acti
   const { organizationId } = await requireSession();
   const event = await prisma.calendarEvent.findFirst({
     where: { id: eventId, organizationId },
-    select: { id: true, projectId: true },
+    select: { id: true, projectId: true, contactId: true, companyId: true },
   });
   if (!event) return { error: "That day is no longer on the calendar" };
+
+  // Unticking an entry that was logged from the calendar takes its
+  // history line back out with it.
+  if (!done) await unlogEventDone(organizationId, event.id);
 
   await prisma.calendarEvent.updateMany({
     where: { id: event.id, organizationId },
     data: { doneAt: done ? new Date() : null },
   });
   revalidateCalendar(event.projectId);
+  if (event.contactId) revalidatePath(`/dashboard/contacts/${event.contactId}`);
+  if (event.companyId) revalidatePath(`/dashboard/companies/${event.companyId}`);
   return { success: done ? "Done" : "Back on the list" };
+}
+
+// "How did it go?": ticks the entry done and writes what happened into
+// the history of whoever it was with, so a scheduled call becomes a
+// logged call in one step.
+export async function completeEventWithLog(
+  eventId: string,
+  input: { activityType: string; note: string },
+): Promise<ActionState> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = z
+    .object({ eventId: idSchema, activityType: z.enum(ACTIVITY_TYPES), note: z.string().trim().max(5000) })
+    .safeParse({ eventId, ...input });
+  if (!parsed.success) return { error: "Pick what kind of touch it was" };
+
+  const result = await logEventDone({
+    organizationId,
+    userId,
+    eventId: parsed.data.eventId,
+    activityType: parsed.data.activityType,
+    note: parsed.data.note,
+  });
+  if ("error" in result) return { error: result.error };
+
+  const event = await prisma.calendarEvent.findFirst({
+    where: { id: parsed.data.eventId, organizationId },
+    select: { projectId: true },
+  });
+  revalidateCalendar(event?.projectId);
+  for (const contactId of result.contactIds) revalidatePath(`/dashboard/contacts/${contactId}`);
+  if (result.companyId) revalidatePath(`/dashboard/companies/${result.companyId}`);
+  return { success: "Done and logged" };
 }
 
 // Dragging is a mouse gesture a phone cannot do, so moving a day is a

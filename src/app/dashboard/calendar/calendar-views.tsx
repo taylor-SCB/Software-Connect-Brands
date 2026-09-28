@@ -13,10 +13,12 @@ import {
   monthGrid,
   weekDays,
 } from "@/lib/calendar";
+import { ACTIVITY_EVENT_TYPES } from "@/lib/constants";
 import { Card, CardHeader, Badge, FormError, EmptyState } from "@/components/ui";
 import { IconCalendar, IconTrash, IconCheck, IconHardHat } from "@/components/icons";
 import { EventForm, type EventChoices, type EventFormValues } from "./event-form";
 import { deleteEvent, moveEvent, setEventDone } from "./actions";
+import { DoneBox, canLogOnDone } from "./done-box";
 
 export type EventView = EventFormValues & {
   crewName: string | null;
@@ -33,7 +35,19 @@ export type EventView = EventFormValues & {
   quoteNumber: number | null;
   contractId: string | null;
   contractNumber: number | null;
+  // The history line this entry is tied to, when it has one.
+  activityId: string | null;
 };
+
+// An entry that is an activity rather than a day of work, so a missing
+// clock reads "No time set" and not "All day": a call is never all day.
+export function isActivityType(type: string) {
+  return ACTIVITY_EVENT_TYPES.some((name) => name.toLowerCase() === type.toLowerCase());
+}
+
+export function timeLabel(event: { type: string; startTime: string | null; endTime: string | null }) {
+  return formatTimeRange(event.startTime, event.endTime) ?? (isActivityType(event.type) ? "No time set" : "All day");
+}
 
 // The quote or contract an entry the app wrote came from, as a link.
 export function EventSourceLink({ event }: { event: EventView }) {
@@ -205,23 +219,26 @@ export function WeekView({
 
 /* --------------------------------- One day --------------------------------- */
 
-function DayPanel({
+export function DayPanel({
   day,
   events,
   choices,
   onClose,
+  title,
 }: {
   day: string;
   events: EventView[];
   choices: EventChoices;
   onClose: () => void;
+  // The team view names the row as well as the day.
+  title?: string;
 }) {
   const [adding, setAdding] = useState(false);
 
   return (
     <Card lit className="mt-4">
       <CardHeader
-        title={day}
+        title={title ?? day}
         subtitle={`${events.length} ${events.length === 1 ? "thing" : "things"} on this day`}
         actions={
           <div className="flex gap-2">
@@ -276,10 +293,11 @@ export function EventCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [ticking, setTicking] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
   const color = colorForType(event.type);
-  const times = formatTimeRange(event.startTime, event.endTime);
+  const times = timeLabel(event);
   const span = eventDays(event).length;
 
   const run = (action: () => Promise<{ error?: string } | undefined>) =>
@@ -317,7 +335,7 @@ export function EventCard({
       </div>
 
       <p className="faint num mt-0.5 text-xs">
-        {times ?? "All day"}
+        {times}
         {span > 1 && ` · ${span} days`}
         {event.crewName && ` · ${event.crewName}`}
         {event.ownerName && <span data-testid="event-owner-name"> · {event.ownerName}</span>}
@@ -368,7 +386,7 @@ export function EventCard({
         <button
           type="button"
           disabled={pending}
-          onClick={() => run(() => setEventDone(event.id, !event.doneAt))}
+          onClick={() => (canLogOnDone(event) ? setTicking(!ticking) : run(() => setEventDone(event.id, !event.doneAt)))}
           className="btn btn-ghost btn-sm"
           data-testid="event-done"
         >
@@ -402,6 +420,8 @@ export function EventCard({
           <IconTrash size={12} />
         </button>
       </div>
+
+      {ticking && <DoneBox event={event} onClose={() => setTicking(false)} />}
 
       {moving && (
         <div className="mt-1.5 flex flex-wrap items-end gap-2">

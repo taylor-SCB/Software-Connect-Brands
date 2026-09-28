@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { formatDay } from "@/lib/format";
-import { colorForType, eventDays, formatTimeRange } from "@/lib/calendar";
+import { colorForType, eventDays } from "@/lib/calendar";
 import { Card, CardHeader, Badge, FormError, EmptyState } from "@/components/ui";
 import { IconCalendar, IconCheck, IconTrash } from "@/components/icons";
 import { EventForm, type EventChoices } from "./event-form";
-import { EventSourceLink, type EventView } from "./calendar-views";
+import { EventSourceLink, timeLabel, type EventView } from "./calendar-views";
 import { deleteEvent, setEventDone } from "./actions";
+import { DoneBox, canLogOnDone } from "./done-box";
 
 // The timeline: two columns of rows, what has happened on the left and
 // what is coming on the right, each grouped by day. Where a month grid
@@ -17,12 +18,17 @@ import { deleteEvent, setEventDone } from "./actions";
 export function LogColumns({
   previous,
   upcoming,
+  overdue,
   choices,
   today,
   capped,
 }: {
   previous: EventView[];
   upcoming: EventView[];
+  // Past its day and never ticked: a follow-up nobody made, a call that
+  // was booked and not logged. Sits at the top of Upcoming in red,
+  // because it is still to do, not something that happened.
+  overdue: EventView[];
   choices: EventChoices;
   today: string;
   // How many rows each column was cut at, for the note at the foot.
@@ -49,6 +55,7 @@ export function LogColumns({
         empty="Follow-ups, due dates, installs and meetings that are still ahead."
         capped={capped}
         testId="log-upcoming"
+        overdue={overdue}
       />
     </div>
   );
@@ -63,6 +70,7 @@ function LogColumn({
   empty,
   capped,
   testId,
+  overdue = [],
 }: {
   title: string;
   subtitle: string;
@@ -72,6 +80,7 @@ function LogColumn({
   empty: string;
   capped: number;
   testId: string;
+  overdue?: EventView[];
 }) {
   // Grouped by the day each event starts, in the order the list came in.
   const days: { day: string; events: EventView[] }[] = [];
@@ -84,8 +93,24 @@ function LogColumn({
   return (
     <Card lit>
       <CardHeader title={title} subtitle={subtitle} />
+      {overdue.length > 0 && (
+        <div
+          className="border-b border-[rgb(251_113_133/0.3)] bg-[rgb(251_113_133/0.06)] px-4 py-2.5"
+          data-testid="log-overdue"
+          data-count={overdue.length}
+        >
+          <p className="eyebrow mb-1.5 text-[var(--danger)]">
+            Overdue · {overdue.length} {overdue.length === 1 ? "thing" : "things"} past their day and not ticked
+          </p>
+          <div className="space-y-1">
+            {overdue.map((event) => (
+              <LogRow key={event.id} event={event} choices={choices} overdue />
+            ))}
+          </div>
+        </div>
+      )}
       <div className="divide-y divide-[rgb(255_255_255/0.045)]" data-testid={testId} data-count={events.length}>
-        {events.length === 0 ? (
+        {events.length === 0 && overdue.length === 0 ? (
           <EmptyState icon={<IconCalendar size={20} />} title={`${title} is empty`} body={empty} />
         ) : (
           days.map((group) => (
@@ -114,12 +139,13 @@ function LogColumn({
 
 // One line of the log. Time, what it was, who it was with, whose it is;
 // tick it done, open it to edit, or take it off.
-function LogRow({ event, choices }: { event: EventView; choices: EventChoices }) {
+function LogRow({ event, choices, overdue = false }: { event: EventView; choices: EventChoices; overdue?: boolean }) {
   const [editing, setEditing] = useState(false);
+  const [ticking, setTicking] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
-  const color = colorForType(event.type);
-  const times = formatTimeRange(event.startTime, event.endTime);
+  const color = overdue ? "var(--danger)" : colorForType(event.type);
+  const times = timeLabel(event);
   const span = eventDays(event).length;
 
   const run = (action: () => Promise<{ error?: string } | undefined>) =>
@@ -149,13 +175,15 @@ function LogRow({ event, choices }: { event: EventView; choices: EventChoices })
       {/* The clock has a column of its own where there is room; on a
           phone it folds into the row so the words get the width. */}
       <span className="num faint hidden w-[5.5rem] shrink-0 pt-0.5 text-xs sm:block">
-        {times ?? "All day"}
+        {overdue && <span className="block text-[var(--danger)]">{formatDay(`${event.startOn}T12:00:00Z`)}</span>}
+        {times}
         {span > 1 && <span className="block">{span} days</span>}
       </span>
       <div className="min-w-0 flex-1 basis-40">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <span className="num faint text-xs sm:hidden">
-            {times ?? "All day"}
+            {overdue && <span className="text-[var(--danger)]">{formatDay(`${event.startOn}T12:00:00Z`)} · </span>}
+            {times}
             {span > 1 && ` · ${span} days`}
           </span>
           <p className={`text-sm ${event.doneAt ? "line-through opacity-60" : ""}`} data-testid="log-title">
@@ -199,13 +227,14 @@ function LogRow({ event, choices }: { event: EventView; choices: EventChoices })
           {event.attendeeNames.length > 0 && ` · with ${event.attendeeNames.join(", ")}`}
         </p>
         {event.notes && <p className="faint mt-0.5 line-clamp-2 whitespace-pre-wrap text-xs">{event.notes}</p>}
+        {ticking && <DoneBox event={event} onClose={() => setTicking(false)} />}
         <FormError message={error} />
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         <button
           type="button"
           disabled={pending}
-          onClick={() => run(() => setEventDone(event.id, !event.doneAt))}
+          onClick={() => (canLogOnDone(event) ? setTicking(!ticking) : run(() => setEventDone(event.id, !event.doneAt)))}
           aria-label={event.doneAt ? `Mark ${event.title} not done` : `Mark ${event.title} done`}
           className={`btn btn-ghost btn-sm !px-1.5 ${event.doneAt ? "text-[var(--ok)]" : ""}`}
           data-testid="log-done"

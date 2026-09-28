@@ -135,6 +135,8 @@ export function CompanyInfoForm({
     defaultDepositPercent: number;
     defaultInstallmentCount: number;
     paymentInstructions: string;
+    quoteFollowUpDays: number[];
+    contractFollowUpDays: number[];
   };
   canEdit: boolean;
 }) {
@@ -192,6 +194,43 @@ export function CompanyInfoForm({
         />
 
         <PaymentTablePreset organization={organization} />
+
+        <div className="space-y-4 border-t border-[rgb(255_255_255/0.06)] pt-5">
+          <div>
+            <h3 className="text-sm font-semibold">Follow-up rhythm</h3>
+            <p className="muted text-sm">
+              When a quote or contract goes out, the calendar puts a follow-up on the sender&apos;s calendar this
+              many days later. Several days means several follow-ups; leave it empty for none.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="quoteFollowUpDays">Quote follow-ups · days after sending</label>
+              <input
+                id="quoteFollowUpDays"
+                name="quoteFollowUpDays"
+                defaultValue={organization.quoteFollowUpDays.join(", ")}
+                placeholder="3, 7, 14"
+                className="input num"
+                data-testid="quote-follow-up-days"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="contractFollowUpDays">Contract follow-ups · days after sending</label>
+              <input
+                id="contractFollowUpDays"
+                name="contractFollowUpDays"
+                defaultValue={organization.contractFollowUpDays.join(", ")}
+                placeholder="3, 7"
+                className="input num"
+                data-testid="contract-follow-up-days"
+              />
+            </div>
+          </div>
+          <p className="faint text-xs">
+            Applies to the next thing sent. Follow-ups already on the calendar stay where they are.
+          </p>
+        </div>
       </fieldset>
 
       <FormError message={state?.error} />

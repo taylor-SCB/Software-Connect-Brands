@@ -13,11 +13,12 @@ import {
   startOfWeek,
   weekDays,
 } from "@/lib/calendar";
-import { LOG_ROWS, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, type EventFilters } from "@/lib/calendar-data";
+import { LOG_ROWS, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, type EventFilters } from "@/lib/calendar-data";
 import { readIds, readLayout } from "@/lib/calendar-filters";
 import { PageHeader, Card } from "@/components/ui";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { MonthView, WeekView } from "./calendar-views";
+import { TeamView } from "./calendar-team";
 import { LogColumns } from "./calendar-log";
 
 type Params = {
@@ -44,7 +45,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   const timeZone = await getTimeZone();
   const today = todayIso(timeZone);
 
-  const view = params.view === "week" ? "week" : "month";
+  const view = params.view === "week" ? "week" : params.view === "team" ? "team" : "month";
   const layout = readLayout(params.layout);
   // Anything that is not a real day falls back to today rather than
   // taking the page down with it.
@@ -66,7 +67,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   const from = isoToDate(days[0])!;
   const to = isoToDate(days[days.length - 1])!;
 
-  const [events, choices, logs, labels] = await Promise.all([
+  const [events, choices, logs, labels, crews] = await Promise.all([
     layout === "log" ? [] : loadEvents(organizationId, { from, to }, filters),
     loadEventChoices(organizationId, userId),
     layout === "calendar" ? null : loadLogs(organizationId, today, filters),
@@ -75,6 +76,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       contactIds: filters.contactIds ?? [],
       projectIds: filters.projectIds ?? [],
     }),
+    view === "team" && layout !== "log" ? loadCrewRows(organizationId) : [],
   ]);
 
   // A crew in two places at once on the same day, with times that
@@ -115,7 +117,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       ? "What has happened, and what is next"
       : view === "month"
         ? monthTitle(anchor)
-        : `Week of ${dayRangeTitle(days[0], days[days.length - 1])}`;
+        : `${view === "team" ? "The team's week of" : "Week of"} ${dayRangeTitle(days[0], days[days.length - 1])}`;
 
   return (
     <div>
@@ -126,6 +128,9 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
           layout === "log" ? (
             <p className="faint num text-xs" data-testid="cal-count">
               {logs?.previous.length ?? 0} before today · {logs?.upcoming.length ?? 0} coming up
+              {(logs?.overdue.length ?? 0) > 0 && (
+                <span className="text-[var(--danger)]"> · {logs?.overdue.length} overdue</span>
+              )}
               {filtering && " with the filters on"}
             </p>
           ) : (
@@ -174,6 +179,8 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       {layout !== "log" &&
         (view === "month" ? (
           <MonthView monthIso={anchor} today={today} events={events} choices={choices} />
+        ) : view === "team" ? (
+          <TeamView weekOf={anchor} today={today} events={events} choices={choices} crews={crews} />
         ) : (
           <WeekView weekOf={anchor} today={today} events={events} choices={choices} />
         ))}
@@ -190,6 +197,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
           <LogColumns
             previous={logs.previous}
             upcoming={logs.upcoming}
+            overdue={logs.overdue}
             choices={choices}
             today={today}
             capped={LOG_ROWS}

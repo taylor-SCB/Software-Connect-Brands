@@ -238,6 +238,20 @@ async function login(page, who) {
   assert.equal(Buffer.from(promo.attachments[0].content, "base64").toString(), "%PDF-1.4 test brochure");
   assert.match(promo.headers["List-Unsubscribe"], /\/u\/[\w-]+\/one-click>$/);
   assert.equal(promo.headers["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click");
+
+  log("the send is one Email entry on the sender's calendar, with the one recipient on it");
+  const sendEntry = (
+    await db.query(
+      `SELECT e.type, e.title, e.notes, e."doneAt", e.auto, e."ownerId", e."contactId", c.email FROM "CalendarEvent" e
+       LEFT JOIN "Contact" c ON c.id = e."contactId" WHERE e."organizationId"=$1 AND e.type='Email'`,
+      [org.id],
+    )
+  ).rows;
+  assert.equal(sendEntry.length, 1, "one entry for the send, not one per person");
+  assert.equal(sendEntry[0].title, "Email · A spring offer for {{first_name}}");
+  assert.match(sendEntry[0].notes, /Marketing email to 1 contact with brochure\.pdf/);
+  assert.ok(sendEntry[0].doneAt !== null && sendEntry[0].auto === true);
+  assert.equal(sendEntry[0].email, "alice@mailtest.example.com", "the one recipient is who it was with");
   assert.ok(!/\{\{/.test(promo.html + promo.text), "no raw token reaches a customer");
   await page.click('button:has-text("Done")');
   const activity = await db.query(

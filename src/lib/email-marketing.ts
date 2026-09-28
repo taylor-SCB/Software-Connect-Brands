@@ -4,6 +4,7 @@ import { publicToken } from "@/lib/tokens";
 import { todayIso } from "@/lib/payments";
 import { isEmailConfigured, sendEmail } from "@/lib/email";
 import { absoluteUrl } from "@/lib/app-url";
+import { recordMarketingSendEvent } from "@/lib/calendar-auto";
 import {
   DAILY_EMAIL_LIMIT,
   MAX_ATTACHMENTS,
@@ -205,7 +206,7 @@ export async function sendMarketingEmails(
   const [contacts, files, template] = await Promise.all([
     prisma.contact.findMany({
       where: { organizationId, id: { in: contactIds } },
-      select: { id: true, name: true, email: true, emailOptOutAt: true, company: { select: { name: true } } },
+      select: { id: true, name: true, email: true, emailOptOutAt: true, companyId: true, company: { select: { name: true } } },
     }),
     fileIds.length
       ? prisma.upload.findMany({
@@ -349,6 +350,19 @@ export async function sendMarketingEmails(
         data: { status: "FAILED", error: result.error.slice(0, 1000) },
       });
     }
+  }
+
+  // One line on the sender's calendar for the whole send.
+  if (sent > 0) {
+    const only = reserved.rows.length === 1 ? byContact.get(reserved.rows[0].contactId!) : null;
+    await recordMarketingSendEvent({
+      organizationId,
+      userId,
+      subject: subject.replace(/\s+/g, " ").trim(),
+      sent,
+      attachmentNames,
+      contact: only ? { id: only.id, companyId: only.companyId } : null,
+    });
   }
 
   return { ok: true, sent, failed, skipped, used: await sentToday(userId, org.timeZone), limit };

@@ -304,6 +304,38 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
     daysOn(20),
   );
 
+  log("the follow-up rhythm in Settings → General writes one follow-up per day listed");
+  await page.goto(`${BASE}/dashboard/settings/general`);
+  await page.locator("[data-testid=quote-follow-up-days]").fill("2, 7");
+  await page.locator("[data-testid=contract-follow-up-days]").fill("3");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Company information saved").waitFor();
+  assert.deepEqual(
+    (await sql(`SELECT "quoteFollowUpDays" FROM "Organization" WHERE id=$1`, [org])).rows[0].quoteFollowUpDays,
+    [2, 7],
+  );
+  await page.goto(`${BASE}/dashboard/settings/general`);
+  await page.locator("[data-testid=quote-follow-up-days]").fill("x, 7");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText(/use whole days/).waitFor();
+  // Re-sending the quote picks the new rhythm up.
+  await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
+  await page.getByRole("button", { name: "Back to draft" }).click();
+  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
+  await page.getByRole("button", { name: "Mark as sent" }).click();
+  await page.getByRole("button", { name: "Mark accepted" }).waitFor();
+  const rhythm = (
+    await sql(`SELECT title, "startOn" FROM "CalendarEvent" WHERE "quoteId"='quo_calv2' AND type='Quote follow up' ORDER BY "startOn"`)
+  ).rows;
+  assert.deepEqual(rhythm.map((row) => isoOf(row.startOn)), [daysOn(2), daysOn(7)], "two follow-ups, two and seven days on");
+  assert.match(rhythm[0].title, /\(1 of 2\)$/);
+  assert.match(rhythm[1].title, /\(2 of 2\)$/);
+  assert.equal(
+    (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
+    4,
+    "sent, due, and the two follow-ups",
+  );
+
   log("the Log layout: the call is in Previous, the follow-up and due are in Upcoming");
   await page.goto(`${BASE}/dashboard/calendar?layout=log`);
   await page.locator("[data-testid=log-columns]").waitFor();
@@ -503,6 +535,97 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
     "the meeting is",
   );
 
+  /* ------------------------------ Overdue and done ------------------------------ */
+
+  log("a scheduled call whose day has gone by unticked is overdue, not previous");
+  await sql(`UPDATE "CalendarEvent" SET "startOn"=$1 WHERE id=$2`, [daysAgo(3), scheduledId]);
+  await page.goto(`${BASE}/dashboard/calendar?layout=log`);
+  await page.locator("[data-testid=log-columns]").waitFor();
+  const overdueStrip = page.locator("[data-testid=log-overdue]");
+  assert.equal(await overdueStrip.getAttribute("data-count"), "1");
+  assert.match(await overdueStrip.textContent(), /Overdue · 1 thing/);
+  assert.match(await overdueStrip.textContent(), /Call · Dana Ruiz/);
+  assert.doesNotMatch(await page.locator("[data-testid=log-previous]").textContent(), /Call back about the deposit/, "it did not happen, so it is not previous");
+  assert.match(await page.locator("[data-testid=cal-count]").textContent(), /1 overdue/);
+  assert.match(await page.locator("[data-testid=log-previous]").textContent(), /No time set/, "an untimed meeting reads No time set, not All day");
+  await shot(page, "05-overdue");
+
+  log("ticking it done asks how it went and writes the contact's history");
+  const overdueRow = overdueStrip.locator("[data-testid=log-row]").first();
+  await overdueRow.locator("[data-testid=log-done]").click();
+  const box = page.locator("[data-testid=done-box]");
+  await box.waitFor();
+  assert.equal(await box.locator("[data-testid=done-type-PHONE_CALL]").getAttribute("aria-pressed"), "true", "a Call reads back as a phone call");
+  await box.locator("[data-testid=done-note]").fill("Spoke to Dana, deposit is coming Friday");
+  await box.locator("[data-testid=done-log]").click();
+  await page.locator("[data-testid=log-overdue]").waitFor({ state: "detached" });
+  const logged = (
+    await sql(
+      `SELECT a.id, a.type, a.body, a."occurredAt", a."contactId", e."doneAt", e."activityId" FROM "Activity" a
+       JOIN "CalendarEvent" e ON e."activityId"=a.id WHERE e.id=$1`,
+      [scheduledId],
+    )
+  ).rows[0];
+  assert.ok(logged, "the history line is tied to the entry");
+  assert.equal(logged.type, "PHONE_CALL");
+  assert.equal(logged.body, "Spoke to Dana, deposit is coming Friday");
+  assert.equal(logged.contactId, "ctc_calv2");
+  assert.equal(dayInZone(logged.occurredAt), daysAgo(3), "logged on the day the call was for");
+  assert.ok(logged.doneAt !== null);
+  await page.goto(`${BASE}/dashboard/contacts/ctc_calv2`);
+  await page.getByText("Spoke to Dana, deposit is coming Friday").waitFor();
+
+  log("unticking it takes that history line back out");
+  await page.goto(`${BASE}/dashboard/calendar?layout=log`);
+  // Two calls with Dana are in Previous now (the one logged from the form
+  // and this one), so pick it by id.
+  const doneRow = page.locator(`[data-testid=log-previous] [data-testid=log-row][data-event-id="${scheduledId}"]`);
+  await doneRow.locator("[data-testid=log-done]").click();
+  await page.waitForFunction(
+    (id) => !document.querySelector(`[data-testid=log-row][data-event-id="${id}"] [data-testid=log-title].line-through`),
+    scheduledId,
+  );
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE id=$1`, [logged.id])).rows[0].n, 0, "the line is gone");
+  const unticked = (await sql(`SELECT "doneAt", "activityId" FROM "CalendarEvent" WHERE id=$1`, [scheduledId])).rows[0];
+  assert.equal(unticked.doneAt, null);
+  assert.equal(unticked.activityId, null);
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE id=$1`, [scheduledId])).rows[0].n, 1, "and the entry itself survived");
+
+  log("a call logged from the form cannot lose its history line by being unticked");
+  await page.goto(`${BASE}/dashboard/calendar?layout=log`);
+  const loggedRow = page.locator("[data-testid=log-previous] [data-testid=log-row]").filter({ hasText: "Meeting · Dana Ruiz" });
+  await loggedRow.locator("[data-testid=log-done]").click();
+  await page.waitForFunction(
+    (id) => !document.querySelector(`[data-testid=log-row][data-event-id="${id}"] [data-testid=log-title].line-through`),
+    meeting[0].id,
+  );
+  assert.equal(
+    (await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE "organizationId"=$1 AND type='MEETING'`, [org])).rows[0].n,
+    2,
+    "both people still have their meeting in their history",
+  );
+  await sql(`UPDATE "CalendarEvent" SET "doneAt"=now() WHERE id=$1`, [meeting[0].id]);
+
+  log("the Team view: a row per teammate with the week's load, and a cell opens the day");
+  await page.goto(`${BASE}/dashboard/calendar?view=team&on=${TODAY}`);
+  await page.locator("[data-testid=team-grid]").waitFor();
+  await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+  const myRow = page.locator(`[data-testid=team-row][data-row="u-${me.id}"]`);
+  const samRow = page.locator("[data-testid=team-row][data-row=u-usr_calv2_sam]");
+  assert.ok(Number(await myRow.getAttribute("data-things")) >= 3, "the three milestones sent today are mine");
+  assert.match(await myRow.locator("[data-testid=team-load]").textContent(), /things · \d of 7 days/);
+  await samRow.waitFor();
+  assert.ok(
+    Number(await myRow.locator(`[data-testid=team-cell][data-day="${TODAY}"]`).getAttribute("data-count")) >= 3,
+    "today's cell in my row carries the three milestones",
+  );
+  await myRow.locator(`[data-testid=team-cell][data-day="${TODAY}"]`).click();
+  const teamPanel = page.locator("[data-testid=day-panel]");
+  await teamPanel.waitFor();
+  assert.match(await page.locator("h2", { hasText: "Taylor Test (me)" }).textContent(), new RegExp(TODAY));
+  assert.match(await teamPanel.textContent(), /Contract sent · Dana Ruiz/);
+  await shot(page, "06-team");
+
   /* --------------------------------- The form --------------------------------- */
 
   log("a new event goes on my calendar unless I say otherwise");
@@ -553,16 +676,16 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
   assert.match(await page.locator("[data-testid=event-form] [data-testid=event-source]").textContent(), /CON-1000/);
   await page.locator("[data-testid=event-form]").getByRole("button", { name: "Cancel" }).click();
 
-  log("a log row can be ticked done and edited in place");
+  log("a log row can be just ticked, without a history line, and edited in place");
   await page.goto(`${BASE}/dashboard/calendar?layout=log`);
-  const callRow = page.locator("[data-testid=log-upcoming] [data-testid=log-row]").filter({ hasText: "Call · Dana Ruiz" });
-  await callRow.locator("[data-testid=log-done]").click();
-  await callRow.locator("[data-testid=log-title].line-through").waitFor();
-  assert.ok(
-    (await sql(`SELECT "doneAt" FROM "CalendarEvent" WHERE id=$1`, [scheduledId])).rows[0].doneAt !== null,
-    "the scheduled call is ticked done",
-  );
   const lunchRow = page.locator("[data-testid=log-row]").filter({ hasText: "Lunch with Ben" });
+  await lunchRow.locator("[data-testid=log-done]").click();
+  await page.locator("[data-testid=done-box] [data-testid=done-only]").click();
+  await lunchRow.locator("[data-testid=log-title].line-through").waitFor();
+  const lunchTicked = (await sql(`SELECT "doneAt", "activityId" FROM "CalendarEvent" WHERE id=$1`, [lunch.id])).rows[0];
+  assert.ok(lunchTicked.doneAt !== null, "ticked");
+  assert.equal(lunchTicked.activityId, null, "and nothing written to Ben's history");
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE "contactId"='ctc_calv2_b'`)).rows[0].n, 0);
   await lunchRow.locator("[data-testid=log-edit]").click();
   await page.locator("[data-testid=event-form] [data-testid=event-title]").fill("Lunch with Ben Ortiz");
   await page.locator("[data-testid=event-form] [data-testid=event-save]").click();

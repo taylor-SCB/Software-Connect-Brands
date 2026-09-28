@@ -44,7 +44,7 @@ export function CalendarToolbar({
   filters,
   labels,
 }: {
-  view: "month" | "week";
+  view: "month" | "week" | "team";
   layout: CalendarLayout;
   // The first of the month, or the Sunday of the week.
   anchor: string;
@@ -121,7 +121,7 @@ export function CalendarToolbar({
             </div>
 
             <div className="flex gap-1" role="tablist" aria-label="How much to show">
-              {(["month", "week"] as const).map((option) => (
+              {(["month", "week", "team"] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -136,7 +136,7 @@ export function CalendarToolbar({
                   className={`btn btn-sm ${view === option ? "btn-primary" : "btn-ghost"}`}
                   data-testid={`cal-view-${option}`}
                 >
-                  {option === "month" ? "Month" : "Week"}
+                  {option === "month" ? "Month" : option === "week" ? "Week" : "Team"}
                 </button>
               ))}
             </div>
@@ -337,7 +337,7 @@ export function CalendarToolbar({
         <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
           <EventForm
             choices={choices}
-            defaults={{ startOn: view === "week" && layout !== "log" ? anchor : today }}
+            defaults={{ startOn: view !== "month" && layout !== "log" ? anchor : today }}
             onDone={() => setAdding(false)}
           />
         </div>
