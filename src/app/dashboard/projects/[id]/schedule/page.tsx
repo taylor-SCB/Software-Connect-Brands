@@ -18,7 +18,7 @@ import { TaskList, type TaskView } from "./task-list";
 // When this job happens: the install days booked per scope of work, the
 // meetings and walks around them, and the list of things to do.
 export default async function ProjectSchedulePage({ params }: { params: Promise<{ id: string }> }) {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const { id } = await params;
   const timeZone = await getTimeZone();
   const today = todayIso(timeZone);
@@ -50,7 +50,7 @@ export default async function ProjectSchedulePage({ params }: { params: Promise<
         },
       },
     }),
-    loadEventChoices(organizationId),
+    loadEventChoices(organizationId, userId),
   ]);
   if (!project) notFound();
 
@@ -93,7 +93,9 @@ export default async function ProjectSchedulePage({ params }: { params: Promise<
     events.filter((event) => event.type === "Install").map((event) => event.scopeId ?? "__job__"),
   );
 
-  const firstDay = upcoming[0] ?? null;
+  // Next up is the first thing still to do: a milestone the app ticked
+  // done today — the contract that was just signed — is not it.
+  const firstDay = upcoming.find((event) => !event.doneAt) ?? null;
 
   return (
     <div>

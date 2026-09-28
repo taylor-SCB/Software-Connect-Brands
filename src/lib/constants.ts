@@ -361,6 +361,37 @@ export const DEFAULT_PAGE_SIZE = 50;
 // two a service business books every week; the rest cover the meetings
 // and deliveries around them. A workspace adds its own with
 // "+ Add new event type", and none of these is special to the code.
+// Activities the calendar records alongside days of work (Sept 27, 2026,
+// Calendar v2). The first four are what a logged call, email, text or
+// meeting lands as; the paperwork ones are written by the app when a
+// quote or contract goes out, comes due or is answered. A workspace can
+// still add its own with "+ Add new activity" on the form.
+export const ACTIVITY_EVENT_TYPES = [
+  "Call",
+  "Meeting",
+  "Email",
+  "Text",
+  "Quote sent",
+  "Quote due",
+  "Quote follow up",
+  "Contract sent",
+  "Contract follow up",
+  "Contract closed",
+] as const;
+
+// The event type each logged touchpoint becomes.
+export const ACTIVITY_EVENT_TYPE: Record<ActivityTypeValue, (typeof ACTIVITY_EVENT_TYPES)[number]> = {
+  PHONE_CALL: "Call",
+  MEETING: "Meeting",
+  EMAIL: "Email",
+  TEXT: "Text",
+};
+
+// How long after a quote or contract goes out its follow-up is put on the
+// calendar. One number for the whole app for now; a per-workspace
+// setting is the next step if anyone wants a different rhythm.
+export const FOLLOW_UP_DAYS = 3;
+
 export const EVENT_TYPE_DEFAULTS = [
   "Install",
   "Site walk",
@@ -369,6 +400,7 @@ export const EVENT_TYPE_DEFAULTS = [
   "Delivery",
   "Inspection",
   "Punch list",
+  ...ACTIVITY_EVENT_TYPES,
   "Other",
 ] as const;
 

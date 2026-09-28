@@ -17,6 +17,7 @@ import {
 } from "@/lib/constants";
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
+import { syncQuoteEvents } from "@/lib/calendar-auto";
 import { computeSchedule, isoToDate } from "@/lib/payments";
 import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
 import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
@@ -94,7 +95,7 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
 const QUOTE_META_FIELDS = ["title", "template", "introNote", "terms", "validUntil"] as const;
 
 export async function updateQuoteMeta(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   // React empties a form whose action is a server function, including when
   // that function refuses, so what was typed has to be handed back with
@@ -179,8 +180,12 @@ export async function updateQuoteMeta(_prev: ActionState, formData: FormData): P
   });
   if (result.count === 0) return { error: "Quote not found", kept };
 
+  // A sent quote's "Quote due" follows its valid-until day.
+  await syncQuoteEvents(organizationId, parsed.data.quoteId, userId);
+
   revalidatePath(`/dashboard/quotes/${parsed.data.quoteId}`);
   revalidatePath("/dashboard/quotes");
+  revalidatePath("/dashboard/calendar");
   return { success: "Quote details saved" };
 }
 
@@ -561,7 +566,7 @@ export async function saveQuotePaymentSchedule(input: {
 }
 
 export async function setQuoteStatus(formData: FormData) {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = z
     .object({
@@ -593,10 +598,14 @@ export async function setQuoteStatus(formData: FormData) {
 
   // Sending a quote moves its deal along the pipeline.
   if (status === "SENT") await advanceDealStage(quote.dealId, organizationId, "QUOTE_SENT");
+  // And onto the calendar: sent today, follow up in a few days, due on
+  // its valid-until day. An answer takes the open follow-up off again.
+  await syncQuoteEvents(organizationId, quoteId, userId);
 
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/calendar");
   revalidatePath(`/dashboard/contacts/${quote.contactId}`);
   revalidatePath("/dashboard");
 }

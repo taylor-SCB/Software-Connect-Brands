@@ -2,7 +2,7 @@
 
 import { useActionState, useRef, useEffect, useState } from "react";
 import { addNote, logActivity, createDealForContact } from "../actions";
-import { FormError } from "@/components/ui";
+import { FormError, FormSuccess } from "@/components/ui";
 import { ContactMultiSelect, type PickableContact } from "@/components/contact-multi-select";
 import {
   ACTIVITY_LABELS,
@@ -139,16 +139,22 @@ function NoteLabelChips() {
 export function LogActivityForm({
   target,
   current,
+  today,
 }: {
   target: LogTargetProps;
   // The contact whose page this is, for "+ Include multiple contacts".
   current?: PickableContact;
+  // Today in the workspace's zone, for the "When" field's default. Comes
+  // from the server so the form never guesses from the browser's clock.
+  today: string;
 }) {
   const { ref, resetKey, state, formAction, pending } = useResettingAction(logActivity);
   const [type, setType] = useState<ActivityTypeValue>("PHONE_CALL");
+  const [when, setWhen] = useState(today);
+  const ahead = when > today;
 
   return (
-    <form ref={ref} action={formAction} className="space-y-3 p-5">
+    <form ref={ref} action={formAction} className="space-y-3 p-5" data-testid="log-activity-form">
       <TargetFields target={target} />
       <input type="hidden" name="type" value={type} />
 
@@ -177,10 +183,40 @@ export function LogActivityForm({
         placeholder="Left a voicemail about the kitchen quote…"
         className="textarea"
       />
+
+      {/* When it happened — or when it will. Either way it lands on the
+          calendar; only a day that has been is written to the history. */}
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="block text-xs">
+          <span className="faint block">When</span>
+          <input
+            key={`when-${resetKey}`}
+            type="date"
+            name="occurredOn"
+            value={when}
+            onChange={(event) => setWhen(event.target.value || today)}
+            className="input input-sm"
+            data-testid="activity-when"
+          />
+        </label>
+        <label className="block text-xs">
+          <span className="faint block">Time · optional</span>
+          <input key={`at-${resetKey}`} type="time" name="atTime" className="input input-sm" data-testid="activity-time" />
+        </label>
+        <p className="faint pb-1.5 text-xs" data-testid="activity-when-note">
+          {ahead
+            ? "That's ahead: it goes on the calendar as something to do, not into the history yet."
+            : "Goes on the calendar on that day, too."}
+        </p>
+      </div>
+
       <FormError message={state?.error} />
+      {/* A scheduled call leaves nothing behind on this page, so the one
+          line saying where it went is the only sign it worked. */}
+      {state?.success?.startsWith("Scheduled") && <FormSuccess message={state.success} />}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
-          {pending ? "Logging…" : `Log ${ACTIVITY_LABELS[type].toLowerCase()}`}
+        <button type="submit" disabled={pending} className="btn btn-ghost btn-sm" data-testid="activity-submit">
+          {pending ? (ahead ? "Scheduling…" : "Logging…") : `${ahead ? "Schedule" : "Log"} ${ACTIVITY_LABELS[type].toLowerCase()}`}
         </button>
         {target.contactId && current && (
           <ContactMultiSelect key={`multi-${resetKey}`} current={current} />

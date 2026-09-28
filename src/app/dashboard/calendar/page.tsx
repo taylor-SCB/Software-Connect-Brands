@@ -13,28 +13,52 @@ import {
   startOfWeek,
   weekDays,
 } from "@/lib/calendar";
-import { loadEvents, loadEventChoices } from "@/lib/calendar-data";
+import { LOG_ROWS, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, type EventFilters } from "@/lib/calendar-data";
+import { readIds, readLayout } from "@/lib/calendar-filters";
 import { PageHeader, Card } from "@/components/ui";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { MonthView, WeekView } from "./calendar-views";
+import { LogColumns } from "./calendar-log";
 
-// Everything scheduled, in one place: the installs booked off a job, plus
-// the site walks and meetings somebody put on by hand.
-export default async function CalendarPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string; on?: string | string[]; crew?: string; type?: string }>;
-}) {
-  const { organizationId } = await requireSession();
+type Params = {
+  view?: string;
+  layout?: string;
+  on?: string | string[];
+  crew?: string;
+  type?: string;
+  users?: string;
+  companies?: string;
+  contacts?: string;
+  projects?: string;
+};
+
+// Everything scheduled and everything that happened, in one place: the
+// installs booked off a job, the site walks and meetings somebody put on
+// by hand, the calls that were logged, and the quotes and contracts that
+// went out and came back. Three ways to lay it out — the grid, the two
+// log columns, or the grid with the logs beneath it — and filters by
+// teammate, company, contact and project that stack.
+export default async function CalendarPage({ searchParams }: { searchParams: Promise<Params> }) {
+  const { organizationId, userId } = await requireSession();
   const params = await searchParams;
   const timeZone = await getTimeZone();
   const today = todayIso(timeZone);
 
   const view = params.view === "week" ? "week" : "month";
+  const layout = readLayout(params.layout);
   // Anything that is not a real day falls back to today rather than
   // taking the page down with it.
   const asked = isRealDay(params.on) ? params.on : today;
   const anchor = view === "month" ? startOfMonth(asked) : startOfWeek(asked);
+
+  const filters: EventFilters = {
+    crewId: params.crew,
+    type: params.type,
+    userIds: readIds(params.users),
+    companyIds: readIds(params.companies),
+    contactIds: readIds(params.contacts),
+    projectIds: readIds(params.projects),
+  };
 
   // The window is the grid, not the month: the six-week grid shows days
   // either side, and they should carry their events like any other day.
@@ -42,9 +66,15 @@ export default async function CalendarPage({
   const from = isoToDate(days[0])!;
   const to = isoToDate(days[days.length - 1])!;
 
-  const [events, choices] = await Promise.all([
-    loadEvents(organizationId, { from, to }, { crewId: params.crew, type: params.type }),
-    loadEventChoices(organizationId),
+  const [events, choices, logs, labels] = await Promise.all([
+    layout === "log" ? [] : loadEvents(organizationId, { from, to }, filters),
+    loadEventChoices(organizationId, userId),
+    layout === "calendar" ? null : loadLogs(organizationId, today, filters),
+    loadFilterLabels(organizationId, {
+      companyIds: filters.companyIds ?? [],
+      contactIds: filters.contactIds ?? [],
+      projectIds: filters.projectIds ?? [],
+    }),
   ]);
 
   // A crew in two places at once on the same day, with times that
@@ -72,31 +102,57 @@ export default async function CalendarPage({
     }
   }
 
+  const filtering =
+    Boolean(params.crew || params.type) ||
+    (filters.userIds?.length ?? 0) +
+      (filters.companyIds?.length ?? 0) +
+      (filters.contactIds?.length ?? 0) +
+      (filters.projectIds?.length ?? 0) >
+      0;
+
+  const subtitle =
+    layout === "log"
+      ? "What has happened, and what is next"
+      : view === "month"
+        ? monthTitle(anchor)
+        : `Week of ${dayRangeTitle(days[0], days[days.length - 1])}`;
+
   return (
     <div>
       <PageHeader
         title="Calendar"
-        subtitle={
-          view === "month"
-            ? monthTitle(anchor)
-            : `Week of ${dayRangeTitle(days[0], days[days.length - 1])}`
-        }
+        subtitle={subtitle}
         actions={
-          <p className="faint num text-xs" data-testid="cal-count">
-            {bookedDays.size} {bookedDays.size === 1 ? "day booked" : "days booked"} ·{" "}
-            {events.length} {events.length === 1 ? "thing on" : "things on"}
-            {(params.crew || params.type) && " with the filters on"}
-          </p>
+          layout === "log" ? (
+            <p className="faint num text-xs" data-testid="cal-count">
+              {logs?.previous.length ?? 0} before today · {logs?.upcoming.length ?? 0} coming up
+              {filtering && " with the filters on"}
+            </p>
+          ) : (
+            <p className="faint num text-xs" data-testid="cal-count">
+              {bookedDays.size} {bookedDays.size === 1 ? "day booked" : "days booked"} ·{" "}
+              {events.length} {events.length === 1 ? "thing on" : "things on"}
+              {filtering && " with the filters on"}
+            </p>
+          )
         }
       />
 
       <CalendarToolbar
         view={view}
+        layout={layout}
         anchor={anchor}
         today={today}
         choices={choices}
-        crewId={params.crew ?? ""}
-        type={params.type ?? ""}
+        filters={{
+          crewId: params.crew ?? "",
+          type: params.type ?? "",
+          userIds: filters.userIds ?? [],
+          companyIds: filters.companyIds ?? [],
+          contactIds: filters.contactIds ?? [],
+          projectIds: filters.projectIds ?? [],
+        }}
+        labels={labels}
       />
 
       {clashes.length > 0 && (
@@ -115,17 +171,30 @@ export default async function CalendarPage({
         </Card>
       )}
 
-      {view === "month" ? (
-        <MonthView monthIso={anchor} today={today} events={events} choices={choices} />
-      ) : (
-        <WeekView weekOf={anchor} today={today} events={events} choices={choices} />
-      )}
+      {layout !== "log" &&
+        (view === "month" ? (
+          <MonthView monthIso={anchor} today={today} events={events} choices={choices} />
+        ) : (
+          <WeekView weekOf={anchor} today={today} events={events} choices={choices} />
+        ))}
 
-      {view === "week" && (
+      {layout !== "log" && view === "week" && (
         <p className="faint mt-4 text-xs">
           Copying this week puts the same days, times and crews into the week of{" "}
           {formatDay(`${addDays(anchor, 7)}T12:00:00Z`)}.
         </p>
+      )}
+
+      {logs && (
+        <div className={layout === "both" ? "mt-6" : ""}>
+          <LogColumns
+            previous={logs.previous}
+            upcoming={logs.upcoming}
+            choices={choices}
+            today={today}
+            capped={LOG_ROWS}
+          />
+        </div>
       )}
     </div>
   );

@@ -184,7 +184,7 @@ function daysAgo(n) {
   await roofRow.getByText("3 days booked").waitFor();
   const booked = (
     await sql(
-      `SELECT title, type, "startOn", "endOn", "startTime", "crewId", "scopeId" FROM "CalendarEvent" WHERE "organizationId"=$1`,
+      `SELECT title, type, "startOn", "endOn", "startTime", "crewId", "scopeId" FROM "CalendarEvent" WHERE "organizationId"=$1 AND type='Install'`,
       [org],
     )
   ).rows[0];

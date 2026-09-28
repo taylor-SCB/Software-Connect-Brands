@@ -198,6 +198,20 @@ const TYPE_COLORS: Record<string, string> = {
   Inspection: "#22d3ee",
   "Punch list": "#fb923c",
   Other: "#94a3b8",
+  // Activities (Calendar v2). Touchpoints share one family of blues so a
+  // week of calls reads as a week of calls; quote milestones are violet
+  // like the Quote Sent stage, contract ones orange like Contract Sent,
+  // and a closed contract green like Won.
+  Call: "#38bdf8",
+  Meeting: "#818cf8",
+  Email: "#7dd3fc",
+  Text: "#67e8f9",
+  "Quote sent": "#a78bfa",
+  "Quote due": "#c084fc",
+  "Quote follow up": "#d8b4fe",
+  "Contract sent": "#f97316",
+  "Contract follow up": "#fdba74",
+  "Contract closed": "#34d399",
 };
 const PALETTE = ["#34d399", "#60a5fa", "#a78bfa", "#fbbf24", "#f472b6", "#22d3ee", "#fb923c", "#94a3b8"];
 

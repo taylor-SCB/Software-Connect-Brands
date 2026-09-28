@@ -200,7 +200,20 @@ hours and their purchase order are both on one job), the **Calendar**
 (month and week, events of any type from a per-workspace pick list, day
 plus optional times, crews and attendees, Copy this week into next, a
 crew double-booking note) with **Schedule install** per scope on a job's
-Schedule tab that flips Awarded → Active, and a things-to-do checklist,
+Schedule tab that flips Awarded → Active, and a things-to-do checklist;
+**Calendar v2** (Sept 27, 2026: three layouts — Calendar, Log with a
+Previous Activity Log and an Upcoming Log side by side, and Calendar +
+Log on one screen; every day has an owner and a **Whose calendar**
+picker; the company view — Everyone / Just me / a multi-select of Users
+with Unassigned — plus multi-select Companies, Contacts and Projects
+filters that stack; activity types Call, Meeting, Email, Text, Quote
+sent / due / follow up, Contract sent / follow up / closed with "+ Add
+new activity"; a call logged from a contact or company lands on the
+calendar on the day it happened with a **When** date and optional time,
+one dated ahead is scheduled instead of logged; marking a quote sent
+writes Quote sent, a follow-up three days on and Quote due, sending a
+contract writes Contract sent and its follow-up, signing writes Contract
+closed, and an answer takes the open follow-up off),
 **Properties** (a building at a time, rolling up the jobs at it, with stage
 chips deciding what counts and cancelled work left out by default) and
 **Close out** (one button, with the loose ends listed beside it and none of
@@ -285,6 +298,24 @@ are all blocking before the first paying customer.
   flags a crew double-booked on one day, but there is no "what is this
   crew's week" view and no capacity planning. Worth building once a
   customer runs more than two crews.
+- **The follow-up rhythm is one number for the whole app.** A quote's or
+  contract's follow-up lands three days after it goes out
+  (`FOLLOW_UP_DAYS` in `src/lib/constants.ts`). A per-workspace setting
+  is Taylor's call and a small build.
+- **A day has one owner, not a team.** "Whose calendar" is one teammate;
+  two teammates at the same meeting is one owner and the other not on
+  it. A many-to-many is the fix if a customer asks.
+- **Marketing sends do not land on the calendar.** Forty emails in one
+  send would be forty entries on one day; only the log form's calls,
+  emails, texts and meetings do. One entry per send is the sensible
+  next step.
+- **The calendar's Projects filter and form pickers are capped at 200
+  open jobs, and the Contacts / Companies filters search the server
+  past their first 200.** The Log columns show the 60 closest rows each
+  way and say so at the foot.
+- **Ticking a scheduled call done on the calendar does not log it.** The
+  event is struck through but nothing is written to the contact's
+  Activity; log it from their page when it has happened.
 - **A subcontractor's hours default to tracked-only.** Their money comes
   from their purchase order, which is right, but a sub genuinely paid by
   the hour needs the per-entry tick each time — there is no per-crew
@@ -359,7 +390,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Nineteen** are checked in at
+suite, and the delete-confirmation suite. **Twenty** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -379,9 +410,16 @@ award now starts from the quote's own discount), the 22-step
 project money suite, the 34-step crews + time suite, the 43-step calendar
 suite and the 28-step properties + close out suite, the login-case and
 password-reset suites (Sept 18, 2026), the 11-step overlay
-readability suite (Sept 20, 2026), and the 23-step email marketing +
+readability suite (Sept 20, 2026), the 23-step email marketing +
 Company Users suite (Sept 27, 2026; needs the same fake email settings
-as `password-reset.cjs`).
+as `password-reset.cjs`), and the 29-step Calendar v2 suite
+(`calendar-v2.cjs`, Sept 27, 2026: logged and scheduled calls, quote and
+contract milestones, the three layouts, the company view and the
+stacking filters, the owner picker, and the phone layout). A suite that
+seeds and sends paperwork now gets calendar entries written for it, so
+**scope any `CalendarEvent` lookup to the type it means** — the old
+calendar suite's first-row read picked up "Contract sent" instead of the
+install it booked.
 
 **The local database is too fast to show timing bugs.** An 1,800-row
 import stopped after 500 on the live site (Sept 27, 2026) because one

@@ -11,7 +11,12 @@ import { CONTACT_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
-import { moneyHold, moneyHoldMessage } from "@/lib/money";
+import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
+import { getTimeZone } from "@/lib/organization";
+import { todayIso } from "@/lib/payments";
+import { cleanTime, isRealDay } from "@/lib/calendar";
+import { recordActivityEvent, scheduleActivityEvent, zonedMoment } from "@/lib/calendar-auto";
+import { formatDay } from "@/lib/format";
 import {
   targetSchema,
   readTarget,
@@ -253,31 +258,107 @@ export async function addNote(_prev: ActionState, formData: FormData): Promise<A
   return { success: others > 0 ? `Note added to ${others + 1} contacts` : "Note added" };
 }
 
+// Logs a call, text, email or meeting — and puts it on the calendar. The
+// "When" on the form defaults to today; a day in the past is logged on
+// that day, so a call remembered on Friday lands on Wednesday where it
+// happened. A day still ahead is not history yet: it goes on the
+// calendar as something to do, and nothing is written to anyone's
+// Activity until it has happened.
 export async function logActivity(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
-    z.object({ target: targetSchema, type: activityTypeSchema, body: activityBodySchema }),
-    { target: readTarget(formData), type: formData.get("type"), body: formData.get("body") },
+    z.object({
+      target: targetSchema,
+      type: activityTypeSchema,
+      body: activityBodySchema,
+      occurredOn: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day")]).optional(),
+    }),
+    {
+      target: readTarget(formData),
+      type: formData.get("type"),
+      body: formData.get("body"),
+      occurredOn: formData.get("occurredOn") ?? undefined,
+    },
   );
   if (!parsed.ok) return { error: parsed.error };
 
   const targets = await resolveTargets(parsed.data.target, organizationId);
   if (!targets) return { error: "Record not found" };
 
-  await prisma.activity.createMany({
-    data: targets.rows.map((row) => ({
+  const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  const on = parsed.data.occurredOn || today;
+  if (!isRealDay(on)) return { error: "That day isn't a real date" };
+  const atTime = cleanTime(formData.get("atTime"));
+
+  // Who it was with, for the calendar's title: the first contact, or
+  // the company.
+  const contactIds = targets.rows.map((row) => row.contactId).filter((id): id is string => Boolean(id));
+  const companyId = targets.rows[0]?.companyId ?? null;
+  const named = contactIds.length
+    ? await prisma.contact.findFirst({ where: { id: contactIds[0], organizationId }, select: { name: true, companyId: true } })
+    : null;
+  const company = companyId
+    ? await prisma.company.findFirst({ where: { id: companyId, organizationId }, select: { name: true } })
+    : null;
+  const primaryName = named?.name ?? company?.name ?? "";
+
+  if (on > today) {
+    await scheduleActivityEvent({
       organizationId,
-      contactId: row.contactId,
-      companyId: row.companyId,
       userId,
       type: parsed.data.type,
       body: parsed.data.body,
-      batchId: targets.batchId,
-    })),
+      startOn: on,
+      startTime: atTime,
+      contactIds,
+      companyId: companyId ?? named?.companyId ?? null,
+      primaryName,
+    });
+    revalidateTarget(targets.primary);
+    revalidatePath("/dashboard/calendar");
+    return { success: `Scheduled for ${formatDay(`${on}T12:00:00Z`)} — it's on the calendar` };
+  }
+
+  // The moment it happened: the time typed, or now if it was today, or
+  // midday on the day it was. In the workspace's clock, like every
+  // other stamp in the app.
+  const occurredAt = atTime ? zonedMoment(on, atTime, timeZone) : on === today ? new Date() : zonedNoon(on, timeZone);
+
+  const rows = await prisma.$transaction(
+    targets.rows.map((row) =>
+      prisma.activity.create({
+        data: {
+          organizationId,
+          contactId: row.contactId,
+          companyId: row.companyId,
+          userId,
+          type: parsed.data.type,
+          body: parsed.data.body,
+          batchId: targets.batchId,
+          occurredAt,
+        },
+        select: { id: true },
+      }),
+    ),
+  );
+
+  await recordActivityEvent({
+    organizationId,
+    userId,
+    activityId: rows[0].id,
+    type: parsed.data.type,
+    body: parsed.data.body,
+    occurredAt,
+    withTime: Boolean(atTime) || on === today,
+    contactIds,
+    companyId: companyId ?? named?.companyId ?? null,
+    primaryName,
   });
 
   revalidateTarget(targets.primary);
+  revalidatePath("/dashboard/calendar");
   const others = targets.rows.length - 1;
   return { success: others > 0 ? `Logged on ${others + 1} contacts` : "Activity logged" };
 }

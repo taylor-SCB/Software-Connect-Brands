@@ -39,6 +39,7 @@ const eventSchema = z.object({
   companyId: z.string().trim().optional(),
   contactId: z.string().trim().optional(),
   crewId: z.string().trim().optional(),
+  ownerId: z.string().trim().optional(),
 });
 
 // The text fields the form can put back when a save is refused.
@@ -58,7 +59,7 @@ const EVENT_FIELDS = [
 // to is optional, because a site walk often happens before there is a job
 // and a coffee with a contact belongs to nothing at all.
 export async function saveEvent(_prev: ActionState, formData: FormData): Promise<ActionState & { eventId?: string }> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   // Whatever was typed, ready to hand back with any refusal below.
   const kept = keepFields(formData, EVENT_FIELDS);
   const parsed = parseForm(eventSchema, {
@@ -75,6 +76,7 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
     companyId: formData.get("companyId") ?? undefined,
     contactId: formData.get("contactId") ?? undefined,
     crewId: formData.get("crewId") ?? undefined,
+    ownerId: formData.get("ownerId") ?? undefined,
   });
   if (!parsed.ok) return { error: parsed.error, kept };
 
@@ -122,6 +124,17 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
   const crew = parsed.data.crewId
     ? await prisma.crew.findFirst({ where: { id: parsed.data.crewId, organizationId }, select: { id: true } })
     : null;
+  // Whose calendar. A form that does not carry the field (a page that
+  // predates it) puts the day on the calendar of whoever is saving. A
+  // removed teammate can still be kept as the owner — that is the form
+  // handing back what was there, not a new assignment.
+  const ownerField = formData.get("ownerId");
+  const owner =
+    ownerField === null
+      ? { id: userId }
+      : parsed.data.ownerId
+        ? await prisma.user.findFirst({ where: { id: parsed.data.ownerId, organizationId }, select: { id: true } })
+        : null;
 
   // Who is expected. Scoped to the workspace the same way, so a guessed
   // id cannot put somebody else's contact on your calendar.
@@ -152,6 +165,7 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
     companyId: company?.id ?? project?.companyId ?? null,
     contactId: contact?.id ?? project?.contactId ?? null,
     crewId: crew?.id ?? null,
+    ownerId: owner?.id ?? null,
   };
 
   let eventId = parsed.data.eventId ?? "";
@@ -306,6 +320,10 @@ export async function copyWeek(input: {
     where: {
       organizationId,
       startOn: { gte: isoToDate(from)!, lt: isoToDate(to)! },
+      // A week of work is what gets copied. The app's own entries — a
+      // quote that went out, a call that was logged — happened once and
+      // would be nonsense a week later.
+      auto: false,
       ...(parsed.data.crewId ? { crewId: parsed.data.crewId } : {}),
       ...(parsed.data.projectId ? { projectId: parsed.data.projectId } : {}),
       ...(parsed.data.type ? { type: parsed.data.type } : {}),
@@ -325,6 +343,7 @@ export async function copyWeek(input: {
       companyId: true,
       contactId: true,
       crewId: true,
+      ownerId: true,
       attendees: { select: { id: true } },
     },
   });
@@ -350,6 +369,7 @@ export async function copyWeek(input: {
         companyId: event.companyId,
         contactId: event.contactId,
         crewId: event.crewId,
+        ownerId: event.ownerId,
         attendees: { connect: event.attendees.map((row) => ({ id: row.id })) },
       },
     });
@@ -372,7 +392,7 @@ export async function scheduleInstall(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const timeZone = await getTimeZone();
   const parsed = parseForm(
     z.object({
@@ -429,6 +449,7 @@ export async function scheduleInstall(
       crewId: scope?.crewId ?? null,
       companyId: project.companyId,
       contactId: project.contactId,
+      ownerId: userId,
     },
   });
 

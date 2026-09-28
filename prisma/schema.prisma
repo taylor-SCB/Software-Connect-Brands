@@ -162,6 +162,9 @@ model User {
   leadQuotes   Quote[] @relation("QuoteLeadRep")
   signerQuotes Quote[] @relation("QuoteContractSigner")
   emailSends   EmailSend[]
+  // Days on their calendar. SetNull, like the quotes: a teammate leaving
+  // must not take the company's schedule with them.
+  calendarEvents CalendarEvent[]
 
   @@index([organizationId])
 }
@@ -421,6 +424,10 @@ model Activity {
   occurredAt     DateTime     @default(now())
   createdAt      DateTime     @default(now())
 
+  // The calendar's copy of this touchpoint, when it was logged from the
+  // form (one per batch, on the first contact's row).
+  calendarEvent  CalendarEvent?
+
   @@index([organizationId])
   @@index([contactId])
   @@index([contactId, type])
@@ -544,6 +551,8 @@ model Quote {
   lineItems QuoteLineItem[]
   payments  QuotePayment[]
   contracts Contract[]
+  // Quote sent / Quote due / Quote follow up, written by the app.
+  calendarEvents CalendarEvent[]
 
   @@unique([organizationId, number])
   @@index([organizationId])
@@ -806,6 +815,8 @@ model Contract {
 
   lineItems ContractLineItem[]
   payments  ContractPayment[]
+  // Contract sent / Contract follow up / Contract closed, written by the app.
+  calendarEvents CalendarEvent[]
 
   @@unique([organizationId, number])
   @@index([organizationId])
@@ -1533,6 +1544,24 @@ model CalendarEvent {
   crewId         String?
   crew           Crew?         @relation(fields: [crewId], references: [id], onDelete: SetNull)
   attendees      Contact[]     @relation("EventAttendees")
+  // Whose calendar it is on: the teammate who made it, or logged the
+  // call it records. What the company view filters by. SetNull so a
+  // removed user's days stay on the company's calendar as unassigned.
+  ownerId        String?
+  owner          User?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  // The paperwork or touchpoint this event was made from, when the app
+  // made it rather than a person: a logged call, a quote going out and
+  // its follow-up, a contract going out and being signed. Each cascades,
+  // so deleting the quote takes its milestones off the calendar with it.
+  // `auto` marks the rows the app wrote, so it can find and re-date them
+  // (a quote's expiry moving) without touching one somebody typed.
+  auto           Boolean       @default(false)
+  activityId     String?       @unique
+  activity       Activity?     @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  quoteId        String?
+  quote          Quote?        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  contractId     String?
+  contract       Contract?     @relation(fields: [contractId], references: [id], onDelete: Cascade)
   // Ticked off when the day is done, so a week reads at a glance.
   doneAt         DateTime?
   createdAt      DateTime      @default(now())
@@ -1545,6 +1574,9 @@ model CalendarEvent {
   @@index([companyId])
   @@index([scopeId])
   @@index([dealId])
+  @@index([ownerId, startOn])
+  @@index([quoteId])
+  @@index([contractId])
 }
 
 // A thing to do on a job, with an optional day it is wanted by. Kept

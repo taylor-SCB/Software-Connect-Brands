@@ -44,7 +44,7 @@ export default async function ContactDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const timeZone = await getTimeZone();
 
@@ -98,7 +98,7 @@ export default async function ContactDetailPage({
     // What is coming up with them, including days they are only an
     // attendee on — a property manager is often not the main contact.
     upcomingFor(organizationId, { contactId: contact.id }, today),
-    loadEventChoices(organizationId),
+    loadEventChoices(organizationId, userId),
   ]);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
@@ -176,7 +176,7 @@ export default async function ContactDetailPage({
               title="Log activity"
               subtitle="Every touchpoint is counted by type on this contact."
             />
-            <LogActivityForm target={{ contactId: contact.id }} current={pickable} />
+            <LogActivityForm target={{ contactId: contact.id }} current={pickable} today={today} />
             <div className="divider" />
             <ActivityFeed
               items={contact.activities.map((activity) => ({

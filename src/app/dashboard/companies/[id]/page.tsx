@@ -48,7 +48,7 @@ export default async function CompanyDetailPage({
 }) {
   const { id } = await params;
   const { people: peopleParam } = await searchParams;
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const timeZone = await getTimeZone();
 
@@ -141,7 +141,7 @@ export default async function CompanyDetailPage({
 
   const [upcoming, eventChoices] = await Promise.all([
     upcomingFor(organizationId, { companyId: company.id }, today),
-    loadEventChoices(organizationId),
+    loadEventChoices(organizationId, userId),
   ]);
 
   // The jobs won here, newest first.
@@ -207,7 +207,7 @@ export default async function CompanyDetailPage({
               title="Log activity"
               subtitle="Logged here it sits on the company. Activity on its people rolls up below too."
             />
-            <LogActivityForm target={{ companyId: company.id }} />
+            <LogActivityForm target={{ companyId: company.id }} today={today} />
             <div className="divider" />
             <ActivityFeed
               items={activities.map((activity) => ({

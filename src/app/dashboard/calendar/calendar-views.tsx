@@ -25,9 +25,34 @@ export type EventView = EventFormValues & {
   contactName: string | null;
   companyName: string | null;
   scopeName: string | null;
+  ownerName: string | null;
   attendeeNames: string[];
   doneAt: string | null;
+  auto: boolean;
+  quoteId: string | null;
+  quoteNumber: number | null;
+  contractId: string | null;
+  contractNumber: number | null;
 };
+
+// The quote or contract an entry the app wrote came from, as a link.
+export function EventSourceLink({ event }: { event: EventView }) {
+  if (event.quoteId) {
+    return (
+      <Link href={`/dashboard/quotes/${event.quoteId}`} className="link" data-testid="event-source-link">
+        QUO-{event.quoteNumber}
+      </Link>
+    );
+  }
+  if (event.contractId) {
+    return (
+      <Link href={`/dashboard/contracts/${event.contractId}`} className="link" data-testid="event-source-link">
+        CON-{event.contractNumber}
+      </Link>
+    );
+  }
+  return null;
+}
 
 /* --------------------------------- The month --------------------------------- */
 
@@ -295,10 +320,16 @@ export function EventCard({
         {times ?? "All day"}
         {span > 1 && ` · ${span} days`}
         {event.crewName && ` · ${event.crewName}`}
+        {event.ownerName && <span data-testid="event-owner-name"> · {event.ownerName}</span>}
       </p>
 
       {!compact && (
         <div className="mt-1 space-y-0.5 text-xs">
+          {(event.quoteId || event.contractId) && (
+            <p className="muted">
+              From <EventSourceLink event={event} />
+            </p>
+          )}
           {event.projectLabel && !hideJob && (
             <p className="muted">
               <Link href={`/dashboard/projects/${event.projectId}/schedule`} className="link">

@@ -15,6 +15,7 @@ import { getTimeZone } from "@/lib/organization";
 import { NEW_TYPE_VALUE, canUserSend } from "@/lib/contracts";
 import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
 import { awardFromContract, reverseAward, refreshProjectTotals } from "@/lib/projects";
+import { syncContractEvents } from "@/lib/calendar-auto";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -31,6 +32,7 @@ function revalidateContract(contract: { id: string; dealId: string | null; publi
   revalidatePath("/dashboard/projects");
   if (contract.dealId) revalidatePath(`/dashboard/deals/${contract.dealId}`);
   if (contract.publicToken) revalidatePath(`/c/${contract.publicToken}`);
+  revalidatePath("/dashboard/calendar");
 }
 
 async function nextContractNumber(organizationId: string) {
@@ -419,6 +421,10 @@ export async function setContractStatus(formData: FormData) {
   if (parsed.data.status === "SENT") {
     await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT");
   }
+  // And onto the calendar: sent today with a follow-up a few days on;
+  // declined or back to draft takes the open follow-up off.
+  await syncContractEvents(organizationId, parsed.data.contractId, userId);
+  revalidatePath("/dashboard/calendar");
 
   // A purchase order only counts as Committed on the job once it is out
   // the door, so the job's stored budget has to be redone here. Without
@@ -488,7 +494,7 @@ export async function markContractSigned(
   contractId: string,
   input: { signerName: string; signedOn: string; note?: string },
 ): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const parsed = markSignedSchema.safeParse({ contractId, ...input });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form" };
 
@@ -522,6 +528,8 @@ export async function markContractSigned(
     // budget this contract just set.
     await awardFromContract(organizationId, contract.id);
   }
+  // "Contract closed" on the calendar, on the day it was signed.
+  await syncContractEvents(organizationId, contract.id, userId);
 
   revalidateContract(contract);
   return { success: "Marked signed" };
@@ -577,6 +585,9 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
     await advanceDealStage(contract.dealId, contract.organizationId, "WON");
     await awardFromContract(contract.organizationId, contract.id);
   }
+  // Nobody is logged in here — the customer is signing — so the closed
+  // milestone goes to whoever sent the contract.
+  await syncContractEvents(contract.organizationId, contract.id, null);
 
   revalidateContract(contract);
   return { success: "Signed" };

@@ -26,6 +26,7 @@ import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote
 import { loadPaymentDefaults } from "@/lib/tracker";
 import { discountInputSchema, newScheduleRowSchema } from "@/lib/schedule-input";
 import { refreshTotals, refreshTotalsForContract, refreshProjectTotals, syncProjectScopes } from "@/lib/projects";
+import { syncContractEvents } from "@/lib/calendar-auto";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -528,6 +529,9 @@ export async function cancelContract(formData: FormData) {
   // A purchase order that is withdrawn stops being Committed on the job,
   // and one that is reopened stops counting until it goes out again.
   await refreshProjectTotals(organizationId, contract.projectId);
+  // Its open follow-up comes off the calendar.
+  await syncContractEvents(organizationId, id.data);
+  revalidatePath("/dashboard/calendar");
   revalidateDeal(contract.dealId ?? "", [id.data]);
 }
 
@@ -550,6 +554,8 @@ export async function reopenContract(formData: FormData) {
   // A purchase order that is withdrawn stops being Committed on the job,
   // and one that is reopened stops counting until it goes out again.
   await refreshProjectTotals(organizationId, contract.projectId);
+  await syncContractEvents(organizationId, id.data);
+  revalidatePath("/dashboard/calendar");
   revalidateDeal(contract.dealId ?? "", [id.data]);
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useEffect, useId, useState } from "react";
 import { FormError } from "@/components/ui";
 import { saveEvent } from "./actions";
@@ -19,15 +20,27 @@ export type EventFormValues = {
   companyId: string | null;
   contactId: string | null;
   crewId: string | null;
+  ownerId: string | null;
   attendeeIds: string[];
-  // What the job and the crew are called, so the form can offer them as
-  // options even when they are no longer on the pickers' lists — a
-  // finished job, a retired crew. Without these the <select> fell back
-  // to its first option and quietly unlinked them on any save.
+  // What the job, the crew, the company, the contact and the owner are
+  // called, so the form can offer them as options even when they are no
+  // longer on the pickers' lists — a finished job, a retired crew, an
+  // archived company, a removed teammate. Without these the <select>
+  // fell back to its first option and quietly unlinked them on any save.
   projectLabel?: string | null;
   projectNumber?: number | null;
   scopeName?: string | null;
   crewName?: string | null;
+  companyName?: string | null;
+  contactName?: string | null;
+  ownerName?: string | null;
+  // The paperwork this entry was made from, when the app made it. Shown
+  // as a link; not editable, because the quote is the record.
+  auto?: boolean;
+  quoteId?: string | null;
+  quoteNumber?: number | null;
+  contractId?: string | null;
+  contractNumber?: number | null;
 };
 
 export type EventChoices = {
@@ -38,6 +51,9 @@ export type EventChoices = {
   projects: { id: string; label: string; scopes: { id: string; name: string; isDefault: boolean }[] }[];
   contacts: { id: string; name: string }[];
   companies: { id: string; name: string }[];
+  // Everyone with a login, for "Whose calendar", and who is looking.
+  users: { id: string; name: string }[];
+  me: string;
 };
 
 // One form for every kind of day. What it is tied to is all optional: a
@@ -94,9 +110,28 @@ export function EventForm({
     event?.crewId && !choices.crews.some((entry) => entry.id === event.crewId)
       ? { id: event.crewId, label: `${event.crewName ?? "That crew"} (retired)` }
       : null;
+  // The same for a company or contact past the pickers' 200, or archived,
+  // and for a teammate who has since been removed.
+  const missingCompany =
+    event?.companyId && !choices.companies.some((entry) => entry.id === event.companyId)
+      ? { id: event.companyId, label: `${event.companyName ?? "That company"} (not on the list)` }
+      : null;
+  const missingContact =
+    event?.contactId && !choices.contacts.some((entry) => entry.id === event.contactId)
+      ? { id: event.contactId, label: `${event.contactName ?? "That contact"} (not on the list)` }
+      : null;
+  const missingOwner =
+    event?.ownerId && !choices.users.some((entry) => entry.id === event.ownerId)
+      ? { id: event.ownerId, label: `${event.ownerName ?? "That teammate"} (removed)` }
+      : null;
   // Its scope is not on any list when its job is not, so it rides along
   // on a hidden field instead of being blanked.
   const keepScope = missingProject !== null && projectId === event?.projectId;
+
+  // A page that already knows who the day is with (a contact's own page)
+  // keeps that answer on a hidden field; the calendar shows the pickers.
+  const pinnedContact = !event && defaults?.contactId;
+  const pinnedCompany = !event && defaults?.companyId;
 
   useEffect(() => {
     if (state.success && onDone) onDone();
@@ -113,6 +148,23 @@ export function EventForm({
       {attendees.map((contactId) => (
         <input key={contactId} type="hidden" name="attendees" value={contactId} />
       ))}
+
+      {event?.auto && (event.quoteId || event.contractId) && (
+        <p className="faint text-xs" data-testid="event-source">
+          Put on by the app from{" "}
+          {event.quoteId && (
+            <Link href={`/dashboard/quotes/${event.quoteId}`} className="link">
+              QUO-{event.quoteNumber}
+            </Link>
+          )}
+          {event.contractId && (
+            <Link href={`/dashboard/contracts/${event.contractId}`} className="link">
+              CON-{event.contractNumber}
+            </Link>
+          )}
+          . Change the day or who it is for here; the paperwork stays as it is.
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -132,7 +184,7 @@ export function EventForm({
         </div>
         <div>
           <label className="label" htmlFor={id("type")}>
-            What kind of day
+            What kind of activity
           </label>
           {addingType ? (
             <input
@@ -166,7 +218,7 @@ export function EventForm({
                   {name}
                 </option>
               ))}
-              <option value="__new__">+ Add new event type</option>
+              <option value="__new__">+ Add new activity</option>
             </select>
           )}
         </div>
@@ -259,6 +311,27 @@ export function EventForm({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div>
+          <label className="label" htmlFor={id("ownerId")}>
+            Whose calendar
+          </label>
+          <select
+            id={id("ownerId")}
+            name="ownerId"
+            defaultValue={event ? (event.ownerId ?? "") : choices.me}
+            className="select"
+            data-testid="event-owner"
+          >
+            <option value="">The company&apos;s — nobody in particular</option>
+            {missingOwner && <option value={missingOwner.id}>{missingOwner.label}</option>}
+            {choices.users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.name}
+                {user.id === choices.me ? " (me)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
           <label className="label" htmlFor={id("crewId")}>
             Who is going<span className="faint font-normal"> · optional</span>
           </label>
@@ -323,7 +396,55 @@ export function EventForm({
         ) : (
           <input type="hidden" name="scopeId" value={keepScope ? (event?.scopeId ?? "") : ""} />
         )}
-        <div className={scopes.length > 0 ? "sm:col-span-2 lg:col-span-3" : ""}>
+        {pinnedCompany ? (
+          <input type="hidden" name="companyId" value={defaults?.companyId ?? ""} />
+        ) : (
+          <div>
+            <label className="label" htmlFor={id("companyId")}>
+              Which company<span className="faint font-normal"> · optional</span>
+            </label>
+            <select
+              id={id("companyId")}
+              name="companyId"
+              defaultValue={event?.companyId ?? defaults?.companyId ?? ""}
+              className="select"
+              data-testid="event-company"
+            >
+              <option value="">No company</option>
+              {missingCompany && <option value={missingCompany.id}>{missingCompany.label}</option>}
+              {choices.companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {pinnedContact ? (
+          <input type="hidden" name="contactId" value={defaults?.contactId ?? ""} />
+        ) : (
+          <div>
+            <label className="label" htmlFor={id("contactId")}>
+              Who it is with<span className="faint font-normal"> · optional</span>
+            </label>
+            <select
+              id={id("contactId")}
+              name="contactId"
+              defaultValue={event?.contactId ?? defaults?.contactId ?? ""}
+              className="select"
+              data-testid="event-contact"
+            >
+              <option value="">No one in particular</option>
+              {missingContact && <option value={missingContact.id}>{missingContact.label}</option>}
+              {choices.contacts.map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className={scopes.length > 0 ? "sm:col-span-2 lg:col-span-3" : "sm:col-span-2 lg:col-span-1"}>
           <label className="label" htmlFor={id("location")}>
             Where<span className="faint font-normal"> · optional</span>
           </label>
@@ -380,11 +501,6 @@ export function EventForm({
           data-testid="event-notes"
         />
       </div>
-
-      {/* Kept on the form so the screen it opened from stays the answer
-          for who the day is with, even when the picker is not shown. */}
-      <input type="hidden" name="contactId" value={event?.contactId ?? defaults?.contactId ?? ""} />
-      <input type="hidden" name="companyId" value={event?.companyId ?? defaults?.companyId ?? ""} />
 
       <FormError message={state.error} />
 

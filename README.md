@@ -456,6 +456,59 @@ entries. And when a crew ends up in two places on one day with times that
 actually collide, the calendar says so. It is a note, not a refusal:
 sending half a crew to a service call in the morning is a normal day.
 
+**Calendar v2** (Sept 27, 2026) — the calendar stops being only days of
+work and becomes the timeline of everything that happened with a customer
+and everything still to do. Three ways to lay it out, switched from the
+toolbar and kept in the address bar: **Calendar** (the month or week
+grid, the landing spot), **Log** (two columns of rows — **Previous
+Activity Log**, newest first, and **Upcoming Log**, soonest first, each
+grouped by day), and **Calendar + Log** (the grid on top, the two columns
+beneath it, on one screen). Previous and Upcoming hang off today whichever
+month is being paged through above them.
+
+**Every day now has an owner** — whose calendar it is on. A new day goes
+on the calendar of whoever made it unless the **Whose calendar** picker on
+the form says otherwise; days that were there before belong to the
+workspace's owner. That is what the **company view** filters by:
+**Everyone** (the default, the whole company's days including any on
+nobody's calendar), **Just me**, or a pick of **Users** from a menu, with
+**Unassigned** as one of the choices. Beside it, **Companies**, **Contacts**
+(type to search, and a contact counts whether the day is with them or they
+are only expected at it) and **Projects** are multi-select too, and the
+crew and activity filters stay. Everything stacks: one user plus one
+company is that user's days with that company. Chips under the toolbar
+name what is picked; **Clear** takes it all off.
+
+**Activities** join the days of work on the per-workspace pick list:
+Call, Meeting, Email, Text, Quote sent, Quote due, Quote follow up,
+Contract sent, Contract follow up and Contract closed, each with its own
+colour, plus **+ Add new activity** on the form. A workspace that existed
+before gets them the first time its list is read.
+
+**The app writes the calendar for you.** Logging a call, text, email or
+meeting from a contact's or company's page puts it on the calendar the
+same moment — on the day it happened, ticked done, under whoever logged
+it. The log form gained **When** (defaults to today) and an optional
+time: a call remembered on Friday is logged on the Wednesday it happened
+and lands there; logged on several contacts at once it is one entry with
+the others expected. A day still ahead is not history yet — it goes on
+the calendar as something to do and nothing is written to anyone's
+Activity, and the button reads **Schedule** instead of **Log**. Marking a
+quote sent writes **Quote sent** today, **Quote follow up** three days on
+and **Quote due** on its valid-until day (which follows the day if it is
+changed); accepting or declining it, or taking it back to draft, takes
+the open follow-up and due off and keeps the sent one. Sending a contract
+writes **Contract sent** and **Contract follow up**; the customer signing,
+or Mark signed, writes **Contract closed** on the day it was signed and
+takes the follow-up off, and a cancelled contract loses its follow-up too.
+Sending the same thing twice moves the milestones rather than doubling
+them, deleting the quote or contract takes them off with it, and each one
+links back to its QUO-n or CON-n from the card, the log row and the form.
+Copy this week into next skips them: a week of work is what gets copied.
+The **Coming up** card on a contact, company or job leaves out anything
+already ticked done, so a quote that went out this morning does not push
+next month's walk-through off it; the calendar's log still shows both.
+
 **Properties** (Sept 14, 2026) — **Projects → Properties** is a building at
 a time. A property manager with four towers wants the number per tower, not
 per job: what was awarded across every job there, what has been spent, what
