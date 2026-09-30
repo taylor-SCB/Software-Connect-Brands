@@ -132,7 +132,10 @@ function backLink(page) {
   assert.ok(await people.getByText(/Owner/).isVisible(), "title shown under the person");
 
   log("+ Add person from the company page pre-fills the company; picker says Existing");
-  await page.getByRole("link", { name: "Add person" }).click();
+  // Since Sept 30, 2026 Add person opens a search of existing people
+  // first; a brand-new person is the link at its foot.
+  await page.locator("[data-testid=add-person]").click();
+  await page.locator("[data-testid=add-person-new]").click();
   await page.waitForURL(/\/dashboard\/contacts\/new\?companyId=/);
   assert.equal(await page.locator("#companyName").inputValue(), "Spirit Communications");
   await page.getByText("Existing").waitFor();
