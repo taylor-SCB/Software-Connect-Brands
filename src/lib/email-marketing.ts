@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
+import { markContacted } from "@/lib/status";
 import { publicToken } from "@/lib/tokens";
 import { todayIso } from "@/lib/payments";
 import { isEmailConfigured, sendEmail } from "@/lib/email";
@@ -342,6 +343,7 @@ export async function sendMarketingEmails(
           },
         }),
       ]);
+      await markContacted({ organizationId, userId }, { contactIds: [contact.id] }, new Date());
     } else {
       console.error("[marketing email] send failed:", result.error);
       failed.push({ name: contact.name, error: "the email service refused it" });

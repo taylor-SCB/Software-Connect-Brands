@@ -15,6 +15,7 @@ import {
   CardHeader,
   BackLink,
   StatusBadge,
+  DealStageBadge,
   Badge,
   TagBadge,
 } from "@/components/ui";
@@ -397,7 +398,7 @@ export default async function ContractDetailPage({
                       <Link href={`/dashboard/contracts/tracker?dealId=${contract.deal.id}`} className="link">
                         {contract.deal.title}
                       </Link>{" "}
-                      <StatusBadge status={contract.deal.stage} />
+                      <DealStageBadge stage={contract.deal.stage} />
                       <Link href={`/dashboard/contracts/tracker?dealId=${contract.deal.id}`} className="faint ml-2 inline-flex items-center gap-1 text-xs hover:text-[var(--text)]">
                         <IconClock size={11} /> Contract Coordinator
                       </Link>

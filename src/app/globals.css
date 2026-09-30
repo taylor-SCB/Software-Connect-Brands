@@ -735,3 +735,38 @@
     margin-top: 1rem !important;
   }
 }
+
+/* Stats / Reporting (Sept 30, 2026): the command-center look — a faint
+   blueprint grid behind the page and a lit edge on every tile. Scoped to
+   the stats page so the rest of the app keeps its calmer glass. */
+.stats-root {
+  position: relative;
+  isolation: isolate;
+}
+.stats-root::before {
+  content: "";
+  position: absolute;
+  inset: -2rem -1rem auto;
+  height: 28rem;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(99 102 241 / 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(99 102 241 / 0.07) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse at 30% 0%, black 20%, transparent 70%);
+}
+.stats-tile,
+.stats-panel {
+  position: relative;
+  overflow: hidden;
+}
+.stats-tile::after,
+.stats-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--brand), transparent);
+  opacity: 0.55;
+}

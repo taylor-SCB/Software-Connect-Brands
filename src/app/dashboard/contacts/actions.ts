@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
-import { CHANNEL_LABELS, CONTACT_STATUSES } from "@/lib/constants";
+import { CHANNEL_LABELS, START_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
@@ -16,6 +16,7 @@ import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { cleanTime, isRealDay } from "@/lib/calendar";
 import { recordActivityEvent, scheduleActivityEvent, zonedMoment } from "@/lib/calendar-auto";
+import { markContacted, markMeetingSet } from "@/lib/status";
 import { formatDay } from "@/lib/format";
 import {
   targetSchema,
@@ -47,7 +48,10 @@ const contactSchema = z.object({
   city: z.string().trim().max(120).optional(),
   state: z.string().trim().max(60).optional(),
   birthday: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Birthday isn't a valid date")]).optional(),
-  status: z.enum(CONTACT_STATUSES),
+  // Only a new record's form offers a status, and only the ones before
+  // the pipeline; after that it is the status button on the record's page
+  // (Sept 30, 2026), which asks for dates when a step is skipped.
+  status: z.enum(START_STATUSES).optional(),
 });
 
 // Accepts "acme.com" as well as a full URL — people type the bare domain.
@@ -79,7 +83,7 @@ function readContactForm(formData: FormData) {
     city: formData.get("city") ?? undefined,
     state: formData.get("state") ?? undefined,
     birthday: formData.get("birthday") ?? undefined,
-    status: formData.get("status"),
+    status: formData.get("status") ?? undefined,
   };
 }
 
@@ -143,7 +147,7 @@ async function contactData(
     city: parsed.city || null,
     state: normalizeState(parsed.state || null),
     birthday: toBirthday(parsed.birthday),
-    status: parsed.status,
+    ...(parsed.status ? { status: parsed.status } : {}),
   };
 }
 
@@ -344,6 +348,8 @@ export async function logActivity(_prev: ActionState, formData: FormData): Promi
       companyId: companyId ?? named?.companyId ?? null,
       primaryName,
     });
+    // Booking a meeting is what sets it, whenever it is for.
+    if (parsed.data.type === "MEETING") await markMeetingSet({ organizationId, userId }, contactIds, new Date());
     revalidateTarget(targets.primary);
     revalidatePath("/dashboard/calendar");
     return { success: `Scheduled for ${formatDay(`${on}T12:00:00Z`)} — it's on the calendar` };
@@ -384,6 +390,11 @@ export async function logActivity(_prev: ActionState, formData: FormData): Promi
     companyId: companyId ?? named?.companyId ?? null,
     primaryName,
   });
+
+  // The ladder: a touch that happened makes Not Actioned into Contacted;
+  // a meeting that happened was, at the latest, set that day.
+  await markContacted({ organizationId, userId }, { contactIds, companyId }, occurredAt);
+  if (parsed.data.type === "MEETING") await markMeetingSet({ organizationId, userId }, contactIds, occurredAt);
 
   revalidateTarget(targets.primary);
   revalidatePath("/dashboard/calendar");

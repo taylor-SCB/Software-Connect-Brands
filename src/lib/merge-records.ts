@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { mergeTags } from "@/lib/industries";
+import { statusRank } from "@/lib/constants";
 
 // Merge Contacts / Merge Companies (Sept 30, 2026). One record is kept;
 // every other one hands over everything that points at it — deals,
@@ -64,6 +65,11 @@ export async function mergeContacts(organizationId: string, keepId: string, othe
     for (const account of row.accounts) if (account.companyId !== primary) linked.add(account.companyId);
   }
 
+  // The merged person is as far along as the furthest of them — unless
+  // the one kept was set aside (Archived) on purpose.
+  const furthest = [keep, ...gone].reduce((best, row) => (statusRank(row.status) > statusRank(best) ? row.status : best), keep.status);
+  const status = keep.status === "ARCHIVED" ? keep.status : furthest;
+
   const moved = { contactId: keepId };
   const from = { organizationId, contactId: { in: goneIds } };
   await prisma.$transaction([
@@ -89,6 +95,8 @@ export async function mergeContacts(organizationId: string, keepId: string, othe
       data: Array.from(linked).map((companyId) => ({ organizationId, contactId: keepId, companyId })),
       skipDuplicates: true,
     }),
+    // Their status history comes along, so Stats still counts them.
+    prisma.statusChange.updateMany({ where: from, data: moved }),
     prisma.contact.deleteMany({ where: { organizationId, id: { in: goneIds } } }),
     prisma.contact.update({
       where: { id: keepId },
@@ -97,6 +105,7 @@ export async function mergeContacts(organizationId: string, keepId: string, othe
         companyId: primary,
         favorite: keep.favorite || gone.some((row) => row.favorite),
         emailOptOutAt,
+        status,
       },
     }),
     // A link to what is now their main company would list them twice.
@@ -146,6 +155,7 @@ export async function mergeCompanies(organizationId: string, keepId: string, oth
     prisma.crew.updateMany({ where: from, data: moved }),
     prisma.calendarEvent.updateMany({ where: from, data: moved }),
     prisma.property.updateMany({ where: from, data: moved }),
+    prisma.statusChange.updateMany({ where: from, data: moved }),
     prisma.quoteLineItem.updateMany({ where: { supplierCompanyId: { in: goneIds } }, data: { supplierCompanyId: keepId } }),
     // Additional-account links: re-point them at the keeper, skipping any
     // person already linked there or whose main company it now is.
@@ -164,7 +174,16 @@ export async function mergeCompanies(organizationId: string, keepId: string, oth
     prisma.company.deleteMany({ where: { organizationId, id: { in: goneIds } } }),
     prisma.company.update({
       where: { id: keepId },
-      data: { ...fill, industries, companyTypes, favorite: keep.favorite || gone.some((row) => row.favorite) },
+      data: {
+        ...fill,
+        industries,
+        companyTypes,
+        favorite: keep.favorite || gone.some((row) => row.favorite),
+        status:
+          keep.status === "ARCHIVED"
+            ? keep.status
+            : gone.map((row) => row.status).reduce((best, next) => (statusRank(next) > statusRank(best) ? next : best), keep.status),
+      },
     }),
   ]);
   return { keptId: keepId, merged: goneIds.length };

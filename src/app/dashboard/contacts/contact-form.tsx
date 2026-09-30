@@ -7,7 +7,7 @@ import { IndustryPicker, type IndustryPickList } from "@/components/industry-pic
 import { ImageUploadField } from "@/components/image-upload-field";
 import { ContactNameField } from "@/components/contact-name-field";
 import type { ActionState } from "@/lib/forms";
-import { CHANNEL_LABELS, CHANNEL_LABEL_NAMES } from "@/lib/constants";
+import { CHANNEL_LABELS, CHANNEL_LABEL_NAMES, CONTACT_STATUS_LABELS, START_STATUSES } from "@/lib/constants";
 
 type ContactDefaults = {
   id?: string;
@@ -140,16 +140,16 @@ export function ContactForm({
           defaultValue={defaults.website ?? ""}
           hint="https:// is added automatically."
         />
-        <SelectField
-          label="Status"
-          name="status"
-          defaultValue={defaults.status ?? "LEAD"}
-          options={[
-            { value: "LEAD", label: "Lead" },
-            { value: "CUSTOMER", label: "Customer" },
-            { value: "ARCHIVED", label: "Archived" },
-          ]}
-        />
+        {/* Status is chosen here only when the record is new; after that
+            it is the status button on its page, which dates skipped steps. */}
+        {!defaults.id && (
+          <SelectField
+            label="Status"
+            name="status"
+            defaultValue="NOT_ACTIONED"
+            options={START_STATUSES.map((value) => ({ value, label: CONTACT_STATUS_LABELS[value] }))}
+          />
+        )}
         <Field
           label="Birthday"
           name="birthday"

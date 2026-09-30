@@ -7,8 +7,8 @@ import { TEMPLATE_HEADERS } from "@/lib/contacts-csv";
 // Company Name) is required.
 const TEMPLATE = [
   TEMPLATE_HEADERS.join(","),
-  'Jane Sample,Owner,jane@samplehvac.com,555-201-1000,,Austin,TX,1984-03-09,Lead,Sample HVAC,555-201-1001,office@samplehvac.com,samplehvac.com,Austin,TX,Lead,Service Provider,Integrator',
-  'Mike Example,,mike@example.com,555-201-2000,,,,,Customer,Example Plumbing,,,,,,,Small Business,General',
+  'Jane Sample,Owner,jane@samplehvac.com,555-201-1000,,Austin,TX,1984-03-09,Interested,Sample HVAC,555-201-1001,office@samplehvac.com,samplehvac.com,Austin,TX,Interested,Service Provider,Integrator',
+  'Mike Example,,mike@example.com,555-201-2000,,,,,Not Actioned,Example Plumbing,,,,,,,Small Business,General',
   "Sara Onlyname,,,,,,,,,,,,,,,,,",
   "",
 ].join("\r\n");

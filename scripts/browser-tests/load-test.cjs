@@ -104,7 +104,7 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
        (ARRAY['TX','TX','TX','CO','AZ','GA','TN','FL','NC','OH'])[1 + g % 10],
        CASE g % 6 WHEN 0 THEN ARRAY['MDU'] WHEN 1 THEN ARRAY['Student'] WHEN 2 THEN ARRAY['Commercial'] WHEN 3 THEN ARRAY['Construction'] WHEN 4 THEN ARRAY['Small Business'] ELSE ARRAY['Service Provider'] END,
        CASE g % 6 WHEN 0 THEN ARRAY['Owner'] WHEN 1 THEN ARRAY['Developer'] WHEN 5 THEN ARRAY['Integrator'] ELSE ARRAY['General'] END,
-       CASE WHEN g % 5 = 0 THEN 'CUSTOMER'::"ContactStatus" ELSE 'LEAD'::"ContactStatus" END,
+       CASE WHEN g % 5 = 0 THEN 'WON'::"ContactStatus" ELSE 'NOT_ACTIONED'::"ContactStatus" END,
        g % 97 = 0, now() - (g || ' seconds')::interval, now() - (g || ' seconds')::interval
      FROM generate_series(1, $2) g`,
     [org, COMPANIES],
@@ -120,7 +120,7 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
        CASE WHEN g % 5 = 0 THEN NULL ELSE '555-' || lpad(((g * 7) % 10000)::text, 4, '0') END,
        (ARRAY['Austin','Dallas','Houston','Denver','Phoenix','Atlanta','Nashville','Tampa','Raleigh','Columbus'])[1 + g % 10],
        CASE WHEN g % 9 = 0 THEN NULL ELSE (ARRAY['TX','TX','TX','CO','AZ','GA','TN','FL','NC','OH'])[1 + g % 10] END,
-       CASE WHEN g % 5 = 0 THEN 'CUSTOMER'::"ContactStatus" ELSE 'LEAD'::"ContactStatus" END,
+       CASE WHEN g % 5 = 0 THEN 'WON'::"ContactStatus" ELSE 'NOT_ACTIONED'::"ContactStatus" END,
        g % 101 = 0, now() - (g || ' seconds')::interval, now() - (g || ' seconds')::interval
      FROM generate_series(1, $3) g`,
     [org, COMPANIES, CONTACTS],

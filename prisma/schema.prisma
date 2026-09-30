@@ -118,6 +118,7 @@ model Organization {
   marketingTemplates  MarketingTemplate[]
   emailSends          EmailSend[]
   contactAccounts     ContactAccount[]
+  statusChanges       StatusChange[]
 
   @@index([status])
 }
@@ -170,6 +171,7 @@ model User {
   signerQuotes Quote[] @relation("QuoteContractSigner")
   emailSends   EmailSend[]
   ownedDeals   Deal[]  @relation("DealOwner")
+  statusChanges StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
   // must not take the company's schedule with them.
   calendarEvents CalendarEvent[]
@@ -201,11 +203,24 @@ model PasswordReset {
   @@index([expiresAt])
 }
 
-// Shared by contacts and companies: a lead is someone you are chasing, a
-// customer is someone who has bought, archived is out of the way but kept.
+// Where a relationship stands, shared by contacts and companies (Sept 30,
+// 2026; Lead became Not Actioned and Customer became Won). The order a
+// person moves through is STATUS_LADDER in src/lib/constants.ts, not the
+// order here. Not Actioned is new; the first logged touch makes it
+// Contacted; Interested / Not Interested are set by hand; Meeting Set
+// onwards is the pipeline. Archived is out of the way but kept, and
+// hidden from the pickers.
 enum ContactStatus {
-  LEAD
-  CUSTOMER
+  NOT_ACTIONED
+  CONTACTED
+  NOT_INTERESTED
+  INTERESTED
+  MEETING_SET
+  MEETING_COMPLETED
+  QUOTE_SENT
+  CONTRACT_SENT
+  WON
+  LOST
   ARCHIVED
 }
 
@@ -234,7 +249,7 @@ model Company {
   // The yellow star. One flag per workspace, since a workspace has one
   // user today; "Favorite Companies" in the sidebar is this filter.
   favorite       Boolean       @default(false)
-  status         ContactStatus @default(LEAD)
+  status         ContactStatus @default(NOT_ACTIONED)
   // Fields the app filled in on its own from the spreadsheet and the
   // company's own people ('industries', 'companyTypes', 'phone',
   // 'website'; see src/lib/enrich.ts). Each shows a small "auto" mark
@@ -250,6 +265,7 @@ model Company {
   // somewhere else). Listed under People; their paperwork is not rolled
   // up here, because it belongs to the company it was filed under.
   linkedContacts ContactAccount[]
+  statusChanges  StatusChange[]
   notes       Note[]
   activities  Activity[]
   uploads     Upload[]
@@ -316,7 +332,7 @@ model Contact {
   imageUrl       String?
   // The yellow star; see Company.favorite.
   favorite       Boolean       @default(false)
-  status         ContactStatus @default(LEAD)
+  status         ContactStatus @default(NOT_ACTIONED)
   // When they clicked "Unsubscribe" at the foot of a marketing email.
   // Every send skips them from then on; the law (CAN-SPAM) requires it.
   emailOptOutAt  DateTime?
@@ -328,6 +344,7 @@ model Contact {
   // entrepreneur who owns three businesses. `company` stays the one their
   // quotes and contracts are filed under.
   accounts   ContactAccount[]
+  statusChanges StatusChange[]
   deals      Deal[]
   notes      Note[]
   activities Activity[]
@@ -356,6 +373,35 @@ model Contact {
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_city_trgm_idx")
 }
 
+// Every move up or down the status ladder, for Stats' time-between-
+// statuses and conversion rates. `on` is the day it happened, which a
+// person types when they skip a step; `auto` marks the ones the app made
+// (the first touch, a meeting booked, paperwork sent). Kept as strings so
+// contact statuses and deal stages share one table.
+model StatusChange {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  dealId         String?
+  deal           Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  fromStatus     String?
+  toStatus       String
+  on             DateTime
+  auto           Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, on])
+  @@index([contactId])
+  @@index([companyId])
+  @@index([dealId])
+}
+
 // "+ Additional Account" (Sept 30, 2026): one person linked to more
 // companies than their main one. Deleting either side drops the link only.
 model ContactAccount {
@@ -376,6 +422,13 @@ model ContactAccount {
 // A deal is one job you are trying to win. It moves through the pipeline
 // as the paperwork goes out: sending a quote or a contract advances it,
 // and a signed contract wins it. It never moves backwards on its own.
+//
+// Deals are for quotes and contracts (Taylor, Sept 30, 2026). The
+// Pipeline's first two columns, Meeting Set and Meeting Completed, are
+// contacts at those statuses, not deals; a deal joins the board at Quote
+// Sent. Lead and Contacted are deals with a quote not yet sent, and are
+// not on the board. Archived is a contract that sat unanswered for 90
+// days; at 180 it becomes Lost.
 enum DealStage {
   LEAD
   CONTACTED
@@ -383,6 +436,7 @@ enum DealStage {
   CONTRACT_SENT
   WON
   LOST
+  ARCHIVED
 }
 
 model Deal {
@@ -396,6 +450,9 @@ model Deal {
   // the deal's value is read from its quotes (see src/lib/deals.ts).
   valueCents     Int          @default(0)
   stage          DealStage    @default(LEAD)
+  // When the deal reached its current stage: the 90 / 180-day contract
+  // clock runs from here.
+  stageChangedAt DateTime     @default(now())
   // The rep whose deal it is: whoever created it, changeable from the
   // pipeline tile. SetNull, like a quote's lead rep: a deal must outlive
   // the person who owned it. Deals from before Sept 30, 2026 took their
@@ -409,10 +466,12 @@ model Deal {
   contracts Contract[]
   project   Project?
   events    CalendarEvent[]
+  statusChanges StatusChange[]
 
   @@index([organizationId])
   @@index([contactId])
   @@index([ownerId])
+  @@index([organizationId, stage])
 }
 
 // Labels a note can wear. The personal ones (everything but GENERAL) are

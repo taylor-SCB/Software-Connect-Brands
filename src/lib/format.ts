@@ -122,3 +122,8 @@ export const MAX_MONEY_CENTS = 2_147_483_647;
 export function moneyTooBig(cents: number) {
   return !Number.isFinite(cents) || Math.abs(cents) > MAX_MONEY_CENTS;
 }
+
+// A rate as a whole percent: 0.5 -> "50%".
+export function pct(rate: number) {
+  return `${Math.round(rate * 100)}%`;
+}

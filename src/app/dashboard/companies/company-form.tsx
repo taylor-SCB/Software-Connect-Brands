@@ -5,6 +5,7 @@ import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
 import { ImageUploadField } from "@/components/image-upload-field";
 import { IndustryPicker, type IndustryPickList } from "@/components/industry-picker";
 import type { ActionState } from "@/lib/forms";
+import { CONTACT_STATUS_LABELS, START_STATUSES } from "@/lib/constants";
 
 type CompanyDefaults = {
   id?: string;
@@ -53,16 +54,16 @@ export function CompanyForm({
           defaultValue={defaults.name ?? ""}
           required
         />
-        <SelectField
-          label="Status"
-          name="status"
-          defaultValue={defaults.status ?? "LEAD"}
-          options={[
-            { value: "LEAD", label: "Lead" },
-            { value: "CUSTOMER", label: "Customer" },
-            { value: "ARCHIVED", label: "Archived" },
-          ]}
-        />
+        {/* Status is chosen here only when the record is new; after that
+            it is the status button on its page, which dates skipped steps. */}
+        {!defaults.id && (
+          <SelectField
+            label="Status"
+            name="status"
+            defaultValue="NOT_ACTIONED"
+            options={START_STATUSES.map((value) => ({ value, label: CONTACT_STATUS_LABELS[value] }))}
+          />
+        )}
         <IndustryPicker
           pickList={pickList}
           defaultIndustries={defaults.industries ?? []}

@@ -410,7 +410,7 @@ async function rowCount(page, testId) {
   const plain = (await sql(`SELECT phone, email, status FROM "Company" WHERE name='Plain Company Row' AND "organizationId"=$1`, [org])).rows[0];
   assert.equal(plain.phone, "555-7003", "company-only row keeps bare phone");
   assert.equal(plain.email, "office@plain.test", "company-only row keeps bare email");
-  assert.equal(plain.status, "CUSTOMER");
+  assert.equal(plain.status, "WON", "a Customer status imports as Signed / Won");
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE email='after@quote.test' AND "organizationId"=$1`, [org])).rows[0].n, 1, "row after the stray quote still imported");
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "IndustryOption" WHERE name='Imported' AND "organizationId"=$1`, [org])).rows[0].n, 0, "no hidden Imported industry");
   // Spot Co's orphan type stays through an untouched edit save.

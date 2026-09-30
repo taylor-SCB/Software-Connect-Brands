@@ -9,6 +9,9 @@ import { StarButton } from "@/components/star-button";
 import { TagCell } from "../contacts-list";
 import { deleteContact, setContactFavorite } from "../actions";
 import { HeaderDeleteButton } from "@/components/header-delete-button";
+import { StatusPicker } from "@/components/status-picker";
+import { meetingSetDay } from "@/lib/status";
+import { dayInZone } from "@/lib/calendar-auto";
 import { AdditionalAccountButton } from "@/components/additional-account-button";
 import { UnlinkAccountButton } from "@/components/unlink-account-button";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
@@ -19,6 +22,7 @@ import {
   CardHeader,
   BackLink,
   StatusBadge,
+  DealStageBadge,
   EmptyState,
 } from "@/components/ui";
 import {
@@ -82,6 +86,7 @@ export default async function ContactDetailPage({
   if (!contact) notFound();
 
   const today = todayIso(timeZone);
+  const meetingSet = await meetingSetDay(organizationId, { contactId: contact.id });
   const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
@@ -135,7 +140,13 @@ export default async function ContactDetailPage({
         actions={
           <>
             <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} size={18} />
-            <StatusBadge status={contact.status} />
+            <StatusPicker
+              kind="contact"
+              id={contact.id}
+              status={contact.status}
+              meetingSetOn={meetingSet ? dayInZone(meetingSet, timeZone) : null}
+              today={today}
+            />
             {contact.emailOptOutAt && (
               <span className="badge text-[var(--warn)]" title={`Unsubscribed ${formatDate(contact.emailOptOutAt, timeZone)}`}>
                 Unsubscribed
@@ -396,7 +407,7 @@ export default async function ContactDetailPage({
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <StatusBadge status={deal.stage} />
+                      <DealStageBadge stage={deal.stage} />
                       <Link
                         href={`/dashboard/quotes/new?contactId=${contact.id}&dealId=${deal.id}`}
                         className="btn btn-ghost btn-sm"

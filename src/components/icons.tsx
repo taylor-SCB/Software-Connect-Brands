@@ -341,3 +341,17 @@ export const IconMerge = (p: IconProps) => (
     <path d="m15 18 3 3 3-3" />
   </Svg>
 );
+
+// Warm: the Interested sub-panes.
+export const IconFlame = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.7 2.2-5 .3 1.6 1 2.6 2.1 3.1C11.1 8.6 11 6 12 3Z" />
+  </Svg>
+);
+
+// Stats / Reporting.
+export const IconChart = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+  </Svg>
+);

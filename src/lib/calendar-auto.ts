@@ -16,6 +16,7 @@ import { ensureEventType } from "@/lib/event-types";
 import { DEFAULT_TIME_ZONE } from "@/lib/format";
 import { addDays, isoToDate, todayIso } from "@/lib/payments";
 import { ACTIVITY_EVENT_TYPE, FOLLOW_UP_DAYS, type ActivityTypeValue } from "@/lib/constants";
+import { markContacted, markMeetingSet } from "@/lib/status";
 
 // The workspace's clock, read from its row rather than the session: the
 // customer signing at /c/<token> has no session, and getTimeZone() would
@@ -626,6 +627,9 @@ export async function logEventDone(input: {
     where: { id: event.id },
     data: { doneAt: occurredAt > new Date() ? new Date() : occurredAt, activityId: written[0].id },
   });
+  const who = { organizationId: input.organizationId, userId: input.userId };
+  await markContacted(who, { contactIds, companyId: contactIds.length ? null : event.companyId }, occurredAt);
+  if (input.activityType === "MEETING") await markMeetingSet(who, contactIds, occurredAt);
   return { ok: true as const, contactIds, companyId: event.companyId };
 }
 

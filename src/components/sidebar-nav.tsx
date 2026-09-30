@@ -16,6 +16,8 @@ import {
   IconCalendar,
   IconClock,
   IconStar,
+  IconFlame,
+  IconChart,
   IconUsers as IconAccount,
 } from "@/components/icons";
 
@@ -48,6 +50,7 @@ const NAV: NavEntry[] = [
         Icon: IconUsers,
         children: [
           { href: "/dashboard/contacts/favorites", label: "Favorite Contacts", Icon: IconStar },
+          { href: "/dashboard/contacts/interested", label: "Interested Contacts", Icon: IconFlame },
           { href: "/dashboard/contacts/with-deals", label: "Contacts with Deals", Icon: IconTrending },
         ],
       },
@@ -57,6 +60,7 @@ const NAV: NavEntry[] = [
         Icon: IconBuilding,
         children: [
           { href: "/dashboard/companies/favorites", label: "Favorite Companies", Icon: IconStar },
+          { href: "/dashboard/companies/interested", label: "Interested Companies", Icon: IconFlame },
           { href: "/dashboard/companies/with-deals", label: "Companies with Deals", Icon: IconTrending },
         ],
       },
@@ -91,6 +95,7 @@ const NAV: NavEntry[] = [
       { href: "/dashboard/projects/crews", label: "Crews", Icon: IconHardHat },
     ],
   },
+  { href: "/dashboard/stats", label: "Stats / Reporting", Icon: IconChart },
   {
     href: "/dashboard/settings",
     label: "Settings",

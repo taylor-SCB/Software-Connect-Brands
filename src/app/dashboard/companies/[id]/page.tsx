@@ -13,6 +13,7 @@ import {
   CardHeader,
   BackLink,
   StatusBadge,
+  DealStageBadge,
   EmptyState,
 } from "@/components/ui";
 import { IconGlobe, IconChevronLeft, IconChevronRight } from "@/components/icons";
@@ -21,6 +22,9 @@ import { AutoPill } from "@/components/auto-pill";
 import { TagCell } from "../../contacts/contacts-list";
 import { deleteCompany, setCompanyFavorite } from "../actions";
 import { HeaderDeleteButton } from "@/components/header-delete-button";
+import { StatusPicker } from "@/components/status-picker";
+import { meetingSetDay } from "@/lib/status";
+import { dayInZone } from "@/lib/calendar-auto";
 import { AddPersonSearch } from "@/components/add-person-search";
 import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
@@ -147,6 +151,7 @@ export default async function CompanyDetailPage({
     ]);
 
   const today = todayIso(timeZone);
+  const meetingSet = await meetingSetDay(organizationId, { companyId: company.id });
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, today);
 
@@ -193,7 +198,13 @@ export default async function CompanyDetailPage({
         actions={
           <>
             <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} size={18} />
-            <StatusBadge status={company.status} />
+            <StatusPicker
+              kind="company"
+              id={company.id}
+              status={company.status}
+              meetingSetOn={meetingSet ? dayInZone(meetingSet, timeZone) : null}
+              today={today}
+            />
             <AddPersonSearch companyId={company.id} companyName={company.name} />
             <Link
               href={`/dashboard/companies/${company.id}/edit`}
@@ -433,7 +444,7 @@ export default async function CompanyDetailPage({
                         </Link>
                       </p>
                     </div>
-                    <StatusBadge status={deal.stage} />
+                    <DealStageBadge stage={deal.stage} />
                   </li>
                 ))}
               </ul>

@@ -420,7 +420,7 @@ export async function setContractStatus(formData: FormData) {
 
   // Sending a contract moves its deal along the pipeline.
   if (parsed.data.status === "SENT") {
-    await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT");
+    await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT", userId);
   }
   // And onto the calendar: sent today with a follow-up a few days on;
   // declined or back to draft takes the open follow-up off.
@@ -524,7 +524,7 @@ export async function markContractSigned(
   // A supplier signing a purchase order never wins a deal; a customer
   // signing anything else does.
   if (!contract.payable) {
-    await advanceDealStage(contract.dealId, organizationId, "WON");
+    await advanceDealStage(contract.dealId, organizationId, "WON", userId);
     // A signed agreement is a job won: it becomes a project with the
     // budget this contract just set.
     await awardFromContract(organizationId, contract.id);

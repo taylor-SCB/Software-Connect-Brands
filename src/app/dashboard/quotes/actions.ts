@@ -598,7 +598,7 @@ export async function setQuoteStatus(formData: FormData) {
   });
 
   // Sending a quote moves its deal along the pipeline.
-  if (status === "SENT") await advanceDealStage(quote.dealId, organizationId, "QUOTE_SENT");
+  if (status === "SENT") await advanceDealStage(quote.dealId, organizationId, "QUOTE_SENT", userId);
   // And onto the calendar: sent today, follow up in a few days, due on
   // its valid-until day. An answer takes the open follow-up off again.
   await syncQuoteEvents(organizationId, quoteId, userId);

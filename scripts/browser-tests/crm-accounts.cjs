@@ -291,6 +291,12 @@ async function until(fn, what) {
     [org, me],
   );
   await sql(`INSERT INTO "Note" (id,"organizationId","contactId","authorId",body) VALUES ('note_acc_m2',$1,'ctc_acc_matt2',$2,'Prefers texts')`, [org, me]);
+  // The duplicate is further along; the merged person keeps that.
+  await sql(`UPDATE "Contact" SET status='MEETING_SET' WHERE id='ctc_acc_matt2'`);
+  await sql(
+    `INSERT INTO "StatusChange" (id,"organizationId","contactId","toStatus","on") VALUES ('sc_acc_m2',$1,'ctc_acc_matt2','MEETING_SET',now())`,
+    [org],
+  );
   await page.goto(`${BASE}/dashboard/contacts`);
   await page.locator("[data-testid=merge-open]").click();
   const merge = page.locator("[data-testid=merge-dialog]");
@@ -310,6 +316,8 @@ async function until(fn, what) {
   assert.equal((await sql(`SELECT count(*)::int n FROM "Contact" WHERE id='ctc_acc_matt2'`)).rows[0].n, 0, "the other one is gone");
   assert.equal((await sql(`SELECT "contactId" FROM "Deal" WHERE id='deal_acc_m2'`)).rows[0].contactId, "ctc_acc_matt1", "the deal moved");
   assert.equal((await sql(`SELECT "contactId" FROM "Note" WHERE id='note_acc_m2'`)).rows[0].contactId, "ctc_acc_matt1", "the note moved");
+  assert.equal((await sql(`SELECT status FROM "Contact" WHERE id='ctc_acc_matt1'`)).rows[0].status, "MEETING_SET", "the furthest status wins");
+  assert.equal((await sql(`SELECT "contactId" FROM "StatusChange" WHERE id='sc_acc_m2'`)).rows[0].contactId, "ctc_acc_matt1", "status history moved");
   // The other Matt's main company (Dallas) becomes an additional account.
   assert.equal((await sql(`SELECT count(*)::int n FROM "ContactAccount" WHERE "contactId"='ctc_acc_matt1' AND "companyId"='cmp_acc_dallas'`)).rows[0].n, 1);
   await page.getByText("Matt garage").first().waitFor();

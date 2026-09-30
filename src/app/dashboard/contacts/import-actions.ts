@@ -175,7 +175,7 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
           website: company.website,
           city: company.city,
           state: company.state,
-          status: company.status ?? "LEAD",
+          status: company.status ?? "NOT_ACTIONED",
           industries: mergeTags([], company.industries.map(canonIndustry)),
           companyTypes: mergeTags([], company.companyTypes.map(canonType)),
         })),
@@ -275,7 +275,7 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
       city: row.city,
       state: row.state,
       birthday: row.birthday ? new Date(`${row.birthday}T00:00:00.000Z`) : null,
-      status: row.status ?? "LEAD",
+      status: row.status ?? "NOT_ACTIONED",
     });
   }
   if (creates.length > 0) {

@@ -216,11 +216,20 @@ export function parseStatus(raw: string): { status: ContactStatusValue | null; n
   if (!value) return { status: null };
   const upper = value.toUpperCase();
   if ((CONTACT_STATUSES as readonly string[]).includes(upper)) return { status: upper as ContactStatusValue };
-  // "Inactive" contains "active", so the archived words are checked first.
-  if (/archiv|inactive|closed|lost|dead|old|former|churn/.test(value)) return { status: "ARCHIVED" };
-  if (/lead|prospect|new|open|cold|warm/.test(value)) return { status: "LEAD" };
-  if (/customer|client|won|active|current/.test(value)) return { status: "CUSTOMER" };
-  return { status: null, note: `Unknown status "${raw.trim()}" — used Lead` };
+  // The ladder's own names, as a person would type them ("Meeting Set",
+  // "not interested").
+  const spaced = upper.replace(/[\s/-]+/g, "_");
+  if ((CONTACT_STATUSES as readonly string[]).includes(spaced)) return { status: spaced as ContactStatusValue };
+  // "Not interested" contains "interested", and "Inactive" contains
+  // "active", so the negative words are checked first.
+  if (/not.?interested|do not|dnc/.test(value)) return { status: "NOT_INTERESTED" };
+  if (/archiv|inactive|dead|old|former|churn/.test(value)) return { status: "ARCHIVED" };
+  if (/lost|closed.?lost/.test(value)) return { status: "LOST" };
+  if (/interested|warm|hot/.test(value)) return { status: "INTERESTED" };
+  if (/contacted|reached|touched/.test(value)) return { status: "CONTACTED" };
+  if (/customer|client|won|signed|active|current/.test(value)) return { status: "WON" };
+  if (/lead|prospect|new|open|cold|not.?actioned/.test(value)) return { status: "NOT_ACTIONED" };
+  return { status: null, note: `Unknown status "${raw.trim()}" — used Not Actioned` };
 }
 
 // "1984-03-09", "3/9/1984", "03-09-84", "March 9, 1984" all land on the

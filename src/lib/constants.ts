@@ -42,8 +42,76 @@ export const ACTIVITY_LABELS: Record<ActivityTypeValue, string> = {
   MEETING: "Meeting",
 };
 
-export const CONTACT_STATUSES = ["LEAD", "CUSTOMER", "ARCHIVED"] as const;
+// The status ladder on contacts and companies (Sept 30, 2026), in the
+// order a relationship moves through it. Not Actioned is where every new
+// record starts; the first logged touch makes it Contacted; Not
+// Interested and Interested are set by hand; Meeting Set onwards is the
+// pipeline. Archived sits outside the ladder and hides the record from
+// the pickers.
+export const CONTACT_STATUSES = [
+  "NOT_ACTIONED",
+  "CONTACTED",
+  "NOT_INTERESTED",
+  "INTERESTED",
+  "MEETING_SET",
+  "MEETING_COMPLETED",
+  "QUOTE_SENT",
+  "CONTRACT_SENT",
+  "WON",
+  "LOST",
+  "ARCHIVED",
+] as const;
 export type ContactStatusValue = (typeof CONTACT_STATUSES)[number];
+
+export const CONTACT_STATUS_LABELS: Record<ContactStatusValue, string> = {
+  NOT_ACTIONED: "Not Actioned",
+  CONTACTED: "Contacted",
+  NOT_INTERESTED: "Not Interested",
+  INTERESTED: "Interested",
+  MEETING_SET: "Meeting Set",
+  MEETING_COMPLETED: "Meeting Completed",
+  QUOTE_SENT: "Quote Sent",
+  CONTRACT_SENT: "Contract Sent",
+  WON: "Signed / Won",
+  LOST: "Lost",
+  ARCHIVED: "Archived",
+};
+
+// What a brand-new record can start at, typed in by hand.
+export const START_STATUSES = ["NOT_ACTIONED", "CONTACTED", "NOT_INTERESTED", "INTERESTED"] as const;
+
+// The pipeline part of the ladder, where each step has a date that Stats
+// measures from. Skipping one by hand asks for the day it happened.
+export const PIPELINE_STEPS = ["MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"] as const;
+export type PipelineStep = (typeof PIPELINE_STEPS)[number];
+
+// How far along a status is, for "only ever moves forward on its own".
+// Not Interested sits level with Interested: both come after a touch and
+// before a meeting. Lost and Archived rank below everything, so nothing
+// automatic lifts a record out of them except a new meeting or paperwork.
+export function statusRank(status: string): number {
+  switch (status) {
+    case "NOT_ACTIONED":
+      return 0;
+    case "CONTACTED":
+      return 1;
+    case "NOT_INTERESTED":
+    case "INTERESTED":
+      return 2;
+    case "MEETING_SET":
+      return 3;
+    case "MEETING_COMPLETED":
+      return 4;
+    case "QUOTE_SENT":
+      return 5;
+    case "CONTRACT_SENT":
+      return 6;
+    case "WON":
+      return 7;
+    default:
+      return -1;
+  }
+}
 
 // The Personal / Work tag on a contact's emails and phone numbers.
 export const CHANNEL_LABELS = ["WORK", "PERSONAL"] as const;
@@ -53,36 +121,64 @@ export const CHANNEL_LABEL_NAMES: Record<ChannelLabelValue, string> = { WORK: "W
 // Pipeline stages, in the order a deal moves through them. Sending a
 // quote or a contract advances a deal on its own; Won and Lost are the
 // two ways out.
-export const DEAL_STAGES = [
-  "LEAD",
-  "CONTACTED",
-  "QUOTE_SENT",
-  "CONTRACT_SENT",
-  "WON",
-  "LOST",
-] as const;
+export const DEAL_STAGES = ["LEAD", "CONTACTED", "QUOTE_SENT", "CONTRACT_SENT", "WON", "LOST", "ARCHIVED"] as const;
 export type DealStageValue = (typeof DEAL_STAGES)[number];
 
-export const DEAL_STAGE_LABELS: Record<DealStageValue, string> = {
-  LEAD: "Lead",
-  CONTACTED: "Contacted",
+// The Pipeline's columns, left to right (Sept 30, 2026). The first two
+// are contacts at that status — a meeting is not a deal; deals are for
+// quotes and contracts and join the board at Quote Sent. Lead and
+// Contacted deals (a quote not sent yet) and Archived ones (a contract
+// unanswered for 90 days) are not on the board.
+export const PIPELINE_COLUMNS = ["MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON", "LOST"] as const;
+export type PipelineColumn = (typeof PIPELINE_COLUMNS)[number];
+export const CONTACT_COLUMNS = ["MEETING_SET", "MEETING_COMPLETED"] as const;
+// The stages a deal can be moved to from its tile.
+export const BOARD_DEAL_STAGES = ["QUOTE_SENT", "CONTRACT_SENT", "WON", "LOST"] as const;
+
+export const PIPELINE_COLUMN_LABELS: Record<PipelineColumn, string> = {
+  MEETING_SET: "Meeting Set",
+  MEETING_COMPLETED: "Meeting Completed",
   QUOTE_SENT: "Quote Sent",
   CONTRACT_SENT: "Contract Sent",
-  WON: "Won",
+  WON: "Signed / Won",
   LOST: "Lost",
 };
 
-export const DEAL_STAGE_COLORS: Record<DealStageValue, string> = {
-  LEAD: "#38bdf8",
-  CONTACTED: "#fbbf24",
+export const PIPELINE_COLUMN_COLORS: Record<PipelineColumn, string> = {
+  MEETING_SET: "#38bdf8",
+  MEETING_COMPLETED: "#22d3ee",
   QUOTE_SENT: "#a78bfa",
   CONTRACT_SENT: "#f97316",
   WON: "#34d399",
   LOST: "#fb7185",
 };
 
+export const DEAL_STAGE_LABELS: Record<DealStageValue, string> = {
+  LEAD: "Quote not sent",
+  CONTACTED: "Quote not sent",
+  QUOTE_SENT: "Quote Sent",
+  CONTRACT_SENT: "Contract Sent",
+  WON: "Won",
+  LOST: "Lost",
+  ARCHIVED: "Archived",
+};
+
+export const DEAL_STAGE_COLORS: Record<DealStageValue, string> = {
+  LEAD: "#64748b",
+  CONTACTED: "#64748b",
+  QUOTE_SENT: "#a78bfa",
+  CONTRACT_SENT: "#f97316",
+  WON: "#34d399",
+  LOST: "#fb7185",
+  ARCHIVED: "#64748b",
+};
+
 // A deal still in play. Everything the dashboard calls "open pipeline".
 export const OPEN_DEAL_STAGES = ["LEAD", "CONTACTED", "QUOTE_SENT", "CONTRACT_SENT"] as const;
+
+// The 90 / 180-day rule on an unanswered contract (Taylor, Sept 30, 2026).
+export const CONTRACT_ARCHIVE_DAYS = 90;
+export const CONTRACT_LOST_DAYS = 180;
 
 // Labels a note can wear. Everything except General counts as personal
 // and is gathered into the contact's relationship view.

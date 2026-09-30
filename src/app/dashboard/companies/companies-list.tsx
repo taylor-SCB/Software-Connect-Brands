@@ -53,6 +53,7 @@ export async function CompaniesList({
         organizationId,
         ...(lock.fav ? { favorite: true } : {}),
         ...(lock.deals ? { contacts: { some: { deals: { some: {} } } } } : {}),
+        ...(lock.interested ? { status: "INTERESTED" as const } : {}),
       },
     }),
   ]);
@@ -116,12 +117,14 @@ export async function CompaniesList({
         {companies.length === 0 ? (
           <EmptyState
             icon={<IconBuilding size={20} />}
-            title={filtered ? "No companies match" : lock.fav ? "No favorite companies yet" : lock.deals ? "No companies with deals yet" : "No companies yet"}
+            title={filtered ? "No companies match" : lock.fav ? "No favorite companies yet" : lock.deals ? "No companies with deals yet" : lock.interested ? "No company marked Interested yet" : "No companies yet"}
             body={
               filtered
                 ? "Try a different search, or clear a filter."
                 : lock.fav
                   ? "Click the star on any company and it shows up here."
+                  : lock.interested
+                    ? "Set a company's status to Interested from its page and it shows up here."
                   : lock.deals
                     ? "A company appears here once one of its people has a deal or quote."
                     : "A company is a business you sell to. Add one here, type a company name on any contact, or import a spreadsheet."
@@ -129,7 +132,8 @@ export async function CompaniesList({
             action={
               !filtered &&
               !lock.fav &&
-              !lock.deals && (
+              !lock.deals &&
+              !lock.interested && (
                 <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
                   <IconPlus size={14} />
                   Add company
