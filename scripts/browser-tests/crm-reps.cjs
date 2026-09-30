@@ -206,6 +206,8 @@ async function login(page, email) {
   const deal = (await sql(`SELECT id, "ownerId" FROM "Deal" WHERE "organizationId" = $1 AND title = 'Rivera office build-out'`, [org])).rows[0];
   assert.equal(deal.ownerId, nicId, "the deal belongs to whoever made it");
 
+  // Deals join the board at Quote Sent (Sept 30, 2026); put this one there.
+  await sql(`UPDATE "Deal" SET stage='QUOTE_SENT' WHERE id=$1`, [deal.id]);
   await page.goto(`${BASE}/dashboard/deals`);
   const tile = page.locator("div.rounded-lg", { hasText: "Rivera office build-out" });
   const rep = tile.locator("[data-testid=deal-owner] select");
