@@ -17,6 +17,11 @@ export async function GET(request: Request) {
   // The company page's activity form asks for that company's people only:
   // its own, and anyone linked to it as an additional account.
   const within = url.searchParams.get("companyId") ?? undefined;
+  // Looked up first rather than as a relation filter inside the OR, which
+  // walks every contact in a big workspace.
+  const linkedIds = within
+    ? (await prisma.contactAccount.findMany({ where: { companyId: within, organizationId }, select: { contactId: true }, take: 5000 })).map((row) => row.contactId)
+    : [];
   const companyIds = await companyIdsMatching(organizationId, q);
 
   const contacts = await prisma.contact.findMany({
@@ -24,7 +29,7 @@ export async function GET(request: Request) {
       organizationId,
       status: { not: "ARCHIVED" },
       ...(exclude ? { id: { not: exclude } } : {}),
-      ...(within ? { AND: [{ OR: [{ companyId: within }, { accounts: { some: { companyId: within } } }] }] } : {}),
+      ...(within ? { AND: [{ OR: [{ companyId: within }, { id: { in: linkedIds } }] }] } : {}),
       ...(q
         ? {
             OR: [

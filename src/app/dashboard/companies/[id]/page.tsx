@@ -65,8 +65,14 @@ export default async function CompanyDetailPage({
   const peopleTotal = company._count.contacts + company._count.linkedContacts;
   const peoplePages = Math.max(1, Math.ceil(peopleTotal / PEOPLE_PER_PAGE));
   const peoplePage = Math.min(peoplePages, Math.max(1, Number(peopleParam) || 1));
+  // The linked ids first, then one indexed OR: a relation filter inside
+  // the OR made Postgres walk every contact in the workspace (2.9s at
+  // 200,000 contacts, against a 2s budget).
+  const linkedIds = company._count.linkedContacts
+    ? (await prisma.contactAccount.findMany({ where: { companyId: company.id }, select: { contactId: true }, take: 5000 })).map((row) => row.contactId)
+    : [];
   const people = await prisma.contact.findMany({
-    where: { organizationId, OR: [{ companyId: company.id }, { accounts: { some: { companyId: company.id } } }] },
+    where: { organizationId, OR: [{ companyId: company.id }, ...(linkedIds.length ? [{ id: { in: linkedIds } }] : [])] },
     orderBy: [{ favorite: "desc" }, { name: "asc" }],
     skip: (peoplePage - 1) * PEOPLE_PER_PAGE,
     take: PEOPLE_PER_PAGE,
