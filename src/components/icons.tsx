@@ -332,3 +332,12 @@ export function IconHardHat(props: IconProps) {
     </Svg>
   );
 }
+
+// Two lines joining into one: Merge Contacts / Merge Companies.
+export const IconMerge = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 3v6a6 6 0 0 0 6 6h0a6 6 0 0 1 6 6" />
+    <path d="M18 3v6a6 6 0 0 1-6 6" />
+    <path d="m15 18 3 3 3-3" />
+  </Svg>
+);

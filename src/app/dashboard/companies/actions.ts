@@ -55,7 +55,7 @@ function companyData(parsed: z.infer<typeof companySchema>) {
 async function tagData(formData: FormData, organizationId: string): Promise<{ industries: string[]; companyTypes: string[] } | null> {
   const tags = readIndustryFields(formData);
   if (!tags.touched) return null;
-  const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+  const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry, tags.offList);
   return { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) };
 }
 

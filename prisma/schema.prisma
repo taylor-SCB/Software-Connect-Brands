@@ -117,6 +117,7 @@ model Organization {
   properties          Property[]
   marketingTemplates  MarketingTemplate[]
   emailSends          EmailSend[]
+  contactAccounts     ContactAccount[]
 
   @@index([status])
 }
@@ -245,6 +246,10 @@ model Company {
   updatedAt      DateTime      @updatedAt
 
   contacts    Contact[]
+  // People linked here as an additional account (their main company is
+  // somewhere else). Listed under People; their paperwork is not rolled
+  // up here, because it belongs to the company it was filed under.
+  linkedContacts ContactAccount[]
   notes       Note[]
   activities  Activity[]
   uploads     Upload[]
@@ -319,6 +324,10 @@ model Contact {
   updatedAt      DateTime      @updatedAt
 
   emailSends EmailSend[]
+  // Other companies this person is part of, beyond `company` above: an
+  // entrepreneur who owns three businesses. `company` stays the one their
+  // quotes and contracts are filed under.
+  accounts   ContactAccount[]
   deals      Deal[]
   notes      Note[]
   activities Activity[]
@@ -345,6 +354,23 @@ model Contact {
   @@index([email2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_email2_trgm_idx")
   @@index([phone2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_phone2_trgm_idx")
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_city_trgm_idx")
+}
+
+// "+ Additional Account" (Sept 30, 2026): one person linked to more
+// companies than their main one. Deleting either side drops the link only.
+model ContactAccount {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  companyId      String
+  company        Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@unique([contactId, companyId])
+  @@index([organizationId])
+  @@index([companyId])
 }
 
 // A deal is one job you are trying to win. It moves through the pipeline

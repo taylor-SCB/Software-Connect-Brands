@@ -4,6 +4,7 @@ import { useActionState, useRef, useEffect, useState } from "react";
 import { addNote, logActivity, createDealForContact } from "../actions";
 import { FormError, FormSuccess } from "@/components/ui";
 import { ContactMultiSelect, type PickableContact } from "@/components/contact-multi-select";
+import { CompanyPeoplePicker, type CompanyPerson } from "@/components/company-people-picker";
 import {
   ACTIVITY_LABELS,
   ACTIVITY_TYPES,
@@ -31,7 +32,8 @@ const ACTIVITY_ICONS = {
 } as const;
 
 // Who an entry is for: the contact page passes contactId, the company
-// page passes companyId. Only a contact entry can fan out to others.
+// page passes companyId. A contact entry fans out to other contacts; a
+// company activity can be put on the company's own people instead.
 export type LogTargetProps =
   | { contactId: string; companyId?: undefined }
   | { companyId: string; contactId?: undefined };
@@ -139,11 +141,14 @@ function NoteLabelChips() {
 export function LogActivityForm({
   target,
   current,
+  companyPeople,
   today,
 }: {
   target: LogTargetProps;
   // The contact whose page this is, for "+ Include multiple contacts".
   current?: PickableContact;
+  // On a company page: its first people, offered as ticks.
+  companyPeople?: CompanyPerson[];
   // Today in the workspace's zone, for the "When" field's default. Comes
   // from the server so the form never guesses from the browser's clock.
   today: string;
@@ -183,6 +188,10 @@ export function LogActivityForm({
         placeholder="Left a voicemail about the kitchen quote…"
         className="textarea"
       />
+
+      {target.companyId && companyPeople && (
+        <CompanyPeoplePicker key={`people-${resetKey}`} companyId={target.companyId} people={companyPeople} />
+      )}
 
       {/* When it happened — or when it will. Either way it lands on the
           calendar; only a day that has been is written to the history. */}

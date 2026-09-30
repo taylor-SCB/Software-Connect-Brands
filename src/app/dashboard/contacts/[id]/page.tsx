@@ -9,6 +9,8 @@ import { StarButton } from "@/components/star-button";
 import { TagCell } from "../contacts-list";
 import { deleteContact, setContactFavorite } from "../actions";
 import { HeaderDeleteButton } from "@/components/header-delete-button";
+import { AdditionalAccountButton } from "@/components/additional-account-button";
+import { UnlinkAccountButton } from "@/components/unlink-account-button";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
 import {
@@ -53,6 +55,10 @@ export default async function ContactDetailPage({
     where: { id, organizationId },
     include: {
       company: { select: { id: true, name: true, industries: true, companyTypes: true } },
+      accounts: {
+        orderBy: { createdAt: "asc" },
+        select: { company: { select: { id: true, name: true, city: true, state: true } } },
+      },
       deals: {
         orderBy: { createdAt: "desc" },
         include: { quotes: QUOTES_FOR_VALUE, _count: { select: { quotes: true } } },
@@ -166,6 +172,11 @@ export default async function ContactDetailPage({
             >
               Edit
             </Link>
+            <AdditionalAccountButton
+              contactId={contact.id}
+              contactName={contact.name}
+              linkedIds={[...(contact.company ? [contact.company.id] : []), ...contact.accounts.map((row) => row.company.id)]}
+            />
             <HeaderDeleteButton
               action={deleteContact}
               hiddenName="contactId"
@@ -232,6 +243,27 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              {contact.accounts.length > 0 && (
+                <Detail
+                  label="Additional accounts"
+                  value={
+                    <ul className="space-y-1" data-testid="additional-accounts">
+                      {contact.accounts.map(({ company }) => (
+                        <li key={company.id} className="flex items-center justify-between gap-2">
+                          <Link href={`/dashboard/companies/${company.id}`} className="link inline-flex min-w-0 items-center gap-1">
+                            <IconBuilding size={12} className="shrink-0" />
+                            <span className="truncate">{company.name}</span>
+                            {(company.city || company.state) && (
+                              <span className="faint shrink-0 text-xs">· {[company.city, company.state].filter(Boolean).join(", ")}</span>
+                            )}
+                          </Link>
+                          <UnlinkAccountButton contactId={contact.id} companyId={company.id} companyName={company.name} />
+                        </li>
+                      ))}
+                    </ul>
+                  }
+                />
+              )}
               <Detail
                 label="Industry · Type"
                 value={

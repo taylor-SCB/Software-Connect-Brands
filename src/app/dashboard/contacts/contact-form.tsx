@@ -5,6 +5,7 @@ import { Field, SelectField, FormError, FormSuccess } from "@/components/ui";
 import { CompanyPicker, type PickedCompany } from "@/components/company-picker";
 import { IndustryPicker, type IndustryPickList } from "@/components/industry-picker";
 import { ImageUploadField } from "@/components/image-upload-field";
+import { ContactNameField } from "@/components/contact-name-field";
 import type { ActionState } from "@/lib/forms";
 import { CHANNEL_LABELS, CHANNEL_LABEL_NAMES } from "@/lib/constants";
 
@@ -66,18 +67,26 @@ export function ContactForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <CompanyPicker
           defaultName={defaults.companyName ?? ""}
+          defaultId={defaults.company?.id ?? null}
           onChange={(picked, text) => {
             setCompany(picked);
             setTyped(text);
           }}
         />
-        <Field
-          label="Contact name"
-          name="name"
-          placeholder="Sam Rivera"
-          defaultValue={defaults.name ?? ""}
-          required
-        />
+        {defaults.id ? (
+          <Field
+            label="Contact name"
+            name="name"
+            placeholder="Sam Rivera"
+            defaultValue={defaults.name ?? ""}
+            required
+          />
+        ) : (
+          <ContactNameField
+            defaultValue={defaults.name ?? ""}
+            company={company ? { id: company.id, name: company.name } : null}
+          />
+        )}
         <IndustryPicker
           key={pickerKey}
           pickList={pickList}

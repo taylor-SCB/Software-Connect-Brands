@@ -21,6 +21,7 @@ import { OwesLine } from "@/components/owes-line";
 import { TagCell } from "../contacts/contacts-list";
 import { lastContactedCompanies } from "@/lib/last-contacted";
 import { LastContactedCell } from "@/components/last-contacted-cell";
+import { MergeButton } from "@/components/merge-button";
 import { setCompanyFavorite } from "./actions";
 import { FillMissingButton } from "./fill-missing-button";
 
@@ -92,6 +93,7 @@ export async function CompaniesList({
         actions={
           <>
             <ImportCsvButton kind="companies" />
+            <MergeButton kind="companies" />
             <FillMissingButton />
             <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />

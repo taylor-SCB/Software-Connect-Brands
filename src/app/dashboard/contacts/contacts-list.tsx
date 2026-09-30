@@ -27,6 +27,7 @@ import { owedBy } from "@/lib/money";
 import { OwesLine } from "@/components/owes-line";
 import { lastContactedContacts } from "@/lib/last-contacted";
 import { LastContactedCell } from "@/components/last-contacted-cell";
+import { MergeButton } from "@/components/merge-button";
 import { setContactFavorite } from "./actions";
 
 const ACTIVITY_ICONS = {
@@ -119,6 +120,7 @@ export async function ContactsList({
         actions={
           <>
             <ImportCsvButton kind="contacts" />
+            <MergeButton kind="contacts" />
             <EmailButton />
             <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />

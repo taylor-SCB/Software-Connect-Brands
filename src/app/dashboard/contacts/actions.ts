@@ -95,14 +95,24 @@ async function contactData(
   organizationId: string,
   formData: FormData,
 ) {
+  // The exact company picked, when its name still matches the box; a
+  // typed name otherwise finds or makes the company by name.
+  const pickedId = formData.get("companyId");
+  const picked =
+    parsed.companyName && typeof pickedId === "string" && pickedId
+      ? await prisma.company.findFirst({
+          where: { id: pickedId, organizationId, name: { equals: parsed.companyName.trim().replace(/\s+/g, " "), mode: "insensitive" } },
+          select: { id: true },
+        })
+      : null;
   const companyId = parsed.companyName
-    ? (await findOrCreateCompany(parsed.companyName, organizationId)).id
+    ? (picked ?? (await findOrCreateCompany(parsed.companyName, organizationId))).id
     : null;
   // Industry and Company Type belong to the company; the contact form
   // edits them in place so one business is never tagged three ways.
   const tags = readIndustryFields(formData);
   if (companyId && tags.touched) {
-    const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+    const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry, tags.offList);
     const industries = canonical.industries;
     const companyTypes = mergeTags(canonical.companyTypes, tags.keepTypes);
     // Tags the app guessed stop being "auto" once a person changes them here.

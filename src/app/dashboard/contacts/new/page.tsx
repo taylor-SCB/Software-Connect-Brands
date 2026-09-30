@@ -8,10 +8,10 @@ import { createContact } from "../actions";
 export default async function NewContactPage({
   searchParams,
 }: {
-  searchParams: Promise<{ companyId?: string }>;
+  searchParams: Promise<{ companyId?: string; name?: string }>;
 }) {
   const { organizationId } = await requireSession();
-  const { companyId } = await searchParams;
+  const { companyId, name } = await searchParams;
 
   // "+ Add person" on a company page lands here with the company filled in.
   const [preset, pickList] = await Promise.all([
@@ -36,7 +36,7 @@ export default async function NewContactPage({
         <ContactForm
           action={createContact}
           pickList={pickList}
-          defaults={{ companyName: preset?.name ?? "", company: preset }}
+          defaults={{ companyName: preset?.name ?? "", company: preset, name: (name ?? "").slice(0, 120) }}
           submitLabel="Save contact"
         />
       </Card>
