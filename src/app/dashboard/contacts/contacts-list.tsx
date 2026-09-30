@@ -25,6 +25,8 @@ import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { owedBy } from "@/lib/money";
 import { OwesLine } from "@/components/owes-line";
+import { lastContactedContacts } from "@/lib/last-contacted";
+import { LastContactedCell } from "@/components/last-contacted-cell";
 import { setContactFavorite } from "./actions";
 
 const ACTIVITY_ICONS = {
@@ -101,7 +103,11 @@ export async function ContactsList({
   }
 
   // A homeowner has no company, so what they owe lands on their own row.
-  const owed = await owedBy(organizationId, "contact", contacts.map((contact) => contact.id), todayIso(timeZone));
+  const pageIds = contacts.map((contact) => contact.id);
+  const [owed, lastContacted] = await Promise.all([
+    owedBy(organizationId, "contact", pageIds, todayIso(timeZone)),
+    lastContactedContacts(organizationId, pageIds),
+  ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
@@ -163,6 +169,7 @@ export async function ContactsList({
               <thead>
                 <tr>
                   <th className="w-8"></th>
+                  <th>Last Contacted By</th>
                   <th>Company</th>
                   <th>Contact</th>
                   <th>Industry · Type</th>
@@ -182,6 +189,9 @@ export async function ContactsList({
                     <tr key={contact.id} data-testid="contact-row">
                       <td className="pr-0">
                         <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} />
+                      </td>
+                      <td>
+                        <LastContactedCell last={lastContacted.get(contact.id)} timeZone={timeZone} />
                       </td>
                       <td className="font-medium">
                         {contact.company ? (

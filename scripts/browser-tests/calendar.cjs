@@ -334,7 +334,45 @@ function daysAgo(n) {
   await page.locator("[data-testid=cal-next]").click();
   await page.getByText("November 2026").waitFor();
   await page.locator("[data-testid=cal-today]").click();
-  await page.waitForURL(/on=\d{4}-\d{2}-01/);
+  // Today clears the day from the address bar: the server's today is
+  // the workspace's today.
+  await page.waitForURL((url) => url.pathname.endsWith("/calendar") && !url.searchParams.has("on"));
+
+  // Regression (Sept 30, 2026): Month -> Week snapped to the week of the
+  // 1st, which starts in the month before, and Week -> Month then read
+  // that Sunday's month. Two round trips from September landed in July.
+  log("Month / Week / Team round trips stay in the same month");
+  await page.goto(`${BASE}/dashboard/calendar?on=2026-09-30`);
+  await page.getByText("September 2026").first().waitFor();
+  for (let round = 0; round < 2; round += 1) {
+    await page.locator("[data-testid=cal-view-week]").click();
+    await page.locator("[data-testid=cal-view-week][aria-selected=true]").waitFor();
+    await page.locator("[data-testid=week-day][data-day='2026-09-30']").waitFor();
+    await page.locator("[data-testid=cal-view-team]").click();
+    await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+    await page.locator("[data-testid=cal-view-month]").click();
+    await page.locator("[data-testid=cal-view-month][aria-selected=true]").waitFor();
+    await page.getByText("September 2026").first().waitFor();
+  }
+  assert.equal(new URL(page.url()).searchParams.get("on"), "2026-09-30");
+
+  log("a week paged forward and switched to Month shows the month the day is in");
+  await page.goto(`${BASE}/dashboard/calendar?view=week&on=2026-09-30`);
+  await page.locator("[data-testid=cal-next]").click();
+  await page.waitForURL(/on=2026-10-07/);
+  await page.locator("[data-testid=cal-view-month]").click();
+  await page.getByText("October 2026").first().waitFor();
+
+  log("a filter ticked while the next month is still loading keeps the new month");
+  await page.goto(`${BASE}/dashboard/calendar?on=2026-10-15`);
+  await page.getByText("October 2026").first().waitFor();
+  await page.locator("[data-testid=cal-next]").click();
+  await page.locator("[data-testid=cal-just-me]").click();
+  await page.waitForURL((url) => url.searchParams.has("users"));
+  await page.getByText("November 2026").first().waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(new URL(page.url()).searchParams.get("on"), "2026-11-01");
+  assert.ok(new URL(page.url()).searchParams.get("users"), "Just me survived the pending month change");
 
   log("the week view lists the days in full");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=${day(3)}`);

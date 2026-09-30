@@ -4,10 +4,11 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime, formatDate } from "@/lib/format";
-import { ACTIVITY_TYPES, INDIVIDUAL_COMPANY_TYPE, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
+import { ACTIVITY_TYPES, CHANNEL_LABEL_NAMES, INDIVIDUAL_COMPANY_TYPE, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
 import { StarButton } from "@/components/star-button";
 import { TagCell } from "../contacts-list";
-import { setContactFavorite } from "../actions";
+import { deleteContact, setContactFavorite } from "../actions";
+import { HeaderDeleteButton } from "@/components/header-delete-button";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
 import {
@@ -165,6 +166,12 @@ export default async function ContactDetailPage({
             >
               Edit
             </Link>
+            <HeaderDeleteButton
+              action={deleteContact}
+              hiddenName="contactId"
+              hiddenValue={contact.id}
+              question={`Delete ${contact.name}, with their notes, activity, deals, quotes and contracts?`}
+            />
           </>
         }
       />
@@ -236,7 +243,7 @@ export default async function ContactDetailPage({
               />
               <Detail label="Title" value={contact.title} />
               <Detail
-                label="Email"
+                label={contact.email2 || contact.emailLabel === "PERSONAL" ? `Email · ${CHANNEL_LABEL_NAMES[contact.emailLabel]}` : "Email"}
                 value={
                   contact.email ? (
                     <a href={`mailto:${contact.email}`} className="link">
@@ -245,8 +252,18 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              {contact.email2 && (
+                <Detail
+                  label={`Email · ${CHANNEL_LABEL_NAMES[contact.email2Label]}`}
+                  value={
+                    <a href={`mailto:${contact.email2}`} className="link" data-testid="contact-email2">
+                      {contact.email2}
+                    </a>
+                  }
+                />
+              )}
               <Detail
-                label="Phone"
+                label={contact.phone2 || contact.phoneLabel === "PERSONAL" ? `Phone · ${CHANNEL_LABEL_NAMES[contact.phoneLabel]}` : "Phone"}
                 value={
                   contact.phone ? (
                     <a href={`tel:${contact.phone}`} className="link num">
@@ -255,6 +272,16 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              {contact.phone2 && (
+                <Detail
+                  label={`Phone · ${CHANNEL_LABEL_NAMES[contact.phone2Label]}`}
+                  value={
+                    <a href={`tel:${contact.phone2}`} className="link num" data-testid="contact-phone2">
+                      {contact.phone2}
+                    </a>
+                  }
+                />
+              )}
               <Detail
                 label="Website"
                 value={

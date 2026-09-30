@@ -284,7 +284,7 @@ async function company(org, name) {
   const expectedWebsites = 24; // g not a multiple of 5
   await page.goto(`${BASE}/dashboard/companies`);
   assert.equal(await pageSummary(page), `Showing 1–50 of ${(SEEDED + 7).toLocaleString()} companies`);
-  const orderBefore = await page.locator("[data-testid=company-row] td:nth-child(2)").allTextContents();
+  const orderBefore = await page.locator("[data-testid=company-row] td:nth-child(3)").allTextContents();
   assert.equal(orderBefore.length, 50);
   await page.getByTestId("fill-missing-button").click();
   const plan = await page.getByTestId("fill-missing-plan").textContent();
@@ -345,7 +345,7 @@ async function company(org, name) {
   assert.equal(seed5.website, null, "a personal mail domain is never a website");
   assert.equal(seed5.phone, null);
   await page.goto(`${BASE}/dashboard/companies`);
-  const orderAfter = await page.locator("[data-testid=company-row] td:nth-child(2)").allTextContents();
+  const orderAfter = await page.locator("[data-testid=company-row] td:nth-child(3)").allTextContents();
   assert.deepEqual(orderAfter, orderBefore, "filling in kept the list in the same order (updatedAt untouched)");
   const bumped = (
     await sql(`SELECT count(*)::int AS n FROM "Company" WHERE "organizationId"=$1 AND name LIKE 'Seeded %' AND "updatedAt" > now() - interval '30 seconds'`, [org])

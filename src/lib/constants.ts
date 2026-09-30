@@ -45,6 +45,11 @@ export const ACTIVITY_LABELS: Record<ActivityTypeValue, string> = {
 export const CONTACT_STATUSES = ["LEAD", "CUSTOMER", "ARCHIVED"] as const;
 export type ContactStatusValue = (typeof CONTACT_STATUSES)[number];
 
+// The Personal / Work tag on a contact's emails and phone numbers.
+export const CHANNEL_LABELS = ["WORK", "PERSONAL"] as const;
+export type ChannelLabelValue = (typeof CHANNEL_LABELS)[number];
+export const CHANNEL_LABEL_NAMES: Record<ChannelLabelValue, string> = { WORK: "Work", PERSONAL: "Personal" };
+
 // Pipeline stages, in the order a deal moves through them. Sending a
 // quote or a contract advances a deal on its own; Won and Lost are the
 // two ways out.

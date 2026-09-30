@@ -168,6 +168,7 @@ model User {
   leadQuotes   Quote[] @relation("QuoteLeadRep")
   signerQuotes Quote[] @relation("QuoteContractSigner")
   emailSends   EmailSend[]
+  ownedDeals   Deal[]  @relation("DealOwner")
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
   // must not take the company's schedule with them.
   calendarEvents CalendarEvent[]
@@ -273,6 +274,12 @@ model Company {
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_city_trgm_idx")
 }
 
+// Which side of someone's life an email or phone number belongs to.
+enum ChannelLabel {
+  WORK
+  PERSONAL
+}
+
 model Contact {
   id             String        @id @default(cuid())
   organizationId String
@@ -284,6 +291,16 @@ model Contact {
   title          String?
   email          String?
   phone          String?
+  // A second email and phone (Sept 30, 2026), each with its own Personal
+  // or Work label. An entrepreneur has both and uses them for different
+  // things. The first pair keeps its old column names so every existing
+  // reader (marketing, the customer's copy, merge fields) is unchanged.
+  emailLabel     ChannelLabel  @default(WORK)
+  email2         String?
+  email2Label    ChannelLabel  @default(PERSONAL)
+  phoneLabel     ChannelLabel  @default(WORK)
+  phone2         String?
+  phone2Label    ChannelLabel  @default(PERSONAL)
   website        String?
   city           String?
   state          String?
@@ -325,6 +342,8 @@ model Contact {
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_name_trgm_idx")
   @@index([email(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_email_trgm_idx")
   @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_phone_trgm_idx")
+  @@index([email2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_email2_trgm_idx")
+  @@index([phone2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_phone2_trgm_idx")
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_city_trgm_idx")
 }
 
@@ -351,6 +370,12 @@ model Deal {
   // the deal's value is read from its quotes (see src/lib/deals.ts).
   valueCents     Int          @default(0)
   stage          DealStage    @default(LEAD)
+  // The rep whose deal it is: whoever created it, changeable from the
+  // pipeline tile. SetNull, like a quote's lead rep: a deal must outlive
+  // the person who owned it. Deals from before Sept 30, 2026 took their
+  // latest quote's lead sales rep, or the workspace owner.
+  ownerId        String?
+  owner          User?        @relation("DealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -361,6 +386,7 @@ model Deal {
 
   @@index([organizationId])
   @@index([contactId])
+  @@index([ownerId])
 }
 
 // Labels a note can wear. The personal ones (everything but GENERAL) are

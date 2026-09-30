@@ -6,6 +6,7 @@ import { CompanyPicker, type PickedCompany } from "@/components/company-picker";
 import { IndustryPicker, type IndustryPickList } from "@/components/industry-picker";
 import { ImageUploadField } from "@/components/image-upload-field";
 import type { ActionState } from "@/lib/forms";
+import { CHANNEL_LABELS, CHANNEL_LABEL_NAMES } from "@/lib/constants";
 
 type ContactDefaults = {
   id?: string;
@@ -16,6 +17,12 @@ type ContactDefaults = {
   title?: string | null;
   email?: string | null;
   phone?: string | null;
+  emailLabel?: string;
+  email2?: string | null;
+  email2Label?: string;
+  phoneLabel?: string;
+  phone2?: string | null;
+  phone2Label?: string;
   website?: string | null;
   city?: string | null;
   state?: string | null;
@@ -85,19 +92,37 @@ export function ContactForm({
           placeholder="Owner, Office Manager, Foreman"
           defaultValue={defaults.title ?? ""}
         />
-        <Field
+        <ChannelField
           label="Contact email"
           name="email"
           type="email"
           placeholder="sam@samsdiner.com"
           defaultValue={defaults.email ?? ""}
+          defaultLabel={defaults.emailLabel ?? "WORK"}
         />
-        <Field
+        <ChannelField
           label="Contact phone"
           name="phone"
           type="tel"
           placeholder="(555) 018-2200"
           defaultValue={defaults.phone ?? ""}
+          defaultLabel={defaults.phoneLabel ?? "WORK"}
+        />
+        <ChannelField
+          label="Second email"
+          name="email2"
+          type="email"
+          placeholder="sam.rivera@gmail.com"
+          defaultValue={defaults.email2 ?? ""}
+          defaultLabel={defaults.email2Label ?? "PERSONAL"}
+        />
+        <ChannelField
+          label="Second phone"
+          name="phone2"
+          type="tel"
+          placeholder="(555) 018-3300"
+          defaultValue={defaults.phone2 ?? ""}
+          defaultLabel={defaults.phone2Label ?? "PERSONAL"}
         />
         <Field
           label="Website"
@@ -134,5 +159,48 @@ export function ContactForm({
         {pending ? "Saving…" : submitLabel}
       </button>
     </form>
+  );
+}
+
+// An email or phone box with its Personal / Work tag beside it. The tag
+// posts as `<name>Label` (emailLabel, phone2Label...).
+function ChannelField({
+  label,
+  name,
+  type,
+  placeholder,
+  defaultValue,
+  defaultLabel,
+}: {
+  label: string;
+  name: string;
+  type: string;
+  placeholder: string;
+  defaultValue: string;
+  defaultLabel: string;
+}) {
+  return (
+    <div>
+      <label className="label" htmlFor={name}>
+        {label}
+        <span className="faint font-normal"> · optional</span>
+      </label>
+      <div className="flex gap-2">
+        <input id={name} name={name} type={type} placeholder={placeholder} defaultValue={defaultValue} className="input min-w-0 flex-1" />
+        <select
+          name={`${name}Label`}
+          defaultValue={defaultLabel}
+          aria-label={`${label}: Personal or Work`}
+          className="select w-28 shrink-0"
+          data-testid={`${name}-label`}
+        >
+          {CHANNEL_LABELS.map((value) => (
+            <option key={value} value={value}>
+              {CHANNEL_LABEL_NAMES[value]}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
   );
 }

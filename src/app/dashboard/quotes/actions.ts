@@ -68,6 +68,7 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
     dealTitle: parsed.data.dealTitle || null,
     contactId: contact.id,
     organizationId,
+    ownerId: userId,
   });
   if (!deal) return { error: "Pick a deal for this quote, or add a new one" };
 

@@ -7,21 +7,26 @@ import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PageHeader, Card, EmptyState } from "@/components/ui";
 import { IconTrending, IconFileText, IconPlus, IconClock } from "@/components/icons";
 import { StageSelect } from "./stage-select";
+import { OwnerSelect } from "./owner-select";
+import { loadWorkspaceUsers } from "@/lib/workspace-users";
 
 export default async function DealsPage() {
   const { organizationId } = await requireSession();
 
-  const deals = await prisma.deal.findMany({
-    where: { organizationId },
-    orderBy: { updatedAt: "desc" },
-    include: {
-      contact: { select: { id: true, name: true, company: { select: { name: true } } } },
-      quotes: {
-        select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true },
-        orderBy: { createdAt: "desc" },
+  const [deals, users] = await Promise.all([
+    prisma.deal.findMany({
+      where: { organizationId },
+      orderBy: { updatedAt: "desc" },
+      include: {
+        contact: { select: { id: true, name: true, company: { select: { name: true } } } },
+        quotes: {
+          select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true },
+          orderBy: { createdAt: "desc" },
+        },
       },
-    },
-  });
+    }),
+    loadWorkspaceUsers(organizationId),
+  ]);
 
   const openValue = deals
     .filter((deal) => isOpenStage(deal.stage))
@@ -96,6 +101,9 @@ export default async function DealsPage() {
                         className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3"
                       >
                         <p className="text-sm font-medium">{deal.title}</p>
+                        <div className="mb-1 mt-1.5 flex">
+                          <OwnerSelect dealId={deal.id} ownerId={deal.ownerId} users={users} />
+                        </div>
                         <Link
                           href={`/dashboard/contacts/${deal.contact.id}`}
                           className="link text-xs"

@@ -75,6 +75,8 @@ export async function contactWhere(
         { name: { contains: p.q, mode: insensitive } },
         { email: { contains: p.q, mode: insensitive } },
         { phone: { contains: p.q } },
+        { email2: { contains: p.q, mode: insensitive } },
+        { phone2: { contains: p.q } },
         { city: { contains: p.q, mode: insensitive } },
         ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
       ],
@@ -104,7 +106,10 @@ export async function contactWhere(
   // Needs attention: no way to reach them, or a company nobody has tagged.
   if (p.attn) {
     and.push({
-      OR: [{ AND: [{ email: null }, { phone: null }] }, { company: { industries: { isEmpty: true } } }],
+      OR: [
+        { AND: [{ email: null }, { phone: null }, { email2: null }, { phone2: null }] },
+        { company: { industries: { isEmpty: true } } },
+      ],
     });
   }
   // Owes money: only a homeowner's own paperwork lands on their row —

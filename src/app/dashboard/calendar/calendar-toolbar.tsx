@@ -3,8 +3,8 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { addDays } from "@/lib/payments";
-import { shiftMonth, startOfMonth, startOfWeek } from "@/lib/calendar";
-import { UNASSIGNED_USER } from "@/lib/calendar-filters";
+import { isRealDay, shiftMonth, startOfMonth } from "@/lib/calendar";
+import { readIds, UNASSIGNED_USER } from "@/lib/calendar-filters";
 import { useSearch } from "@/lib/use-search";
 import { FormError, FormSuccess } from "@/components/ui";
 import {
@@ -39,6 +39,7 @@ export function CalendarToolbar({
   view,
   layout,
   anchor,
+  focus,
   today,
   choices,
   filters,
@@ -48,6 +49,10 @@ export function CalendarToolbar({
   layout: CalendarLayout;
   // The first of the month, or the Sunday of the week.
   anchor: string;
+  // The day the address bar asked for. The grid snaps to its month or
+  // week, but the day itself is kept, so Month -> Week -> Month lands
+  // back where it started instead of a month earlier each round trip.
+  focus: string;
   today: string;
   choices: EventChoices;
   filters: CalendarFilterState;
@@ -62,21 +67,54 @@ export function CalendarToolbar({
   const [copyState, setCopyState] = useState<{ error?: string; success?: string }>({});
   const [pending, start] = useTransition();
 
+  // What the address bar will say once the last click lands. Every click
+  // builds on this rather than on the page on screen: while a click is
+  // still loading, the page (and useSearchParams) still show the one
+  // before, and building on that undid the click — a filter ticked right
+  // after "next month" threw you back a month (Sept 30, 2026).
+  const live = useRef<URLSearchParams>(new URLSearchParams(params.toString()));
+  useEffect(() => {
+    live.current = new URLSearchParams(params.toString());
+  }, [params]);
+
   const go = (changes: Record<string, string | string[] | null>) => {
-    const next = new URLSearchParams(params.toString());
+    const next = new URLSearchParams(live.current.toString());
     for (const [key, value] of Object.entries(changes)) {
       const joined = Array.isArray(value) ? value.join(",") : value;
       if (joined === null || joined === "") next.delete(key);
       else next.set(key, joined);
     }
+    live.current = next;
     router.push(`/dashboard/calendar?${next.toString()}`);
   };
 
-  const step = (direction: -1 | 1) =>
-    go({ on: view === "month" ? shiftMonth(anchor, direction) : addDays(anchor, direction * 7) });
+  const liveView = () => {
+    const value = live.current.get("view");
+    return value === "week" || value === "team" ? value : "month";
+  };
+  const liveFocus = () => {
+    const value = live.current.get("on") ?? undefined;
+    return isRealDay(value) ? value : today;
+  };
 
-  const toggle = (list: string[], value: string) =>
-    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  // Paging keeps a real day in the address bar, never just the snapped
+  // 1st or Sunday: a month step lands on today when it comes back to this
+  // month, a week step moves the day itself by seven.
+  const step = (direction: -1 | 1) => {
+    const day = liveFocus();
+    if (liveView() === "month") {
+      const month = shiftMonth(startOfMonth(day), direction);
+      go({ on: month === startOfMonth(today) ? today : month });
+    } else {
+      go({ on: addDays(day, direction * 7) });
+    }
+  };
+
+  // A filter list as the address bar will have it, not as the page shows it.
+  const toggleIn = (key: string, value: string) => {
+    const list = readIds(live.current.get(key) ?? undefined);
+    return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  };
 
   const filtering =
     Boolean(filters.crewId || filters.type) ||
@@ -103,7 +141,7 @@ export function CalendarToolbar({
               </button>
               <button
                 type="button"
-                onClick={() => go({ on: view === "month" ? startOfMonth(today) : startOfWeek(today) })}
+                onClick={() => go({ on: null })}
                 className="btn btn-ghost btn-sm"
                 data-testid="cal-today"
               >
@@ -127,12 +165,10 @@ export function CalendarToolbar({
                   type="button"
                   role="tab"
                   aria-selected={view === option}
-                  onClick={() =>
-                    go({
-                      view: option,
-                      on: option === "month" ? startOfMonth(anchor) : startOfWeek(anchor),
-                    })
-                  }
+                  // The day stays put; the server snaps it to the month or
+                  // week. Snapping here, from the already-snapped anchor,
+                  // lost a month every Month -> Week -> Month.
+                  onClick={() => go({ view: option === "month" ? null : option })}
                   className={`btn btn-sm ${view === option ? "btn-primary" : "btn-ghost"}`}
                   data-testid={`cal-view-${option}`}
                 >
@@ -227,7 +263,7 @@ export function CalendarToolbar({
           testId="cal-users"
           values={filters.userIds}
           rows={[...choices.users, { id: UNASSIGNED_USER, name: "Unassigned" }]}
-          onToggle={(id) => go({ users: toggle(filters.userIds, id) })}
+          onToggle={(id) => go({ users: toggleIn("users", id) })}
           onReset={() => go({ users: null })}
         />
         <SearchSelect
@@ -237,7 +273,7 @@ export function CalendarToolbar({
           selected={labels.companies}
           fallback={choices.companies}
           searchUrl="/dashboard/companies/search"
-          onToggle={(id) => go({ companies: toggle(filters.companyIds, id) })}
+          onToggle={(id) => go({ companies: toggleIn("companies", id) })}
           onReset={() => go({ companies: null })}
         />
         <SearchSelect
@@ -247,7 +283,7 @@ export function CalendarToolbar({
           selected={labels.contacts}
           fallback={choices.contacts}
           searchUrl="/dashboard/contacts/search"
-          onToggle={(id) => go({ contacts: toggle(filters.contactIds, id) })}
+          onToggle={(id) => go({ contacts: toggleIn("contacts", id) })}
           onReset={() => go({ contacts: null })}
         />
         <MultiSelect
@@ -258,7 +294,7 @@ export function CalendarToolbar({
             ...labels.projects.filter((project) => !choices.projects.some((entry) => entry.id === project.id)),
             ...choices.projects.map((project) => ({ id: project.id, name: project.label })),
           ]}
-          onToggle={(id) => go({ projects: toggle(filters.projectIds, id) })}
+          onToggle={(id) => go({ projects: toggleIn("projects", id) })}
           onReset={() => go({ projects: null })}
           searchable
         />
@@ -308,22 +344,22 @@ export function CalendarToolbar({
       {filters.userIds.length + filters.companyIds.length + filters.contactIds.length + filters.projectIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="cal-active-filters">
           {filters.userIds.map((id) => (
-            <Chip key={`u-${id}`} onRemove={() => go({ users: toggle(filters.userIds, id) })}>
+            <Chip key={`u-${id}`} onRemove={() => go({ users: toggleIn("users", id) })}>
               {userName(id)}
             </Chip>
           ))}
           {filters.companyIds.map((id) => (
-            <Chip key={`c-${id}`} onRemove={() => go({ companies: toggle(filters.companyIds, id) })}>
+            <Chip key={`c-${id}`} onRemove={() => go({ companies: toggleIn("companies", id) })}>
               Company: {labels.companies.find((row) => row.id === id)?.name ?? "…"}
             </Chip>
           ))}
           {filters.contactIds.map((id) => (
-            <Chip key={`p-${id}`} onRemove={() => go({ contacts: toggle(filters.contactIds, id) })}>
+            <Chip key={`p-${id}`} onRemove={() => go({ contacts: toggleIn("contacts", id) })}>
               Contact: {labels.contacts.find((row) => row.id === id)?.name ?? "…"}
             </Chip>
           ))}
           {filters.projectIds.map((id) => (
-            <Chip key={`j-${id}`} onRemove={() => go({ projects: toggle(filters.projectIds, id) })}>
+            <Chip key={`j-${id}`} onRemove={() => go({ projects: toggleIn("projects", id) })}>
               {labels.projects.find((row) => row.id === id)?.name ?? "…"}
             </Chip>
           ))}
@@ -337,7 +373,7 @@ export function CalendarToolbar({
         <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
           <EventForm
             choices={choices}
-            defaults={{ startOn: view !== "month" && layout !== "log" ? anchor : today }}
+            defaults={{ startOn: view !== "month" && layout !== "log" ? focus : today }}
             onDone={() => setAdding(false)}
           />
         </div>

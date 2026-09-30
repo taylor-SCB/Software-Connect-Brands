@@ -215,7 +215,7 @@ export async function previewMergeContext(input: {
 /* ----------------------------- Contracts ----------------------------- */
 
 export async function createContract(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
     z.object({
@@ -270,6 +270,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
         dealTitle: parsed.data.dealTitle || null,
         contactId: contact.id,
         organizationId,
+        ownerId: userId,
       })
     : null;
   if (wantsDeal && !deal) return { error: "That deal doesn't belong to this customer" };

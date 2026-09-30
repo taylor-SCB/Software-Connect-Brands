@@ -147,6 +147,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         view={view}
         layout={layout}
         anchor={anchor}
+        focus={asked}
         today={today}
         choices={choices}
         filters={{
@@ -178,7 +179,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
       {layout !== "log" &&
         (view === "month" ? (
-          <MonthView monthIso={anchor} today={today} events={events} choices={choices} />
+          <MonthView key={anchor} monthIso={anchor} today={today} events={events} choices={choices} />
         ) : view === "team" ? (
           <TeamView weekOf={anchor} today={today} events={events} choices={choices} crews={crews} />
         ) : (

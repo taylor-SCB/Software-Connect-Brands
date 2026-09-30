@@ -19,6 +19,8 @@ import { todayIso } from "@/lib/payments";
 import { owedBy } from "@/lib/money";
 import { OwesLine } from "@/components/owes-line";
 import { TagCell } from "../contacts/contacts-list";
+import { lastContactedCompanies } from "@/lib/last-contacted";
+import { LastContactedCell } from "@/components/last-contacted-cell";
 import { setCompanyFavorite } from "./actions";
 import { FillMissingButton } from "./fill-missing-button";
 
@@ -74,7 +76,11 @@ export async function CompaniesList({
   });
   // What each company on this page still owes, in one statement rather
   // than a query per row, so the list stays fast at forty thousand.
-  const owed = await owedBy(organizationId, "company", companies.map((company) => company.id), todayIso(timeZone));
+  const pageIds = companies.map((company) => company.id);
+  const [owed, lastContacted] = await Promise.all([
+    owedBy(organizationId, "company", pageIds, todayIso(timeZone)),
+    lastContactedCompanies(organizationId, pageIds),
+  ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
@@ -135,6 +141,7 @@ export async function CompaniesList({
               <thead>
                 <tr>
                   <th className="w-8"></th>
+                  <th>Last Contacted By</th>
                   <th>Company</th>
                   <th>Industry · Type</th>
                   <th>Location</th>
@@ -154,6 +161,9 @@ export async function CompaniesList({
                     <tr key={company.id} data-testid="company-row">
                       <td className="pr-0">
                         <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} />
+                      </td>
+                      <td>
+                        <LastContactedCell last={lastContacted.get(company.id)} timeZone={timeZone} />
                       </td>
                       <td className="font-medium">
                         <Link href={`/dashboard/companies/${company.id}`} className="link">

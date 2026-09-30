@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
-import { CONTACT_STATUSES } from "@/lib/constants";
+import { CHANNEL_LABELS, CONTACT_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
@@ -37,6 +37,12 @@ const contactSchema = z.object({
   companyName: z.string().trim().max(120).optional(),
   email: z.union([z.literal(""), z.email("Enter a valid email address")]).optional(),
   phone: z.string().trim().max(40).optional(),
+  emailLabel: z.enum(CHANNEL_LABELS).catch("WORK"),
+  email2: z.union([z.literal(""), z.email("Enter a valid second email address")]).optional(),
+  email2Label: z.enum(CHANNEL_LABELS).catch("PERSONAL"),
+  phoneLabel: z.enum(CHANNEL_LABELS).catch("WORK"),
+  phone2: z.string().trim().max(40).optional(),
+  phone2Label: z.enum(CHANNEL_LABELS).catch("PERSONAL"),
   website: z.union([z.literal(""), z.string().trim().max(200)]).optional(),
   city: z.string().trim().max(120).optional(),
   state: z.string().trim().max(60).optional(),
@@ -63,6 +69,12 @@ function readContactForm(formData: FormData) {
     companyName: formData.get("companyName") ?? undefined,
     email: formData.get("email") ?? undefined,
     phone: formData.get("phone") ?? undefined,
+    emailLabel: formData.get("emailLabel") ?? undefined,
+    email2: formData.get("email2") ?? undefined,
+    email2Label: formData.get("email2Label") ?? undefined,
+    phoneLabel: formData.get("phoneLabel") ?? undefined,
+    phone2: formData.get("phone2") ?? undefined,
+    phone2Label: formData.get("phone2Label") ?? undefined,
     website: formData.get("website") ?? undefined,
     city: formData.get("city") ?? undefined,
     state: formData.get("state") ?? undefined,
@@ -111,6 +123,12 @@ async function contactData(
     companyId,
     email: parsed.email ? parsed.email.toLowerCase() : null,
     phone: parsed.phone || null,
+    emailLabel: parsed.emailLabel,
+    email2: parsed.email2 ? parsed.email2.toLowerCase() : null,
+    email2Label: parsed.email2Label,
+    phoneLabel: parsed.phoneLabel,
+    phone2: parsed.phone2 || null,
+    phone2Label: parsed.phone2Label,
     website: normalizeWebsite(parsed.website || null),
     city: parsed.city || null,
     state: normalizeState(parsed.state || null),
@@ -367,7 +385,7 @@ export async function createDealForContact(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
     z.object({
@@ -388,6 +406,7 @@ export async function createDealForContact(
       contactId: parsed.data.contactId,
       title: parsed.data.title,
       valueCents: dollarsToCents(formData.get("value")),
+      ownerId: userId,
     },
   });
 

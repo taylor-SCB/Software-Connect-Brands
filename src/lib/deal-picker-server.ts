@@ -9,8 +9,10 @@ export async function resolveDeal(input: {
   dealTitle: string | null;
   contactId: string;
   organizationId: string;
+  // Whoever is making the quote or contract: a deal made here is theirs.
+  ownerId: string;
 }): Promise<{ id: string } | null> {
-  const { dealId, dealTitle, contactId, organizationId } = input;
+  const { dealId, dealTitle, contactId, organizationId, ownerId } = input;
 
   if (dealId) {
     return prisma.deal.findFirst({
@@ -29,7 +31,7 @@ export async function resolveDeal(input: {
   if (existing) return existing;
 
   return prisma.deal.create({
-    data: { organizationId, contactId, title },
+    data: { organizationId, contactId, title, ownerId },
     select: { id: true },
   });
 }

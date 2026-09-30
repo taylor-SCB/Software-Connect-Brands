@@ -19,7 +19,8 @@ import { IconGlobe, IconUserPlus, IconPlus, IconChevronLeft, IconChevronRight } 
 import { StarButton } from "@/components/star-button";
 import { AutoPill } from "@/components/auto-pill";
 import { TagCell } from "../../contacts/contacts-list";
-import { setCompanyFavorite } from "../actions";
+import { deleteCompany, setCompanyFavorite } from "../actions";
+import { HeaderDeleteButton } from "@/components/header-delete-button";
 import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
@@ -196,6 +197,12 @@ export default async function CompanyDetailPage({
             >
               Edit
             </Link>
+            <HeaderDeleteButton
+              action={deleteCompany}
+              hiddenName="companyId"
+              hiddenValue={company.id}
+              question={`Delete ${company.name} and the notes and activity on it? Its people stay, with no company.`}
+            />
           </>
         }
       />
