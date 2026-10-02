@@ -322,11 +322,15 @@ async function anonymousStatus(browser, url) {
 
   /* ------------------------------ Contract Coordinator ------------------------------ */
 
-  log("Contract Coordinator under Pipeline is blank until a deal is picked");
+  // Since Sept 30, 2026 the sidebar lists Contract Coordinator under
+  // Contracts only; the Pipeline address still works for old links and
+  // the Pipeline page's own button.
+  log("Contract Coordinator from the Pipeline address is blank until a deal is picked");
   await page.goto(`${BASE}/dashboard/deals/tracker`);
   await page.getByRole("heading", { name: "Contract Coordinator" }).waitFor();
   await page.getByText("Pick a deal to start").waitFor();
-  assert.ok(await nav.getByRole("link", { name: "Contract Coordinator" }).first().isVisible());
+  assert.equal(await nav.getByRole("link", { name: "Contract Coordinator" }).count(), 0, "not listed under Pipeline");
+  assert.equal(await nav.locator("a[aria-current=page]").textContent(), "Pipeline");
 
   log("the quote page's Split into contracts button lands on the tracker with the deal picked");
   await page.goto(`${BASE}/dashboard/quotes/quo_tr`);

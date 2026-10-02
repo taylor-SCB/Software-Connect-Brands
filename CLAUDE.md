@@ -244,6 +244,41 @@ Users; unsubscribes at `/u/<token>` mark every contact with that address),
 company logos and contact photos, and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
+**Users vs Company (Sept 30, 2026).** The sidebar is Overview, Calendar,
+**CRM** (Contacts with Favorite / Interested / with Deals, Companies with
+the same three), **Closer's Club** (Pipeline, Quotes, Contracts with
+Contract Coordinator, Products with Ratesheets), Projects (Properties,
+Budgets, Crews), **Stats / Reporting**, Settings. Every deal has a **rep**
+(`Deal.ownerId`, whoever made it, changeable on its tile). Contacts and
+Companies open on **Last Contacted By** (who, when). Contacts carry a
+second email and phone, each **Personal / Work**. **Delete** sits in a
+contact's and a company's page header. A contact can belong to more
+companies than their main one (**+ Additional Account**, the
+`ContactAccount` table; the main `companyId` stays the one paperwork is
+filed under, and a linked company does not roll up their paperwork).
+Add person on a company page searches existing people with email and
+phone first; a new contact's name is checked for duplicates as typed; the
+contact form's company box posts the exact `companyId` picked, because
+two companies can share a name. **Merge Contacts / Merge Companies** on
+the lists (up to five, one transaction). **Custom industry / company
+type** with **Save for Future Use** (unticked: on that company only,
+marked Custom). A company page's activity form can tick its people or
+add a new contact. The **status ladder** on contacts and companies: Not
+Actioned → Contacted (first logged touch, automatic) → Not Interested /
+Interested (by hand) → Meeting Set (first meeting booked with that
+*contact*, automatic) → Meeting Completed (by hand) → Quote Sent →
+Contract Sent → Signed / Won → Lost, plus Archived; every move is a
+`StatusChange` row with the day it happened, and skipping a pipeline
+step by hand asks each skipped step's date, prefilled with the meeting
+day. Status is set from the button on the record's page, no longer the
+edit form. **The Pipeline starts at Meeting Set: its first two columns
+are contacts, not deals** (Taylor, three times: deals are for quotes and
+contracts); deals join at Quote Sent. A contract unanswered 90 days is
+Archived (off the board, "Show archived"), at 180 Lost — swept when the
+Pipeline or Stats is opened. **Stats / Reporting** counts people per
+funnel step, money per deal, rates, days between steps and a
+leaderboard, with period and rep filters; everyone sees everyone.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -382,6 +417,17 @@ are all blocking before the first paying customer.
 - **No opens, clicks or bounces are tracked,** and a template is plain
   text (no images or layout). Attachments are the marketing files, at most
   five and 10 MB together.
+- **Stats' "time between steps" only knows dates from Sept 30, 2026 on.**
+  Before that nobody recorded when a status changed; the migration moved
+  existing records onto the ladder without dates.
+- **The Pipeline's meeting columns show 100 people each** and say "and N
+  more" past that; the deal columns still load every deal.
+- **The 90 / 180-day contract rule runs when the Pipeline or Stats is
+  opened.** A workspace nobody opens for a month catches up on the next
+  visit, all at once.
+- **A person linked to a second company is not rolled up there.** Their
+  deals, quotes and notes stay with their main company; the linked one
+  lists them under People with an "Additional account" tag only.
 
 ## Testing
 
@@ -394,7 +440,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty** are checked in at
+suite, and the delete-confirmation suite. **Twenty-three** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -422,7 +468,13 @@ Calendar v2 suite (`calendar-v2.cjs`, Sept 27, 2026: logged and
 scheduled calls, quote and contract milestones, the three layouts, the
 company view and the stacking filters, the owner picker, and the phone
 layout; Sept 28: the follow-up rhythm, the Overdue strip, tick-to-log
-and untick, the Team view). A suite that
+and untick, the Team view), and the three Sept 30, 2026 "Users vs
+Company" suites: `crm-reps.cjs` (16 steps: sidebar, rep on deals, Last
+Contacted By, second email/phone, header Delete), `crm-accounts.cjs`
+(20: additional accounts, Add person search, duplicate check, same-name
+companies, custom industries, company activity people, merge) and
+`crm-pipeline-stats.cjs` (20: the status ladder, the Pipeline from
+Meeting Set, skipped-step dates, the 90/180 rule, Stats). A suite that
 seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the

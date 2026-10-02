@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { DEAL_STAGES, OPEN_DEAL_STAGES, type DealStageValue } from "@/lib/constants";
+import { advanceContact, statusForDealStage } from "@/lib/status";
 
 type QuoteForValue = {
   status: string;
@@ -60,28 +61,42 @@ export const QUOTES_FOR_VALUE = {
 // Moves a deal forward when paperwork goes out. Never moves it backwards
 // and never touches a deal that is already Won or Lost, except that a
 // signed contract always wins the deal — that is the one event that
-// outranks whatever the stage was.
+// outranks whatever the stage was. An Archived deal (a contract left
+// unanswered) comes back to life when new paperwork goes out.
+//
+// Since Sept 30, 2026 the move is also written to StatusChange, and the
+// deal's contact (and their company) moves forward with it.
 export async function advanceDealStage(
   dealId: string | null | undefined,
   organizationId: string,
   target: DealStageValue,
+  userId?: string | null,
 ) {
   if (!dealId) return;
   const deal = await prisma.deal.findFirst({
     where: { id: dealId, organizationId },
-    select: { stage: true },
+    select: { stage: true, contactId: true },
   });
   if (!deal) return;
 
   const current = DEAL_STAGES.indexOf(deal.stage);
   const next = DEAL_STAGES.indexOf(target);
   const closed = deal.stage === "WON" || deal.stage === "LOST";
+  const revived = deal.stage === "ARCHIVED" && target !== "ARCHIVED";
 
-  const shouldMove = target === "WON" ? deal.stage !== "WON" : !closed && next > current;
+  const shouldMove = target === "WON" ? deal.stage !== "WON" : revived || (!closed && next > current);
   if (!shouldMove) return;
 
-  await prisma.deal.updateMany({
-    where: { id: dealId, organizationId },
-    data: { stage: target },
-  });
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.deal.updateMany({
+      where: { id: dealId, organizationId },
+      data: { stage: target, stageChangedAt: now },
+    }),
+    prisma.statusChange.create({
+      data: { organizationId, dealId, userId: userId ?? null, fromStatus: deal.stage, toStatus: target, on: now, auto: true },
+    }),
+  ]);
+  const status = statusForDealStage(target);
+  if (status) await advanceContact({ organizationId, userId }, deal.contactId, status, { on: now, dealId });
 }

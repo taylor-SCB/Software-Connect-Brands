@@ -6,7 +6,7 @@ import { todayIso } from "@/lib/payments";
 import { formatCents, formatDate } from "@/lib/format";
 import { AwardWithoutPaperwork } from "@/app/dashboard/projects/award-without-paperwork";
 import { contractHoldsRows } from "@/lib/contracts";
-import { PageHeader, Card, CardHeader, EmptyState, StatusBadge, FormSuccess } from "@/components/ui";
+import { PageHeader, Card, CardHeader, EmptyState, StatusBadge, FormSuccess, DealStageBadge } from "@/components/ui";
 import { Avatar } from "@/components/avatar";
 import { IconClock, IconFileText, IconHardHat } from "@/components/icons";
 import { TrackerPicker } from "./tracker-picker";
@@ -115,7 +115,7 @@ export async function DealTrackerPage({
                     ) : null}
                     <Link href={`/dashboard/contacts/${deal.contact.id}`} className="link">{deal.contact.name}</Link>
                     {" "}
-                    <StatusBadge status={deal.stage} />
+                    <DealStageBadge stage={deal.stage} />
                   </p>
                 </div>
               </div>

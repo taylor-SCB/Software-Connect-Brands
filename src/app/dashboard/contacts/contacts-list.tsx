@@ -25,6 +25,9 @@ import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { owedBy } from "@/lib/money";
 import { OwesLine } from "@/components/owes-line";
+import { lastContactedContacts } from "@/lib/last-contacted";
+import { LastContactedCell } from "@/components/last-contacted-cell";
+import { MergeButton } from "@/components/merge-button";
 import { setContactFavorite } from "./actions";
 
 const ACTIVITY_ICONS = {
@@ -101,7 +104,11 @@ export async function ContactsList({
   }
 
   // A homeowner has no company, so what they owe lands on their own row.
-  const owed = await owedBy(organizationId, "contact", contacts.map((contact) => contact.id), todayIso(timeZone));
+  const pageIds = contacts.map((contact) => contact.id);
+  const [owed, lastContacted] = await Promise.all([
+    owedBy(organizationId, "contact", pageIds, todayIso(timeZone)),
+    lastContactedContacts(organizationId, pageIds),
+  ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
@@ -113,6 +120,7 @@ export async function ContactsList({
         actions={
           <>
             <ImportCsvButton kind="contacts" />
+            <MergeButton kind="contacts" />
             <EmailButton />
             <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
@@ -136,12 +144,14 @@ export async function ContactsList({
         {contacts.length === 0 ? (
           <EmptyState
             icon={<IconUsers size={20} />}
-            title={filtered ? "No contacts match" : lock.fav ? "No favorite contacts yet" : lock.deals ? "No contacts with deals yet" : "No contacts yet"}
+            title={filtered ? "No contacts match" : lock.fav ? "No favorite contacts yet" : lock.deals ? "No contacts with deals yet" : lock.interested ? "Nobody marked Interested yet" : "No contacts yet"}
             body={
               filtered
                 ? "Try a different search, or clear a filter."
                 : lock.fav
                   ? "Click the star on any contact and they show up here."
+                  : lock.interested
+                    ? "Set someone's status to Interested from their page and they show up here."
                   : lock.deals
                     ? "A contact appears here once a deal or quote carries their name."
                     : "Add your first customer or lead to start tracking notes, quotes and contracts, or import a spreadsheet."
@@ -149,7 +159,8 @@ export async function ContactsList({
             action={
               !filtered &&
               !lock.fav &&
-              !lock.deals && (
+              !lock.deals &&
+              !lock.interested && (
                 <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm">
                   <IconPlus size={14} />
                   Add contact
@@ -163,6 +174,7 @@ export async function ContactsList({
               <thead>
                 <tr>
                   <th className="w-8"></th>
+                  <th>Last Contacted By</th>
                   <th>Company</th>
                   <th>Contact</th>
                   <th>Industry · Type</th>
@@ -182,6 +194,9 @@ export async function ContactsList({
                     <tr key={contact.id} data-testid="contact-row">
                       <td className="pr-0">
                         <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} />
+                      </td>
+                      <td>
+                        <LastContactedCell last={lastContacted.get(contact.id)} timeZone={timeZone} />
                       </td>
                       <td className="font-medium">
                         {contact.company ? (
@@ -313,7 +328,12 @@ export async function ContactsList({
 // everything", so the empty state can say the right thing.
 async function totalInWorkspace(organizationId: string, lock: ListLock) {
   return prisma.contact.count({
-    where: { organizationId, ...(lock.fav ? { favorite: true } : {}), ...(lock.deals ? { deals: { some: {} } } : {}) },
+    where: {
+      organizationId,
+      ...(lock.fav ? { favorite: true } : {}),
+      ...(lock.deals ? { deals: { some: {} } } : {}),
+      ...(lock.interested ? { status: "INTERESTED" as const } : {}),
+    },
   });
 }
 

@@ -22,11 +22,15 @@ export type ListParams = {
   // Only the people who still owe money on signed paperwork — the first
   // thing to look at in the morning.
   owed: boolean;
+  // Only ever set by a sub-pane's lock, never from the address bar.
+  interested: boolean;
 };
 
 // The sub-panes ("Favorite Contacts", "Companies with Deals") are the same
 // list with one toggle held on; the bar hides that toggle there.
-export type ListLock = { fav?: boolean; deals?: boolean };
+// "Interested Contacts" / "Interested Companies" (Sept 30, 2026) hold
+// the status at Interested.
+export type ListLock = { fav?: boolean; deals?: boolean; interested?: boolean };
 
 type RawParams = Record<string, string | string[] | undefined>;
 
@@ -60,6 +64,7 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     attn: raw.attn === "1",
     auto: raw.auto === "1",
     owed: raw.owed === "1",
+    interested: Boolean(lock.interested),
   };
 }
 

@@ -1,4 +1,4 @@
-import { TAG_COLORS, TAG_LABELS, type LineItemTagValue } from "@/lib/constants";
+import { DEAL_STAGE_COLORS, DEAL_STAGE_LABELS, TAG_COLORS, TAG_LABELS, type DealStageValue, type LineItemTagValue } from "@/lib/constants";
 
 // Presentational primitives with no hooks, so they can be rendered from
 // server components and client components alike.
@@ -211,6 +211,12 @@ const STATUS_COLORS: Record<string, string> = {
   LEAD: "#fbbf24",
   CUSTOMER: "#34d399",
   ARCHIVED: "#64748b",
+  // The status ladder (Sept 30, 2026).
+  NOT_ACTIONED: "#94a3b8",
+  NOT_INTERESTED: "#64748b",
+  INTERESTED: "#facc15",
+  MEETING_SET: "#38bdf8",
+  MEETING_COMPLETED: "#22d3ee",
   NEW: "#38bdf8",
   CONTACTED: "#fbbf24",
   QUOTE_SENT: "#a78bfa",
@@ -244,7 +250,24 @@ const STATUS_COLORS: Record<string, string> = {
 // letter. A job that is ON_HOLD is "Delayed" everywhere it shows.
 const STATUS_LABELS: Record<string, string> = {
   ON_HOLD: "Delayed",
+  WON: "Signed / Won",
+  NOT_ACTIONED: "Not Actioned",
+  NOT_INTERESTED: "Not Interested",
+  MEETING_SET: "Meeting Set",
+  MEETING_COMPLETED: "Meeting Completed",
+  QUOTE_SENT: "Quote Sent",
+  CONTRACT_SENT: "Contract Sent",
 };
+
+// A deal's stage, in the deal's own words: before its quote goes out a
+// deal is "Quote not sent", not the contact ladder's "Contacted".
+export function DealStageBadge({ stage }: { stage: string }) {
+  return (
+    <Badge color={DEAL_STAGE_COLORS[stage as DealStageValue] ?? "var(--text-dim)"} dot>
+      {DEAL_STAGE_LABELS[stage as DealStageValue] ?? stage}
+    </Badge>
+  );
+}
 
 export function StatusBadge({ status }: { status: string }) {
   const label =

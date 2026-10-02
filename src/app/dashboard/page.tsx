@@ -43,7 +43,7 @@ export default async function DashboardPage() {
     activeProjects,
   ] = await Promise.all([
     prisma.contact.count({ where: { organizationId } }),
-    prisma.contact.count({ where: { organizationId, status: "LEAD" } }),
+    prisma.contact.count({ where: { organizationId, status: { in: ["NOT_ACTIONED", "CONTACTED", "INTERESTED"] } } }),
     prisma.deal.findMany({
       where: { organizationId, stage: { in: [...OPEN_DEAL_STAGES] } },
       select: { valueCents: true, quotes: QUOTES_FOR_VALUE },
@@ -132,7 +132,7 @@ export default async function DashboardPage() {
             accent="#818cf8"
           />
         </Link>
-        <StatTile label="Contacts" value={contactCount} hint={`${leadCount} open leads`} />
+        <StatTile label="Contacts" value={contactCount} hint={`${leadCount} not yet at a meeting`} />
         <StatTile
           label="Open pipeline"
           value={formatCents(openDealValue)}

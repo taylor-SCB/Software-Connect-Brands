@@ -19,6 +19,9 @@ import { todayIso } from "@/lib/payments";
 import { owedBy } from "@/lib/money";
 import { OwesLine } from "@/components/owes-line";
 import { TagCell } from "../contacts/contacts-list";
+import { lastContactedCompanies } from "@/lib/last-contacted";
+import { LastContactedCell } from "@/components/last-contacted-cell";
+import { MergeButton } from "@/components/merge-button";
 import { setCompanyFavorite } from "./actions";
 import { FillMissingButton } from "./fill-missing-button";
 
@@ -50,6 +53,7 @@ export async function CompaniesList({
         organizationId,
         ...(lock.fav ? { favorite: true } : {}),
         ...(lock.deals ? { contacts: { some: { deals: { some: {} } } } } : {}),
+        ...(lock.interested ? { status: "INTERESTED" as const } : {}),
       },
     }),
   ]);
@@ -74,7 +78,11 @@ export async function CompaniesList({
   });
   // What each company on this page still owes, in one statement rather
   // than a query per row, so the list stays fast at forty thousand.
-  const owed = await owedBy(organizationId, "company", companies.map((company) => company.id), todayIso(timeZone));
+  const pageIds = companies.map((company) => company.id);
+  const [owed, lastContacted] = await Promise.all([
+    owedBy(organizationId, "company", pageIds, todayIso(timeZone)),
+    lastContactedCompanies(organizationId, pageIds),
+  ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
 
   return (
@@ -86,6 +94,7 @@ export async function CompaniesList({
         actions={
           <>
             <ImportCsvButton kind="companies" />
+            <MergeButton kind="companies" />
             <FillMissingButton />
             <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
@@ -108,12 +117,14 @@ export async function CompaniesList({
         {companies.length === 0 ? (
           <EmptyState
             icon={<IconBuilding size={20} />}
-            title={filtered ? "No companies match" : lock.fav ? "No favorite companies yet" : lock.deals ? "No companies with deals yet" : "No companies yet"}
+            title={filtered ? "No companies match" : lock.fav ? "No favorite companies yet" : lock.deals ? "No companies with deals yet" : lock.interested ? "No company marked Interested yet" : "No companies yet"}
             body={
               filtered
                 ? "Try a different search, or clear a filter."
                 : lock.fav
                   ? "Click the star on any company and it shows up here."
+                  : lock.interested
+                    ? "Set a company's status to Interested from its page and it shows up here."
                   : lock.deals
                     ? "A company appears here once one of its people has a deal or quote."
                     : "A company is a business you sell to. Add one here, type a company name on any contact, or import a spreadsheet."
@@ -121,7 +132,8 @@ export async function CompaniesList({
             action={
               !filtered &&
               !lock.fav &&
-              !lock.deals && (
+              !lock.deals &&
+              !lock.interested && (
                 <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
                   <IconPlus size={14} />
                   Add company
@@ -135,6 +147,7 @@ export async function CompaniesList({
               <thead>
                 <tr>
                   <th className="w-8"></th>
+                  <th>Last Contacted By</th>
                   <th>Company</th>
                   <th>Industry · Type</th>
                   <th>Location</th>
@@ -154,6 +167,9 @@ export async function CompaniesList({
                     <tr key={company.id} data-testid="company-row">
                       <td className="pr-0">
                         <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} />
+                      </td>
+                      <td>
+                        <LastContactedCell last={lastContacted.get(company.id)} timeZone={timeZone} />
                       </td>
                       <td className="font-medium">
                         <Link href={`/dashboard/companies/${company.id}`} className="link">

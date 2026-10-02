@@ -4,10 +4,16 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
 import { formatCents, formatDateTime, formatDate } from "@/lib/format";
-import { ACTIVITY_TYPES, INDIVIDUAL_COMPANY_TYPE, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
+import { ACTIVITY_TYPES, CHANNEL_LABEL_NAMES, INDIVIDUAL_COMPANY_TYPE, isPersonalLabel, type ActivityTypeValue } from "@/lib/constants";
 import { StarButton } from "@/components/star-button";
 import { TagCell } from "../contacts-list";
-import { setContactFavorite } from "../actions";
+import { deleteContact, setContactFavorite } from "../actions";
+import { HeaderDeleteButton } from "@/components/header-delete-button";
+import { StatusPicker } from "@/components/status-picker";
+import { meetingSetDay } from "@/lib/status";
+import { dayInZone } from "@/lib/calendar-auto";
+import { AdditionalAccountButton } from "@/components/additional-account-button";
+import { UnlinkAccountButton } from "@/components/unlink-account-button";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
 import {
@@ -16,6 +22,7 @@ import {
   CardHeader,
   BackLink,
   StatusBadge,
+  DealStageBadge,
   EmptyState,
 } from "@/components/ui";
 import {
@@ -52,6 +59,10 @@ export default async function ContactDetailPage({
     where: { id, organizationId },
     include: {
       company: { select: { id: true, name: true, industries: true, companyTypes: true } },
+      accounts: {
+        orderBy: { createdAt: "asc" },
+        select: { company: { select: { id: true, name: true, city: true, state: true } } },
+      },
       deals: {
         orderBy: { createdAt: "desc" },
         include: { quotes: QUOTES_FOR_VALUE, _count: { select: { quotes: true } } },
@@ -75,6 +86,7 @@ export default async function ContactDetailPage({
   if (!contact) notFound();
 
   const today = todayIso(timeZone);
+  const meetingSet = await meetingSetDay(organizationId, { contactId: contact.id });
   const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
@@ -128,7 +140,13 @@ export default async function ContactDetailPage({
         actions={
           <>
             <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} size={18} />
-            <StatusBadge status={contact.status} />
+            <StatusPicker
+              kind="contact"
+              id={contact.id}
+              status={contact.status}
+              meetingSetOn={meetingSet ? dayInZone(meetingSet, timeZone) : null}
+              today={today}
+            />
             {contact.emailOptOutAt && (
               <span className="badge text-[var(--warn)]" title={`Unsubscribed ${formatDate(contact.emailOptOutAt, timeZone)}`}>
                 Unsubscribed
@@ -165,6 +183,17 @@ export default async function ContactDetailPage({
             >
               Edit
             </Link>
+            <AdditionalAccountButton
+              contactId={contact.id}
+              contactName={contact.name}
+              linkedIds={[...(contact.company ? [contact.company.id] : []), ...contact.accounts.map((row) => row.company.id)]}
+            />
+            <HeaderDeleteButton
+              action={deleteContact}
+              hiddenName="contactId"
+              hiddenValue={contact.id}
+              question={`Delete ${contact.name}, with their notes, activity, deals, quotes and contracts?`}
+            />
           </>
         }
       />
@@ -225,6 +254,27 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              {contact.accounts.length > 0 && (
+                <Detail
+                  label="Additional accounts"
+                  value={
+                    <ul className="space-y-1" data-testid="additional-accounts">
+                      {contact.accounts.map(({ company }) => (
+                        <li key={company.id} className="flex items-center justify-between gap-2">
+                          <Link href={`/dashboard/companies/${company.id}`} className="link inline-flex min-w-0 items-center gap-1">
+                            <IconBuilding size={12} className="shrink-0" />
+                            <span className="truncate">{company.name}</span>
+                            {(company.city || company.state) && (
+                              <span className="faint shrink-0 text-xs">· {[company.city, company.state].filter(Boolean).join(", ")}</span>
+                            )}
+                          </Link>
+                          <UnlinkAccountButton contactId={contact.id} companyId={company.id} companyName={company.name} />
+                        </li>
+                      ))}
+                    </ul>
+                  }
+                />
+              )}
               <Detail
                 label="Industry · Type"
                 value={
@@ -236,7 +286,7 @@ export default async function ContactDetailPage({
               />
               <Detail label="Title" value={contact.title} />
               <Detail
-                label="Email"
+                label={contact.email2 || contact.emailLabel === "PERSONAL" ? `Email · ${CHANNEL_LABEL_NAMES[contact.emailLabel]}` : "Email"}
                 value={
                   contact.email ? (
                     <a href={`mailto:${contact.email}`} className="link">
@@ -245,8 +295,18 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              {contact.email2 && (
+                <Detail
+                  label={`Email · ${CHANNEL_LABEL_NAMES[contact.email2Label]}`}
+                  value={
+                    <a href={`mailto:${contact.email2}`} className="link" data-testid="contact-email2">
+                      {contact.email2}
+                    </a>
+                  }
+                />
+              )}
               <Detail
-                label="Phone"
+                label={contact.phone2 || contact.phoneLabel === "PERSONAL" ? `Phone · ${CHANNEL_LABEL_NAMES[contact.phoneLabel]}` : "Phone"}
                 value={
                   contact.phone ? (
                     <a href={`tel:${contact.phone}`} className="link num">
@@ -255,6 +315,16 @@ export default async function ContactDetailPage({
                   ) : null
                 }
               />
+              {contact.phone2 && (
+                <Detail
+                  label={`Phone · ${CHANNEL_LABEL_NAMES[contact.phone2Label]}`}
+                  value={
+                    <a href={`tel:${contact.phone2}`} className="link num" data-testid="contact-phone2">
+                      {contact.phone2}
+                    </a>
+                  }
+                />
+              )}
               <Detail
                 label="Website"
                 value={
@@ -337,7 +407,7 @@ export default async function ContactDetailPage({
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <StatusBadge status={deal.stage} />
+                      <DealStageBadge stage={deal.stage} />
                       <Link
                         href={`/dashboard/quotes/new?contactId=${contact.id}&dealId=${deal.id}`}
                         className="btn btn-ghost btn-sm"

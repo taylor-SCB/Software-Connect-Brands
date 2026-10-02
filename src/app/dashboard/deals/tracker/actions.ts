@@ -271,7 +271,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
           ? existing.id
           : (
               await tx.contact.create({
-                data: { organizationId, companyId, name, status: "LEAD" },
+                data: { organizationId, companyId, name, status: "NOT_ACTIONED" },
                 select: { id: true },
               })
             ).id;

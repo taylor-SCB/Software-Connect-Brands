@@ -37,6 +37,22 @@ export async function resolveTargets(target: LogTarget, organizationId: string) 
       select: { id: true },
     });
     if (!company) return null;
+    // Logged from the company page with some of its people ticked
+    // (Sept 30, 2026): one copy on each of them, which the company page
+    // rolls up. Nobody ticked: it lands on the company itself.
+    if (target.extraContactIds.length) {
+      const people = await prisma.contact.findMany({
+        where: { id: { in: Array.from(new Set(target.extraContactIds)) }, organizationId },
+        select: { id: true },
+      });
+      if (people.length) {
+        return {
+          rows: people.map((person) => ({ contactId: person.id, companyId: null })),
+          batchId: people.length > 1 ? randomUUID() : null,
+          primary: { companyId: company.id },
+        };
+      }
+    }
     return { rows: [{ companyId: company.id, contactId: null }], batchId: null, primary: { companyId: company.id } };
   }
 

@@ -35,6 +35,7 @@ export async function companyWhere(organizationId: string, p: ListParams): Promi
   if (p.types.length) and.push({ companyTypes: { hasSome: p.types.filter((t) => t !== INDIVIDUAL_COMPANY_TYPE) } });
   if (p.companies.length) and.push({ id: { in: p.companies } });
   if (p.fav) and.push({ favorite: true });
+  if (p.interested) and.push({ status: "INTERESTED" });
   if (p.deals) and.push({ contacts: { some: { deals: { some: {} } } } });
   // Needs attention: nothing known about it beyond a name, or no industry.
   if (p.attn) and.push({ OR: [{ industries: { isEmpty: true } }, { AND: [{ phone: null }, { email: null }] }] });
@@ -75,6 +76,8 @@ export async function contactWhere(
         { name: { contains: p.q, mode: insensitive } },
         { email: { contains: p.q, mode: insensitive } },
         { phone: { contains: p.q } },
+        { email2: { contains: p.q, mode: insensitive } },
+        { phone2: { contains: p.q } },
         { city: { contains: p.q, mode: insensitive } },
         ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
       ],
@@ -100,11 +103,15 @@ export async function contactWhere(
   }
   if (p.companies.length) and.push({ companyId: { in: p.companies } });
   if (p.fav) and.push({ favorite: true });
+  if (p.interested) and.push({ status: "INTERESTED" });
   if (p.deals) and.push({ deals: { some: {} } });
   // Needs attention: no way to reach them, or a company nobody has tagged.
   if (p.attn) {
     and.push({
-      OR: [{ AND: [{ email: null }, { phone: null }] }, { company: { industries: { isEmpty: true } } }],
+      OR: [
+        { AND: [{ email: null }, { phone: null }, { email2: null }, { phone2: null }] },
+        { company: { industries: { isEmpty: true } } },
+      ],
     });
   }
   // Owes money: only a homeowner's own paperwork lands on their row —

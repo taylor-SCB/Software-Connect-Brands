@@ -518,7 +518,7 @@ export async function awardWithoutPaperwork(
     return contract.id;
   });
 
-  await advanceDealStage(deal.id, organizationId, "WON");
+  await advanceDealStage(deal.id, organizationId, "WON", userId);
   const projectId = await awardFromContract(organizationId, contractId);
   if (projectId) revalidateProject(projectId);
   revalidatePath("/dashboard/contracts");
@@ -701,7 +701,7 @@ export async function orderFromSupplier(
               name: distributor.name,
               industries: ["Service Provider"],
               companyTypes: [distributorTypeName],
-              status: "CUSTOMER",
+              status: "WON",
             },
             select: { id: true },
           })
@@ -740,7 +740,7 @@ export async function orderFromSupplier(
           name: rep?.name ?? `${distributor.name} orders`,
           email: rep?.email ?? null,
           phone: rep?.phone ?? null,
-          status: "CUSTOMER",
+          status: "WON",
         },
         select: { id: true },
       });

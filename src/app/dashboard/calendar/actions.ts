@@ -12,6 +12,7 @@ import { formatDay } from "@/lib/format";
 import { ensureEventType } from "@/lib/event-types";
 import { ACTIVITY_TYPES, INSTALL_EVENT_TYPE } from "@/lib/constants";
 import { logEventDone, unlogEventDone } from "@/lib/calendar-auto";
+import { markMeetingSet } from "@/lib/status";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a day");
@@ -191,6 +192,13 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
       select: { id: true },
     });
     eventId = created.id;
+  }
+
+  // A meeting on the calendar with someone sets it (Sept 30, 2026) — the
+  // first one for that person; anyone already past Meeting Set stays put.
+  if (type === "Meeting") {
+    const people = [data.contactId, ...attendees.map((row) => row.id)].filter((id): id is string => Boolean(id));
+    await markMeetingSet({ organizationId, userId }, Array.from(new Set(people)), new Date());
   }
 
   await startJobOnFirstDatedDay(organizationId, project?.id);

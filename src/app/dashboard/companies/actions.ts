@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
-import { CONTACT_STATUSES } from "@/lib/constants";
+import { START_STATUSES } from "@/lib/constants";
 import { normalizeWebsite, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
@@ -22,7 +22,10 @@ const companySchema = z.object({
   website: z.union([z.literal(""), z.string().trim().max(200)]).optional(),
   city: z.string().trim().max(120).optional(),
   state: z.string().trim().max(60).optional(),
-  status: z.enum(CONTACT_STATUSES),
+  // Only a new record's form offers a status, and only the ones before
+  // the pipeline; after that it is the status button on the record's page
+  // (Sept 30, 2026), which asks for dates when a step is skipped.
+  status: z.enum(START_STATUSES).optional(),
 });
 
 function readCompanyForm(formData: FormData) {
@@ -33,7 +36,7 @@ function readCompanyForm(formData: FormData) {
     website: formData.get("website") ?? undefined,
     city: formData.get("city") ?? undefined,
     state: formData.get("state") ?? undefined,
-    status: formData.get("status"),
+    status: formData.get("status") ?? undefined,
   };
 }
 
@@ -45,7 +48,7 @@ function companyData(parsed: z.infer<typeof companySchema>) {
     website: normalizeWebsite(parsed.website || null),
     city: parsed.city || null,
     state: normalizeState(parsed.state || null),
-    status: parsed.status,
+    ...(parsed.status ? { status: parsed.status } : {}),
   };
 }
 
@@ -55,7 +58,7 @@ function companyData(parsed: z.infer<typeof companySchema>) {
 async function tagData(formData: FormData, organizationId: string): Promise<{ industries: string[]; companyTypes: string[] } | null> {
   const tags = readIndustryFields(formData);
   if (!tags.touched) return null;
-  const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry);
+  const canonical = await ensureIndustryOptions(organizationId, tags.industries, tags.typesByIndustry, tags.offList);
   return { industries: canonical.industries, companyTypes: mergeTags(canonical.companyTypes, tags.keepTypes) };
 }
 

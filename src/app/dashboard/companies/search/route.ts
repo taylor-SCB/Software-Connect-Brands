@@ -18,7 +18,13 @@ export async function GET(request: Request) {
       ...(ids.length > 0
         ? { id: { in: ids } }
         : q
-          ? { name: { contains: q, mode: "insensitive" } }
+          ? {
+              OR: [
+                { name: { contains: q, mode: "insensitive" } },
+                // "Acme Austin" is how people tell two Acmes apart.
+                { city: { contains: q, mode: "insensitive" } },
+              ],
+            }
           : {}),
     },
     orderBy: [{ favorite: "desc" }, { name: "asc" }],

@@ -132,7 +132,10 @@ function backLink(page) {
   assert.ok(await people.getByText(/Owner/).isVisible(), "title shown under the person");
 
   log("+ Add person from the company page pre-fills the company; picker says Existing");
-  await page.getByRole("link", { name: "Add person" }).click();
+  // Since Sept 30, 2026 Add person opens a search of existing people
+  // first; a brand-new person is the link at its foot.
+  await page.locator("[data-testid=add-person]").click();
+  await page.locator("[data-testid=add-person-new]").click();
   await page.waitForURL(/\/dashboard\/contacts\/new\?companyId=/);
   assert.equal(await page.locator("#companyName").inputValue(), "Spirit Communications");
   await page.getByText("Existing").waitFor();
@@ -187,7 +190,8 @@ function backLink(page) {
   const dealsCard = page.locator("div.card", { hasText: "a deal is one job" });
   assert.ok(await dealsCard.getByText("Fiber install").first().isVisible(), "deal appears on the contact");
   assert.ok(await dealsCard.getByText("1 quote").isVisible());
-  assert.ok(await dealsCard.getByText("Lead").isVisible(), "new deal starts at Lead");
+  // Since Sept 30, 2026 a deal before its quote goes out reads "Quote not sent".
+  assert.ok(await dealsCard.getByText("Quote not sent").isVisible(), "new deal starts before the pipeline");
   const quotesCard = page.locator("div.card", { hasText: "QUO-1000" });
   assert.ok(await quotesCard.getByText("QUO-1000 · Fiber install").isVisible(), "quote row names its deal");
 
@@ -195,7 +199,7 @@ function backLink(page) {
   await dealsCard.getByRole("link", { name: "Quote" }).click();
   await page.waitForURL(/dealId=/);
   assert.equal(await page.locator("#dealTitle").inputValue(), "Fiber install");
-  await page.getByText("Lead", { exact: true }).waitFor();
+  await page.getByText("Quote not sent", { exact: true }).waitFor();
   await page.fill("#title", "Fiber install — option B");
   await page.getByRole("button", { name: "Create quote" }).click();
   await page.waitForURL(/\/dashboard\/quotes\/(?!new$)[a-z0-9]+$/);
@@ -232,14 +236,15 @@ function backLink(page) {
   await page.getByRole("button", { name: "Mark as sent" }).click();
   await page.getByText("Customer link").waitFor();
   await page.goto(`${BASE}/dashboard/deals`);
-  const columns = page.locator("h2");
-  assert.deepEqual(await columns.allTextContents(), ["Lead", "Contacted", "Quote Sent", "Contract Sent", "Won", "Lost"]);
+  // The Pipeline starts at Meeting Set (Sept 30, 2026).
+  const columns = page.locator("[data-testid^=pipeline-column-] h2");
+  assert.deepEqual(await columns.allTextContents(), ["Meeting Set", "Meeting Completed", "Quote Sent", "Contract Sent", "Signed / Won", "Lost"]);
   const quoteSentCol = page.locator("div.card", { has: page.locator("h2", { hasText: "Quote Sent" }) }).first();
   assert.ok(await quoteSentCol.getByText("Fiber install").first().isVisible(), "deal moved to Quote Sent");
   assert.ok(await quoteSentCol.getByText("$1,250.00").first().isVisible(), "value read from the sent quote");
   assert.ok(await quoteSentCol.getByText("QUO-1000").isVisible(), "quotes listed on the deal card");
-  assert.equal(await page.locator("select[aria-label='Deal stage'] >> nth=0 >> option").count(), 6);
-  assert.ok(await page.getByText("$1,250.00 in open deals").isVisible());
+  assert.equal(await page.locator("select[aria-label='Deal stage'] >> nth=0 >> option").count(), 4);
+  assert.ok(await page.getByText("$1,250.00 in quotes and contracts out").isVisible());
   await shot(page, "06-pipeline");
 
   log("Back from a contact reached via the pipeline says Pipeline");

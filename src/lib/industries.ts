@@ -84,10 +84,20 @@ export async function seedIndustries(organizationId: string) {
 // the canonical spellings (the existing option's case wins, so "mdu" on a
 // CSV lands on "MDU"). A brand-new industry gets "General" so it is never
 // an empty bucket.
+//
+// `offList` (Sept 30, 2026) is what someone typed as a custom industry or
+// company type and did NOT tick "Save for Future Use" on: it tags this
+// company only and never becomes a pick-list row. A custom industry's
+// types are custom too — a type cannot be saved under an industry that
+// is not on the list. A custom name that turns out to match an existing
+// option simply uses the option.
+export type OffList = { industries: string[]; types: string[] };
+
 export async function ensureIndustryOptions(
   organizationId: string,
   industries: string[],
   typesByIndustry: Record<string, string[]>,
+  offList: OffList = { industries: [], types: [] },
 ): Promise<{ industries: string[]; companyTypes: string[] }> {
   const existing = await prisma.industryOption.findMany({
     where: { organizationId },
@@ -108,8 +118,21 @@ export async function ensureIndustryOptions(
     if (name) addUnique(wanted, name);
   }
 
+  const offIndustries = new Set(offList.industries.map((name) => cleanName(name).toLowerCase()));
+  const offTypes = new Set(offList.types.map((pair) => pairKey(pair)));
+  const typesUnder = (name: string) => {
+    const key = Object.keys(typesByIndustry).find((k) => cleanName(k).toLowerCase() === name.toLowerCase());
+    return key ? typesByIndustry[key].map(cleanName).filter(Boolean) : [];
+  };
+
   for (const rawName of wanted) {
     let row = byLower.get(rawName.toLowerCase());
+    if (!row && offIndustries.has(rawName.toLowerCase())) {
+      // Custom and not saved: tags the company, stays off the list.
+      if (wantedIndustries.some((n) => n.toLowerCase() === rawName.toLowerCase())) addUnique(canonicalIndustries, rawName);
+      for (const typeName of typesUnder(rawName)) addUnique(canonicalTypes, typeName);
+      continue;
+    }
     if (!row) {
       if (industryCount >= MAX_INDUSTRY_OPTIONS) {
         // Past the cap the value still tags the company; it just isn't a pick-list row.
@@ -148,7 +171,7 @@ export async function ensureIndustryOptions(
         addUnique(canonicalTypes, found.name);
         continue;
       }
-      if (row.companyTypes.length >= MAX_TYPE_OPTIONS_PER_INDUSTRY) {
+      if (row.companyTypes.length >= MAX_TYPE_OPTIONS_PER_INDUSTRY || offTypes.has(pairKey(`${row.name}${TAG_SEPARATOR}${typeName}`))) {
         addUnique(canonicalTypes, typeName);
         continue;
       }
@@ -167,6 +190,13 @@ export async function ensureIndustryOptions(
   }
 
   return { industries: canonicalIndustries, companyTypes: canonicalTypes };
+}
+
+// "Industry<SEP>Type", cleaned and lower-cased, for comparing pairs.
+function pairKey(pair: string) {
+  const at = pair.indexOf(TAG_SEPARATOR);
+  if (at <= 0) return "";
+  return `${cleanName(pair.slice(0, at)).toLowerCase()}${TAG_SEPARATOR}${cleanName(pair.slice(at + 1)).toLowerCase()}`;
 }
 
 // Union of two tag lists, ignoring case, first spelling wins.
@@ -204,6 +234,7 @@ export function readIndustryFields(formData: FormData): {
   typesByIndustry: Record<string, string[]>;
   keepTypes: string[];
   touched: boolean;
+  offList: OffList;
 } {
   const touched = formData.get("industryFieldsPresent") === "1";
   const strings = (name: string) => formData.getAll(name).filter((value): value is string => typeof value === "string").slice(0, 200);
@@ -218,5 +249,11 @@ export function readIndustryFields(formData: FormData): {
     (typesByIndustry[industry] ??= []).push(type);
   }
   const keepTypes = strings("keepTypes").map(cleanName).filter(Boolean);
-  return { industries, typesByIndustry, keepTypes, touched };
+  // Custom values left unsaved: `customIndustries` by name, `customTypes`
+  // as "Industry<SEP>Type".
+  const offList = {
+    industries: strings("customIndustries").map(cleanName).filter(Boolean),
+    types: strings("customTypes").filter((value) => value.indexOf(TAG_SEPARATOR) > 0),
+  };
+  return { industries, typesByIndustry, keepTypes, touched, offList };
 }

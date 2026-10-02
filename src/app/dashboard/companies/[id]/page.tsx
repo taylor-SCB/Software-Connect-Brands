@@ -13,13 +13,19 @@ import {
   CardHeader,
   BackLink,
   StatusBadge,
+  DealStageBadge,
   EmptyState,
 } from "@/components/ui";
-import { IconGlobe, IconUserPlus, IconPlus, IconChevronLeft, IconChevronRight } from "@/components/icons";
+import { IconGlobe, IconChevronLeft, IconChevronRight } from "@/components/icons";
 import { StarButton } from "@/components/star-button";
 import { AutoPill } from "@/components/auto-pill";
 import { TagCell } from "../../contacts/contacts-list";
-import { setCompanyFavorite } from "../actions";
+import { deleteCompany, setCompanyFavorite } from "../actions";
+import { HeaderDeleteButton } from "@/components/header-delete-button";
+import { StatusPicker } from "@/components/status-picker";
+import { meetingSetDay } from "@/lib/status";
+import { dayInZone } from "@/lib/calendar-auto";
+import { AddPersonSearch } from "@/components/add-person-search";
 import { LooksRightButton } from "./looks-right-button";
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
@@ -54,18 +60,27 @@ export default async function CompanyDetailPage({
 
   const company = await prisma.company.findFirst({
     where: { id, organizationId },
-    include: { _count: { select: { contacts: true } } },
+    include: { _count: { select: { contacts: true, linkedContacts: true } } },
   });
   if (!company) notFound();
 
-  const peoplePages = Math.max(1, Math.ceil(company._count.contacts / PEOPLE_PER_PAGE));
+  // People: everyone whose main company this is, plus anyone linked here
+  // as an additional account (Sept 30, 2026), who wear a small tag.
+  const peopleTotal = company._count.contacts + company._count.linkedContacts;
+  const peoplePages = Math.max(1, Math.ceil(peopleTotal / PEOPLE_PER_PAGE));
   const peoplePage = Math.min(peoplePages, Math.max(1, Number(peopleParam) || 1));
+  // The linked ids first, then one indexed OR: a relation filter inside
+  // the OR made Postgres walk every contact in the workspace (2.9s at
+  // 200,000 contacts, against a 2s budget).
+  const linkedIds = company._count.linkedContacts
+    ? (await prisma.contactAccount.findMany({ where: { companyId: company.id }, select: { contactId: true }, take: 5000 })).map((row) => row.contactId)
+    : [];
   const people = await prisma.contact.findMany({
-    where: { organizationId, companyId: company.id },
+    where: { organizationId, OR: [{ companyId: company.id }, ...(linkedIds.length ? [{ id: { in: linkedIds } }] : [])] },
     orderBy: [{ favorite: "desc" }, { name: "asc" }],
     skip: (peoplePage - 1) * PEOPLE_PER_PAGE,
     take: PEOPLE_PER_PAGE,
-    select: { id: true, name: true, title: true, email: true, phone: true, status: true, favorite: true },
+    select: { id: true, name: true, title: true, email: true, phone: true, status: true, favorite: true, companyId: true },
   });
 
   // Everything logged on the company itself, plus everything logged on
@@ -136,6 +151,7 @@ export default async function CompanyDetailPage({
     ]);
 
   const today = todayIso(timeZone);
+  const meetingSet = await meetingSetDay(organizationId, { companyId: company.id });
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, today);
 
@@ -182,20 +198,26 @@ export default async function CompanyDetailPage({
         actions={
           <>
             <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} size={18} />
-            <StatusBadge status={company.status} />
-            <Link
-              href={`/dashboard/contacts/new?companyId=${company.id}`}
-              className="btn btn-ghost btn-sm"
-            >
-              <IconUserPlus size={13} />
-              Add person
-            </Link>
+            <StatusPicker
+              kind="company"
+              id={company.id}
+              status={company.status}
+              meetingSetOn={meetingSet ? dayInZone(meetingSet, timeZone) : null}
+              today={today}
+            />
+            <AddPersonSearch companyId={company.id} companyName={company.name} />
             <Link
               href={`/dashboard/companies/${company.id}/edit`}
               className="btn btn-ghost btn-sm"
             >
               Edit
             </Link>
+            <HeaderDeleteButton
+              action={deleteCompany}
+              hiddenName="companyId"
+              hiddenValue={company.id}
+              question={`Delete ${company.name} and the notes and activity on it? Its people stay, with no company.`}
+            />
           </>
         }
       />
@@ -207,7 +229,11 @@ export default async function CompanyDetailPage({
               title="Log activity"
               subtitle="Logged here it sits on the company. Activity on its people rolls up below too."
             />
-            <LogActivityForm target={{ companyId: company.id }} today={today} />
+            <LogActivityForm
+              target={{ companyId: company.id }}
+              companyPeople={people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone }))}
+              today={today}
+            />
             <div className="divider" />
             <ActivityFeed
               items={activities.map((activity) => ({
@@ -340,16 +366,8 @@ export default async function CompanyDetailPage({
           <Card lit id="people">
             <CardHeader
               title="People"
-              subtitle={`${company._count.contacts.toLocaleString()} at this company`}
-              actions={
-                <Link
-                  href={`/dashboard/contacts/new?companyId=${company.id}`}
-                  className="btn btn-ghost btn-sm"
-                >
-                  <IconPlus size={12} />
-                  Add
-                </Link>
-              }
+              subtitle={`${peopleTotal.toLocaleString()} at this company`}
+              actions={<AddPersonSearch companyId={company.id} companyName={company.name} compact />}
             />
             {people.length === 0 ? (
               <EmptyState
@@ -368,6 +386,11 @@ export default async function CompanyDetailPage({
                         <p className="truncate text-sm font-medium hover:underline">
                           {person.favorite && <span className="mr-1 text-[var(--warn)]">★</span>}
                           {person.name}
+                          {person.companyId !== company.id && (
+                            <span className="badge ml-2 border-[var(--border)] text-[0.62rem] text-[var(--text-faint)]" data-testid="linked-person">
+                              Additional account
+                            </span>
+                          )}
                         </p>
                         <p className="faint truncate text-xs">
                           {[person.title, person.phone, person.email].filter(Boolean).join(" · ") || "—"}
@@ -421,7 +444,7 @@ export default async function CompanyDetailPage({
                         </Link>
                       </p>
                     </div>
-                    <StatusBadge status={deal.stage} />
+                    <DealStageBadge stage={deal.stage} />
                   </li>
                 ))}
               </ul>

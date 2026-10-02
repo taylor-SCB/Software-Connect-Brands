@@ -451,7 +451,7 @@ async function waitForProperty(page, projectId, expected) {
     "cmp_pr",
     "editing the address left the owner alone",
   );
-  await sql(`UPDATE "Company" SET status='CUSTOMER' WHERE id='cmp_pr'`);
+  await sql(`UPDATE "Company" SET status='WON' WHERE id='cmp_pr'`);
 
   log("audit fixes: a note from an earlier closing does not reappear on a later one");
   // prj_b was closed out with a note, then reopened, back in step 19.

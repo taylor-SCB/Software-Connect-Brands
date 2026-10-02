@@ -215,7 +215,7 @@ export async function previewMergeContext(input: {
 /* ----------------------------- Contracts ----------------------------- */
 
 export async function createContract(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
     z.object({
@@ -270,6 +270,7 @@ export async function createContract(_prev: ActionState, formData: FormData): Pr
         dealTitle: parsed.data.dealTitle || null,
         contactId: contact.id,
         organizationId,
+        ownerId: userId,
       })
     : null;
   if (wantsDeal && !deal) return { error: "That deal doesn't belong to this customer" };
@@ -419,7 +420,7 @@ export async function setContractStatus(formData: FormData) {
 
   // Sending a contract moves its deal along the pipeline.
   if (parsed.data.status === "SENT") {
-    await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT");
+    await advanceDealStage(contract.dealId, organizationId, "CONTRACT_SENT", userId);
   }
   // And onto the calendar: sent today with a follow-up a few days on;
   // declined or back to draft takes the open follow-up off.
@@ -523,7 +524,7 @@ export async function markContractSigned(
   // A supplier signing a purchase order never wins a deal; a customer
   // signing anything else does.
   if (!contract.payable) {
-    await advanceDealStage(contract.dealId, organizationId, "WON");
+    await advanceDealStage(contract.dealId, organizationId, "WON", userId);
     // A signed agreement is a job won: it becomes a project with the
     // budget this contract just set.
     await awardFromContract(organizationId, contract.id);

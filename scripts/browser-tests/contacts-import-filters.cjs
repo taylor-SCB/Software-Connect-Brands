@@ -1,7 +1,7 @@
 /* Browser regression for Contacts + Companies v2 (Sept 13, 2026).
  *
  * Covers: Industry and Company Type on the company and contact forms
- * ("+ Add new industry", "+ Add new company type", General for new
+ * ("+ Custom industry", "+ Custom company type", General for new
  * industries, Individual / Personal for a contact with no company, tags
  * shared through the company), the favorite star and the Favorite
  * Contacts / Favorite Companies sub-panes, the Contacts with Deals /
@@ -104,13 +104,17 @@ async function rowCount(page, testId) {
   await chip(page, "MDU").click();
   for (const name of ["Owner", "Capital Group", "Developer", "Property Management"]) await chip(page, name).waitFor();
   await chip(page, "Owner").click();
-  await page.getByRole("button", { name: "Add new company type" }).click();
+  await page.getByRole("button", { name: "Custom company type" }).click();
   await page.getByLabel("New company type under MDU").fill("REIT");
-  await page.keyboard.press("Enter");
+  // Sept 30, 2026: a custom value only joins the pick list when "Save for
+  // Future Use" is ticked.
+  await page.getByTestId("save-type").locator("input").check();
+  await page.getByLabel("New company type under MDU").press("Enter");
   assert.equal(await chip(page, "REIT").getAttribute("aria-checked"), "true", "new type is ticked");
-  await page.getByRole("button", { name: "Add new industry" }).click();
+  await page.getByRole("button", { name: "Custom industry" }).click();
   await page.getByLabel("New industry name").fill("Hospitality");
-  await page.keyboard.press("Enter");
+  await page.getByTestId("save-industry").locator("input").check();
+  await page.getByLabel("New industry name").press("Enter");
   assert.equal(await chip(page, "Hospitality").getAttribute("aria-checked"), "true", "new industry is ticked");
   await chip(page, "General").waitFor();
   await page.fill("#name", "Acme Towers");
@@ -406,7 +410,7 @@ async function rowCount(page, testId) {
   const plain = (await sql(`SELECT phone, email, status FROM "Company" WHERE name='Plain Company Row' AND "organizationId"=$1`, [org])).rows[0];
   assert.equal(plain.phone, "555-7003", "company-only row keeps bare phone");
   assert.equal(plain.email, "office@plain.test", "company-only row keeps bare email");
-  assert.equal(plain.status, "CUSTOMER");
+  assert.equal(plain.status, "WON", "a Customer status imports as Signed / Won");
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE email='after@quote.test' AND "organizationId"=$1`, [org])).rows[0].n, 1, "row after the stray quote still imported");
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "IndustryOption" WHERE name='Imported' AND "organizationId"=$1`, [org])).rows[0].n, 0, "no hidden Imported industry");
   // Spot Co's orphan type stays through an untouched edit save.
@@ -423,9 +427,10 @@ async function rowCount(page, testId) {
   log("audit fixes: a comma in an industry name still filters; % in search is not a wildcard; two quick filter clicks both stick");
   await page.goto(`${BASE}/dashboard/companies/new`);
   await page.fill("#name", "Comma Industries");
-  await page.getByRole("button", { name: "Add new industry" }).click();
+  await page.getByRole("button", { name: "Custom industry" }).click();
   await page.getByLabel("New industry name").fill("Food, Beverage");
-  await page.keyboard.press("Enter");
+  await page.getByTestId("save-industry").locator("input").check();
+  await page.getByLabel("New industry name").press("Enter");
   await page.getByRole("button", { name: "Save company" }).click();
   await page.waitForURL(/\/dashboard\/companies\/(?!new$)[a-z0-9]+$/);
   await page.goto(`${BASE}/dashboard/companies?industry=${encodeURIComponent("Food, Beverage")}`);
