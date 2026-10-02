@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { getTimeZone } from "@/lib/organization";
 import { formatDate } from "@/lib/format";
-import { findCompanyDuplicates, findContactDuplicates, MAX_PAIRS, REASON_LABELS, type DupPair, type DupRecord } from "@/lib/duplicates";
+import { scanDuplicates, MAX_PAIRS, REASON_LABELS, type DupPair, type DupRecord } from "@/lib/duplicates";
 import { PageHeader, Card, EmptyState } from "@/components/ui";
 import { IconMerge } from "@/components/icons";
 import { DuplicatePair, type PairView } from "@/components/duplicate-pair";
@@ -14,7 +14,7 @@ import { DuplicatePair, type PairView } from "@/components/duplicate-pair";
 export async function DuplicateRadar({ kind }: { kind: "contacts" | "companies" }) {
   const { organizationId } = await requireSession();
   const timeZone = await getTimeZone();
-  const pairs = kind === "contacts" ? await findContactDuplicates(organizationId) : await findCompanyDuplicates(organizationId);
+  const pairs = await scanDuplicates(organizationId, kind === "contacts" ? "contact" : "company");
 
   const record = (row: DupRecord) => ({
     id: row.id,

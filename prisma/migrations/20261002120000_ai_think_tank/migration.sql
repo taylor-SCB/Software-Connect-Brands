@@ -58,3 +58,20 @@ ALTER TABLE "AiDraft" ADD CONSTRAINT "AiDraft_organizationId_fkey" FOREIGN KEY (
 
 -- AddForeignKey
 ALTER TABLE "DuplicateDismissal" ADD CONSTRAINT "DuplicateDismissal_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- CreateTable
+CREATE TABLE "DuplicateScan" (
+    "id" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "count" INTEGER NOT NULL,
+    "scannedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "DuplicateScan_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "DuplicateScan_organizationId_kind_key" ON "DuplicateScan"("organizationId", "kind");
+
+-- AddForeignKey
+ALTER TABLE "DuplicateScan" ADD CONSTRAINT "DuplicateScan_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

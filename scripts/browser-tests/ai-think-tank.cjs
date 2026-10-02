@@ -275,9 +275,9 @@ async function company(org, name, city) {
     await page.goto(`${BASE}/dashboard/contacts`);
     const aside = page.locator("aside");
     assert.equal(await aside.getByRole("link", { name: "Possible Duplicates" }).count(), 1);
-    await page.locator("[data-testid=merge-count]").waitFor();
-    assert.match(await page.locator("[data-testid=merge-count]").textContent(), /^2 possible$/);
-    await shot(page, "01-contacts-merge-count");
+    // The list never runs the full check itself: no badge until the radar has looked.
+    await page.waitForLoadState("networkidle");
+    assert.equal(await page.locator("[data-testid=merge-count]").count(), 0);
 
     log("the radar shows Matt / Matthew by phone and nickname, and Dana across two companies");
     await page.goto(`${BASE}/dashboard/contacts/duplicates`);
@@ -290,6 +290,11 @@ async function company(org, name, city) {
     assert.ok((await danaPair.locator("[data-testid=dup-reason]").allTextContents()).includes("Same email"));
     assert.equal(await danaPair.locator("[data-testid=dup-across]").count(), 1, "Dana pair explains the Additional Account");
     await shot(page, "02-contact-radar");
+    await page.goto(`${BASE}/dashboard/contacts`);
+    await page.locator("[data-testid=merge-count]").waitFor();
+    assert.match(await page.locator("[data-testid=merge-count]").textContent(), /^2 possible$/, "the list shows what the radar found");
+    await shot(page, "01-contacts-merge-count");
+    await page.goto(`${BASE}/dashboard/contacts/duplicates`);
 
     log("Not the same person puts the Dana pair away for good");
     await danaPair.locator("[data-testid=dup-dismiss]").click();

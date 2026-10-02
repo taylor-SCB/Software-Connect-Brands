@@ -236,7 +236,7 @@ function TwinsAfterImport({ kind }: { kind: "contacts" | "companies" }) {
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
-    fetch(`/dashboard/${kind}/duplicates/count`, { cache: "no-store" })
+    fetch(`/dashboard/${kind}/duplicates/count?fresh=1`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((body: { count?: number } | null) => {
         if (live && typeof body?.count === "number") setCount(body.count);

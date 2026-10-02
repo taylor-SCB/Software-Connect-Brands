@@ -295,8 +295,10 @@ calendar's "How did it go?" on a Meeting, a held row on the Call List):
 typed or dictated lines read into a checklist — log, Meeting Completed,
 follow-up call, a **Draft** quote whose lines and prices come only from
 the catalog — applied with one click. **Duplicate radar** (Contacts /
-Companies → Possible Duplicates, an "N possible" count beside Merge, a
-note after an import): same phone however written, same email in either
+Companies → Possible Duplicates, an "N possible" count beside Merge from
+the radar's last check (`DuplicateScan`; the full check reads every row,
+~1.2s at 200,000, so a list never runs it — the radar page and the end of
+an import do), a note after an import): same phone however written, same email in either
 slot, Matt/Matthew at one company, same name; companies by name without
 Inc/LLC, phone or website; "Not the same person" is remembered
 (`DuplicateDismissal`); Merge opens with the pair picked. **One person,

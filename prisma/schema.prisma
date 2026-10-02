@@ -122,6 +122,7 @@ model Organization {
   aiUsage             AiUsage[]
   aiDrafts            AiDraft[]
   duplicateDismissals DuplicateDismissal[]
+  duplicateScans      DuplicateScan[]
 
   @@index([status])
 }
@@ -1866,4 +1867,19 @@ model DuplicateDismissal {
   createdAt      DateTime     @default(now())
 
   @@unique([organizationId, kind, aId, bId])
+}
+
+// How many likely twins the radar last found, for the "N possible" badge
+// beside Merge. The full check reads every record (about a second at
+// 200,000 contacts), so the lists never run it: the radar page and the end
+// of an import do, and write the number here.
+model DuplicateScan {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String
+  count          Int
+  scannedAt      DateTime     @default(now())
+
+  @@unique([organizationId, kind])
 }

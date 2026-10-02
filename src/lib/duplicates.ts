@@ -428,3 +428,27 @@ export async function dismissPair(organizationId: string, userId: string, kind: 
     update: {},
   });
 }
+
+/* ------------------------------ The list badge ----------------------------- */
+
+// The "N possible" badge beside Merge shows what the radar last found. The
+// full check reads every record, so it runs only on the radar page and at
+// the end of an import — never when a list opens.
+export async function storedDuplicateCount(organizationId: string, kind: DupKind) {
+  const row = await prisma.duplicateScan.findUnique({ where: { organizationId_kind: { organizationId, kind } }, select: { count: true } });
+  return row?.count ?? null;
+}
+
+export async function scanDuplicates(organizationId: string, kind: DupKind) {
+  const pairs = kind === "contact" ? await findContactDuplicates(organizationId) : await findCompanyDuplicates(organizationId);
+  await saveDuplicateCount(organizationId, kind, pairs.length);
+  return pairs;
+}
+
+export async function saveDuplicateCount(organizationId: string, kind: DupKind, count: number) {
+  await prisma.duplicateScan.upsert({
+    where: { organizationId_kind: { organizationId, kind } },
+    create: { organizationId, kind, count },
+    update: { count, scannedAt: new Date() },
+  });
+}
