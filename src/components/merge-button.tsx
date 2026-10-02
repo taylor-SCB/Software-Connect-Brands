@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { IconMerge, IconSearch, IconX } from "@/components/icons";
 import { FormError } from "@/components/ui";
 import { useSearch } from "@/lib/use-search";
 import { mergeCompaniesAction, mergeContactsAction } from "@/app/dashboard/merge-actions";
+
+export type MergeHit = Hit;
 
 type Hit = {
   id: string;
@@ -30,12 +33,53 @@ function detail(kind: "contacts" | "companies", hit: Hit) {
 // shown with what tells them apart), pick the one to keep, and everything
 // on the others moves onto it. The kept record's details win; its blanks
 // are filled from the others.
-export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
+//
+// Duplicate radar (Oct 2, 2026) opens the same window with a suggested pair
+// already ticked (`initial`, the first is the one to keep) and stays on its
+// own page afterwards; the lists show how many suggestions are waiting.
+export function MergeButton({
+  kind,
+  initial,
+  label,
+  stay = false,
+  showCount = false,
+}: {
+  kind: "contacts" | "companies";
+  initial?: Hit[];
+  label?: string;
+  stay?: boolean;
+  showCount?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Hit[]>([]);
   const [keepId, setKeepId] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState<number | null>(null);
+
+  // How many twins the radar has found, fetched after the list has drawn
+  // so a big workspace's list is never held up by it.
+  useEffect(() => {
+    if (!showCount) return;
+    let live = true;
+    fetch(`/dashboard/${kind}/duplicates/count`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { count?: number } | null) => {
+        if (live && body && typeof body.count === "number") setWaiting(body.count);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [kind, showCount]);
+
+  function openWindow() {
+    if (initial?.length) {
+      setPicked(initial.slice(0, MAX));
+      setKeepId(initial[0].id);
+    }
+    setOpen(true);
+  }
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
@@ -87,7 +131,8 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
         return;
       }
       close();
-      router.push(`/dashboard/${kind}/${result.keptId}`);
+      if (stay) router.refresh();
+      else router.push(`/dashboard/${kind}/${result.keptId}`);
     });
   }
 
@@ -95,10 +140,28 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost btn-sm" data-testid="merge-open">
-        <IconMerge size={13} />
-        Merge {kind === "contacts" ? "Contacts" : "Companies"}
-      </button>
+      <span className="inline-flex items-center">
+        <button
+          type="button"
+          onClick={openWindow}
+          className={`btn btn-sm ${initial ? "btn-primary" : "btn-ghost"}`}
+          data-testid={initial ? "merge-suggested" : "merge-open"}
+        >
+          <IconMerge size={13} />
+          {label ?? `Merge ${kind === "contacts" ? "Contacts" : "Companies"}`}
+        </button>
+        {showCount && waiting != null && waiting > 0 && (
+          <Link
+            href={`/dashboard/${kind}/duplicates`}
+            className="badge ml-1"
+            style={{ color: "var(--warn)", borderColor: "color-mix(in srgb, var(--warn) 32%, transparent)" }}
+            title="Possible duplicates the app has spotted"
+            data-testid="merge-count"
+          >
+            {waiting >= 200 ? "200+" : waiting} possible
+          </Link>
+        )}
+      </span>
 
       {open && (
         <div className="modal-backdrop" onClick={close}>

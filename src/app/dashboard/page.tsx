@@ -9,6 +9,8 @@ import { computeQuoteTotals } from "@/lib/quote-math";
 import { ACTIVITY_LABELS, OPEN_DEAL_STAGES, OPEN_PROJECT_STAGES, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PageHeader, Card, CardHeader, StatTile, EmptyState } from "@/components/ui";
+import { buildCallList, scopeRows, storedOpeners } from "@/lib/call-list";
+import { CallRows } from "./call-list/call-rows";
 import {
   IconPlus,
   IconFileText,
@@ -27,7 +29,7 @@ const ACTIVITY_ICONS = {
 } as const;
 
 export default async function DashboardPage() {
-  const { organizationId, name } = await requireSession();
+  const { organizationId, name, userId } = await requireSession();
 
   const timeZone = await getTimeZone();
 
@@ -80,6 +82,13 @@ export default async function DashboardPage() {
   );
 
   const firstName = name?.split(" ")[0] ?? "there";
+
+  // The top of today's Call List: the rep's own first, then nobody's.
+  const today = todayIso(timeZone);
+  const calls = scopeRows(await buildCallList(organizationId, today), { userId });
+  const topCalls = [...calls.mine, ...calls.nobodys].slice(0, 5);
+  const callCount = calls.mine.length + calls.nobodys.length;
+  const topOpeners = Object.fromEntries(await storedOpeners(organizationId, topCalls, today));
 
   return (
     <div>
@@ -158,6 +167,23 @@ export default async function DashboardPage() {
           accent="#34d399"
         />
       </div>
+
+      <Card lit className="mt-5" id="todays-calls">
+        <CardHeader
+          title="Today's calls"
+          subtitle={callCount === 0 ? "Nobody to chase today" : `${callCount} on your Call List, most pressing first`}
+          actions={
+            <Link href="/dashboard/call-list" className="btn btn-ghost btn-sm" data-testid="overview-call-list">
+              Open the Call List
+            </Link>
+          }
+        />
+        {topCalls.length > 0 && (
+          <div data-testid="overview-calls">
+            <CallRows rows={topCalls} openers={topOpeners} aiReady={false} showOwner={false} compact />
+          </div>
+        )}
+      </Card>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
         <Card lit className="lg:col-span-2">

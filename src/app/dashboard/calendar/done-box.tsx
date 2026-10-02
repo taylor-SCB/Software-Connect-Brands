@@ -5,6 +5,7 @@ import { ACTIVITY_LABELS, ACTIVITY_TYPES, type ActivityTypeValue } from "@/lib/c
 import { FormError } from "@/components/ui";
 import { IconCheck } from "@/components/icons";
 import { completeEventWithLog, setEventDone } from "./actions";
+import { MeetingNotesButton } from "@/components/meeting-notes";
 
 // The activity type an entry reads back as when it is ticked: a Call is
 // a call, a Meeting a meeting; a quote follow-up was most likely a call,
@@ -37,7 +38,7 @@ export function DoneBox({
   event,
   onClose,
 }: {
-  event: { id: string; type: string; title: string; notes: string };
+  event: { id: string; type: string; title: string; notes: string; contactId?: string | null; contactName?: string | null };
   onClose: () => void;
 }) {
   const [type, setType] = useState<ActivityTypeValue>(guessType(event.type));
@@ -79,6 +80,18 @@ export function DoneBox({
         className="textarea"
         data-testid="done-note"
       />
+      {type === "MEETING" && event.contactId && (
+        // A meeting's notes can do more than log a line: mark it held, book
+        // the follow-up and draft the quote (Oct 2, 2026).
+        <MeetingNotesButton
+          compact
+          contactId={event.contactId}
+          contactName={event.contactName ?? event.title}
+          aiReady
+          eventId={event.id}
+          onApplied={onClose}
+        />
+      )}
       <FormError message={error} />
       <div className="flex flex-wrap gap-1.5">
         <button

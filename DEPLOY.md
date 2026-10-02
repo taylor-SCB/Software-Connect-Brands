@@ -173,6 +173,23 @@ and changed nothing about the existing ones.
   deploys never wipe contacts or quotes.
 - **Check it on your phone.** It's built to work there.
 
+## Switching on AI drafting
+
+The Call List openers, Meeting notes, "Before you call" briefings and the
+Forecast's "Read it to me" are written by Claude. Without a key, everything
+else on those screens still works and the AI buttons say it isn't on yet.
+
+1. At **console.anthropic.com**, sign in with the owner account, add a
+   payment method under **Billing**, then create a key under **API Keys**.
+2. In Vercel: **Settings → Environment Variables**, add
+   - **Name:** `ANTHROPIC_API_KEY`
+   - **Value:** the key you just made (starts `sk-ant-`)
+   - **Environments:** Production only.
+3. Redeploy (Deployments → the latest → Redeploy) so the site picks it up.
+
+Never paste the key into chat. Each user gets 100 AI drafts a day; the bill
+is yours across every workspace.
+
 ## Approving who gets in
 
 Signing up no longer opens a workspace. A new signup is stored as **waiting**

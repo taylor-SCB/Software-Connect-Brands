@@ -8,6 +8,10 @@ import { sweepStaleContracts } from "@/lib/status";
 import { loadWorkspaceUsers } from "@/lib/workspace-users";
 import { readIds } from "@/lib/calendar-filters";
 import { DailyTrend, FunnelBars, RepActivityBars, VelocityBars } from "./charts";
+import { loadForecast, storedReading } from "@/lib/forecast";
+import { todayIso } from "@/lib/payments";
+import { aiStatus } from "@/lib/ai";
+import { ForecastReading } from "./forecast-reading";
 
 type Params = Promise<{ period?: string; reps?: string }>;
 
@@ -17,17 +21,20 @@ type Params = Promise<{ period?: string; reps?: string }>;
 // (the team funnel, how long each hand-off takes, what is open now).
 // Everyone sees everyone's numbers for now (Taylor: no permissions yet).
 export default async function StatsPage({ searchParams }: { searchParams: Params }) {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const params = await searchParams;
   const period: PeriodKey = params.period && params.period in PERIODS ? (params.period as PeriodKey) : "30d";
   const repIds = readIds(params.reps, 20);
   const timeZone = await getTimeZone();
 
   await sweepStaleContracts(organizationId);
-  const [stats, users] = await Promise.all([
+  const [stats, users, forecast, ai] = await Promise.all([
     loadStats(organizationId, { period, userIds: repIds, timeZone }),
     loadWorkspaceUsers(organizationId),
+    loadForecast(organizationId, { today: todayIso(timeZone), repIds }),
+    aiStatus(userId, timeZone),
   ]);
+  const reading = await storedReading(organizationId, repIds, forecast);
   const t = stats.totals;
   const p = stats.previous;
   const rate = (a: number, b: number) => (b ? a / b : null);
@@ -150,6 +157,94 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
           <Mini label="In Meeting Completed" value={String(stats.pipelineNow.meetingCompleted)} />
           <Mini label={`Quotes out (${stats.pipelineNow.quoteCount})`} value={formatCents(stats.pipelineNow.quoteCents)} />
           <Mini label={`Contracts out (${stats.pipelineNow.contractCount})`} value={formatCents(stats.pipelineNow.contractCents)} />
+        </div>
+      </Panel>
+
+      <Panel title="Forecast" kicker="CRO" sub="What is likely to sign, from your own step-by-step history. Not limited to the period." className="mt-4">
+        <div data-testid="forecast">
+          {forecast.lowConfidence && (
+            <p className="mb-3 inline-block rounded-full border border-[var(--warn)] px-2.5 py-0.5 text-[0.7rem] text-[var(--warn)]" data-testid="forecast-low">
+              Low confidence · {forecast.confidenceNote}
+            </p>
+          )}
+          <ForecastReading repIds={repIds} stored={reading?.reading ?? null} aiReady={ai.configured && ai.used < ai.limit} />
+          <div className="grid gap-3 md:grid-cols-3" data-testid="forecast-buckets">
+            {forecast.buckets.map((bucket) => (
+              <div key={bucket.key} className="rounded-lg border border-[var(--border)] p-3" data-testid="forecast-bucket">
+                <p className="faint text-[0.68rem] uppercase tracking-[0.14em]">{bucket.label}</p>
+                <p className="num mt-1 text-xl font-semibold">{formatCents(bucket.weightedCents)}</p>
+                <p className="faint text-[0.68rem]">likely, of {formatCents(bucket.fullCents)} open</p>
+                <p className="muted mt-2 text-xs leading-relaxed">{bucket.sentence}</p>
+              </div>
+            ))}
+          </div>
+          <ul className="mt-4 space-y-1 text-xs" data-testid="forecast-rates">
+            {forecast.rates.map((row) => (
+              <li key={row.stage} className="muted">
+                {row.sentence}
+              </li>
+            ))}
+          </ul>
+          {forecast.byRep.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="table text-xs" data-testid="forecast-reps">
+                <thead>
+                  <tr>
+                    <th>Rep</th>
+                    <th className="text-right">Likely {forecast.buckets[0].label}</th>
+                    <th className="text-right">Likely {forecast.buckets[1].label}</th>
+                    <th className="text-right">Open deals</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {forecast.byRep.map((row) => (
+                    <tr key={row.name}>
+                      <td className="font-medium">{row.name}</td>
+                      <td className="num text-right">{formatCents(row.thisCents)}</td>
+                      <td className="num text-right">{formatCents(row.nextCents)}</td>
+                      <td className="num text-right">{row.deals}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {forecast.dragging.length > 0 && (
+            <div className="mt-4" data-testid="forecast-dragging">
+              <p className="text-xs font-semibold text-[var(--warn)]">Dragging past their usual time — worth a call before the 90-day archive</p>
+              <ul className="mt-1.5 space-y-1.5">
+                {forecast.dragging.slice(0, 10).map((deal) => (
+                  <li key={deal.id} className="text-xs">
+                    <Link href={`/dashboard/contacts/${deal.contactId}`} className="font-medium hover:underline">
+                      {deal.title}
+                    </Link>
+                    <span className="faint">
+                      {" "}
+                      · {deal.contactName} · {deal.rep ?? "no rep"}
+                    </span>
+                    <p className="muted">{deal.sentence}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {forecast.deals.length > 0 && (
+            <details className="mt-4">
+              <summary className="cursor-pointer text-xs text-[var(--brand)]">Every open deal and how its number was worked out ({forecast.deals.length})</summary>
+              <ul className="mt-2 space-y-1.5" data-testid="forecast-deals">
+                {forecast.deals.map((deal) => (
+                  <li key={deal.id} className="text-xs">
+                    <span className="font-medium">{deal.title}</span>
+                    <span className="faint">
+                      {" "}
+                      · {deal.contactName} · {deal.rep ?? "no rep"}
+                    </span>
+                    <p className="muted">{deal.sentence}</p>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       </Panel>
 

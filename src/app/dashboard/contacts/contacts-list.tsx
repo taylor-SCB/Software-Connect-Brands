@@ -120,7 +120,7 @@ export async function ContactsList({
         actions={
           <>
             <ImportCsvButton kind="contacts" />
-            <MergeButton kind="contacts" />
+            <MergeButton kind="contacts" showCount />
             <EmailButton />
             <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />

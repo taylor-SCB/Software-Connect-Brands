@@ -279,6 +279,35 @@ Pipeline or Stats is opened. **Stats / Reporting** counts people per
 funnel step, money per deal, rates, days between steps and a
 leaderboard, with period and rep filters; everyone sees everyone.
 
+**CTO Think Tank (Oct 2, 2026).** The AI layer (`src/lib/ai.ts`): the app
+*finds* with rules and counting and the AI only *writes*, so every list
+works with no key; nothing the AI writes is saved or sent until a person
+applies it. Claude Opus 5.5 through the official SDK, **100 drafts per
+user per day** (`AiUsage`, counted in the workspace's zone like email's
+40), words kept in `AiDraft` until the facts they came from change.
+**Call List** (sidebar between Overview and Calendar, top 5 on Overview):
+follow-ups due, meetings not marked held, met with no quote, quotes out 3+
+days and contracts 7+ days with no touch, Interested a week with no
+meeting; a rep's own plus a shared **Nobody's**, owners and admins can
+open anyone's or Everyone; an opener drafted per row after the page draws;
+Log it / Mark held take a row off. **Meeting notes** (contact header, the
+calendar's "How did it go?" on a Meeting, a held row on the Call List):
+typed or dictated lines read into a checklist — log, Meeting Completed,
+follow-up call, a **Draft** quote whose lines and prices come only from
+the catalog — applied with one click. **Duplicate radar** (Contacts /
+Companies → Possible Duplicates, an "N possible" count beside Merge, a
+note after an import): same phone however written, same email in either
+slot, Matt/Matthew at one company, same name; companies by name without
+Inc/LLC, phone or website; "Not the same person" is remembered
+(`DuplicateDismissal`); Merge opens with the pair picked. **One person,
+every company** (contact page): "Looks like the same person" and **Before
+you call**, the facts across every company they're part of plus an AI
+paragraph on request. **Forecast** on Stats: open quotes and contracts ×
+this workspace's own step-to-signed rate, bucketed by month and rep, every
+number with its sentence, deals past twice their usual time flagged and
+halved, "Low confidence" until 60 days of history and 5 closed deals per
+step, "Read it to me" on request.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -429,6 +458,21 @@ are all blocking before the first paying customer.
   deals, quotes and notes stay with their main company; the linked one
   lists them under People with an "Additional account" tag only.
 
+- **The AI has only been tested against a stand-in.** No real key exists
+  yet; the first real call happens after Taylor adds `ANTHROPIC_API_KEY`
+  in Vercel (DEPLOY.md). Check one briefing on the live site then.
+- **AI cost sits with Taylor, for every workspace.** Opus 5.5: an opener
+  batch is about 2 cents, a meeting-notes reading about 5–10 (the catalog
+  goes in, capped at 300 products), a briefing about 1. A busy rep is a
+  few dollars a month; the 100-a-day cap bounds the worst case near $8 a
+  user a day.
+- **The Call List's rules each read at most 300 rows,** oldest first, and
+  the radar shows 200 pairs and ignores any phone or email shared by more
+  than six records (an office line, info@).
+- **The forecast's history starts Sept 30, 2026** and leans on a starting
+  guess (30% of quotes and 60% of contracts sign, in 30 and 14 days) until
+  a step has five closed deals.
+
 ## Testing
 
 **Bug audit of a session:** `/session-auditor`
@@ -440,7 +484,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-three** are checked in at
+suite, and the delete-confirmation suite. **Twenty-four** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -474,7 +518,13 @@ Contacted By, second email/phone, header Delete), `crm-accounts.cjs`
 (20: additional accounts, Add person search, duplicate check, same-name
 companies, custom industries, company activity people, merge) and
 `crm-pipeline-stats.cjs` (20: the status ladder, the Pipeline from
-Meeting Set, skipped-step dates, the 90/180 rule, Stats). A suite that
+Meeting Set, skipped-step dates, the 90/180 rule, Stats), and
+`ai-think-tank.cjs` (23 steps, Oct 2, 2026: the radar, twins and Before
+you call, the Call List, Meeting notes, the Forecast, the 100-a-day cap
+and an AI outage). It stands up a fake AI on :3998, so the server needs
+`ANTHROPIC_API_KEY=fake-local` and `ANTHROPIC_BASE_URL=http://localhost:3998`
+— on the **command line** in a cloud session, whose shell already exports
+`ANTHROPIC_BASE_URL` and wins over `.env`. A suite that
 seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the

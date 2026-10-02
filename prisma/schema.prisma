@@ -119,6 +119,9 @@ model Organization {
   emailSends          EmailSend[]
   contactAccounts     ContactAccount[]
   statusChanges       StatusChange[]
+  aiUsage             AiUsage[]
+  aiDrafts            AiDraft[]
+  duplicateDismissals DuplicateDismissal[]
 
   @@index([status])
 }
@@ -175,6 +178,7 @@ model User {
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
   // must not take the company's schedule with them.
   calendarEvents CalendarEvent[]
+  aiUsage        AiUsage[]
 
   @@index([organizationId])
 }
@@ -1807,4 +1811,59 @@ model EmailSend {
 
   @@index([organizationId, userId, createdAt])
   @@index([contactId])
+}
+
+// One call to the AI provider (Oct 2, 2026). The 100-a-day allowance per
+// user is counted from these, in the workspace's time zone, the same way
+// marketing email's 40 is counted from EmailSend. Tokens are kept so the
+// bill can be traced to a workspace and a feature.
+model AiUsage {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // SetNull: a removed user must not take today's count down with them.
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // "openers", "meeting-notes", "briefing", "forecast".
+  feature        String
+  inputTokens    Int          @default(0)
+  outputTokens   Int          @default(0)
+  ok             Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, userId, createdAt])
+}
+
+// Words the AI wrote that are worth keeping a while: a call-list opener,
+// a "before you call" briefing, a meeting-notes reading waiting to be
+// applied. `stamp` is a fingerprint of what the words were written from;
+// when the records change the stamp no longer matches and it is written
+// again, so nobody pays twice for the same paragraph.
+model AiDraft {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key            String
+  stamp          String
+  body           Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, key])
+}
+
+// "Not the same person" on a Duplicate radar suggestion, so the pair does
+// not come back. `aId` is always the smaller of the two ids.
+model DuplicateDismissal {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // "contact" or "company".
+  kind           String
+  aId            String
+  bId            String
+  userId         String?
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, kind, aId, bId])
 }

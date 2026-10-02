@@ -94,7 +94,7 @@ export async function CompaniesList({
         actions={
           <>
             <ImportCsvButton kind="companies" />
-            <MergeButton kind="companies" />
+            <MergeButton kind="companies" showCount />
             <FillMissingButton />
             <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />

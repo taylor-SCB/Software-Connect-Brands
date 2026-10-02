@@ -44,6 +44,12 @@ import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm, AddDealForm } from "./forms";
+import { gatherBriefing, storedBriefing } from "@/lib/briefing";
+import { findTwinsOf, REASON_LABELS } from "@/lib/duplicates";
+import { aiConfigured } from "@/lib/ai";
+import { BeforeYouCall } from "@/components/before-you-call";
+import { DuplicatePair } from "@/components/duplicate-pair";
+import { MeetingNotesButton } from "@/components/meeting-notes";
 
 export default async function ContactDetailPage({
   params,
@@ -87,7 +93,7 @@ export default async function ContactDetailPage({
 
   const today = todayIso(timeZone);
   const meetingSet = await meetingSetDay(organizationId, { contactId: contact.id });
-  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices] = await Promise.all([
+  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices, facts, twins] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
     // A homeowner's own balance. Someone at a company is billed through
@@ -111,7 +117,10 @@ export default async function ContactDetailPage({
     // attendee on — a property manager is often not the main contact.
     upcomingFor(organizationId, { contactId: contact.id }, today),
     loadEventChoices(organizationId, userId),
+    gatherBriefing(organizationId, contact.id, timeZone),
+    findTwinsOf(organizationId, contact.id),
   ]);
+  const briefing = facts ? await storedBriefing(organizationId, contact.id, facts) : null;
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
@@ -163,6 +172,7 @@ export default async function ContactDetailPage({
                 },
               ]}
             />
+            <MeetingNotesButton contactId={contact.id} contactName={contact.name} aiReady={aiConfigured()} />
             <Link
               href={`/dashboard/quotes/new?contactId=${contact.id}`}
               className="btn btn-ghost btn-sm"
@@ -198,8 +208,52 @@ export default async function ContactDetailPage({
         }
       />
 
+      {twins.length > 0 && (
+        <Card lit className="mb-5">
+          <CardHeader
+            title="Looks like the same person"
+            subtitle="The app spotted records that match this one. Merge them into one, or say they're different people."
+          />
+          <ul className="space-y-3 p-4" data-testid="twins-card">
+            {twins.map((pair) => (
+              <DuplicatePair
+                key={pair.b.id}
+                kind="contacts"
+                stay={false}
+                pair={{
+                  a: { ...pair.a, email2: pair.a.email2 ?? null, phone2: pair.a.phone2 ?? null, company: pair.a.company ?? null, added: formatDate(pair.a.createdAt, timeZone) },
+                  b: { ...pair.b, email2: pair.b.email2 ?? null, phone2: pair.b.phone2 ?? null, company: pair.b.company ?? null, added: formatDate(pair.b.createdAt, timeZone) },
+                  reasons: pair.reasons.map((reason) => REASON_LABELS[reason]),
+                  strength: pair.strength,
+                  acrossCompanies: pair.acrossCompanies,
+                }}
+              />
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
+          {facts && (
+            <Card lit id="before-you-call">
+              <CardHeader
+                title="Before you call"
+                subtitle={
+                  facts.groups.length > 1
+                    ? `Everything with ${contact.name} across ${facts.groups.length} companies`
+                    : `Everything with ${contact.name} so far`
+                }
+              />
+              <BeforeYouCall
+                contactId={contact.id}
+                groups={facts.groups}
+                paragraph={briefing?.paragraph ?? null}
+                stale={briefing?.stale ?? false}
+                aiReady={aiConfigured()}
+              />
+            </Card>
+          )}
           <Card lit id="activity">
             <CardHeader
               title="Log activity"

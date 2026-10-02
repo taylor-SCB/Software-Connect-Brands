@@ -207,6 +207,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
                 Stop after this batch
               </button>
             )}
+            {phase.step === "finished" && <TwinsAfterImport kind={kind} />}
             {phase.step === "finished" && (
               <button type="button" onClick={onClose} className="btn btn-primary btn-sm" data-testid="import-done">
                 Done
@@ -226,6 +227,30 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
         </div>
       </div>
     </div>
+  );
+}
+
+// Duplicate radar after an import: how many likely twins the workspace now
+// has, with the way to them. Asked once the import has finished.
+function TwinsAfterImport({ kind }: { kind: "contacts" | "companies" }) {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/dashboard/${kind}/duplicates/count`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { count?: number } | null) => {
+        if (live && typeof body?.count === "number") setCount(body.count);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [kind]);
+  if (!count) return null;
+  return (
+    <a href={`/dashboard/${kind}/duplicates`} className="text-xs text-[var(--warn)] underline" data-testid="import-twins">
+      We found {count >= 200 ? "200+" : count} likely twin{count === 1 ? "" : "s"} — check them
+    </a>
   );
 }
 

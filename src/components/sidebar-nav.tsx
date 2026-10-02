@@ -18,6 +18,8 @@ import {
   IconStar,
   IconFlame,
   IconChart,
+  IconMerge,
+  IconPhone,
   IconUsers as IconAccount,
 } from "@/components/icons";
 
@@ -40,6 +42,8 @@ type NavEntry = NavItem | { group: string; items: NavItem[] };
 // Contracts only (it used to sit under Pipeline as well).
 const NAV: NavEntry[] = [
   { href: "/dashboard", label: "Overview", Icon: IconGrid },
+  // The morning Call List (Oct 2, 2026): what a rep opens first.
+  { href: "/dashboard/call-list", label: "Call List", Icon: IconPhone },
   { href: "/dashboard/calendar", label: "Calendar", Icon: IconCalendar },
   {
     group: "CRM",
@@ -52,6 +56,7 @@ const NAV: NavEntry[] = [
           { href: "/dashboard/contacts/favorites", label: "Favorite Contacts", Icon: IconStar },
           { href: "/dashboard/contacts/interested", label: "Interested Contacts", Icon: IconFlame },
           { href: "/dashboard/contacts/with-deals", label: "Contacts with Deals", Icon: IconTrending },
+          { href: "/dashboard/contacts/duplicates", label: "Possible Duplicates", Icon: IconMerge },
         ],
       },
       {
@@ -62,6 +67,7 @@ const NAV: NavEntry[] = [
           { href: "/dashboard/companies/favorites", label: "Favorite Companies", Icon: IconStar },
           { href: "/dashboard/companies/interested", label: "Interested Companies", Icon: IconFlame },
           { href: "/dashboard/companies/with-deals", label: "Companies with Deals", Icon: IconTrending },
+          { href: "/dashboard/companies/duplicates", label: "Possible Duplicates", Icon: IconMerge },
         ],
       },
     ],
