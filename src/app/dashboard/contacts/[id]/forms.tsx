@@ -50,10 +50,14 @@ type FormAction = (state: ActionState, formData: FormData) => Promise<ActionStat
 function useResettingAction(action: FormAction, onResult?: (result: ActionState) => void) {
   const ref = useRef<HTMLFormElement>(null);
   const [resetKey, setResetKey] = useState(0);
+  // Counts every result, success or refusal, so a field keyed on it is
+  // redrawn with the values the refusal handed back (`kept`).
+  const [attempt, setAttempt] = useState(0);
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     async (previous, formData) => {
       const result = await action(previous, formData);
       if (result?.success) setResetKey((key) => key + 1);
+      setAttempt((n) => n + 1);
       onResult?.(result);
       return result;
     },
@@ -62,7 +66,7 @@ function useResettingAction(action: FormAction, onResult?: (result: ActionState)
   useEffect(() => {
     if (state?.success) ref.current?.reset();
   }, [state]);
-  return { ref, resetKey, state, formAction, pending };
+  return { ref, resetKey, attempt, state, formAction, pending };
 }
 
 function TargetFields({ target }: { target: LogTargetProps }) {
@@ -147,6 +151,7 @@ export function LogActivityForm({
   target,
   current,
   companyPeople,
+  userName,
   today,
 }: {
   target: LogTargetProps;
@@ -154,6 +159,8 @@ export function LogActivityForm({
   current?: PickableContact;
   // On a company page: its first people, offered as ticks.
   companyPeople?: CompanyPerson[];
+  // On a company page: who is logging, for the bypass line.
+  userName?: string;
   // Today in the workspace's zone, for the "When" field's default. Comes
   // from the server so the form never guesses from the browser's clock.
   today: string;
@@ -164,7 +171,7 @@ export function LogActivityForm({
   // row report the same words and the second must open the box again.
   const [followUp, setFollowUp] = useState<FollowUpSeed | null>(null);
   const [notice, setNotice] = useState<string | undefined>();
-  const { ref, resetKey, state, formAction, pending } = useResettingAction(logActivity, (result: LogActivityState) => {
+  const { ref, resetKey, attempt, state, formAction, pending } = useResettingAction(logActivity, (result: LogActivityState) => {
     if (result?.followUp) {
       setFollowUp(result.followUp);
       setNotice(undefined);
@@ -199,15 +206,19 @@ export function LogActivityForm({
           })}
         </div>
 
+        {/* Keyed on the attempt so a refusal redraws it with what was
+            typed (React empties a form whose action refuses). */}
         <textarea
+          key={`body-${attempt}-${resetKey}`}
           name="body"
           rows={2}
+          defaultValue={state?.kept?.body}
           placeholder="Left a voicemail about the kitchen quote…"
           className="textarea"
         />
 
         {target.companyId && companyPeople && (
-          <CompanyPeoplePicker key={`people-${resetKey}`} companyId={target.companyId} people={companyPeople} />
+          <CompanyPeoplePicker key={`people-${resetKey}`} companyId={target.companyId} people={companyPeople} userName={userName} />
         )}
 
         {/* When it happened — or when it will. Either way it lands on the
@@ -227,7 +238,14 @@ export function LogActivityForm({
           </label>
           <label className="block text-xs">
             <span className="faint block">Time · optional</span>
-            <input key={`at-${resetKey}`} type="time" name="atTime" className="input input-sm" data-testid="activity-time" />
+            <input
+              key={`at-${attempt}-${resetKey}`}
+              type="time"
+              name="atTime"
+              defaultValue={state?.kept?.atTime}
+              className="input input-sm"
+              data-testid="activity-time"
+            />
           </label>
           <p className="faint pb-1.5 text-xs" data-testid="activity-when-note">
             {ahead

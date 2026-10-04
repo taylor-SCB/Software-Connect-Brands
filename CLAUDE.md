@@ -293,6 +293,21 @@ Set. No thanks writes nothing; scheduling ahead opens no box. The
 calendar's own "How did it go?" box does not offer one yet — the next
 place to put it.
 
+**An activity on the company page is with a person (Oct 4, 2026).**
+Nobody ticked is refused (typed fields handed back via `kept`) unless
+"I'm choosing not to link a contact for these activities" is ticked
+(`bypass=1`); then it lands on the company alone and reads "<who>
+Bypassed" in the feed. Those sit under **Other Contacts** on the People
+card, grouped by who bypassed, with Claim / Claim all
+(`claimActivities` in `src/app/dashboard/companies/actions.ts`,
+`OtherContacts` in `src/components/other-contacts.tsx`): the activity
+moves onto the person (contactId set, companyId cleared, the same shape
+as a touch logged on them), their status follows, the calendar entry
+follows. Pre-rule company-only activities are claimable the same way.
+Notes are not under the rule; the company page's Notes tabs split All ·
+Company · People · Personal. The favorite star is deliberately not
+linked between a person and their company.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -454,7 +469,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-four** are checked in at
+suite, and the delete-confirmation suite. **Twenty-five** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -490,7 +505,11 @@ companies, custom industries, company activity people, merge) and
 `crm-pipeline-stats.cjs` (20: the status ladder, the Pipeline from
 Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
-lists and the follow-up box after a logged touch). A suite that
+lists and the follow-up box after a logged touch) and
+`company-bypass.cjs` (12: the company-page rule, the bypass box, Other
+Contacts and claiming, the Notes split). **A suite that logs on a
+company page with nobody ticked must tick `company-bypass-tick` first**
+or the log is refused. A suite that
 seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the

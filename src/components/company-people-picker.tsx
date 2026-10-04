@@ -11,9 +11,22 @@ export type CompanyPerson = { id: string; name: string; email: string | null; ph
 // people are offered as ticks; the box searches the rest of them (its
 // own and anyone linked to it); "+ Add new contact" makes one on the
 // spot and ticks them. Every tick posts as `extraContactIds`, and the
-// entry is logged on each of them. Nobody ticked: it goes on the company.
-export function CompanyPeoplePicker({ companyId, people }: { companyId: string; people: CompanyPerson[] }) {
+// entry is logged on each of them. Nobody ticked is refused (Oct 4,
+// 2026) unless "I'm choosing not to link a contact for these
+// activities" is ticked: the entry then sits on the company under
+// "<you> Bypassed" in Other Contacts until somebody claims it.
+export function CompanyPeoplePicker({
+  companyId,
+  people,
+  userName,
+}: {
+  companyId: string;
+  people: CompanyPerson[];
+  // Whoever is logging, for the line saying what a bypass will read as.
+  userName?: string;
+}) {
   const [picked, setPicked] = useState<Map<string, CompanyPerson>>(new Map());
+  const [bypass, setBypass] = useState(false);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", email: "", phone: "" });
@@ -32,6 +45,8 @@ export function CompanyPeoplePicker({ companyId, people }: { companyId: string; 
       else next.set(person.id, person);
       return next;
     });
+    // Ticking a person is the opposite of bypassing.
+    setBypass(false);
   }
 
   function addNew() {
@@ -56,9 +71,41 @@ export function CompanyPeoplePicker({ companyId, people }: { companyId: string; 
       {Array.from(picked.keys()).map((id) => (
         <input key={id} type="hidden" name="extraContactIds" value={id} />
       ))}
+      {/* The bypass sits above the list, as asked: a deliberate choice,
+          not the default. It posts only while ticked, and only counts
+          when nobody is ticked. */}
+      <label
+        className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs transition-colors ${
+          bypass ? "border-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)]" : "border-[var(--border)]"
+        } ${picked.size > 0 ? "opacity-50" : ""}`}
+        data-testid="company-bypass"
+      >
+        <input
+          type="checkbox"
+          name="bypass"
+          value="1"
+          checked={bypass}
+          disabled={picked.size > 0}
+          onChange={(event) => setBypass(event.target.checked)}
+          className="mt-0.5 h-3.5 w-3.5 accent-[var(--warn)]"
+          data-testid="company-bypass-tick"
+        />
+        <span>
+          <span className="font-medium">I&apos;m choosing not to link a contact for these activities</span>
+          <span className="faint block">
+            {bypass
+              ? `It will sit under Other Contacts as “${userName ?? "you"} Bypassed” until someone claims it for a person.`
+              : "An activity here is with a person at this company. Tick this to log it on the company alone."}
+          </span>
+        </span>
+      </label>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="faint text-xs">
-          {picked.size === 0 ? "With whom? Tick people, or leave it on the company." : `Logged on ${picked.size} ${picked.size === 1 ? "person" : "people"}`}
+          {picked.size === 0
+            ? bypass
+              ? "Logged on the company, nobody linked."
+              : "With whom? Tick people below."
+            : `Logged on ${picked.size} ${picked.size === 1 ? "person" : "people"}`}
         </p>
         <div className="relative">
           <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-faint)]" />

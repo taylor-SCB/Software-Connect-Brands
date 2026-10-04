@@ -38,6 +38,7 @@ import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm } from "../../contacts/[id]/forms";
+import { OtherContacts, type BypassGroup } from "@/components/other-contacts";
 
 // A company can have thousands of people and years of activity, so the
 // page shows the people fifty at a time and the latest slice of every
@@ -54,7 +55,7 @@ export default async function CompanyDetailPage({
 }) {
   const { id } = await params;
   const { people: peopleParam } = await searchParams;
-  const { organizationId, userId } = await requireSession();
+  const { organizationId, userId, name: userName } = await requireSession();
 
   const timeZone = await getTimeZone();
 
@@ -152,6 +153,22 @@ export default async function CompanyDetailPage({
 
   const today = todayIso(timeZone);
   const meetingSet = await meetingSetDay(organizationId, { companyId: company.id });
+
+  // Other Contacts: what was logged here with nobody linked, newest
+  // first, grouped under whoever bypassed, for claiming.
+  const unclaimed = await prisma.activity.findMany({
+    where: { organizationId, companyId: company.id, contactId: null },
+    orderBy: { occurredAt: "desc" },
+    take: 100,
+    select: { id: true, type: true, body: true, occurredAt: true, user: { select: { id: true, name: true } } },
+  });
+  const bypassGroups = Array.from(
+    unclaimed.reduce((groups, row) => {
+      const group = groups.get(row.user.id) ?? { userId: row.user.id, userName: row.user.name, activities: [] };
+      group.activities.push({ id: row.id, type: row.type, body: row.body, when: formatDateTime(row.occurredAt, timeZone) });
+      return groups.set(row.user.id, group);
+    }, new Map<string, BypassGroup>()),
+  ).map(([, group]) => group);
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, today);
 
@@ -175,6 +192,8 @@ export default async function CompanyDetailPage({
       committedCents: true,
     },
   });
+
+  const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone }));
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
@@ -227,11 +246,12 @@ export default async function CompanyDetailPage({
           <Card lit id="activity">
             <CardHeader
               title="Log activity"
-              subtitle="Logged here it sits on the company. Activity on its people rolls up below too."
+              subtitle="An activity here is with a person at this company. Everything logged on its people rolls up below too."
             />
             <LogActivityForm
               target={{ companyId: company.id }}
-              companyPeople={people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone }))}
+              companyPeople={companyPeople}
+              userName={userName}
               today={today}
             />
             <div className="divider" />
@@ -244,6 +264,7 @@ export default async function CompanyDetailPage({
                 when: formatDateTime(activity.occurredAt, timeZone),
                 others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
                 via: activity.contact,
+                bypassedBy: activity.contact ? null : activity.user.name,
               }))}
             />
           </Card>
@@ -256,6 +277,7 @@ export default async function CompanyDetailPage({
             <AddNoteForm target={{ companyId: company.id }} />
             <div className="divider" />
             <NotesList
+              split
               notes={notes.map((note) => ({
                 id: note.id,
                 body: note.body,
@@ -402,6 +424,7 @@ export default async function CompanyDetailPage({
                 ))}
               </ul>
             )}
+            <OtherContacts companyId={company.id} people={companyPeople} groups={bypassGroups} />
             {peoplePages > 1 && (
               <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-2.5 text-xs">
                 <span className="faint">

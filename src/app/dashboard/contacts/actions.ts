@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { parseForm, type ActionState } from "@/lib/forms";
+import { keepFields, parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
 import { ACTIVITY_LABELS, ACTIVITY_TYPES, CHANNEL_LABELS, START_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
@@ -319,6 +319,19 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
 
   const targets = await resolveTargets(parsed.data.target, organizationId);
   if (!targets) return { error: "Record not found" };
+
+  // On a company page an activity is with a person at it (Taylor, Oct 4,
+  // 2026). Nobody ticked is only allowed with the "I'm choosing not to
+  // link a contact" box ticked; it then sits on the company under
+  // "<who> Bypassed" in Other Contacts until somebody claims it. The
+  // typed fields come back with the refusal so nothing is lost.
+  const onCompanyOnly = targets.rows.length === 1 && !targets.rows[0].contactId && Boolean(targets.rows[0].companyId);
+  if (onCompanyOnly && formData.get("bypass") !== "1") {
+    return {
+      error: "Tick who at this company it was with, or tick “I'm choosing not to link a contact for these activities”.",
+      kept: keepFields(formData, ["body", "occurredOn", "atTime"]),
+    };
+  }
 
   const timeZone = await getTimeZone();
   const today = todayIso(timeZone);

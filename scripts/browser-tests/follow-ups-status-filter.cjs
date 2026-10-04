@@ -337,9 +337,10 @@ async function followUps(org) {
   await form.getByText(/Scheduled for/).waitFor();
   assert.equal(await box.count(), 0, "no follow-up box after scheduling");
 
-  log("a company-page log gets the same box, with the company as who it is with");
+  log("a company-page log (bypassed, nobody linked) gets the same box, with the company as who it is with");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_oak`);
   await form.locator("textarea[name=body]").fill("Spoke to reception");
+  await form.locator("[data-testid=company-bypass-tick]").check();
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
   assert.match(await box.textContent(), /Want to set a follow-up with Oak Legal\?/);

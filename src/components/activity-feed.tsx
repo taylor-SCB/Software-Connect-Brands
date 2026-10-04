@@ -23,6 +23,11 @@ export type ActivityItem = {
   when: string;
   others: number;
   via?: { id: string; name: string } | null;
+  // On a company page: logged on the company with nobody linked, by this
+  // teammate, who ticked "I'm choosing not to link a contact". Reads
+  // "Nic Steffl Bypassed" where the person's name would be, until the
+  // entry is claimed for someone under Other Contacts.
+  bypassedBy?: string | null;
 };
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {
@@ -60,6 +65,14 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
                     <Link href={`/dashboard/contacts/${activity.via.id}`} className="link">
                       {activity.via.name}
                     </Link>
+                  </>
+                )}
+                {!activity.via && activity.bypassedBy && (
+                  <>
+                    {" · "}
+                    <span className="badge border-[var(--border)] text-[0.62rem] text-[var(--text-faint)]" data-testid="activity-bypassed">
+                      {activity.bypassedBy} Bypassed
+                    </span>
                   </>
                 )}
                 {activity.others > 0 &&

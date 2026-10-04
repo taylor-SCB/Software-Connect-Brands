@@ -278,10 +278,19 @@ async function until(fn, what) {
   assert.equal(logged.rows.length, 2);
   assert.deepEqual(logged.rows.map((r) => r.contactId).sort(), ["ctc_acc_jordan", pat.id].sort());
   assert.ok(logged.rows.every((r) => r.companyId === null && r.batchId && r.batchId === logged.rows[0].batchId), "one batch, on the people");
-  log("nobody ticked: it lands on the company, as before");
+  log("nobody ticked: refused until the bypass box is ticked, then it lands on the company");
   await form.locator("textarea[name=body]").fill("Left a message at the front desk");
   await form.locator("[data-testid=activity-submit]").click();
-  await page.getByText("Left a message at the front desk").first().waitFor();
+  await form.getByRole("alert").waitFor();
+  assert.match(await form.getByRole("alert").textContent(), /Tick who at this company/);
+  assert.equal(await form.locator("textarea[name=body]").inputValue(), "Left a message at the front desk", "what was typed is kept");
+  await form.locator("[data-testid=company-bypass-tick]").check();
+  await form.locator("[data-testid=activity-submit]").click();
+  // The typed text is still in the box after the refusal, so wait for the
+  // follow-up box the save opens, not for the words.
+  await page.locator("[data-testid=follow-up-prompt]").waitFor();
+  await page.locator("[data-testid=follow-up-skip]").click();
+  await page.locator("#activity li", { hasText: "Left a message at the front desk" }).waitFor();
   const onCompany = await sql(`SELECT "contactId", "companyId" FROM "Activity" WHERE "organizationId"=$1 AND body='Left a message at the front desk'`, [org]);
   assert.deepEqual(onCompany.rows, [{ contactId: null, companyId: "cmp_acc_dallas" }]);
 

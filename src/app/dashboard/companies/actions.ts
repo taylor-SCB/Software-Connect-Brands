@@ -12,6 +12,7 @@ import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/indu
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
 import { sameTags, withoutAuto, type AutoField } from "@/lib/enrich";
 import { moneyHold, moneyHoldMessage } from "@/lib/money";
+import { markContacted, markMeetingSet } from "@/lib/status";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -196,6 +197,56 @@ export async function setCompanyFavorite(
   revalidatePath("/dashboard/companies");
   revalidatePath(`/dashboard/companies/${id.data}`);
   return { favorite: Boolean(favorite) };
+}
+
+// Claiming from Other Contacts (Oct 4, 2026): activities logged on the
+// company with nobody linked move onto a real person at it. The person
+// must be at that company (their main one, or linked as an additional
+// account). Their history, Contacted status and the calendar entries the
+// activities made follow, as if they had been logged on them to begin
+// with — which is why the company link is cleared, the same shape as a
+// touch logged on a person.
+export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = z
+    .object({ activityIds: z.array(idSchema).min(1, "Nothing to claim").max(500), contactId: idSchema })
+    .safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Pick who it was with" };
+
+  const contact = await prisma.contact.findFirst({
+    where: { id: parsed.data.contactId, organizationId },
+    select: { id: true, name: true, companyId: true, accounts: { select: { companyId: true } } },
+  });
+  if (!contact) return { error: "That person is no longer here" };
+  const at = new Set([contact.companyId, ...contact.accounts.map((row) => row.companyId)].filter(Boolean));
+
+  const activities = await prisma.activity.findMany({
+    where: { id: { in: parsed.data.activityIds }, organizationId, contactId: null, companyId: { not: null } },
+    select: { id: true, companyId: true, type: true, occurredAt: true },
+  });
+  if (activities.length === 0) return { error: "Those activities were already claimed" };
+  if (activities.some((row) => !at.has(row.companyId!))) return { error: `${contact.name} is not at this company` };
+
+  const ids = activities.map((row) => row.id);
+  await prisma.$transaction([
+    prisma.activity.updateMany({ where: { id: { in: ids }, organizationId }, data: { contactId: contact.id, companyId: null } }),
+    prisma.calendarEvent.updateMany({ where: { activityId: { in: ids }, organizationId }, data: { contactId: contact.id } }),
+  ]);
+
+  // The ladder, as if logged on them: the earliest touch makes them
+  // Contacted, the earliest meeting sets Meeting Set.
+  const who = { organizationId, userId };
+  const earliest = (rows: typeof activities) => rows.map((row) => row.occurredAt).sort((a, b) => a.getTime() - b.getTime())[0];
+  await markContacted(who, { contactIds: [contact.id], companyId: activities[0].companyId }, earliest(activities));
+  const meetings = activities.filter((row) => row.type === "MEETING");
+  if (meetings.length) await markMeetingSet(who, [contact.id], earliest(meetings));
+
+  for (const companyId of new Set(activities.map((row) => row.companyId!))) revalidatePath(`/dashboard/companies/${companyId}`);
+  revalidatePath(`/dashboard/contacts/${contact.id}`);
+  revalidatePath("/dashboard/contacts");
+  revalidatePath("/dashboard/companies");
+  revalidatePath("/dashboard/calendar");
+  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}` };
 }
 
 // The people stay; they just lose their company link (the database sets

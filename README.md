@@ -552,6 +552,26 @@ by a person, so the app never re-dates or sweeps them the way it does a
 quote's follow-ups. `scripts/browser-tests/follow-ups-status-filter.cjs`
 walks all of it, plus the Status filter.
 
+**An activity on the company page is with a person (Oct 4, 2026).** The
+company page's Log activity still offers the company's people as ticks,
+a search for the rest and **Add New Contact**, and the follow-up box
+after. What changed: nobody ticked is **refused**, with what was typed
+kept, unless the box above the list is ticked — **"I'm choosing not to
+link a contact for these activities."** Ticked, the entry lands on the
+company alone and reads **"Nic Steffl Bypassed"** (whoever logged it)
+where the person's name would be. Those entries gather under **Other
+Contacts** at the foot of the People card, grouped by who bypassed, each
+with **Claim** (and **Claim all** on a group): pick one of the company's
+people, search for another, or add a new contact on the spot, and the
+activity moves onto them — into their history, making them Contacted
+(Meeting Set for a meeting), and the calendar entry it made follows.
+Entries logged on a company before this rule sit there too, claimable.
+A person from another company is never offered. **Notes** on the company
+page are not under this rule, but their tabs now split **All · Company ·
+People · Personal**: Company is what was written on the company itself,
+People what was written on its people, each with the person's name.
+`scripts/browser-tests/company-bypass.cjs` walks all of it.
+
 **Properties** (Sept 14, 2026) — **Projects → Properties** is a building at
 a time. A property manager with four towers wants the number per tower, not
 per job: what was awarded across every job there, what has been spent, what

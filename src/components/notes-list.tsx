@@ -22,50 +22,76 @@ export type NoteItem = {
   via?: { id: string; name: string } | null;
 };
 
+type View = "all" | "company" | "people" | "personal";
+
 // The notes feed with an All / Personal switch. Personal gathers every
 // note wearing a personal label (birthday, family, hobbies…) so the
-// relationship side of a contact is one tap away.
-export function NotesList({ notes }: { notes: NoteItem[] }) {
-  const [view, setView] = useState<"all" | "personal">("all");
+// relationship side of a contact is one tap away. On a company page
+// (`split`, Oct 4, 2026) two more views sit between them: Company, the
+// notes written on the company itself, and People, the notes written on
+// the people at it, so "they move buildings in March" is not lost among
+// forty people's notes.
+export function NotesList({ notes, split = false }: { notes: NoteItem[]; split?: boolean }) {
+  const [view, setView] = useState<View>("all");
   const personal = notes.filter((note) => isPersonalLabel(note.label));
-  const shown = view === "personal" ? personal : notes;
+  const company = notes.filter((note) => !note.via);
+  const people = notes.filter((note) => Boolean(note.via));
+  const shown = view === "personal" ? personal : view === "company" ? company : view === "people" ? people : notes;
+
+  const tabs: { key: View; label: string; count: number }[] = [
+    { key: "all", label: "All", count: notes.length },
+    ...(split
+      ? [
+          { key: "company" as const, label: "Company", count: company.length },
+          { key: "people" as const, label: "People", count: people.length },
+        ]
+      : []),
+    { key: "personal", label: "Personal", count: personal.length },
+  ];
 
   return (
     <div>
-      <div className="flex items-center gap-1.5 px-5 pt-4">
-        <button
-          type="button"
-          onClick={() => setView("all")}
-          aria-pressed={view === "all"}
-          className={`btn btn-sm ${view === "all" ? "btn-primary" : "btn-ghost"}`}
-        >
-          All
-          <span className="num opacity-70">{notes.length}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setView("personal")}
-          aria-pressed={view === "personal"}
-          className={`btn btn-sm ${view === "personal" ? "btn-primary" : "btn-ghost"}`}
-        >
-          Personal
-          <span className="num opacity-70">{personal.length}</span>
-        </button>
+      <div className="flex flex-wrap items-center gap-1.5 px-5 pt-4" data-testid="notes-tabs">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setView(tab.key)}
+            aria-pressed={view === tab.key}
+            className={`btn btn-sm ${view === tab.key ? "btn-primary" : "btn-ghost"}`}
+            data-testid={`notes-tab-${tab.key}`}
+          >
+            {tab.label}
+            <span className="num opacity-70">{tab.count}</span>
+          </button>
+        ))}
       </div>
 
       {shown.length === 0 ? (
         <EmptyState
-          title={view === "personal" ? "Nothing personal yet" : "No notes yet"}
+          title={
+            view === "personal"
+              ? "Nothing personal yet"
+              : view === "company"
+                ? "No notes on the company itself yet"
+                : view === "people"
+                  ? "No notes on its people yet"
+                  : "No notes yet"
+          }
           body={
             view === "personal"
               ? "Label a note Personal, Birthday, Hobbies or Family and it shows up here."
-              : undefined
+              : view === "company"
+                ? "A note added on this page sits on the company."
+                : view === "people"
+                  ? "A note added on a person's page shows here with their name."
+                  : undefined
           }
         />
       ) : (
-        <ul className="mt-2 divide-y divide-[rgb(255_255_255/0.045)]">
+        <ul className="mt-2 divide-y divide-[rgb(255_255_255/0.045)]" data-testid="notes-rows">
           {shown.map((note) => (
-            <li key={note.id} className="px-5 py-3">
+            <li key={note.id} className="px-5 py-3" data-testid="note-row">
               <div className="flex items-start justify-between gap-3">
                 <p className="min-w-0 text-sm leading-relaxed">{note.body}</p>
                 {note.label && (
