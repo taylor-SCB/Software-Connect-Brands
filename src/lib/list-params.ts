@@ -1,4 +1,4 @@
-import { DEFAULT_PAGE_SIZE, PAGE_SIZES } from "@/lib/constants";
+import { CONTACT_STATUSES, DEFAULT_PAGE_SIZE, PAGE_SIZES, type ContactStatusValue } from "@/lib/constants";
 
 // Everything the Contacts and Companies lists can be narrowed by, read
 // from the address bar so Back, bookmarks and "how I got there is how I
@@ -12,6 +12,10 @@ export type ListParams = {
   industries: string[];
   types: string[];
   companies: string[];
+  // Where they are on the status ladder (Oct 4, 2026): any of Not
+  // Actioned … Archived, stacking like the other multi-selects. Empty
+  // on the Interested sub-panes, whose lock already holds the status.
+  statuses: ContactStatusValue[];
   fav: boolean;
   deals: boolean;
   attn: boolean;
@@ -59,6 +63,9 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     industries: list(raw.industry),
     types: list(raw.type),
     companies: list(raw.company),
+    statuses: lock.interested
+      ? []
+      : list(raw.status).filter((value): value is ContactStatusValue => (CONTACT_STATUSES as readonly string[]).includes(value)),
     fav: lock.fav || raw.fav === "1",
     deals: lock.deals || raw.deals === "1",
     attn: raw.attn === "1",
@@ -82,6 +89,7 @@ export function listHref(basePath: string, params: ListParams, overrides: Partia
   for (const industry of next.industries) search.append("industry", industry);
   for (const type of next.types) search.append("type", type);
   for (const company of next.companies) search.append("company", company);
+  if (!lock.interested) for (const status of next.statuses) search.append("status", status);
   if (next.fav && !lock.fav) search.set("fav", "1");
   if (next.deals && !lock.deals) search.set("deals", "1");
   if (next.attn) search.set("attn", "1");
@@ -97,6 +105,7 @@ export function activeFilterCount(params: ListParams, lock: ListLock = {}) {
     params.industries.length +
     params.types.length +
     params.companies.length +
+    (lock.interested ? 0 : params.statuses.length) +
     (params.fav && !lock.fav ? 1 : 0) +
     (params.deals && !lock.deals ? 1 : 0) +
     (params.attn ? 1 : 0) +

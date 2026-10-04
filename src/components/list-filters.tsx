@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles, IconFileText } from "@/components/icons";
-import { INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES } from "@/lib/constants";
+import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES, type ContactStatusValue } from "@/lib/constants";
 import { listHref, activeFilterCount, type ListParams, type ListLock } from "@/lib/list-params";
 import { useSearch } from "@/lib/use-search";
 
@@ -121,6 +121,20 @@ export function ListFilters({
             onClear={() => go({ companies: [] })}
           />
         )}
+        {/* The status ladder, in its own order rather than alphabetical,
+            so Not Actioned reads above Contacted above Interested. The
+            Interested sub-panes hold the status already and hide this. */}
+        {!lock.interested && (
+          <MultiSelect
+            label="Status"
+            values={params.statuses}
+            choices={[...CONTACT_STATUSES]}
+            labels={CONTACT_STATUS_LABELS}
+            onToggle={(value) => go({ statuses: toggle(params.statuses, value as ContactStatusValue) as ContactStatusValue[] })}
+            onClear={() => go({ statuses: [] })}
+            empty="No statuses."
+          />
+        )}
 
         {!lock.fav && (
           <Toggle on={params.fav} onClick={() => go({ fav: !params.fav })} testId="filter-fav">
@@ -189,6 +203,12 @@ export function ListFilters({
               Company: {selectedCompanies.find((company) => company.id === id)?.name ?? "…"}
             </Chip>
           ))}
+          {!lock.interested &&
+            params.statuses.map((status) => (
+              <Chip key={`st-${status}`} onRemove={() => go({ statuses: toggle(params.statuses, status) as ContactStatusValue[] })}>
+                Status: {CONTACT_STATUS_LABELS[status]}
+              </Chip>
+            ))}
           {params.fav && !lock.fav && <Chip onRemove={() => go({ fav: false })}>Favorites</Chip>}
           {params.deals && !lock.deals && <Chip onRemove={() => go({ deals: false })}>With deals</Chip>}
           {params.attn && <Chip onRemove={() => go({ attn: false })}>Needs attention</Chip>}
@@ -197,7 +217,7 @@ export function ListFilters({
           <button
             type="button"
             onClick={() =>
-              go({ q: "", states: [], industries: [], types: [], companies: [], fav: false, deals: false, attn: false, auto: false, owed: false })
+              go({ q: "", states: [], industries: [], types: [], companies: [], statuses: [], fav: false, deals: false, attn: false, auto: false, owed: false })
             }
             className="btn btn-ghost btn-sm"
           >
@@ -300,6 +320,7 @@ function MultiSelect({
   label,
   values,
   choices,
+  labels,
   onToggle,
   onClear,
   empty,
@@ -307,6 +328,9 @@ function MultiSelect({
   label: string;
   values: string[];
   choices: string[];
+  // What to print for a choice when it is a code rather than a name
+  // (the status ladder's NOT_ACTIONED reads "Not Actioned").
+  labels?: Partial<Record<string, string>>;
   onToggle: (value: string) => void;
   onClear: () => void;
   empty: string;
@@ -326,7 +350,7 @@ function MultiSelect({
                 <li key={choice}>
                   <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
                     <input type="checkbox" checked={on} onChange={() => onToggle(choice)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
-                    <span className="min-w-0 flex-1 truncate">{choice}</span>
+                    <span className="min-w-0 flex-1 truncate">{labels?.[choice] ?? choice}</span>
                   </label>
                 </li>
               );

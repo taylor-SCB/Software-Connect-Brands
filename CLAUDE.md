@@ -267,7 +267,9 @@ add a new contact. The **status ladder** on contacts and companies: Not
 Actioned → Contacted (first logged touch, automatic) → Not Interested /
 Interested (by hand) → Meeting Set (first meeting booked with that
 *contact*, automatic) → Meeting Completed (by hand) → Quote Sent →
-Contract Sent → Signed / Won → Lost, plus Archived; every move is a
+Contract Sent → Signed / Won → Lost, plus Archived (**a Status
+multi-select on the Contacts and Companies filter bars, Oct 4, 2026**);
+every move is a
 `StatusChange` row with the day it happened, and skipping a pipeline
 step by hand asks each skipped step's date, prefilled with the meeting
 day. Status is set from the button on the record's page, no longer the
@@ -278,6 +280,18 @@ Archived (off the board, "Show archived"), at 180 Lost — swept when the
 Pipeline or Stats is opened. **Stats / Reporting** counts people per
 funnel step, money per deal, rates, days between steps and a
 leaderboard, with period and rep filters; everyone sees everyone.
+
+**Follow-up after a logged touch (Oct 4, 2026).** Logging a call, text,
+email or meeting on a contact or company opens "Want to set a
+follow-up?" under the form: tick any of the four, each with its own day
+(three days on by default, today or later) and optional time, and each
+becomes an open calendar entry "Follow up · Name" with the same people,
+under whoever logged it (`scheduleFollowUps` in
+`src/app/dashboard/contacts/actions.ts`, `FollowUpPrompt` in
+`src/components/follow-up-prompt.tsx`). A Meeting ticked sets Meeting
+Set. No thanks writes nothing; scheduling ahead opens no box. The
+calendar's own "How did it go?" box does not offer one yet — the next
+place to put it.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
@@ -440,7 +454,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-three** are checked in at
+suite, and the delete-confirmation suite. **Twenty-four** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -474,7 +488,9 @@ Contacted By, second email/phone, header Delete), `crm-accounts.cjs`
 (20: additional accounts, Add person search, duplicate check, same-name
 companies, custom industries, company activity people, merge) and
 `crm-pipeline-stats.cjs` (20: the status ladder, the Pipeline from
-Meeting Set, skipped-step dates, the 90/180 rule, Stats). A suite that
+Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
+4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
+lists and the follow-up box after a logged touch). A suite that
 seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the

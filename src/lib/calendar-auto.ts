@@ -502,6 +502,47 @@ export async function scheduleActivityEvent(input: {
   return created.id;
 }
 
+// The follow-ups picked from the "Want to set a follow-up?" box after a
+// call, text, email or meeting is logged (Oct 4, 2026): one open entry
+// per thing ticked, each on its own day, with the same people as the
+// touch it follows and under whoever logged it. Typed by a person, so
+// `auto` is false like any other scheduled call: nothing here is ever
+// re-dated or swept by the app.
+export async function scheduleFollowUpEvents(input: {
+  organizationId: string;
+  userId: string;
+  items: { type: ActivityTypeValue; startOn: string; startTime: string | null }[];
+  contactIds: string[];
+  companyId: string | null;
+  primaryName: string;
+  // What it follows up on, for the entry's notes: "Follow up on the call
+  // logged Oct 4: left a voicemail…".
+  about: string;
+}) {
+  const [first, ...rest] = input.contactIds;
+  const ids: string[] = [];
+  for (const item of input.items) {
+    const type = (await ensureEventType(input.organizationId, ACTIVITY_EVENT_TYPE[item.type])) ?? ACTIVITY_EVENT_TYPE[item.type];
+    const created = await prisma.calendarEvent.create({
+      data: {
+        organizationId: input.organizationId,
+        ownerId: input.userId,
+        type,
+        title: `Follow up · ${input.primaryName}`,
+        startOn: isoToDate(item.startOn)!,
+        startTime: item.startTime,
+        notes: input.about,
+        contactId: first ?? null,
+        companyId: input.companyId,
+        attendees: { connect: rest.map((id) => ({ id })) },
+      },
+      select: { id: true },
+    });
+    ids.push(created.id);
+  }
+  return ids;
+}
+
 /* ---------------------------- Marketing sends ---------------------------- */
 
 // One entry per marketing send, not one per recipient: forty emails in a

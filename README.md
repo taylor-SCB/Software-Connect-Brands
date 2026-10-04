@@ -80,7 +80,10 @@ a page (10 / 50 / 100 to pick from) with **Showing 51–100 of 12,340**
 and page links; the search bar and every filter run in the database and
 live in the address bar, so Back and bookmarks keep the view. Filters:
 **State**, **Industry**, **Company Type** (all multi-select, they stack),
-plus **Company** on contacts (type to search), and the toggles
+plus **Company** on contacts (type to search), **Status** (Oct 4, 2026:
+any steps of the status ladder, Not Actioned through Archived, in
+ladder order; hidden on the Interested sub-panes, which hold it
+already), and the toggles
 **Favorites**, **With deals** and **Needs attention** (contacts with no
 email and no phone, or a company nobody has tagged; companies with no
 industry, or no phone and no email). Active filters show as chips with
@@ -530,6 +533,24 @@ to the next thing sent. A **marketing send** is one Email entry on the
 sender's calendar ("Email · subject", with how many it went to), not one
 per recipient. And an activity with no clock on it reads **No time set**
 rather than All day, and sits at the bottom of its day.
+
+**A follow-up after a logged touch (Oct 4, 2026).** The moment a call,
+text, email or meeting is logged from a contact's or company's page, a
+box opens under the form: **"Want to set a follow-up with Dana Ruiz?"**
+Tick what comes next — one or several of Text, Email, Phone Call,
+Meeting — and each tick gets its own day (three days on by default, never
+before today) and an optional time. **Add to the calendar** writes one
+open entry per tick, titled "Follow up · Dana Ruiz", with the same people
+as the touch (the first is who it is with, the rest expected), under
+whoever logged it, its notes saying which touch it follows. It shows on
+the person's Coming up card and in the calendar's Upcoming log, and Done
+there opens "How did it go?" as for any scheduled call. A Meeting ticked
+sets Meeting Set, as booking one from the form does. **No thanks** writes
+nothing, and the box opens again for the next touch. Scheduling a call
+ahead opens no box: that call is already the thing to do. These are typed
+by a person, so the app never re-dates or sweeps them the way it does a
+quote's follow-ups. `scripts/browser-tests/follow-ups-status-filter.cjs`
+walks all of it, plus the Status filter.
 
 **Properties** (Sept 14, 2026) — **Projects → Properties** is a building at
 a time. A property manager with four towers wants the number per tower, not

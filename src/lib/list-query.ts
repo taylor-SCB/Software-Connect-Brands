@@ -34,6 +34,7 @@ export async function companyWhere(organizationId: string, p: ListParams): Promi
   if (p.industries.length) and.push({ industries: { hasSome: p.industries } });
   if (p.types.length) and.push({ companyTypes: { hasSome: p.types.filter((t) => t !== INDIVIDUAL_COMPANY_TYPE) } });
   if (p.companies.length) and.push({ id: { in: p.companies } });
+  if (p.statuses.length) and.push({ status: { in: p.statuses } });
   if (p.fav) and.push({ favorite: true });
   if (p.interested) and.push({ status: "INTERESTED" });
   if (p.deals) and.push({ contacts: { some: { deals: { some: {} } } } });
@@ -102,6 +103,7 @@ export async function contactWhere(
     and.push({ OR: or });
   }
   if (p.companies.length) and.push({ companyId: { in: p.companies } });
+  if (p.statuses.length) and.push({ status: { in: p.statuses } });
   if (p.fav) and.push({ favorite: true });
   if (p.interested) and.push({ status: "INTERESTED" });
   if (p.deals) and.push({ deals: { some: {} } });

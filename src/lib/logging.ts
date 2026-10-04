@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { ACTIVITY_TYPES, NOTE_LABELS } from "@/lib/constants";
+import { ACTIVITY_TYPES, NOTE_LABELS, type ActivityTypeValue } from "@/lib/constants";
+import type { ActionState } from "@/lib/forms";
 
 // Notes and activity can be logged on a contact or on a company, and a
 // contact entry can be copied to several other contacts at once. This is
@@ -72,6 +73,24 @@ export async function resolveTargets(target: LogTarget, organizationId: string) 
     primary: { contactId: target.contactId! },
   };
 }
+
+// What the "Want to set a follow-up?" box (Oct 4, 2026) needs to know
+// about the touch just logged, handed back with the success so the box
+// can offer one: who it was with, and a line saying what it follows.
+export type FollowUpSeed = {
+  contactIds: string[];
+  companyId: string | null;
+  primaryName: string;
+  about: string;
+};
+
+// logActivity's result: the usual message, plus the seed when a touch
+// was logged (not when one was scheduled ahead — a follow-up on a call
+// that has not happened yet is the calendar's job, not this box's).
+export type LogActivityState = ActionState & { followUp?: FollowUpSeed };
+
+// One thing ticked in that box: what to do and the day (time optional).
+export type FollowUpPick = { type: ActivityTypeValue; on: string; time: string };
 
 export const noteBodySchema = z.string().trim().min(1, "Note can't be empty").max(5000);
 export const noteLabelSchema = z.union([z.literal(""), z.enum(NOTE_LABELS)]).optional();

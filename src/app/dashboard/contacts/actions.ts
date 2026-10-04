@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
-import { CHANNEL_LABELS, START_STATUSES } from "@/lib/constants";
+import { ACTIVITY_LABELS, ACTIVITY_TYPES, CHANNEL_LABELS, START_STATUSES } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
@@ -15,7 +15,7 @@ import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
 import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { cleanTime, isRealDay } from "@/lib/calendar";
-import { recordActivityEvent, scheduleActivityEvent, zonedMoment } from "@/lib/calendar-auto";
+import { recordActivityEvent, scheduleActivityEvent, scheduleFollowUpEvents, zonedMoment } from "@/lib/calendar-auto";
 import { markContacted, markMeetingSet } from "@/lib/status";
 import { formatDay } from "@/lib/format";
 import {
@@ -26,6 +26,8 @@ import {
   noteLabelSchema,
   activityTypeSchema,
   activityBodySchema,
+  type FollowUpSeed,
+  type LogActivityState,
 } from "@/lib/logging";
 
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
@@ -296,7 +298,7 @@ export async function addNote(_prev: ActionState, formData: FormData): Promise<A
 // happened. A day still ahead is not history yet: it goes on the
 // calendar as something to do, and nothing is written to anyone's
 // Activity until it has happened.
-export async function logActivity(_prev: ActionState, formData: FormData): Promise<ActionState> {
+export async function logActivity(_prev: LogActivityState, formData: FormData): Promise<LogActivityState> {
   const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
@@ -399,7 +401,106 @@ export async function logActivity(_prev: ActionState, formData: FormData): Promi
   revalidateTarget(targets.primary);
   revalidatePath("/dashboard/calendar");
   const others = targets.rows.length - 1;
-  return { success: others > 0 ? `Logged on ${others + 1} contacts` : "Activity logged" };
+
+  // Handed back so the form can ask "Want to set a follow-up?" about
+  // exactly this touch, with the same people on it.
+  const excerpt = parsed.data.body.length > 140 ? `${parsed.data.body.slice(0, 140).trimEnd()}…` : parsed.data.body;
+  const followUp: FollowUpSeed = {
+    contactIds,
+    companyId: companyId ?? named?.companyId ?? null,
+    primaryName,
+    about: `Follow up on the ${ACTIVITY_LABELS[parsed.data.type].toLowerCase()} logged ${formatDay(`${on}T12:00:00Z`)}: ${excerpt}`,
+  };
+  return { success: others > 0 ? `Logged on ${others + 1} contacts` : "Activity logged", followUp };
+}
+
+// The follow-ups ticked in the box that opens after a touch is logged
+// (Oct 4, 2026): one open calendar entry per thing ticked, on the day
+// picked, with the same people as the touch and under whoever logged it.
+// The seed came from logActivity a moment ago, but it has been through
+// the browser since, so every id in it is checked against this workspace
+// and the name is read back from the record rather than trusted.
+export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Promise<ActionState> {
+  const { organizationId, userId } = await requireSession();
+
+  const parsed = z
+    .object({
+      seed: z.object({
+        contactIds: z.array(idSchema).max(500),
+        companyId: z.string().trim().min(1).nullable(),
+        about: z.string().trim().max(5000),
+      }),
+      items: z
+        .array(
+          z.object({
+            type: activityTypeSchema,
+            on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a day for each follow-up"),
+            time: z.string().optional(),
+          }),
+        )
+        .min(1, "Tick at least one follow-up")
+        .max(ACTIVITY_TYPES.length),
+    })
+    .safeParse({ seed, items });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the follow-ups and try again" };
+
+  const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  for (const item of parsed.data.items) {
+    if (!isRealDay(item.on)) return { error: "That day isn't a real date" };
+    if (item.on < today) return { error: `A follow-up has to be today or later (${ACTIVITY_LABELS[item.type]} is dated ${formatDay(`${item.on}T12:00:00Z`)})` };
+  }
+  // One entry per kind: the chips are a multi-select, not a counter.
+  const seen = new Set<string>();
+  const picks = parsed.data.items.filter((item) => {
+    if (seen.has(item.type)) return false;
+    seen.add(item.type);
+    return true;
+  });
+
+  // Only this workspace's people, in the order they were logged so the
+  // first stays the one the entry is with.
+  const owned = parsed.data.seed.contactIds.length
+    ? await prisma.contact.findMany({
+        where: { id: { in: parsed.data.seed.contactIds }, organizationId },
+        select: { id: true, name: true, companyId: true },
+      })
+    : [];
+  const byId = new Map(owned.map((row) => [row.id, row]));
+  const contactIds = parsed.data.seed.contactIds.filter((id) => byId.has(id));
+  const company = parsed.data.seed.companyId
+    ? await prisma.company.findFirst({ where: { id: parsed.data.seed.companyId, organizationId }, select: { id: true, name: true } })
+    : null;
+  if (!contactIds.length && !company) return { error: "Record not found" };
+  const first = contactIds.length ? byId.get(contactIds[0]) : undefined;
+  const primaryName = first?.name ?? company?.name ?? "";
+
+  await scheduleFollowUpEvents({
+    organizationId,
+    userId,
+    items: picks.map((item) => ({ type: item.type, startOn: item.on, startTime: cleanTime(item.time) })),
+    contactIds,
+    companyId: company?.id ?? first?.companyId ?? null,
+    primaryName,
+    about: parsed.data.seed.about,
+  });
+  // Booking a meeting is what sets it, whenever it is for — the same rule
+  // as a meeting scheduled from the form above.
+  if (picks.some((item) => item.type === "MEETING")) await markMeetingSet({ organizationId, userId }, contactIds, new Date());
+
+  for (const id of contactIds) revalidatePath(`/dashboard/contacts/${id}`);
+  const companyPath = company?.id ?? first?.companyId;
+  if (companyPath) revalidatePath(`/dashboard/companies/${companyPath}`);
+  revalidatePath("/dashboard/calendar");
+  revalidatePath("/dashboard");
+
+  const soonest = picks.map((item) => item.on).sort()[0];
+  return {
+    success:
+      picks.length === 1
+        ? `${ACTIVITY_LABELS[picks[0].type]} follow-up on the calendar for ${formatDay(`${soonest}T12:00:00Z`)}`
+        : `${picks.length} follow-ups on the calendar, the first ${formatDay(`${soonest}T12:00:00Z`)}`,
+  };
 }
 
 export async function createDealForContact(
