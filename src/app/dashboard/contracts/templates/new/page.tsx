@@ -1,12 +1,17 @@
 import { requireSession } from "@/lib/session";
 import { loadContractPickers } from "@/lib/contract-pickers";
+import { loadTemplatesByType } from "@/lib/contract-templates";
 import { BackLink, PageHeader } from "@/components/ui";
 import { TemplateWorkspace } from "../template-workspace";
+import { aiConfigured } from "@/lib/template-import";
 import { createTemplate } from "../../actions";
 
 export default async function NewTemplatePage() {
   const { organizationId, userId } = await requireSession();
-  const pickers = await loadContractPickers(organizationId);
+  const [pickers, templatesByType] = await Promise.all([
+    loadContractPickers(organizationId),
+    loadTemplatesByType(organizationId),
+  ]);
 
   return (
     <div>
@@ -21,6 +26,8 @@ export default async function NewTemplatePage() {
         submitLabel="Save template"
         currentUserId={userId}
         pickers={pickers}
+        templatesByType={templatesByType}
+        aiEnabled={aiConfigured()}
       />
     </div>
   );

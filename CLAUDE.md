@@ -308,6 +308,28 @@ Notes are not under the rule; the company page's Notes tabs split All ·
 Company · People · Personal. The favorite star is deliberately not
 linked between a person and their company.
 
+**Contracts v2 (Oct 7, 2026; Taylor's four-phase plan: 1 replace
+wording, 2 upload + AI fields, 3 Google, 4 Adobe Sign + PDF designer).**
+Phases 1 and 2 are built. A template page's Body has **Replace with my
+own** (empties the editor in place, Undo puts it back), **Restore the
+original** (the built-in wording, via `ContractTemplate.baseline`), **Upload
+Word or PDF** (.docx via mammoth, text PDFs via unpdf, .txt; a scan, a
+.doc or an empty file is refused in words; a Google Doc comes in as its
+Word download) and **Suggest fields** (Claude proposes `{{field}}`
+spots as tick boxes; a suggestion whose snippet isn't in the body exactly
+once or names no real field is dropped; nothing changes until "Put
+ticked fields in"; `src/lib/template-import.ts`). Nothing is saved until
+Save. Every type has exactly one template **in use**
+(`ContractTemplate.isDefault`, kept by `setTemplateDefault` /
+`repairTemplateDefault` in `src/lib/contract-templates.ts`): it is what the
+Contract Coordinator, Award without paperwork, Order materials and change
+orders reach for, where before they took whichever row came first. A
+second template of a type says "You already have one", saves as an
+Alternate, and takes over only when "Use this one" is ticked. Phases 3
+and 4 live in Settings → Connectors and wait on the Google and Adobe app
+registrations; Multi-Bids' Google admin trusting the app domain-wide is
+what lets full Gmail run without Google's paid security review.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -329,6 +351,18 @@ The same clock applies to the gaps below. They are not urgent this week; they
 are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
+
+- **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel.** Without it the
+  button simply isn't shown. It sends the agreement's text to Claude
+  (claude-opus-5-5, server-side fallback on) and costs about a cent a
+  click.
+- **Contract templates are not limited to Owners and Admins.** The
+  template actions only check for a signed-in user, so a Member can edit
+  or replace one despite the Company Users rule. Found Oct 7, 2026; not
+  changed without asking.
+- **An uploaded agreement keeps its words, not its look.** Bold, tables,
+  columns and logos from the Word or PDF file don't come across; the
+  Phase 4 PDF designer is where formatting lives.
 
 - **Email goes out for three things only:** password reset, Company Users
   invitations and email marketing (Sept 27, 2026). No approval notice, no
@@ -469,7 +503,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-five** are checked in at
+suite, and the delete-confirmation suite. **Twenty-seven** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -507,7 +541,13 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
-Contacts and claiming, the Notes split). **A suite that logs on a
+Contacts and claiming, the Notes split), and from Oct 7, 2026
+`template-replace.cjs` (13: Replace with my own, Restore the original,
+the one template in use per type and the Coordinator following it) and
+`template-import.cjs` (11: Word / PDF / scan / .doc uploads and Suggest
+fields; needs `ANTHROPIC_API_KEY=test-key` and
+`ANTHROPIC_ENDPOINT=http://localhost:3998` in `.env`, and answers as
+Claude itself, so nothing leaves the machine). **A suite that logs on a
 company page with nobody ticked must tick `company-bypass-tick` first**
 or the log is refused. A suite that
 seeds and sends paperwork now gets calendar entries written for it, so

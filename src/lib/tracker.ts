@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { TEMPLATE_ORDER } from "@/lib/contract-templates";
 import { contractHoldsRows, contractTotalCents } from "@/lib/contracts";
 import { pickPrimaryQuote } from "@/lib/deals";
 import { paidCentsOf } from "@/lib/money";
@@ -49,7 +50,7 @@ export async function loadTrackerPickers(organizationId: string) {
     }),
     prisma.contractTemplate.findMany({
       where: { organizationId },
-      orderBy: { createdAt: "asc" },
+      orderBy: TEMPLATE_ORDER,
       select: { id: true, name: true, type: true },
     }),
     // "Your Company Signer" starts as the owner — the admin role on the

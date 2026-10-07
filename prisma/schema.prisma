@@ -822,6 +822,17 @@ model ContractTemplate {
   // kept when the switch is turned back on, so it survives a toggle.
   allUsersCanSend Boolean      @default(true)
   senderUserIds   String[]     @default([])
+  // The one the app reaches for when it needs "the Sales Order" on its
+  // own (the Contract Coordinator, Award without paperwork, Order
+  // materials, change orders). Exactly one per type while the type has any
+  // template; kept so by setTemplateDefault / repairTemplateDefault in
+  // src/lib/contract-templates.ts. A second template of a type is an
+  // alternate picked by hand.
+  isDefault       Boolean      @default(false)
+  // The built-in this template started as ("Sales Order"), so "Restore the
+  // original" knows which wording to put back. Null for a template the
+  // workspace wrote from scratch.
+  baseline        String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 

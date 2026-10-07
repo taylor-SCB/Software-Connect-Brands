@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { TEMPLATE_ORDER } from "@/lib/contract-templates";
 import { loadContractPickers } from "@/lib/contract-pickers";
 import { Card, BackLink, PageHeader, EmptyState } from "@/components/ui";
 import { IconUsers, IconFileText } from "@/components/icons";
@@ -18,7 +19,7 @@ export default async function NewContractPage({
     loadContractPickers(organizationId),
     prisma.contractTemplate.findMany({
       where: { organizationId },
-      orderBy: { createdAt: "asc" },
+      orderBy: TEMPLATE_ORDER,
       select: { id: true, name: true, description: true, type: true, body: true },
     }),
   ]);

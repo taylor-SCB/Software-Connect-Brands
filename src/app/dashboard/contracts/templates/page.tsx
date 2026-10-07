@@ -26,6 +26,8 @@ export default async function TemplatesPage() {
       })
     : [];
   const senderName = new Map(senders.map((user) => [user.id, user.name]));
+  const typeCount = new Map<string, number>();
+  for (const template of templates) typeCount.set(template.type, (typeCount.get(template.type) ?? 0) + 1);
 
   return (
     <div>
@@ -76,7 +78,14 @@ export default async function TemplatesPage() {
                     {template.description || "No description"}
                   </p>
                 </div>
-                <Badge>{template.type}</Badge>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <Badge>{template.type}</Badge>
+                  {(typeCount.get(template.type) ?? 0) > 1 && (
+                    <span className="faint text-[11px]" data-testid="template-role">
+                      {template.isDefault ? "In use" : "Alternate"}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="faint mt-4 flex items-center gap-3 text-xs">
                 <span>

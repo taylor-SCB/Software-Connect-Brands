@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { loadTemplateDefaultFor } from "@/lib/contract-templates";
 import { requireSession } from "@/lib/session";
 import { getTimeZone } from "@/lib/organization";
 import { parseForm, type ActionState } from "@/lib/forms";
@@ -370,10 +371,7 @@ export async function awardWithoutPaperwork(
   if (rows.length === 0) return { error: "Write the quote first — there is nothing priced to award." };
 
   const template =
-    (await prisma.contractTemplate.findFirst({
-      where: { organizationId, type: "Sales Order" },
-      select: { id: true, name: true, type: true, body: true },
-    })) ??
+    (await loadTemplateDefaultFor(organizationId, "Sales Order")) ??
     (await prisma.contractTemplate.findFirst({
       where: { organizationId },
       orderBy: { createdAt: "asc" },
@@ -647,10 +645,7 @@ export async function orderFromSupplier(
   }
 
   const template =
-    (await prisma.contractTemplate.findFirst({
-      where: { organizationId, type: "Purchase Order" },
-      select: { id: true, name: true, type: true, body: true },
-    })) ??
+    (await loadTemplateDefaultFor(organizationId, "Purchase Order")) ??
     (await prisma.contractTemplate.findFirst({
       where: { organizationId },
       orderBy: { createdAt: "asc" },
@@ -886,10 +881,7 @@ export async function createChangeOrder(
   if (!scope) return { error: "Scope not found" };
 
   const template =
-    (await prisma.contractTemplate.findFirst({
-      where: { organizationId, type: "Change Order" },
-      select: { id: true, name: true, type: true, body: true },
-    })) ??
+    (await loadTemplateDefaultFor(organizationId, "Change Order")) ??
     (await prisma.contractTemplate.findFirst({
       where: { organizationId },
       orderBy: { createdAt: "asc" },
