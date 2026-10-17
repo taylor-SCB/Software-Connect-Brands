@@ -30,6 +30,7 @@ import { loadMergeContext } from "@/lib/merge-data";
 import { renderMergeFields } from "@/lib/merge";
 import { publicToken } from "@/lib/tokens";
 import { hasFile, readUpload, MAX_DOCUMENT_BYTES } from "@/lib/uploads";
+import { deleteObject } from "@/lib/storage";
 import { pickPrimaryQuote } from "@/lib/deals";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -1056,11 +1057,12 @@ export async function deleteProjectFile(formData: FormData) {
 
   const upload = await prisma.upload.findFirst({
     where: { id: id.data, organizationId, kind: "PROJECT_FILE" },
-    select: { projectId: true },
+    select: { projectId: true, storageDriver: true, storageKey: true },
   });
   if (!upload) return;
 
   await prisma.upload.deleteMany({ where: { id: id.data, organizationId, kind: "PROJECT_FILE" } });
+  await deleteObject(upload.storageDriver, upload.storageKey);
   if (upload.projectId) revalidatePath(`/dashboard/projects/${upload.projectId}/files`);
 }
 

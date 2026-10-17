@@ -27,63 +27,63 @@ enum OrganizationStatus {
 // CRM gets one Organization. Every other model is scoped to an
 // organizationId so tenants never see each other's data.
 model Organization {
-  id                 String             @id @default(cuid())
-  name               String
-  slug               String             @unique
-  status             OrganizationStatus @default(PENDING)
+  id                      String             @id @default(cuid())
+  name                    String
+  slug                    String             @unique
+  status                  OrganizationStatus @default(PENDING)
   // Set when the operator approves or rejects, for the admin list.
-  reviewedAt         DateTime?
-  logoUrl            String?
-  primaryColor       String             @default("#6366f1")
+  reviewedAt              DateTime?
+  logoUrl                 String?
+  primaryColor            String             @default("#6366f1")
   // Company Information (Settings → Company Information → General). All
   // optional: a workspace works fine with just a name, and every one of
   // these is a merge field a contract can pull in.
-  addressLine1       String?
-  addressLine2       String?
-  city               String?
-  state              String?
-  postalCode         String?
-  phone              String?
-  email              String?
-  website            String?
+  addressLine1            String?
+  addressLine2            String?
+  city                    String?
+  state                   String?
+  postalCode              String?
+  phone                   String?
+  email                   String?
+  website                 String?
   // "About us" and "Company history": plain text, for the website-style
   // blurb a contract or proposal can open with.
-  description        String             @default("")
-  history            String             @default("")
+  description             String             @default("")
+  history                 String             @default("")
   // Dates and times render in the business's own zone, everywhere —
   // dashboard, quotes and contracts alike. Storing it per organization
   // keeps server-rendered output deterministic (no hydration mismatch)
   // and means a document shows the sender's local time, not the reader's.
-  timeZone           String             @default("America/Chicago")
+  timeZone                String             @default("America/Chicago")
   // Money is stored in cents everywhere; these drive human-readable
   // sequential document numbers (QUO-1004, CON-1002...).
-  nextQuoteNumber    Int                @default(1000)
-  nextContractNumber Int                @default(1000)
+  nextQuoteNumber         Int                @default(1000)
+  nextContractNumber      Int                @default(1000)
   // The Preset Payment Table (Settings → Company Information → General):
   // what a new contract's payment table starts as. The preset uses the
   // same identifiers the tracker's preset picker does (see
   // SchedulePreset in src/lib/payments.ts); the percent and count only
   // matter for the preset that needs them.
-  defaultPaymentTerms     String        @default("Net 30")
-  defaultPaymentPreset    String        @default("FULL")
-  defaultDepositPercent   Int           @default(50)
-  defaultInstallmentCount Int           @default(3)
+  defaultPaymentTerms     String             @default("Net 30")
+  defaultPaymentPreset    String             @default("FULL")
+  defaultDepositPercent   Int                @default(50)
+  defaultInstallmentCount Int                @default(3)
   // PRJ-n on an awarded project, allocated like the quote and contract
   // numbers above.
-  nextProjectNumber       Int           @default(1000)
+  nextProjectNumber       Int                @default(1000)
   // INV-n, stamped on a payment row when it is sent as an invoice.
-  nextInvoiceNumber       Int           @default(1000)
+  nextInvoiceNumber       Int                @default(1000)
   // "Checks to Acme LLC, 12 Main St. Zelle: pay@acme.com" — printed on
   // the invoice a customer opens, since nothing here takes card payments.
-  paymentInstructions     String        @default("")
+  paymentInstructions     String             @default("")
   // The follow-up rhythm (Settings → General, Sept 28, 2026): how many
   // days after a quote or a contract goes out each follow-up lands on
   // the calendar. [3] is one follow-up three days on; [2, 7, 14] is
   // three of them. Empty means none.
-  quoteFollowUpDays       Int[]         @default([3])
-  contractFollowUpDays    Int[]         @default([3])
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  quoteFollowUpDays       Int[]              @default([3])
+  contractFollowUpDays    Int[]              @default([3])
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 
   users               User[]
   companies           Company[]
@@ -119,6 +119,7 @@ model Organization {
   emailSends          EmailSend[]
   contactAccounts     ContactAccount[]
   statusChanges       StatusChange[]
+  photoLinks          ProjectPhotoLink[]
 
   @@index([status])
 }
@@ -161,20 +162,22 @@ model User {
   organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt            DateTime     @default(now())
 
-  notes      Note[]
-  activities Activity[]
-  uploads    Upload[]
+  notes          Note[]
+  activities     Activity[]
+  uploads        Upload[]
   passwordResets PasswordReset[]
   // Quotes this person leads or signs. Both SetNull, unlike the three
   // above — a quote must outlive the person who owned it.
-  leadQuotes   Quote[] @relation("QuoteLeadRep")
-  signerQuotes Quote[] @relation("QuoteContractSigner")
-  emailSends   EmailSend[]
-  ownedDeals   Deal[]  @relation("DealOwner")
-  statusChanges StatusChange[]
+  leadQuotes     Quote[]            @relation("QuoteLeadRep")
+  signerQuotes   Quote[]            @relation("QuoteContractSigner")
+  emailSends     EmailSend[]
+  ownedDeals     Deal[]             @relation("DealOwner")
+  statusChanges  StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
   // must not take the company's schedule with them.
   calendarEvents CalendarEvent[]
+  uploadsSent    Upload[]           @relation("UploadedBy")
+  photoLinksMade ProjectPhotoLink[] @relation("PhotoLinkCreatedBy")
 
   @@index([organizationId])
 }
@@ -187,17 +190,17 @@ model User {
 // Rows are kept after use rather than deleted, so a link that has already
 // been spent can say so instead of looking like it never existed.
 model PasswordReset {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String   @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
   expiresAt DateTime
   usedAt    DateTime?
   // An invitation from Company Users rather than a forgotten password.
   // Same link, same page, but it lives for days rather than an hour and
   // the page says "Set your password" to someone who never had one.
-  isInvite  Boolean  @default(false)
-  createdAt DateTime @default(now())
+  isInvite  Boolean   @default(false)
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -260,23 +263,24 @@ model Company {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  contacts    Contact[]
+  contacts           Contact[]
   // People linked here as an additional account (their main company is
   // somewhere else). Listed under People; their paperwork is not rolled
   // up here, because it belongs to the company it was filed under.
-  linkedContacts ContactAccount[]
-  statusChanges  StatusChange[]
-  notes       Note[]
-  activities  Activity[]
-  uploads     Upload[]
-  contracts   Contract[]
-  projects    Project[]
-  distributor Distributor?
-  crews       Crew[]
-  events      CalendarEvent[]
-  properties  Property[]
+  linkedContacts     ContactAccount[]
+  statusChanges      StatusChange[]
+  notes              Note[]
+  activities         Activity[]
+  uploads            Upload[]
+  contracts          Contract[]
+  projects           Project[]
+  distributor        Distributor?
+  crews              Crew[]
+  events             CalendarEvent[]
+  properties         Property[]
   // Quote lines we buy from this company. Internal to the workspace.
-  supplierQuoteLines QuoteLineItem[] @relation("QuoteLineSupplier")
+  supplierQuoteLines QuoteLineItem[]    @relation("QuoteLineSupplier")
+  photoLinks         ProjectPhotoLink[]
 
   @@index([organizationId])
   @@index([organizationId, name])
@@ -339,25 +343,25 @@ model Contact {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  emailSends EmailSend[]
+  emailSends    EmailSend[]
   // Other companies this person is part of, beyond `company` above: an
   // entrepreneur who owns three businesses. `company` stays the one their
   // quotes and contracts are filed under.
-  accounts   ContactAccount[]
+  accounts      ContactAccount[]
   statusChanges StatusChange[]
-  deals      Deal[]
-  notes      Note[]
-  activities Activity[]
-  quotes     Quote[]
-  contracts  Contract[]
-  uploads    Upload[]
-  projects   Project[]
-  crews      Crew[]
-  events     CalendarEvent[]
-  properties Property[]
+  deals         Deal[]
+  notes         Note[]
+  activities    Activity[]
+  quotes        Quote[]
+  contracts     Contract[]
+  uploads       Upload[]
+  projects      Project[]
+  crews         Crew[]
+  events        CalendarEvent[]
+  properties    Property[]
   // Events this person is expected at, as distinct from the one they are
   // the point of contact for above.
-  attending  CalendarEvent[] @relation("EventAttendees")
+  attending     CalendarEvent[]  @relation("EventAttendees")
 
   @@index([organizationId])
   @@index([companyId])
@@ -462,10 +466,10 @@ model Deal {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  quotes    Quote[]
-  contracts Contract[]
-  project   Project?
-  events    CalendarEvent[]
+  quotes        Quote[]
+  contracts     Contract[]
+  project       Project?
+  events        CalendarEvent[]
   statusChanges StatusChange[]
 
   @@index([organizationId])
@@ -543,7 +547,7 @@ model Activity {
 
   // The calendar's copy of this touchpoint, when it was logged from the
   // form (one per batch, on the first contact's row).
-  calendarEvent  CalendarEvent?
+  calendarEvent CalendarEvent?
 
   @@index([organizationId])
   @@index([contactId])
@@ -617,57 +621,57 @@ enum QuoteStatus {
 }
 
 model Quote {
-  id             String        @id @default(cuid())
-  organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contactId      String
-  contact        Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId        String
+  contact          Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
   // Every quote is an offer on a deal; a deal can carry several.
-  dealId         String
-  deal           Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  number         Int
-  title          String
-  template       QuoteTemplate @default(SIMPLE)
-  status         QuoteStatus   @default(DRAFT)
-  introNote      String        @default("")
-  terms          String        @default("")
+  dealId           String
+  deal             Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  number           Int
+  title            String
+  template         QuoteTemplate @default(SIMPLE)
+  status           QuoteStatus   @default(DRAFT)
+  introNote        String        @default("")
+  terms            String        @default("")
   // The one-line terms shown above the payment table ("Net 30"), as
   // Contract.paymentTerms is. The free-text `terms` above stays the fine
   // print and is still what {{quote_terms}} merges into a contract body.
-  paymentTerms   String?
+  paymentTerms     String?
   // Ticked to keep the payment table off the customer's copy. Honoured in
   // the query that builds that copy, not in CSS: hiding it in the browser
   // would still ship the numbers inside the page.
-  hidePaymentTable Boolean     @default(false)
+  hidePaymentTable Boolean       @default(false)
   // Who owns the deal, who signs it, and who else is on it. All three are
   // SetNull on purpose: every other User relation in this file cascades,
   // and cascading here would delete the quote along with the person.
   leadSalesRepId   String?
-  leadSalesRep     User?       @relation("QuoteLeadRep", fields: [leadSalesRepId], references: [id], onDelete: SetNull)
+  leadSalesRep     User?         @relation("QuoteLeadRep", fields: [leadSalesRepId], references: [id], onDelete: SetNull)
   contractSignerId String?
-  contractSigner   User?       @relation("QuoteContractSigner", fields: [contractSignerId], references: [id], onDelete: SetNull)
+  contractSigner   User?         @relation("QuoteContractSigner", fields: [contractSignerId], references: [id], onDelete: SetNull)
   // Ids of other workspace users on this deal. A plain array rather than
   // a join table so updateQuoteMeta can keep writing through updateMany
   // with organizationId in the WHERE clause.
-  teamUserIds      String[]    @default([])
-  validUntil     DateTime?
+  teamUserIds      String[]      @default([])
+  validUntil       DateTime?
   // A discount on the whole quote, under the line discounts: cents already
   // worked out against the lines' net subtotal, plus the percent it was
   // typed as (if it was) so a change to the lines re-prices it rather than
   // freezing it. The quote total is the lines' net less this, everywhere.
   // It is copied onto the money-in contracts split off the quote as their
   // starting contract discount; a purchase order never carries it.
-  discountCents   Int          @default(0)
-  discountPercent Float?
-  publicToken    String        @unique
-  sentAt         DateTime?
-  respondedAt    DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  discountCents    Int           @default(0)
+  discountPercent  Float?
+  publicToken      String        @unique
+  sentAt           DateTime?
+  respondedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  lineItems QuoteLineItem[]
-  payments  QuotePayment[]
-  contracts Contract[]
+  lineItems      QuoteLineItem[]
+  payments       QuotePayment[]
+  contracts      Contract[]
   // Quote sent / Quote due / Quote follow up, written by the app.
   calendarEvents CalendarEvent[]
 
@@ -680,47 +684,47 @@ model Quote {
 }
 
 model QuoteLineItem {
-  id             String      @id @default(cuid())
-  quoteId        String
-  quote          Quote       @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  productId      String?
-  product        Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+  id                 String         @id @default(cuid())
+  quoteId            String
+  quote              Quote          @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId          String?
+  product            Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
   // Copied from the product at insert time so editing a product later
   // never rewrites history on a quote that was already sent.
-  name           String
-  description    String      @default("")
-  projectNotes   String      @default("")
-  quantity       Float       @default(1)
-  unitPriceCents Int         @default(0)
+  name               String
+  description        String         @default("")
+  projectNotes       String         @default("")
+  quantity           Float          @default(1)
+  unitPriceCents     Int            @default(0)
   // Money off this one line, in cents, already worked out. When it was
   // typed as a percent that percent is kept too, so a later change to
   // the quantity or price re-prices the discount instead of freezing it.
   // The line's total is quantity × price − discountCents, everywhere.
-  discountCents   Int        @default(0)
-  discountPercent Float?
-  tag            LineItemTag
+  discountCents      Int            @default(0)
+  discountPercent    Float?
+  tag                LineItemTag
   // Who we buy this line from. Internal: never selected onto the public
   // quote page, the PDF taken from it, or the text merged into a contract
   // body — the same footing as what a line costs us.
-  supplierCompanyId String?
-  supplierCompany   Company? @relation("QuoteLineSupplier", fields: [supplierCompanyId], references: [id], onDelete: SetNull)
+  supplierCompanyId  String?
+  supplierCompany    Company?       @relation("QuoteLineSupplier", fields: [supplierCompanyId], references: [id], onDelete: SetNull)
   // How the line is counted, and for a software line how it bills and for
   // how long. Descriptive: the term is printed beside the line and never
   // multiplies the line total, which stays quantity × price.
-  unitOfMeasure  UnitOfMeasure?
-  softwareRate   SoftwareRate?
+  unitOfMeasure      UnitOfMeasure?
+  softwareRate       SoftwareRate?
   // Plain months, unlike Product.softwareTerm which counts periods of
   // whatever softwareRate says. Typed as years + months and stored flat.
   softwareTermMonths Int?
   // Optional: which kind of work this row belongs to, from the
   // workspace's service-type list. Only shown once "Split by service
   // type" is turned on, so a one-trade business never sees it.
-  serviceType    String?
-  position       Int         @default(0)
+  serviceType        String?
+  position           Int            @default(0)
   // Set from the deal tracker when a row is taken off the table without
   // deleting it from the quote: it stays on the quote, priced, but can
   // no longer be put on a contract. Cleared by "Restore".
-  cancelledAt    DateTime?
+  cancelledAt        DateTime?
 
   contractLines ContractLineItem[]
 
@@ -850,88 +854,88 @@ enum PaymentKind {
 }
 
 model Contract {
-  id               String            @id @default(cuid())
-  organizationId   String
-  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contactId        String
-  contact          Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  id                String            @id @default(cuid())
+  organizationId    String
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contactId         String
+  contact           Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
   // The business this document is addressed to. Usually the contact's
   // company; a purchase order split off a deal goes to the supplier's
   // company instead, which is why it is stored here and not derived.
-  companyId        String?
-  company          Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyId         String?
+  company           Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
   // Optional: a standalone service agreement has no deal behind it.
-  dealId           String?
-  deal             Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  templateId       String?
-  template         ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  dealId            String?
+  deal              Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  templateId        String?
+  template          ContractTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   // The quote whose numbers filled the merge fields, when the deal had one.
-  quoteId          String?
-  quote            Quote?            @relation(fields: [quoteId], references: [id], onDelete: SetNull)
-  number           Int
-  title            String
-  type             String            @default("Custom")
+  quoteId           String?
+  quote             Quote?            @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  number            Int
+  title             String
+  type              String            @default("Custom")
   // Merge fields are resolved when the contract is created, so the
   // signed copy is a frozen snapshot of what the customer agreed to.
-  body             String
-  status           ContractStatus    @default(DRAFT)
+  body              String
+  status            ContractStatus    @default(DRAFT)
   // Which way the money goes. false = they owe us (a Sales Order, Service
   // Agreement, Change Order or Invoice: "Money in"); true = we owe them (a
   // Purchase Order to a supplier: "Money out"). Defaults from the
   // template's type, and the user can flip it. Only Money-in contracts
   // count as money owed to the business, and only their signature wins a
   // deal — a supplier signing a PO is not the customer saying yes.
-  payable          Boolean           @default(false)
+  payable           Boolean           @default(false)
   // The awarded job this paperwork belongs to: the signed agreement that
   // created it, and every purchase order and change order since.
-  projectId        String?
-  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectId         String?
+  project           Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
   // A change order says which agreement it changes. Shown on both, so
   // neither reads as a stray document; the budget math works off the
   // rows, not this link.
-  amendsContractId String?
-  amends           Contract?         @relation("Amends", fields: [amendsContractId], references: [id], onDelete: SetNull)
-  amendedBy        Contract[]        @relation("Amends")
-  publicToken      String            @unique
-  sentAt           DateTime?
-  signedAt         DateTime?
-  signerName       String?
-  signerEmail      String?
+  amendsContractId  String?
+  amends            Contract?         @relation("Amends", fields: [amendsContractId], references: [id], onDelete: SetNull)
+  amendedBy         Contract[]        @relation("Amends")
+  publicToken       String            @unique
+  sentAt            DateTime?
+  signedAt          DateTime?
+  signerName        String?
+  signerEmail       String?
   // "Mark signed": the customer signed a paper copy, or said yes some
   // other way, and the user recorded it by hand instead of through the
   // signing link. The note is their own words ("signed on site").
-  signedOffline    Boolean           @default(false)
-  signedNote       String?
-  declinedAt       DateTime?
-  cancelledAt      DateTime?
+  signedOffline     Boolean           @default(false)
+  signedNote        String?
+  declinedAt        DateTime?
+  cancelledAt       DateTime?
   // "Your Company Signer": who signs for the workspace. Prefilled with the
   // owner's name on the deal tracker; printed under the provider's
   // signature line.
-  senderSignerName String?
+  senderSignerName  String?
   // "Net 30", "Due on receipt"... free text so a workspace can write its
   // own. The dated rows live in `payments`.
-  paymentTerms     String?
+  paymentTerms      String?
   // Money off the whole contract, after the rows' own discounts. In
   // cents, already worked out; the percent it was typed as is kept so the
   // screens can show it back. The contract total is the rows less this.
-  discountCents    Int               @default(0)
-  discountPercent  Float?
+  discountCents     Int               @default(0)
+  discountPercent   Float?
   // Set when this contract's payment rows were seeded from its quote's
   // table rather than from a preset, and when someone first changed them
   // afterwards. Together they are what puts "Amended from original quote"
   // on the schedule, so the difference from what the customer was quoted
   // is visible rather than silent.
-  scheduleFromQuote Boolean          @default(false)
+  scheduleFromQuote Boolean           @default(false)
   scheduleAmendedAt DateTime?
   // Reminders are copied out by hand today (no email is sent). Counting
   // them is what lets the tracker say "reminded twice, last on Sep 12".
-  reminderCount    Int               @default(0)
-  lastReminderAt   DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  reminderCount     Int               @default(0)
+  lastReminderAt    DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
-  lineItems ContractLineItem[]
-  payments  ContractPayment[]
+  lineItems      ContractLineItem[]
+  payments       ContractPayment[]
   // Contract sent / Contract follow up / Contract closed, written by the app.
   calendarEvents CalendarEvent[]
 
@@ -1271,9 +1275,9 @@ enum UploadKind {
 // `publicToken` is the file's address under /files/, so a logo's URL is
 // unguessable and changes every time the logo is replaced.
 model Upload {
-  id             String       @id @default(cuid())
+  id             String            @id @default(cuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   kind           UploadKind
   // "W-9", "COI", "License" on a compliance file; free on marketing.
   category       String?
@@ -1281,27 +1285,78 @@ model Upload {
   fileName       String
   mimeType       String
   sizeBytes      Int
-  data           Bytes
-  publicToken    String       @unique
+  // The bytes, for files kept in Postgres. Null for a photo or video kept
+  // in object storage, which is found by storageKey instead.
+  data           Bytes?
+  // Where a big file lives outside the database (Oct 17, 2026): the path
+  // inside the store, and which store ("vercel-blob", or "local" on a
+  // laptop). Google Drive and OneDrive are meant to slot in as more.
+  storageKey     String?
+  storageDriver  String?
+  // Who sent it through a crew photo link: the name they typed, and the
+  // link, so turning a link off doesn't lose where its photos came from.
+  uploadedByName String?
+  photoLinkId    String?
+  photoLink      ProjectPhotoLink? @relation(fields: [photoLinkId], references: [id], onDelete: SetNull)
+  // Who sent it from inside the app.
+  uploadedById   String?
+  uploadedBy     User?             @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  publicToken    String            @unique
   // When a COI or license runs out, so the compliance tile can flag it.
-  expiresOn      DateTime?    @db.Date
+  expiresOn      DateTime?         @db.Date
   // Which record an image belongs to; null for workspace-level files.
   userId         String?
-  user           User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
   companyId      String?
-  company        Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company        Company?          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   contactId      String?
-  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact        Contact?          @relation(fields: [contactId], references: [id], onDelete: Cascade)
   projectId      String?
-  project        Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  project        Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   @@index([organizationId, kind])
   @@index([projectId])
+  @@index([photoLinkId])
   @@index([userId])
   @@index([companyId])
   @@index([contactId])
+}
+
+// A link that opens one job's photos without a login (Oct 17, 2026).
+// CREW: the installer's link — they can send photos and videos and see
+// nothing. One per job; turning it off and making a new one swaps the
+// token. VIEW: a look-only gallery handed to anyone, inside the company
+// or out, named for who has it so it can be turned off one at a time.
+enum PhotoLinkKind {
+  CREW
+  VIEW
+}
+
+model ProjectPhotoLink {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind           PhotoLinkKind
+  token          String        @unique
+  // Who holds a VIEW link: a company in the CRM, or a name typed in.
+  label          String
+  companyId      String?
+  company        Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  // Turned off, not deleted, so the list shows who used to have access.
+  active         Boolean       @default(true)
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  createdById    String?
+  createdBy      User?         @relation("PhotoLinkCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  uploads        Upload[]
+
+  @@index([projectId, kind])
+  @@index([organizationId])
 }
 
 // ------------------------------------------------------------------
@@ -1340,54 +1395,54 @@ enum ProjectStage {
 // signs (or when the user records a signature by hand), already carrying
 // the budget the signed contract set.
 model Project {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  number         Int
-  name           String
-  stage          ProjectStage @default(AWARDED)
+  id                  String       @id @default(cuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  number              Int
+  name                String
+  stage               ProjectStage @default(AWARDED)
   // The deal it came from. One project per deal; null once the deal is
   // deleted, which is why the customer's name is copied below.
-  dealId         String?      @unique
-  deal           Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  companyId      String?
-  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  contactId      String?
-  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  dealId              String?      @unique
+  deal                Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  companyId           String?
+  company             Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contactId           String?
+  contact             Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   // "Harbor Property Group · Dana Ruiz" — kept as text so the row still
   // reads after a company or contact is deleted.
-  customerName   String
+  customerName        String
   // The building the work is at, when several jobs share one. A job has at
   // most one property, which is what keeps a property's roll-up from
   // counting the same money twice.
-  propertyId     String?
-  property       Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  propertyId          String?
+  property            Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
   // Where the work happens, which is often not the customer's office. One
   // free line; nothing else in the app stores a job-site address.
-  siteAddress    String?
-  awardedAt      DateTime
+  siteAddress         String?
+  awardedAt           DateTime
   // True when the award came from "Mark signed" or "Award without
   // paperwork" rather than the customer signing the link.
-  awardedOffline Boolean      @default(false)
+  awardedOffline      Boolean      @default(false)
   // The first dated day of work, which is what flips the stage to ACTIVE.
-  startOn        DateTime?    @db.Date
-  closedAt       DateTime?
-  closeOutNote   String?
+  startOn             DateTime?    @db.Date
+  closedAt            DateTime?
+  closeOutNote        String?
   // The bar's four numbers, kept on the row so the list and the roll-ups
   // read them without adding every line item up again. Recomputed from
   // scratch by refreshProjectTotals after anything that moves money, and
   // by `npm run recompute-projects` if they are ever doubted.
-  awardedCents     Int        @default(0)
-  spentCents       Int        @default(0)
-  committedCents   Int        @default(0)
-  receivedCents    Int        @default(0)
-  billedCents      Int        @default(0)
-  plannedCostCents Int        @default(0)
+  awardedCents        Int          @default(0)
+  spentCents          Int          @default(0)
+  committedCents      Int          @default(0)
+  receivedCents       Int          @default(0)
+  billedCents         Int          @default(0)
+  plannedCostCents    Int          @default(0)
   // The crew-time part of spent and committed, summed from its scopes.
-  laborSpentCents     Int     @default(0)
-  laborCommittedCents Int     @default(0)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  laborSpentCents     Int          @default(0)
+  laborCommittedCents Int          @default(0)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
   scopes      ProjectScope[]
   contracts   Contract[]
@@ -1397,6 +1452,7 @@ model Project {
   tasks       ProjectTask[]
   notes       Note[]
   activities  Activity[]
+  photoLinks  ProjectPhotoLink[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])
@@ -1413,34 +1469,34 @@ model Project {
 // holds anything untagged; when it is the only one the page shows a
 // single bar and never mentions scopes at all.
 model ProjectScope {
-  id          String   @id @default(cuid())
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name        String
+  id                  String  @id @default(cuid())
+  projectId           String
+  project             Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name                String
   // The service type this scope covers, by name; null on the default one.
-  serviceType String?
+  serviceType         String?
   // The scope of work in the owner's own words.
-  description String   @default("")
+  description         String  @default("")
   // Who is doing it. The crew picked from the workspace's own list, or a
   // typed name when there is no crew record — the field predates crews and
   // still reads for a one-off sub nobody wants to set up.
-  crewId      String?
-  crew        Crew?    @relation(fields: [crewId], references: [id], onDelete: SetNull)
-  crewLabel   String?
-  isDefault   Boolean  @default(false)
-  position    Int      @default(0)
+  crewId              String?
+  crew                Crew?   @relation(fields: [crewId], references: [id], onDelete: SetNull)
+  crewLabel           String?
+  isDefault           Boolean @default(false)
+  position            Int     @default(0)
   // The same six numbers as the project, for this scope alone. The
   // project's are the sum of its scopes', so the two can never disagree.
-  awardedCents     Int @default(0)
-  spentCents       Int @default(0)
-  committedCents   Int @default(0)
-  receivedCents    Int @default(0)
-  billedCents      Int @default(0)
-  plannedCostCents Int @default(0)
+  awardedCents        Int     @default(0)
+  spentCents          Int     @default(0)
+  committedCents      Int     @default(0)
+  receivedCents       Int     @default(0)
+  billedCents         Int     @default(0)
+  plannedCostCents    Int     @default(0)
   // The part of spent and committed that is crew time rather than
   // materials, so the bar can be explained without adding hours up again.
-  laborSpentCents     Int @default(0)
-  laborCommittedCents Int @default(0)
+  laborSpentCents     Int     @default(0)
+  laborCommittedCents Int     @default(0)
 
   awards      ScopeAward[]
   lineItems   ContractLineItem[]
@@ -1497,30 +1553,30 @@ enum CrewKind {
 // "Ridgeline Roofing" as a subcontractor. Built once, assigned to scopes
 // of work on any number of jobs.
 model Crew {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String
-  kind           CrewKind     @default(OWN)
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  kind            CrewKind     @default(OWN)
   // The company that bills you, on a subcontractor crew. Their record in
   // the CRM, so what is owed to them reads on one page.
-  companyId      String?
-  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyId       String?
+  company         Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
   // Who you call: their foreman or coordinator.
-  contactId      String?
-  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactId       String?
+  contact         Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   // What they do, by service-type name, so a scope suggests the right crew.
-  serviceTypes   String[]     @default([])
+  serviceTypes    String[]     @default([])
   // What they cost. Either rate, or both: a crew quoted by the day still
   // gets called out for four hours sometimes.
   hourlyRateCents Int?
   dailyRateCents  Int?
-  phone          String?
-  email          String?
-  notes          String       @default("")
-  active         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  phone           String?
+  email           String?
+  notes           String       @default("")
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   workers     Worker[]
   timeEntries TimeEntry[]
@@ -1535,22 +1591,22 @@ model Crew {
 // One person on a crew. Their own rate when they have one, else the
 // crew's. Not a login — nobody here can sign in.
 model Worker {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  crewId         String?
-  crew           Crew?        @relation(fields: [crewId], references: [id], onDelete: SetNull)
-  name           String
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  crewId          String?
+  crew            Crew?        @relation(fields: [crewId], references: [id], onDelete: SetNull)
+  name            String
   // "Journeyman electrician", "Apprentice", "Foreman" — their trade in
   // their own words, not a pick list.
-  role           String?
+  role            String?
   hourlyRateCents Int?
   dailyRateCents  Int?
-  phone          String?
-  email          String?
-  active         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  phone           String?
+  email           String?
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   timeEntries TimeEntry[]
 
@@ -1563,38 +1619,38 @@ model Worker {
 // the row when it is logged, so raising a crew's rate never rewrites what
 // last month cost.
 model TimeEntry {
-  id             String        @id @default(cuid())
-  organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  projectId      String
-  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id              String        @id @default(cuid())
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId       String
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // Which scope of work it was against. Null lands it on the whole job.
-  scopeId        String?
-  scope          ProjectScope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
-  crewId         String?
-  crew           Crew?         @relation(fields: [crewId], references: [id], onDelete: SetNull)
-  workerId       String?
-  worker         Worker?       @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  scopeId         String?
+  scope           ProjectScope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  crewId          String?
+  crew            Crew?         @relation(fields: [crewId], references: [id], onDelete: SetNull)
+  workerId        String?
+  worker          Worker?       @relation(fields: [workerId], references: [id], onDelete: SetNull)
   // Who it was, as text, so the row still reads after a crew or worker is
   // deleted.
-  workerName     String
-  workedOn       DateTime      @db.Date
-  hours          Float         @default(0)
-  days           Float         @default(0)
-  hourlyRateCents Int          @default(0)
-  dailyRateCents  Int          @default(0)
+  workerName      String
+  workedOn        DateTime      @db.Date
+  hours           Float         @default(0)
+  days            Float         @default(0)
+  hourlyRateCents Int           @default(0)
+  dailyRateCents  Int           @default(0)
   // hours × hourly + days × daily, rounded once and stored, so a total is
   // a sum and never a recomputation.
-  amountCents    Int           @default(0)
+  amountCents     Int           @default(0)
   // False for a subcontractor's hours, whose money arrives as their
   // purchase order instead. Tracked either way; only ever counted once.
-  countsAsCost   Boolean       @default(true)
+  countsAsCost    Boolean       @default(true)
   // The day it was paid out. Set one row at a time, or in bulk by
   // "Mark paid through". Unpaid time is Committed; paid time is Spent.
-  paidOn         DateTime?     @db.Date
-  note           String        @default("")
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  paidOn          DateTime?     @db.Date
+  note            String        @default("")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@index([organizationId, workedOn])
   @@index([projectId, workedOn])
@@ -1784,26 +1840,26 @@ enum EmailSendStatus {
 // (PENDING and SENT, never FAILED), and the unsubscribe link at the foot
 // of the message carries this row's token.
 model EmailSend {
-  id               String          @id @default(cuid())
+  id               String             @id @default(cuid())
   organizationId   String
-  organization     Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   // SetNull on both: a removed contact or user must not take the count of
   // what was sent today down with it.
   userId           String?
-  user             User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user             User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   contactId        String?
-  contact          Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contact          Contact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
   templateId       String?
   template         MarketingTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   toEmail          String
   subject          String
   // File names only, for the record; the files themselves stay in Upload.
   attachmentNames  String[]
-  status           EmailSendStatus @default(PENDING)
+  status           EmailSendStatus    @default(PENDING)
   error            String?
   providerId       String?
-  unsubscribeToken String          @unique
-  createdAt        DateTime        @default(now())
+  unsubscribeToken String             @unique
+  createdAt        DateTime           @default(now())
 
   @@index([organizationId, userId, createdAt])
   @@index([contactId])

@@ -241,7 +241,13 @@ person, the business address and an unsubscribe link at the foot, every
 send logged on the contact's Activity; **40 emails per user per day** in
 the workspace's time zone, with a counter in the window and on Company
 Users; unsubscribes at `/u/<token>` mark every contact with that address),
-company logos and contact photos, and an operator console at `/admin` where signups
+company logos and contact photos, **job photos and videos** (Oct 17,
+2026: the top of a job's Files tab, grouped Site walk / Finished install /
+Photo; a **crew photo link** per job that an installer opens on a phone
+with no login and can only send through; **Shared with** look-only
+gallery links for anyone in or outside the company, owners and admins
+only, each turned off on its own; files in Vercel Blob, see `DEPLOY.md`),
+and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
 **Users vs Company (Sept 30, 2026).** The sidebar is Overview, Calendar,
@@ -340,11 +346,30 @@ are all blocking before the first paying customer.
 - **"Link Distributor / Partner" is Coming Soon.** Public and
   Invite/Approve ratesheets are stored with their visibility but nobody in
   another workspace can search for them yet; every send today is a link.
-- **Uploaded files live in Postgres** — ratesheets, compliance and
-  marketing documents (4 MB cap), logos and photos (2 MB). Fine at this
-  scale; object storage is the real answer when files get bigger. Logo and
-  photo links (`/files/<token>`) are public by design so they render on the
-  customer's copy of a document; documents need a login.
+- **Uploaded files live in Postgres, except job photos and videos** —
+  ratesheets, compliance and marketing documents (4 MB cap), logos and
+  photos (2 MB) are in the database. Logo and photo links
+  (`/files/<token>`) are public by design so they render on the
+  customer's copy of a document; documents need a login. Job photos and
+  videos (Oct 17, 2026) are in Vercel Blob, private, up to 1 GB.
+- **Job photos are in Vercel Blob only, not the customer's Google or
+  Microsoft account yet.** Taylor wants OAuth to Google Drive and
+  OneDrive per customer next; `src/lib/storage.ts` is the one place a
+  new driver goes (tickets, stat, delete, a short-lived view address).
+- **The Vercel Blob path could not be tested from a session.** The
+  browser suite runs the identical flow against the local driver; Blob
+  itself (client upload, `head`, presigned private reads, the streaming
+  fallback) is first exercised on the live site. Check the runtime logs
+  for `[storage]` after the first real upload.
+- **Deleting a workspace or a job leaves its photos in Blob.** The rows
+  cascade away; the files don't. Deleting one photo does remove it.
+  A sweep by the `org/<id>/` prefix is the fix when it matters.
+- **A crew link has no upload limit.** Anyone holding it can send photos
+  and videos (1 GB each) to that job until it is turned off or replaced.
+  Fine for a link texted to installers; a per-link daily cap is the fix if
+  one leaks.
+- **A shared gallery is named, not tied to a CRM company.** "Who is it
+  for" is free text; it does not show on that company's page.
 - **"Receive in-app messages" is a stored switch only.** There is no
   in-app messaging yet.
 - **No billing.** Nothing charges anybody.
@@ -469,7 +494,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-five** are checked in at
+suite, and the delete-confirmation suite. **Twenty-six** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -507,7 +532,12 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
-Contacts and claiming, the Notes split). **A suite that logs on a
+Contacts and claiming, the Notes split), and from Oct 17, 2026
+`job-photos.cjs` (24: the photo uploader, the crew link on a phone, the
+shared gallery and what it can and can't open, turning links off, a
+paused workspace, Members, deletes, forged tickets). **It needs
+`STORAGE_DRIVER=local` in `.env`** (and no `BLOB_READ_WRITE_TOKEN`), or
+every upload is refused as "Photo storage isn't switched on". **A suite that logs on a
 company page with nobody ticked must tick `company-bypass-tick` first**
 or the log is refused. A suite that
 seeds and sends paperwork now gets calendar entries written for it, so
