@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { Card, CardHeader, EmptyState, StatusBadge, Badge } from "@/components/ui";
-import { IconLayers, IconPower, IconDownload, IconFilter, IconUpload, IconPlus } from "@/components/icons";
+import { IconLayers, IconPower, IconDownload, IconFilter, IconUpload, IconPlus, IconX, IconFileText } from "@/components/icons";
 import { DeleteButton } from "@/components/delete-button";
 import { CopyLink } from "@/components/copy-link";
 import { RATESHEET_VISIBILITY_LABELS, type RatesheetVisibilityValue } from "@/lib/constants";
 import type { InviteState, RatesheetState } from "@/lib/ratesheets";
 import { toggleRatesheetActive, deleteRatesheet, deleteLinkedRatesheet } from "./actions";
+import { ImportRatesheet, type RatesheetSupplier } from "../import-ratesheet";
 
 export type BoardSheet = {
   id: string;
@@ -42,6 +44,13 @@ export type BoardFile = {
   size: string;
   uploadedAt: string;
   highlighted: boolean;
+  // Set once it has been through Import Ratesheet.
+  supplierId: string | null;
+  supplierName: string | null;
+  effectiveOn: string | null;
+  importSummary: string | null;
+  // A CSV or Excel file the importer can read.
+  importable: boolean;
 };
 
 const VISIBILITY_COLORS: Record<string, string> = {
@@ -56,16 +65,20 @@ const VISIBILITY_COLORS: Record<string, string> = {
 // the tiles come first so the filtered list lands right under the tap.
 export function RatesheetsBoard({
   organizationName,
+  suppliers,
   sheets,
   invites,
   files,
 }: {
   organizationName: string;
+  suppliers: RatesheetSupplier[];
   sheets: BoardSheet[];
   invites: BoardInvite[];
   files: BoardFile[];
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // A saved file opened in Import Ratesheet.
+  const [importing, setImporting] = useState<BoardFile | null>(null);
   const selected = sheets.find((sheet) => sheet.id === selectedId) ?? null;
   const visibleInvites = selected
     ? invites.filter((invite) => invite.ratesheetId === selected.id)
@@ -183,8 +196,26 @@ export function RatesheetsBoard({
                     <p className="faint truncate text-xs">
                       {file.fileName} · {file.size} · uploaded {file.uploadedAt}
                     </p>
+                    {(file.supplierName || file.importSummary) && (
+                      <p className="faint truncate text-xs" data-testid="linked-file-import">
+                        {[file.supplierName, file.effectiveOn && `effective ${file.effectiveOn}`, file.importSummary]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {file.importable && (
+                      <button
+                        type="button"
+                        onClick={() => setImporting(file)}
+                        className="btn btn-ghost btn-sm"
+                        title="Bring these prices into your catalog"
+                      >
+                        <IconFileText size={12} />
+                        Import prices
+                      </button>
+                    )}
                     <a
                       href={`/dashboard/products/ratesheets/files/${file.id}`}
                       className="btn btn-ghost btn-sm"
@@ -348,6 +379,48 @@ export function RatesheetsBoard({
           )}
         </Card>
       </div>
+
+      {/* On document.body, so the scrim and the dialog are placed against the
+          screen, not against whatever page section the button sits in. */}
+      {importing &&
+        createPortal(
+          <div
+            className="modal-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setImporting(null);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="import-saved-title"
+              className="card card-lit popover max-h-[92vh] w-full max-w-4xl overflow-y-auto p-5"
+            >
+              <div className="sticky -top-5 z-10 -mx-5 -mt-5 flex items-start justify-between gap-3 bg-[var(--overlay)] px-5 pb-2 pt-5">
+                <div>
+                  <p className="eyebrow mb-1">Import prices</p>
+                  <h2 id="import-saved-title" className="text-base font-semibold">
+                    {importing.name}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setImporting(null)}
+                  aria-label="Close"
+                  className="btn btn-ghost btn-sm !px-1.5"
+                >
+                  <IconX size={14} />
+                </button>
+              </div>
+              <ImportRatesheet
+                suppliers={suppliers}
+                savedFile={{ id: importing.id, fileName: importing.fileName, distributorId: importing.supplierId }}
+                onDone={() => setImporting(null)}
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

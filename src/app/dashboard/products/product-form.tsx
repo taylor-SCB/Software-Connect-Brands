@@ -26,6 +26,7 @@ import {
   type SoftwareRateValue,
 } from "@/lib/constants";
 import { centsToDollarInput, dollarsToCents, formatCents } from "@/lib/format";
+import { marginPercent, markupPercent, percentToBasisPoints, priceFromRule } from "@/lib/price-list";
 import { IconPlus, IconTrash, IconMail, IconPhone, IconEdit, IconCheck } from "@/components/icons";
 import type { ActionState } from "@/lib/forms";
 
@@ -45,6 +46,7 @@ export type ProductFormDefaults = {
   sku?: string | null;
   unitPriceCents?: number;
   costCents?: number;
+  listPriceCents?: number | null;
   defaultTag?: string;
   serviceType?: string | null;
   unitOfMeasure?: string | null;
@@ -119,6 +121,66 @@ export function ProductForm({
   const [unitPrice, setUnitPrice] = useState(
     defaults?.unitPriceCents !== undefined ? centsToDollarInput(defaults.unitPriceCents) : "",
   );
+
+  // COGS, markup, margin and price are one thing seen four ways. Type the
+  // price and the two percentages follow; type a percentage and the price
+  // follows, and keeps following when the cost changes — until the price
+  // is typed again. The percentages are never stored, only worked out.
+  const [cost, setCost] = useState(
+    defaults?.costCents !== undefined ? centsToDollarInput(defaults.costCents) : "",
+  );
+  const [anchor, setAnchor] = useState<"price" | "markup" | "margin">("price");
+  const roundPct = (value: number | null) => (value === null ? "" : String(Math.round(value * 100) / 100));
+  const [markupText, setMarkupText] = useState(() =>
+    defaults?.costCents && defaults.unitPriceCents ? roundPct(markupPercent(defaults.costCents, defaults.unitPriceCents)) : "",
+  );
+  const [marginText, setMarginText] = useState(() =>
+    defaults?.costCents && defaults.unitPriceCents ? roundPct(marginPercent(defaults.costCents, defaults.unitPriceCents)) : "",
+  );
+
+  function followFrom(costCents: number, priceCents: number) {
+    setMarkupText(costCents > 0 && priceCents > 0 ? roundPct(markupPercent(costCents, priceCents)) : "");
+    setMarginText(costCents > 0 && priceCents > 0 ? roundPct(marginPercent(costCents, priceCents)) : "");
+  }
+
+  function priceFrom(kind: "MARKUP" | "MARGIN", percent: string, costCents: number) {
+    const bp = percentToBasisPoints(percent);
+    if (bp === null || costCents <= 0 || (kind === "MARGIN" && bp >= 10_000)) return null;
+    return priceFromRule(kind, bp, costCents, null);
+  }
+
+  function changeCost(value: string) {
+    setCost(value);
+    const costCents = dollarsToCents(value);
+    if (anchor !== "price") {
+      const next = priceFrom(anchor === "markup" ? "MARKUP" : "MARGIN", anchor === "markup" ? markupText : marginText, costCents);
+      if (next !== null) {
+        setUnitPrice(centsToDollarInput(next));
+        if (anchor === "markup") setMarginText(roundPct(marginPercent(costCents, next)));
+        else setMarkupText(roundPct(markupPercent(costCents, next)));
+        return;
+      }
+    }
+    followFrom(costCents, dollarsToCents(unitPrice));
+  }
+
+  function changePercent(kind: "markup" | "margin", value: string) {
+    setAnchor(kind);
+    if (kind === "markup") setMarkupText(value);
+    else setMarginText(value);
+    const costCents = dollarsToCents(cost);
+    const next = priceFrom(kind === "markup" ? "MARKUP" : "MARGIN", value, costCents);
+    if (next === null) return;
+    setUnitPrice(centsToDollarInput(next));
+    if (kind === "markup") setMarginText(roundPct(marginPercent(costCents, next)));
+    else setMarkupText(roundPct(markupPercent(costCents, next)));
+  }
+
+  function changePrice(value: string) {
+    setUnitPrice(value);
+    setAnchor("price");
+    followFrom(dollarsToCents(cost), dollarsToCents(value));
+  }
 
   const [distributorId, setDistributorId] = useState(defaults?.distributorId ?? "");
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(
@@ -328,17 +390,51 @@ export function ProductForm({
               </div>
 
               {/* Row 3 */}
-              <Field
-                label="COGS ($)"
-                name="cost"
-                type="number"
-                step="0.01"
-                placeholder="80.00"
-                defaultValue={
-                  defaults?.costCents !== undefined ? centsToDollarInput(defaults.costCents) : ""
-                }
-                hint="What it costs you. Never shown to customers."
-              />
+              <div>
+                <label className="label" htmlFor="cost">
+                  COGS ($)
+                </label>
+                <input
+                  id="cost"
+                  name="cost"
+                  type="number"
+                  step="0.01"
+                  placeholder="80.00"
+                  value={cost}
+                  onChange={(event) => changeCost(event.target.value)}
+                  className="input"
+                />
+                <p className="faint mt-1 text-xs">What it costs you. Never shown to customers.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="label" htmlFor="markupPercent">
+                    Markup %
+                  </label>
+                  <input
+                    id="markupPercent"
+                    inputMode="decimal"
+                    placeholder="35"
+                    value={markupText}
+                    onChange={(event) => changePercent("markup", event.target.value)}
+                    className="input"
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="marginPercent">
+                    Margin %
+                  </label>
+                  <input
+                    id="marginPercent"
+                    inputMode="decimal"
+                    placeholder="26"
+                    value={marginText}
+                    onChange={(event) => changePercent("margin", event.target.value)}
+                    className="input"
+                  />
+                </div>
+                <p className="faint col-span-2 text-xs">Type either one and the unit price follows.</p>
+              </div>
               <div>
                 <label className="label" htmlFor="unitPrice">
                   Unit price ($)<span className="faint font-normal"> · optional</span>
@@ -350,11 +446,24 @@ export function ProductForm({
                   step="0.01"
                   placeholder="125.00"
                   value={unitPrice}
-                  onChange={(event) => setUnitPrice(event.target.value)}
+                  onChange={(event) => changePrice(event.target.value)}
                   className="input"
                 />
                 <p className="faint mt-1 text-xs">Used as the default value on quote line items.</p>
               </div>
+              <Field
+                label="MSRP ($)"
+                name="listPrice"
+                type="number"
+                step="0.01"
+                placeholder="189.99"
+                defaultValue={
+                  defaults?.listPriceCents !== undefined && defaults.listPriceCents !== null
+                    ? centsToDollarInput(defaults.listPriceCents)
+                    : ""
+                }
+                hint="The supplier's suggested price, from their ratesheet. Internal only."
+              />
               {hasUnits ? (
                 <div>
                   <label className="label" htmlFor="unitOfMeasure">

@@ -462,51 +462,50 @@ async function login(page) {
   await pendingPartner.goto(secondLink);
   assert.ok((await pendingPartner.locator("body").innerText()).match(/404|not be found/i), "deleted sheet's link should 404");
 
-  log("Link Ratesheet → Import CSV: preview, create, update, skip");
+  log("Link Ratesheet → Import Ratesheet: their price is your cost, MSRP kept, markup sets the price");
   const importCsv = path.join(OUT, "price-list.csv");
   fs.writeFileSync(importCsv, [
-    "Product,Part #,Description,Unit Price,Our Cost,Brand,UOM,Category",
-    '"Copper pipe 3/4in",CU-34,"Type L, hard",4.25,3.10,Mueller,LF,Materials',
-    '"Journeyman labor",LAB-1,,130.00,,,hr,Labor',
-    '"Permit handling",,,150,0,,each,Project Services',
-    ',X-1,no name,1,1,,,',
+    "Product,Part #,Description,Our Cost,MSRP,Brand,UOM,Category",
+    '"Copper pipe 3/4in",CU-34,"Type L, hard",3.10,4.25,Mueller,LF,Materials',
+    '"Journeyman labor",LAB-1,,100.00,,,hr,Labor',
+    '"Permit handling",PERMIT,,150,,,each,Project Services',
     '"Copper pipe 3/4in",CU-34,dup,9,9,,,',
   ].join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/products`);
   await page.getByRole("button", { name: "Link Ratesheet" }).click();
-  await page.getByRole("button", { name: "Import CSV" }).click();
+  await page.getByRole("button", { name: /Import Ratesheet/ }).click();
   const template = await page.request.get(`${BASE}/dashboard/products/import-template`);
   assert.equal(template.status(), 200);
-  assert.match(template.headers()["content-disposition"], /products-template\.csv/);
-  assert.ok((await template.text()).startsWith("Name,SKU,Description,Unit price,COGS,Manufacturer,Unit,Tag"));
-  await page.setInputFiles("#import-file", importCsv);
-  await page.getByTestId("import-summary").waitFor();
-  const importSummary = await page.getByTestId("import-summary").innerText();
-  assert.match(importSummary, /3 products found/);
-  assert.match(importSummary, /1 without a name skipped/);
-  assert.match(importSummary, /1 duplicate skipped/);
-  const matchedText = await page.getByText("Matched:").innerText();
-  for (const expected of ['Name ← "Product"', 'SKU ← "Part #"', 'Unit price ← "Unit Price"', 'COGS ← "Our Cost"', 'Manufacturer ← "Brand"', 'Unit ← "UOM"', 'Tag ← "Category"']) {
+  assert.match(template.headers()["content-disposition"], /ratesheet-example\.csv/);
+  await page.setInputFiles("#ratesheet-import-file", importCsv);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption({ label: "Ferguson" });
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"));
+  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /3 products on the sheet · 3 ticked/);
+  assert.ok(await page.getByText("1 repeated rows skipped").isVisible());
+  const matchedText = await page.getByTestId("ratesheet-columns").innerText();
+  for (const expected of ['Product name ← "Product"', 'SKU / part # ← "Part #"', 'Your cost (COGS) ← "Our Cost"', 'MSRP ← "MSRP"', 'Manufacturer ← "Brand"', 'Unit ← "UOM"', 'Tag ← "Category"']) {
     assert.ok(matchedText.includes(expected), `column mapping should include ${expected}`);
   }
-  assert.ok(await page.getByText("Per LinearFt").isVisible(), "LF recognised as Per LinearFt in the preview");
   assert.ok(await page.getByText("Project Services products carry no unit").isVisible(), "preview explains the ignored unit");
+  // A price typed in the preview wins over the rule.
+  await page.getByTestId("ratesheet-row").filter({ hasText: "Journeyman labor" }).locator("input[inputmode=decimal]").fill("130");
   await shot(page, "15-import-preview");
-  await page.getByRole("button", { name: "Import 3 products" }).click();
-  await page.getByText("Imported: 2 new, 1 updated, 2 skipped.").waitFor();
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByText("Imported 3 products from Ferguson: 2 new, 1 updated (1 cost more).").waitFor();
   await page.getByRole("button", { name: "Done" }).click();
   await page.waitForFunction(() => !document.querySelector("[role=dialog]"));
   const copperRow = page.locator("tr", { hasText: "Copper pipe 3/4in" });
   await copperRow.waitFor();
   assert.ok(await copperRow.getByText("Mueller").isVisible());
   assert.ok(await copperRow.getByText("Per LinearFt").isVisible());
-  assert.ok(await copperRow.getByText("$4.25").isVisible());
-  const imported = await sql(`SELECT name, sku, "unitPriceCents", "costCents", "unitOfMeasure", "defaultTag" FROM "Product" WHERE name IN ('Journeyman labor','Permit handling','Copper pipe 3/4in') ORDER BY name`);
+  assert.ok(await copperRow.getByText("$4.03").isVisible(), "30% markup on the $3.10 cost");
+  const imported = await sql(`SELECT name, sku, "unitPriceCents", "costCents", "listPriceCents", "unitOfMeasure", "defaultTag" FROM "Product" WHERE name IN ('Journeyman labor','Permit handling','Copper pipe 3/4in') ORDER BY name`);
   assert.deepEqual(imported.rows, [
-    { name: "Copper pipe 3/4in", sku: "CU-34", unitPriceCents: 425, costCents: 310, unitOfMeasure: "PER_LINEAR_FT", defaultTag: "MATERIALS" },
-    { name: "Journeyman labor", sku: "LAB-1", unitPriceCents: 13000, costCents: 8050, unitOfMeasure: "PER_HOUR", defaultTag: "LABOR" },
-    { name: "Permit handling", sku: null, unitPriceCents: 15000, costCents: 0, unitOfMeasure: null, defaultTag: "PROJECT_SERVICES" },
-  ], "update kept the blank-cell fields, creates landed, no-unit tag stayed null");
+    { name: "Copper pipe 3/4in", sku: "CU-34", unitPriceCents: 403, costCents: 310, listPriceCents: 425, unitOfMeasure: "PER_LINEAR_FT", defaultTag: "MATERIALS" },
+    { name: "Journeyman labor", sku: "LAB-1", unitPriceCents: 13000, costCents: 10000, listPriceCents: null, unitOfMeasure: "PER_HOUR", defaultTag: "LABOR" },
+    { name: "Permit handling", sku: "PERMIT", unitPriceCents: 19500, costCents: 15000, listPriceCents: null, unitOfMeasure: null, defaultTag: "PROJECT_SERVICES" },
+  ], "the update kept the product's own unit and tag, creates landed, no-unit tag stayed null");
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Manufacturer" WHERE name='Mueller'`)).rows[0].n, 1);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Product" WHERE name='Journeyman labor'`)).rows[0].n, 1, "re-import updated, not duplicated");
 

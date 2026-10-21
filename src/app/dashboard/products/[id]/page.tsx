@@ -54,6 +54,7 @@ export default async function EditProductPage({
           sku: product.sku,
           unitPriceCents: product.unitPriceCents,
           costCents: product.costCents,
+          listPriceCents: product.listPriceCents,
           defaultTag: product.defaultTag,
           unitOfMeasure: product.unitOfMeasure,
           softwareRate: product.softwareRate,

@@ -32,11 +32,11 @@ function databaseUrl() {
 function createPrismaClient() {
   return new PrismaClient({
     adapter: new PrismaPg({ connectionString: databaseUrl() }),
-    // Uploaded files (ratesheets, logos, W-9s) live in Bytes columns. Prisma returns every
+    // Uploaded files (ratesheets, declined ratesheet imports, logos, W-9s) live in Bytes columns. Prisma returns every
     // scalar by default, which would pull each upload's whole file through
     // the server just to list its name. Opt out globally; the download
     // route selects `data` explicitly.
-    omit: { linkedRatesheet: { data: true }, upload: { data: true } },
+    omit: { linkedRatesheet: { data: true }, upload: { data: true }, ratesheetImportIssue: { data: true } },
   });
 }
 
