@@ -38,6 +38,9 @@ const RATESHEETS_PATH = "/dashboard/products/ratesheets";
 // few dozen round trips on the live database, and nothing runs inside
 // one long transaction (the Sept 27, 2026 lesson).
 const CHUNK = 250;
+// The most rows a sheet can bring (the planner reads up to 25,000), with
+// room to spare: what the screen may post as ticked or typed.
+const MAX_POSTED_ROWS = 30_000;
 
 const tabsSchema = z
   .array(
@@ -93,27 +96,29 @@ type CatalogRow = {
   distributorId: string | null;
   distributorName: string | null;
   active: boolean;
+  createdAt: Date;
 };
 
-// Only the products a sheet could match — by part number or by name —
-// plus everything already bought from this supplier (for "not on this
-// list anymore"), rather than the whole catalog. The keys are built the
-// same way skuKey() and the planner's name key build theirs.
-async function loadCatalogFor(
-  organizationId: string,
-  supplierId: string | null,
-  skus: string[],
-  names: string[],
-): Promise<CatalogItem[]> {
-  const skuKeys = [...new Set(skus.map(skuKey).filter(Boolean))].slice(0, 6000);
-  const nameKeys = [...new Set(names.map((name) => name.trim().toLowerCase().replace(/\s+/g, " ")))].slice(0, 6000);
-  const rows = await prisma.$queryRaw<CatalogRow[]>`
+// The keys are built the same way skuKey() and the planner's name key
+// build theirs: case, spaces, dashes and underscores ignored, leading
+// zeros dropped from an all-digit part number.
+function catalogKeys(skus: string[], names: string[]) {
+  return {
+    skuKeys: [...new Set(skus.map(skuKey).filter(Boolean))],
+    nameKeys: [...new Set(names.map((name) => name.trim().toLowerCase().replace(/\s+/g, " ")).filter(Boolean))],
+  };
+}
+
+// Products a sheet's part numbers or names could match.
+async function catalogByKeys(organizationId: string, skuKeys: string[], nameKeys: string[]) {
+  if (skuKeys.length === 0 && nameKeys.length === 0) return [];
+  return prisma.$queryRaw<CatalogRow[]>`
     SELECT p."id", p."name", p."sku", p."costCents", p."unitPriceCents", p."listPriceCents",
-           p."distributorId", d."name" AS "distributorName", p."active"
+           p."distributorId", d."name" AS "distributorName", p."active", p."createdAt"
       FROM "Product" p
       LEFT JOIN "Distributor" d ON d."id" = p."distributorId"
       CROSS JOIN LATERAL (
-        SELECT regexp_replace(lower(btrim(coalesce(p."sku", ''))), '[[:space:]./_-]+', '', 'g') AS k
+        SELECT regexp_replace(lower(btrim(coalesce(p."sku", ''))), '[[:space:]_-]+', '', 'g') AS k
       ) raw
      WHERE p."organizationId" = ${organizationId}
        AND (
@@ -121,29 +126,128 @@ async function loadCatalogFor(
            (CASE WHEN raw.k ~ '^[0-9]+$' THEN regexp_replace(raw.k, '^0+([0-9])', '\\1') ELSE raw.k END)
              = ANY(${skuKeys}::text[]))
          OR lower(regexp_replace(btrim(p."name"), '\\s+', ' ', 'g')) = ANY(${nameKeys}::text[])
-         OR (${supplierId}::text IS NOT NULL AND p."distributorId" = ${supplierId}::text)
-       )
-     ORDER BY p."createdAt" ASC
-     LIMIT 20000`;
-  return rows;
+       )`;
 }
 
-export async function loadRatesheetCatalog(input: unknown): Promise<CatalogItem[]> {
-  const { organizationId } = await requireSession();
-  const parsed = z
-    .object({
-      supplierId: z.string().trim().max(60).nullable(),
-      skus: z.array(z.string().max(80)).max(6000),
-      names: z.array(z.string().max(200)).max(6000),
-    })
-    .safeParse(input);
-  if (!parsed.success) return [];
-  let supplierId = parsed.data.supplierId;
+// Everything already bought from this supplier, a page at a time (for
+// "not on this sheet anymore" and for its own products winning a tie).
+async function catalogBySupplier(organizationId: string, supplierId: string, after: string | null, take: number) {
+  return prisma.$queryRaw<CatalogRow[]>`
+    SELECT p."id", p."name", p."sku", p."costCents", p."unitPriceCents", p."listPriceCents",
+           p."distributorId", d."name" AS "distributorName", p."active", p."createdAt"
+      FROM "Product" p
+      JOIN "Distributor" d ON d."id" = p."distributorId"
+     WHERE p."organizationId" = ${organizationId}
+       AND p."distributorId" = ${supplierId}
+       AND (${after}::text IS NULL OR p."id" > ${after}::text)
+     ORDER BY p."id" ASC
+     LIMIT ${take}`;
+}
+
+// Oldest first, so when two products share a key the planner meets the
+// same one in the preview and on the server.
+function mergeCatalog(rows: CatalogRow[]): CatalogItem[] {
+  const byId = new Map<string, CatalogRow>();
+  for (const row of rows) byId.set(row.id, row);
+  return [...byId.values()]
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      sku: row.sku,
+      costCents: row.costCents,
+      unitPriceCents: row.unitPriceCents,
+      listPriceCents: row.listPriceCents,
+      distributorId: row.distributorId,
+      distributorName: row.distributorName,
+      active: row.active,
+    }));
+}
+
+// The server's own read: every key on the sheet, every product of the
+// supplier, no caps — it never leaves the server.
+async function loadCatalogFor(
+  organizationId: string,
+  supplierId: string | null,
+  skus: string[],
+  names: string[],
+): Promise<CatalogItem[]> {
+  const { skuKeys, nameKeys } = catalogKeys(skus, names);
+  const rows = await catalogByKeys(organizationId, skuKeys, nameKeys);
   if (supplierId) {
-    const owned = await prisma.distributor.findFirst({ where: { id: supplierId, organizationId }, select: { id: true } });
-    if (!owned) supplierId = null;
+    let after: string | null = null;
+    for (;;) {
+      const page = await catalogBySupplier(organizationId, supplierId, after, 10_000);
+      rows.push(...page);
+      if (page.length < 10_000) break;
+      after = page[page.length - 1].id;
+    }
   }
-  return loadCatalogFor(organizationId, supplierId, parsed.data.skus, parsed.data.names);
+  return mergeCatalog(rows);
+}
+
+// The preview's read, in pieces small enough to come back under the
+// hosting's response limit on a 25,000-row sheet: either the products
+// matching a batch of the sheet's keys, or one page of the supplier's own.
+// Each row goes back as a tuple to keep the response small.
+export type CatalogTuple = [
+  id: string,
+  name: string,
+  sku: string | null,
+  costCents: number,
+  unitPriceCents: number,
+  listPriceCents: number | null,
+  distributorId: string | null,
+  active: boolean,
+  createdAtMs: number,
+];
+const CATALOG_BATCH = 5000;
+
+export async function loadRatesheetCatalog(
+  input: unknown,
+): Promise<{ rows: CatalogTuple[]; supplierNames: Record<string, string>; next: string | null }> {
+  const { organizationId } = await requireSession();
+  const empty = { rows: [], supplierNames: {}, next: null };
+  const parsed = z
+    .union([
+      z.object({
+        skus: z.array(z.string().max(80)).max(CATALOG_BATCH),
+        names: z.array(z.string().max(200)).max(CATALOG_BATCH),
+      }),
+      z.object({ supplierId: z.string().trim().min(1).max(60), after: z.string().max(60).nullable() }),
+    ])
+    .safeParse(input);
+  if (!parsed.success) return empty;
+
+  let rows: CatalogRow[];
+  let next: string | null = null;
+  if ("supplierId" in parsed.data) {
+    const supplierId = parsed.data.supplierId;
+    const owned = await prisma.distributor.findFirst({ where: { id: supplierId, organizationId }, select: { id: true } });
+    if (!owned) return empty;
+    rows = await catalogBySupplier(organizationId, supplierId, parsed.data.after, CATALOG_BATCH);
+    if (rows.length === CATALOG_BATCH) next = rows[rows.length - 1].id;
+  } else {
+    const { skuKeys, nameKeys } = catalogKeys(parsed.data.skus, parsed.data.names);
+    rows = await catalogByKeys(organizationId, skuKeys, nameKeys);
+  }
+  const supplierNames: Record<string, string> = {};
+  for (const row of rows) if (row.distributorId && row.distributorName) supplierNames[row.distributorId] = row.distributorName;
+  return {
+    rows: rows.map((row) => [
+      row.id,
+      row.name,
+      row.sku,
+      row.costCents,
+      row.unitPriceCents,
+      row.listPriceCents,
+      row.distributorId,
+      row.active,
+      row.createdAt.getTime(),
+    ]),
+    supplierNames,
+    next,
+  };
 }
 
 // ------------------------------------------------------------------
@@ -158,7 +262,13 @@ type LoadedFile = {
   savedDistributorId: string | null;
 };
 
-async function loadFile(formData: FormData, organizationId: string): Promise<{ ok: true; file: LoadedFile } | { ok: false; error: string }> {
+// For a Decline the file is evidence, not something to read, so any type
+// is taken; one too big to send arrives as its name and size only.
+async function loadFile(
+  formData: FormData,
+  organizationId: string,
+  forDecline = false,
+): Promise<{ ok: true; file: LoadedFile } | { ok: false; error: string }> {
   const savedFileId = text(formData, "savedFileId", 60);
   if (savedFileId) {
     const saved = await prisma.linkedRatesheet.findFirst({
@@ -182,10 +292,18 @@ async function loadFile(formData: FormData, organizationId: string): Promise<{ o
   }
 
   const file = formData.get("file");
+  if (forDecline && !(file instanceof File)) {
+    const name = text(formData, "fileName", 200);
+    if (!name) return { ok: false, error: "Choose the ratesheet file." };
+    return {
+      ok: true,
+      file: { fileName: name, mimeType: "application/octet-stream", bytes: new Uint8Array(0), savedFileId: null, savedDistributorId: null },
+    };
+  }
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose the ratesheet file." };
   if (file.size > MAX_RATESHEET_BYTES) return { ok: false, error: "That file is over 4 MB. Ask the supplier for a smaller export, or split it." };
   const fileName = file.name.trim().slice(0, 200) || "ratesheet";
-  if (!priceListFileKind(fileName)) return { ok: false, error: unsupportedFileMessage(fileName) };
+  if (!forDecline && !priceListFileKind(fileName)) return { ok: false, error: unsupportedFileMessage(fileName) };
   return {
     ok: true,
     file: {
@@ -241,9 +359,10 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
 
   const postedTabs = tabsSchema.safeParse(readJson(formData, "tabs"));
   const pricingParsed = pricingSchema.safeParse(readJson(formData, "pricing"));
-  const selectedParsed = z.array(z.string().max(40)).max(20_000).safeParse(readJson(formData, "selected"));
+  const selectedParsed = z.array(z.string().max(40)).max(MAX_POSTED_ROWS).safeParse(readJson(formData, "selected"));
   const overridesParsed = z
     .record(z.string().max(40), z.number().int().min(0).max(2_000_000_000))
+    .refine((map) => Object.keys(map).length <= MAX_POSTED_ROWS)
     .safeParse(readJson(formData, "overrides") ?? {});
   if (!postedTabs.success || !pricingParsed.success || !selectedParsed.success || !overridesParsed.success) {
     return { ok: false, error: "The import screen sent something the server couldn't read. Close it and try again." };
@@ -256,83 +375,107 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   if (!tabs) return { ok: false, error: "That file doesn't match what's on screen anymore. Choose it again." };
   if (!tabs.some((tab) => tab.included)) return { ok: false, error: "Tick at least one tab to import." };
 
-  // Who sent it — required. An existing supplier, or a new one (which
-  // also makes the matching Company, like everywhere else a supplier is
-  // added).
-  let supplier: { id: string; name: string } | null = null;
+  // Everything that can refuse is checked before anything is written: a
+  // new supplier or contact must not be left behind by an import that
+  // then says no.
   const supplierId = text(formData, "supplierId", 60);
   const newSupplierName = text(formData, "newSupplierName", 160);
+  let existingSupplier: { id: string; name: string } | null = null;
   if (supplierId) {
-    supplier = await prisma.distributor.findFirst({
+    existingSupplier = await prisma.distributor.findFirst({
       where: { id: supplierId, organizationId },
       select: { id: true, name: true },
     });
-    if (!supplier) return { ok: false, error: "That supplier no longer exists. Pick who sent the ratesheet again." };
-  } else if (newSupplierName) {
-    const linked = await linkDistributorCompany(organizationId, newSupplierName);
-    if (!linked) return { ok: false, error: "Type the distributor's name." };
-    supplier = { id: linked.distributorId, name: linked.name };
-  } else {
+    if (!existingSupplier) return { ok: false, error: "That supplier no longer exists. Pick who sent the ratesheet again." };
+  } else if (!newSupplierName) {
     return { ok: false, error: "Pick who sent this ratesheet: a distributor, manufacturer or software provider." };
   }
 
-  // Point of contact at the supplier: one of theirs, a new one, or none.
-  // A typed contact who is already on file (same email, or same name when
-  // there is no email) is reused rather than made twice.
-  let contactId: string | null = null;
   const pickedContact = text(formData, "contactId", 60);
-  const typedContact = newContactSchema.safeParse(readJson(formData, "newContact") ?? undefined);
+  const typedRaw = readJson(formData, "newContact");
+  let typed: { name: string; email: string | null; phone: string | null } | null = null;
   if (pickedContact) {
+    if (!existingSupplier) return { ok: false, error: "Pick the point of contact again." };
     const owned = await prisma.distributorContact.findFirst({
-      where: { id: pickedContact, organizationId, distributorId: supplier.id },
+      where: { id: pickedContact, organizationId, distributorId: existingSupplier.id },
       select: { id: true },
     });
     if (!owned) return { ok: false, error: "That point of contact isn't on this supplier anymore. Pick them again." };
-    contactId = owned.id;
-  } else if (readJson(formData, "newContact") !== undefined) {
-    if (!typedContact.success) return { ok: false, error: typedContact.error.issues[0]?.message ?? "Check the point of contact." };
-    const contact = typedContact.data;
+  } else if (typedRaw !== undefined) {
+    const parsedContact = newContactSchema.safeParse(typedRaw);
+    if (!parsedContact.success) return { ok: false, error: parsedContact.error.issues[0]?.message ?? "Check the point of contact." };
+    const contact = parsedContact.data;
     const name = `${contact.firstName} ${contact.lastName}`.trim();
-    if (name) {
-      const email = contact.email ? contact.email.toLowerCase() : null;
-      const existing = await prisma.distributorContact.findFirst({
-        where: email
-          ? { organizationId, distributorId: supplier.id, email: { equals: email, mode: "insensitive" } }
-          : { organizationId, distributorId: supplier.id, name: { equals: name, mode: "insensitive" } },
-        select: { id: true },
-      });
-      contactId =
-        existing?.id ??
-        (
-          await prisma.distributorContact.create({
-            data: { organizationId, distributorId: supplier.id, name, email, phone: contact.phone || null },
-            select: { id: true },
-          })
-        ).id;
-    }
+    const anything = name || contact.email || contact.phone;
+    if (anything && !name) return { ok: false, error: "Type the point of contact's first or last name." };
+    if (name) typed = { name, email: contact.email ? contact.email.toLowerCase() : null, phone: contact.phone || null };
   }
 
   const effectiveRaw = text(formData, "effectiveOn", 10);
   const effectiveOn = /^\d{4}-\d{2}-\d{2}$/.test(effectiveRaw) ? new Date(`${effectiveRaw}T00:00:00.000Z`) : null;
 
   // Plan against the catalog as it is now, importing exactly the rows
-  // that were ticked.
-  const outline = planRatesheet({ sheets: read.sheets, tabs, catalog: [], supplierId: supplier.id, pricing });
-  const catalog = await loadCatalogFor(
-    organizationId,
-    supplier.id,
-    outline.rows.map((row) => row.sku ?? "").filter(Boolean),
-    outline.rows.map((row) => row.name),
-  );
-  const plan = planRatesheet({
-    sheets: read.sheets,
-    tabs,
-    catalog,
-    supplierId: supplier.id,
-    pricing,
-    overrides: overridesParsed.data,
-    selected: selectedParsed.data,
-  });
+  // that were ticked. A supplier still to be made has no products yet.
+  const planFor = async (forSupplierId: string | null) => {
+    const outline = planRatesheet({ sheets: read.sheets, tabs, catalog: [], supplierId: forSupplierId, pricing });
+    const catalog = await loadCatalogFor(
+      organizationId,
+      forSupplierId,
+      outline.rows.map((row) => row.sku ?? "").filter(Boolean),
+      outline.rows.map((row) => row.name),
+    );
+    const plan = planRatesheet({
+      sheets: read.sheets,
+      tabs,
+      catalog,
+      supplierId: forSupplierId,
+      pricing,
+      overrides: overridesParsed.data,
+      selected: selectedParsed.data,
+    });
+    return { catalog, plan };
+  };
+  let { catalog, plan } = await planFor(existingSupplier?.id ?? null);
+  if (!plan.rows.some((row) => row.included)) return { ok: false, error: "Tick at least one product to import." };
+
+  // Who sent it: an existing supplier, or a new one (which also makes the
+  // matching Company, like everywhere else a supplier is added). A name
+  // already on file is that supplier, so the plan is redone for it.
+  let supplier: { id: string; name: string };
+  if (existingSupplier) {
+    supplier = existingSupplier;
+  } else {
+    const linked = await linkDistributorCompany(organizationId, newSupplierName);
+    if (!linked) return { ok: false, error: "Type the distributor's name." };
+    supplier = { id: linked.distributorId, name: linked.name };
+    ({ catalog, plan } = await planFor(supplier.id));
+  }
+
+  // The point of contact. A typed one already on file (same email, or the
+  // same name when there is no email) is reused rather than made twice —
+  // compared here in code, since Prisma's case-insensitive equals is a
+  // LIKE that reads _ and % in an address as wildcards.
+  let contactId: string | null = pickedContact || null;
+  if (typed) {
+    const people = await prisma.distributorContact.findMany({
+      where: { organizationId, distributorId: supplier.id },
+      select: { id: true, name: true, email: true },
+    });
+    const same = people.find((person) =>
+      typed.email
+        ? person.email?.toLowerCase() === typed.email
+        : !person.email && person.name.trim().toLowerCase() === typed.name.toLowerCase(),
+    );
+    contactId =
+      same?.id ??
+      (
+        await prisma.distributorContact.create({
+          data: { organizationId, distributorId: supplier.id, name: typed.name, email: typed.email, phone: typed.phone },
+          select: { id: true },
+        })
+      ).id;
+  }
+
   const rows = plan.rows.filter((row) => row.included);
   if (rows.length === 0) return { ok: false, error: "Tick at least one product to import." };
   const catalogById = new Map(catalog.map((item) => [item.id, item]));
@@ -454,13 +597,13 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
 
   // Remember how this supplier's sheet was read and priced, so the next
   // one opens the same way.
-  const existingSupplier = await prisma.distributor.findUnique({
+  const supplierRecord = await prisma.distributor.findUnique({
     where: { id: supplier.id },
     select: { ratesheetColumns: true },
   });
   const remembered: Record<string, ColumnRole[]> =
-    existingSupplier?.ratesheetColumns && typeof existingSupplier.ratesheetColumns === "object" && !Array.isArray(existingSupplier.ratesheetColumns)
-      ? { ...(existingSupplier.ratesheetColumns as Record<string, ColumnRole[]>) }
+    supplierRecord?.ratesheetColumns && typeof supplierRecord.ratesheetColumns === "object" && !Array.isArray(supplierRecord.ratesheetColumns)
+      ? { ...(supplierRecord.ratesheetColumns as Record<string, ColumnRole[]>) }
       : {};
   for (const tab of tabs.filter((tab) => tab.included)) {
     delete remembered[headerSignature(tab.headers)];
@@ -514,13 +657,22 @@ export async function declineRatesheet(formData: FormData): Promise<{ ok: true; 
   const note = text(formData, "note", 2000);
   if (!note) return { ok: false, error: "Tell us what was wrong with the import, so we can fix how it reads this sheet." };
 
-  const loaded = await loadFile(formData, organizationId);
+  const loaded = await loadFile(formData, organizationId, true);
   if (!loaded.ok) return loaded;
   const { file } = loaded;
+  // Too big to send: say how big, since the file itself isn't here.
+  const sentSize = Number(text(formData, "fileSize", 20)) || 0;
+  const fullNote =
+    file.bytes.byteLength === 0 && sentSize > 0
+      ? `${note}\n\n(The file was ${(sentSize / 1024 / 1024).toFixed(1)} MB, too big to attach.)`
+      : note;
 
   // What the app made of it, rebuilt here from the file rather than
   // taken from the screen.
-  const read = await readPriceListFile(file.fileName, file.bytes.slice().buffer);
+  const read =
+    file.bytes.byteLength > 0 && priceListFileKind(file.fileName)
+      ? await readPriceListFile(file.fileName, file.bytes.slice().buffer)
+      : ({ ok: false, error: file.bytes.byteLength === 0 ? "The file was too big to send." : unsupportedFileMessage(file.fileName) } as const);
   const detectedTabs = read.ok ? detectTabs(read.sheets) : [];
   const postedTabs = tabsSchema.safeParse(readJson(formData, "tabs"));
   const pricing = pricingSchema.safeParse(readJson(formData, "pricing"));
@@ -551,7 +703,7 @@ export async function declineRatesheet(formData: FormData): Promise<{ ok: true; 
       organizationId,
       userId,
       distributorId: supplier?.id ?? null,
-      note,
+      note: fullNote,
       detected: detected as Prisma.InputJsonValue,
       fileName: file.fileName,
       mimeType: file.mimeType,

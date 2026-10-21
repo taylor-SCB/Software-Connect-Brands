@@ -7,7 +7,7 @@
 // <form action>, which React would empty on a refusal (file, ticks and
 // typed prices included).
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { IconCheck, IconUpload, IconX } from "@/components/icons";
 import { FormError } from "@/components/ui";
 import { formatCents } from "@/lib/format";
@@ -16,6 +16,7 @@ import {
   COLUMN_ROLES,
   COLUMN_ROLE_LABELS,
   DEFAULT_PRICING,
+  MAX_NEW_PRODUCTS,
   MAX_RATESHEET_BYTES,
   basisPointsToPercent,
   describeRule,
@@ -43,6 +44,7 @@ import {
   declineRatesheet,
   importRatesheet,
   loadRatesheetCatalog,
+  type CatalogTuple,
 } from "./ratesheets/import-actions";
 
 export type RatesheetSupplier = {
@@ -181,7 +183,12 @@ export function ImportRatesheet({
       ? (suppliers.find((item) => item.name.trim().toLowerCase() === newSupplierName.trim().toLowerCase()) ?? null)
       : null;
 
+  // Only the newest pick may land: a big file picked by mistake and still
+  // being read must not replace the right one picked after it.
+  const readToken = useRef(0);
+
   async function takeBytes(name: string, buffer: ArrayBuffer) {
+    const token = (readToken.current += 1);
     setReading(true);
     setReadError("");
     setSheets(null);
@@ -193,6 +200,7 @@ export function ImportRatesheet({
     setRolesEdited(false);
     setRememberedNote("");
     const read = await readPriceListFile(name, buffer);
+    if (token !== readToken.current) return;
     setReading(false);
     if (!read.ok) {
       setReadError(read.error);
@@ -220,10 +228,13 @@ export function ImportRatesheet({
     setFileName(picked?.name ?? "");
     setDone(null);
     setError("");
+    readToken.current += 1;
     if (!picked) return;
     if (picked.size > MAX_RATESHEET_BYTES) {
+      setReading(false);
       setReadError("That file is over 4 MB. Ask the supplier for a smaller export, or split it.");
       setSheets(null);
+      setTabs([]);
       return;
     }
     await takeBytes(picked.name, await picked.arrayBuffer());
@@ -262,7 +273,16 @@ export function ImportRatesheet({
       const remembered = chosen.ratesheetColumns;
       const redetected = detectTabs(readSheets, remembered);
       if (redetected.length > 0) {
-        setTabs(redetected);
+        // The columns come from last time; which tabs are ticked stays
+        // whatever the person has set on this sheet.
+        setTabs((current) =>
+          freshRead
+            ? redetected
+            : redetected.map((tab) => ({
+                ...tab,
+                included: current.find((mine) => mine.sheetIndex === tab.sheetIndex)?.included ?? tab.included,
+              })),
+        );
         const reused = redetected.some((tab) => remembered[headerSignature(tab.headers)]);
         setRememberedNote(reused ? `Reading the columns the way you set them for ${chosen.name} last time.` : "");
       }
@@ -292,12 +312,50 @@ export function ImportRatesheet({
     if (!outline) return;
     let cancelled = false;
     startCatalog(async () => {
-      const found = await loadRatesheetCatalog({
-        supplierId,
-        skus: outline.rows.map((row) => row.sku ?? "").filter(Boolean).slice(0, 6000),
-        names: outline.rows.map((row) => row.name).slice(0, 6000),
-      });
-      if (!cancelled) setFetched({ key: catalogKey, items: found });
+      // In batches, so a 25,000-row sheet never asks for (or gets back)
+      // more than one response can carry; then the supplier's own
+      // products a page at a time. Oldest first, as on the server.
+      const tuples: CatalogTuple[] = [];
+      const names: Record<string, string> = {};
+      try {
+        for (let start = 0; start < outline.rows.length; start += 5000) {
+          const batch = outline.rows.slice(start, start + 5000);
+          const answer = await loadRatesheetCatalog({
+            skus: batch.map((row) => row.sku ?? "").filter(Boolean),
+            names: batch.map((row) => row.name),
+          });
+          if (cancelled) return;
+          tuples.push(...answer.rows);
+          Object.assign(names, answer.supplierNames);
+        }
+        let after: string | null = null;
+        while (supplierId) {
+          const answer = await loadRatesheetCatalog({ supplierId, after });
+          if (cancelled) return;
+          tuples.push(...answer.rows);
+          Object.assign(names, answer.supplierNames);
+          if (!answer.next) break;
+          after = answer.next;
+        }
+      } catch {
+        if (!cancelled) setReadError("Couldn't check this sheet against your catalog. Check your connection and pick the file again.");
+        return;
+      }
+      const byId = new Map(tuples.map((tuple) => [tuple[0], tuple]));
+      const items: CatalogItem[] = [...byId.values()]
+        .sort((a, b) => a[8] - b[8] || a[0].localeCompare(b[0]))
+        .map(([id, name, sku, costCents, unitPriceCents, listPriceCents, distributorId, active]) => ({
+          id,
+          name,
+          sku,
+          costCents,
+          unitPriceCents,
+          listPriceCents,
+          distributorId,
+          distributorName: distributorId ? (names[distributorId] ?? null) : null,
+          active,
+        }));
+      if (!cancelled) setFetched({ key: catalogKey, items });
     });
     return () => {
       cancelled = true;
@@ -322,6 +380,7 @@ export function ImportRatesheet({
   );
 
   const rows = plan?.rows ?? [];
+  const badPrices = Object.entries(priceText).filter(([, text]) => parseMoney(text).cents === null).length;
   const shown = rows.filter((row) => matchesFilter(row, filter));
   const ruleProblem = pricingError(pricing);
   const firstTab = tabs.find((tab) => tab.included) ?? null;
@@ -393,13 +452,22 @@ export function ImportRatesheet({
     setExcluded(new Set(rows.map((row) => row.key)));
   }
 
+  // A typed price that doesn't read as one is held on screen (red) and
+  // stops the import until it is fixed; it never falls back to the last
+  // value that did. Clearing the box goes back to the rule's price.
   function typePrice(row: PlanRow, value: string) {
-    setPriceText((current) => ({ ...current, [row.key]: value }));
     const next = { ...overrides };
+    const nextText = { ...priceText };
     const money = parseMoney(value);
-    if (value.trim() === "") delete next[row.key];
-    else if (money.cents !== null) next[row.key] = money.cents;
-    else return;
+    if (value.trim() === "") {
+      delete next[row.key];
+      delete nextText[row.key];
+    } else {
+      nextText[row.key] = value;
+      if (money.cents !== null) next[row.key] = money.cents;
+      else delete next[row.key];
+    }
+    setPriceText(nextText);
     setOverrides(next);
   }
 
@@ -428,6 +496,20 @@ export function ImportRatesheet({
       setError("Tick at least one product to import.");
       return;
     }
+    if (badPrices > 0) {
+      setError(`${badPrices} sell ${badPrices === 1 ? "price doesn't" : "prices don't"} read as a price. Fix ${badPrices === 1 ? "it" : "them"} or clear the box.`);
+      return;
+    }
+    const typingContact = contactChoice === NEW || (supplierChoice === NEW && !typedMatch);
+    if (
+      typingContact &&
+      (newContact.email || newContact.phone) &&
+      !newContact.firstName.trim() &&
+      !newContact.lastName.trim()
+    ) {
+      setError("Type the point of contact's first or last name.");
+      return;
+    }
     const form = buildForm();
     if (contactChoice && contactChoice !== NEW && supplier) form.set("contactId", contactChoice);
     else if (contactChoice === NEW || (supplierChoice === NEW && !typedMatch)) {
@@ -440,9 +522,13 @@ export function ImportRatesheet({
     form.set("selected", JSON.stringify(rows.filter((row) => row.included).map((row) => row.key)));
     if (markMissing) form.set("markMissingInactive", "1");
     startTransition(async () => {
-      const result = await importRatesheet(form);
-      if (result.ok) setDone({ kind: "import", message: result.message });
-      else setError(result.error);
+      try {
+        const result = await importRatesheet(form);
+        if (result.ok) setDone({ kind: "import", message: result.message });
+        else setError(result.error);
+      } catch {
+        setError("The import didn't reach the server. Check your connection and try again — nothing was changed on this screen.");
+      }
     });
   }
 
@@ -454,10 +540,20 @@ export function ImportRatesheet({
     }
     const form = buildForm();
     form.set("note", note.trim());
+    if (file && file.size > MAX_RATESHEET_BYTES) {
+      // Too big to send: we get its name and size, and the note.
+      form.delete("file");
+      form.set("fileName", file.name);
+      form.set("fileSize", String(file.size));
+    }
     startTransition(async () => {
-      const result = await declineRatesheet(form);
-      if (result.ok) setDone({ kind: "decline", message: result.message });
-      else setError(result.error);
+      try {
+        const result = await declineRatesheet(form);
+        if (result.ok) setDone({ kind: "decline", message: result.message });
+        else setError(result.error);
+      } catch {
+        setError("That didn't reach the server. Check your connection and try again.");
+      }
     });
   }
 
@@ -815,7 +911,7 @@ export function ImportRatesheet({
                   plan.skippedBlank > 0 && `${plan.skippedBlank} blank or heading rows skipped`,
                   plan.skippedDuplicates > 0 && `${plan.skippedDuplicates} repeated rows skipped`,
                   plan.truncated > 0 && `${plan.truncated.toLocaleString()} rows past the 25,000-row limit not read`,
-                  plan.counts.tooManyNew > 0 && `${plan.counts.tooManyNew.toLocaleString()} new products past the 5,000 limit left out`,
+                  plan.counts.tooManyNew > 0 && `${plan.counts.tooManyNew.toLocaleString()} new products past the ${MAX_NEW_PRODUCTS.toLocaleString()} limit left out`,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -898,7 +994,12 @@ export function ImportRatesheet({
                           value={priceText[row.key] ?? (row.newPriceCents !== null ? (row.newPriceCents / 100).toFixed(2) : "")}
                           placeholder="Type one"
                           onChange={(event) => typePrice(row, event.target.value)}
-                          className={`input input-sm num text-right ${row.belowCost ? "!border-[var(--danger)]" : ""}`}
+                          aria-invalid={priceText[row.key] !== undefined && parseMoney(priceText[row.key]).cents === null}
+                      className={`input input-sm num text-right ${
+                        row.belowCost || (priceText[row.key] !== undefined && parseMoney(priceText[row.key]).cents === null)
+                          ? "!border-[var(--danger)]"
+                          : ""
+                      }`}
                         />
                         <p className={row.belowCost ? "text-[var(--danger)]" : "faint"}>
                           {row.newPriceCents !== null

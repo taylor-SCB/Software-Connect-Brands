@@ -53,24 +53,37 @@ export default async function AdminPage() {
     },
   });
 
-  // Declined ratesheet imports: open ones first, then the last few fixed.
-  const issues = await prisma.ratesheetImportIssue.findMany({
-    orderBy: [{ resolvedAt: { sort: "desc", nulls: "first" } }, { createdAt: "desc" }],
-    take: 50,
-    select: {
-      id: true,
-      note: true,
-      detected: true,
-      fileName: true,
-      sizeBytes: true,
-      createdAt: true,
-      resolvedAt: true,
-      organization: { select: { name: true } },
-      user: { select: { name: true, email: true } },
-      distributor: { select: { name: true } },
-    },
-  });
-  const openIssues = issues.filter((issue) => !issue.resolvedAt);
+  // Declined ratesheet imports: every open one (newest first, up to 200),
+  // then the last ten fixed. The open count is counted, not inferred from
+  // the rows shown.
+  const issueSelect = {
+    id: true,
+    note: true,
+    detected: true,
+    fileName: true,
+    sizeBytes: true,
+    createdAt: true,
+    resolvedAt: true,
+    organization: { select: { name: true } },
+    user: { select: { name: true, email: true } },
+    distributor: { select: { name: true } },
+  } as const;
+  const [openIssues, fixedIssues, openCount] = await Promise.all([
+    prisma.ratesheetImportIssue.findMany({
+      where: { resolvedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: issueSelect,
+    }),
+    prisma.ratesheetImportIssue.findMany({
+      where: { resolvedAt: { not: null } },
+      orderBy: { resolvedAt: "desc" },
+      take: 10,
+      select: issueSelect,
+    }),
+    prisma.ratesheetImportIssue.count({ where: { resolvedAt: null } }),
+  ]);
+  const issues = [...openIssues, ...fixedIssues];
 
   const counts = {
     pending: organizations.filter((o) => o.status === "PENDING").length,
@@ -137,9 +150,11 @@ export default async function AdminPage() {
         <CardHeader
           title="Ratesheet imports to look at"
           subtitle={
-            openIssues.length > 0
-              ? `${openIssues.length} declined because the sheet read wrong. Nothing was imported from them.`
-              : "Nobody has declined an import."
+            openCount > 0
+              ? `${openCount} declined because the sheet read wrong. Nothing was imported from them.`
+              : issues.length > 0
+                ? "Nothing open. The last ones fixed are below."
+                : "Nobody has declined an import."
           }
         />
         {issues.length === 0 ? (
@@ -172,10 +187,12 @@ export default async function AdminPage() {
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-1.5">
-                      <a href={`/admin/ratesheet-issues/${issue.id}`} className="btn btn-ghost btn-sm">
-                        <IconDownload size={12} />
-                        File
-                      </a>
+                      {issue.sizeBytes > 0 && (
+                        <a href={`/admin/ratesheet-issues/${issue.id}`} className="btn btn-ghost btn-sm">
+                          <IconDownload size={12} />
+                          File
+                        </a>
+                      )}
                       <form action={setRatesheetIssueResolved}>
                         <input type="hidden" name="issueId" value={issue.id} />
                         <input type="hidden" name="resolved" value={issue.resolvedAt ? "0" : "1"} />
@@ -198,6 +215,11 @@ export default async function AdminPage() {
               );
             })}
           </ul>
+        )}
+        {openCount > openIssues.length && (
+          <p className="faint px-5 pb-4 text-xs">
+            …and {openCount - openIssues.length} older open ones. Mark some fixed to see them.
+          </p>
         )}
       </Card>
 

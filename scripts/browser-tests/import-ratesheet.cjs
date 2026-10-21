@@ -370,6 +370,220 @@ async function product(org, sku) {
   assert.deepEqual(bulk, { kept_margin: 1500, new_rule: 1500, total: 3000 });
   await page.getByRole("button", { name: "Done" }).click();
 
+  log("audit fixes: the sheet reader (part numbers, placeholders, New Price, Windows Excel text, tabs, odd files)");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag",active,"updatedAt") VALUES
+      ('prd_ir_fuse15',$1,'Fuse 15 A','','FUSE-15A',520,400,'MATERIALS',true,now()),
+      ('prd_ir_shop',$1,'Shop supplies','','N/A',1000,500,'MATERIALS',true,now())`,
+    [org],
+  );
+  const reader = path.join(OUT, "ir-audit-reader.csv");
+  fs.writeFileSync(reader, [
+    "Part #,Description,Current Price,New Price,% Increase",
+    "FUSE-1.5A,Fuse 1.5 A,2.00,2.10,5%",
+    "FUSE-15A,Fuse 15 A,4.00,4.20,5%",
+    "N/A,Installation labor,50,55,10%",
+    "N/A,Programming,75,80,7%",
+    "TBD,Site survey,150,160,7%",
+  ].join("\n") + "\n");
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", reader);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_adi");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"));
+  assert.ok((await page.getByTestId("ratesheet-columns").innerText()).includes('Your cost (COGS) ← "New Price"'), "New Price is the cost, not Current Price");
+  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /5 products on the sheet/, "N/A and TBD rows aren't merged into one part");
+  assert.ok(await row("Fuse 1.5 A").getByText(/· new ·/).isVisible(), "FUSE-1.5A is not FUSE-15A");
+  assert.ok(await row("Fuse 15 A").getByText(/updates your product/).isVisible());
+  assert.equal(await row("Fuse 15 A").locator("input[inputmode=decimal]").inputValue(), "5.46", "keep my margin on the real 15 A fuse: 5.20 × 4.20 / 4.00");
+  assert.ok(await row("Installation labor").getByText(/No part # · new/).isVisible(), "N/A is no part number, so it can't match 'Shop supplies'");
+  await page.getByLabel("Close").click();
+
+  const ansi = path.join(OUT, "ir-audit-ansi.csv");
+  fs.writeFileSync(ansi, Buffer.concat([
+    Buffer.from("Part #,Description,Price\nE-90,90", "latin1"),
+    Buffer.from([0xb0]), Buffer.from(" Elbow 3/4", "latin1"), Buffer.from([0x94]), Buffer.from(" EMT,1.25\n", "latin1"),
+  ]));
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", ansi);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  assert.ok(await row("90° Elbow 3/4” EMT").isVisible(), "Windows Excel CSV text reads right");
+  await page.getByLabel("Close").click();
+
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", path.join(__dirname, "fixtures", "audit-tabs.xlsx"));
+  await page.getByTestId("ratesheet-summary").waitFor();
+  assert.ok(await page.getByTestId("ratesheet-tabs").getByLabel(/Coverage Plans/).isChecked(), "a tab called Coverage Plans is not a cover sheet");
+  await page.setInputFiles("#ratesheet-import-file", path.join(__dirname, "fixtures", "audit-bomb.xlsx"));
+  await page.getByText(/unpacks to far more than a price list should/).waitFor();
+  await page.setInputFiles("#ratesheet-import-file", path.join(__dirname, "fixtures", "audit-wide.xlsx"));
+  await page.getByText(/reaches far past its prices \(out to column XFD\)/).waitFor();
+  await page.getByLabel("Close").click();
+
+  log("audit fixes: the screen (tab ticks kept, a newer file wins, unreadable prices, contacts, declines)");
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", FIXTURE);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.getByTestId("ratesheet-tabs").getByLabel(/Price List/).uncheck();
+  await page.getByTestId("ratesheet-tabs").getByLabel(/Discontinued/).check();
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_adi");
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_spirit");
+  assert.ok(!(await page.getByTestId("ratesheet-tabs").getByLabel(/Price List/).isChecked()), "picking the supplier kept Price List unticked");
+  assert.ok(await page.getByTestId("ratesheet-tabs").getByLabel(/Discontinued/).isChecked());
+  // A newer pick replaces one still being read.
+  await page.setInputFiles("#ratesheet-import-file", path.join(OUT, "ir-spirit-big.csv"));
+  await page.setInputFiles("#ratesheet-import-file", reader);
+  await page.waitForTimeout(1500);
+  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /5 products on the sheet/, "the file picked last is the one shown");
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_adi");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"));
+  const priceBox = row("Site survey").locator("input[inputmode=decimal]");
+  await priceBox.fill("15O");
+  assert.equal(await priceBox.getAttribute("aria-invalid"), "true");
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByText("1 sell price doesn't read as a price").waitFor();
+  await priceBox.fill("");
+  assert.equal(await priceBox.inputValue(), "208.00", "a cleared box goes back to the rule's price (30% on $160)");
+  await page.locator("#ratesheet-contact").selectOption("__new__");
+  await page.getByLabel("Contact email").fill("nobody@adi.example");
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByText("Type the point of contact's first or last name.").waitFor();
+  await page.getByLabel("Close").click();
+
+  log("audit fixes: nothing is made by an import that is refused; a look-alike email is a different person");
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", csv2);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("__new__");
+  await page.getByLabel("New distributor name").fill("Ghost Supply");
+  await page.getByLabel("Contact first name").fill("Gus");
+  await page.getByLabel("Contact email").fill("gus@ghost");
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByText("Enter a valid email for the point of contact").waitFor();
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Distributor" WHERE "organizationId"=$1 AND name='Ghost Supply'`, [org])).rows[0].n, 0, "no supplier left behind");
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Company" WHERE "organizationId"=$1 AND name='Ghost Supply'`, [org])).rows[0].n, 0);
+  await page.getByLabel("Close").click();
+  await sql(`INSERT INTO "DistributorContact" (id,"organizationId","distributorId",name,email) VALUES ('dc_ir_jsmith',$1,'dst_ir_adi','J Smith','j.smith@acme.example')`, [org]);
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", reader);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_adi");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"));
+  await page.locator("#ratesheet-contact").selectOption("__new__");
+  await page.getByLabel("Contact first name").fill("Jo");
+  await page.getByLabel("Contact last name").fill("Smyth");
+  await page.getByLabel("Contact email").fill("j_smith@acme.example");
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByTestId("ratesheet-done").waitFor();
+  const people = (await sql(`SELECT email FROM "DistributorContact" WHERE "organizationId"=$1 AND "distributorId"='dst_ir_adi' AND email LIKE '%smith@acme.example' ORDER BY email`, [org])).rows;
+  assert.deepEqual(people.map((person) => person.email), ["j.smith@acme.example", "j_smith@acme.example"]);
+  const fuse15 = await product(org, "FUSE-15A");
+  assert.deepEqual([fuse15.costCents, fuse15.unitPriceCents], [420, 546], "the 15 A fuse got its own price, not the 1.5 A's");
+  assert.equal((await product(org, "N/A")).costCents, 500, "Shop supplies was not touched by an N/A row");
+  await page.getByRole("button", { name: "Done" }).click();
+
+  log("audit fixes: a PDF and a file over 4 MB can still be declined");
+  const pdf = path.join(OUT, "ir-audit.pdf");
+  fs.writeFileSync(pdf, "%PDF-1.4\n% not a real price list\n");
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", pdf);
+  await page.getByText(/PDF price lists can't be read yet/).waitFor();
+  await page.getByRole("button", { name: "Decline" }).click();
+  await page.fill("#ratesheet-decline-note", "IR-SUITE it's a PDF");
+  await page.getByRole("button", { name: "Send and don't import" }).click();
+  await page.getByTestId("ratesheet-done").waitFor();
+  await page.getByRole("button", { name: "Done" }).click();
+  const huge = path.join(OUT, "ir-audit-huge.csv");
+  fs.writeFileSync(huge, "Part #,Description,Price\n" + "X,Y,1\n".repeat(900_000));
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", huge);
+  await page.getByText("That file is over 4 MB").waitFor();
+  await page.getByRole("button", { name: "Decline" }).click();
+  await page.fill("#ratesheet-decline-note", "IR-SUITE too big");
+  await page.getByRole("button", { name: "Send and don't import" }).click();
+  await page.getByTestId("ratesheet-done").waitFor();
+  await page.getByRole("button", { name: "Done" }).click();
+  const declined = (await sql(`SELECT "fileName","sizeBytes",note FROM "RatesheetImportIssue" WHERE "organizationId"=$1 AND note LIKE 'IR-SUITE%' ORDER BY "createdAt"`, [org])).rows;
+  assert.equal(declined.length, 3);
+  assert.deepEqual([declined[1].fileName, declined[1].sizeBytes > 0], ["ir-audit.pdf", true]);
+  assert.deepEqual([declined[2].fileName, declined[2].sizeBytes], ["ir-audit-huge.csv", 0]);
+  assert.match(declined[2].note, /too big to attach/);
+
+  log("audit fixes: a 6,600-row sheet still finds the 600 products you carry past row 6,000; new ones stop at 2,000");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag",active,"updatedAt")
+     SELECT 'prd_ir_xl_' || g, $1, 'XL item ' || g, '', 'XL-' || g, 3000, 2000, 'MATERIALS', true, now()
+       FROM generate_series(6001, 6600) g`,
+    [org],
+  );
+  const xl = path.join(OUT, "ir-audit-xl.csv");
+  const xlLines = ["Mfr Part #,Description,Dealer,MSRP"];
+  for (let i = 1; i <= 6600; i += 1) xlLines.push(`XL-${i},XL item ${i},21.00,40.00`);
+  fs.writeFileSync(xl, xlLines.join("\n") + "\n");
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", xl);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_adi");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"), null, { timeout: 60_000 });
+  assert.match(await page.getByTestId("ratesheet-filter-update").innerText(), /You carry 600/);
+  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /6,600 products on the sheet · 2,600 ticked/);
+  assert.ok(await page.getByText("4,000 new products past the 2,000 limit left out").isVisible());
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByTestId("ratesheet-done").waitFor({ timeout: 120_000 });
+  const xlCount = (await sql(
+    `SELECT count(*)::int n, count(DISTINCT sku)::int skus,
+            count(*) FILTER (WHERE id LIKE 'prd_ir_xl_%' AND "costCents"=2100)::int updated
+       FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'XL-%'`,
+    [org],
+  )).rows[0];
+  assert.deepEqual(xlCount, { n: 2600, skus: 2600, updated: 600 }, "600 updated, 2,000 new, no duplicates");
+  await page.getByRole("button", { name: "Done" }).click();
+  // Back to a catalog a person would type by hand: the Products list
+  // still loads every product (a known gap), and the steps below open it.
+  await sql(`DELETE FROM "Product" WHERE "organizationId"=$1 AND (sku LIKE 'XL-%' OR sku LIKE 'BULK-%')`, [org]);
+
+  log("audit fixes: the product form (service type kept, COGS retyped under a markup, MSRP kept on a refusal, a margin it can't use)");
+  await sql(`UPDATE "Product" SET "serviceType"='Retired Scope Type' WHERE id='prd_ir_hid'`);
+  await page.goto(`${BASE}/dashboard/products/prd_ir_hid`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Product saved").waitFor();
+  assert.equal((await sql(`SELECT "serviceType" FROM "Product" WHERE id='prd_ir_hid'`)).rows[0].serviceType, "Retired Scope Type", "saving doesn't erase the service type");
+  await page.goto(`${BASE}/dashboard/products/new`);
+  await page.fill("#cost", "80");
+  await page.fill("#markupPercent", "50");
+  assert.equal(await page.locator("#unitPrice").inputValue(), "120.00");
+  await page.fill("#cost", "");
+  await page.locator("#cost").pressSequentially("100");
+  assert.equal(await page.locator("#unitPrice").inputValue(), "150.00", "retyping the cost keeps the 50% markup");
+  assert.equal(await page.locator("#markupPercent").inputValue(), "50");
+  await page.fill("#marginPercent", "100");
+  assert.ok(await page.getByText("Margin has to be under 100%.").isVisible());
+  await page.fill("#name", "Refused product");
+  await page.fill("#listPrice", "189.99");
+  await page.fill("#cost", "-5");
+  await page.getByRole("button", { name: "Save product" }).click();
+  await page.getByText("COGS can't be negative").waitFor();
+  assert.equal(await page.locator("#listPrice").inputValue(), "189.99", "a refused save keeps the MSRP typed");
+
+  log("audit fixes: /admin counts every open decline and says when none are open; Ratesheets page fits a phone");
+  await sql(`UPDATE "User" SET "isSuperAdmin"=true WHERE email=$1`, [EMAIL]);
+  await page.goto(`${BASE}/admin`);
+  const openNow = (await sql(`SELECT count(*)::int n FROM "RatesheetImportIssue" WHERE "resolvedAt" IS NULL`)).rows[0].n;
+  const subtitle = await page.locator("#ratesheet-issues").innerText();
+  assert.ok(subtitle.includes(`${openNow} declined because the sheet read wrong`), `subtitle counts all ${openNow} open`);
+  await sql(`UPDATE "RatesheetImportIssue" SET "resolvedAt"=now() WHERE "resolvedAt" IS NULL`);
+  await page.reload();
+  assert.ok((await page.locator("#ratesheet-issues").innerText()).includes("Nothing open. The last ones fixed are below."));
+  await sql(`UPDATE "User" SET "isSuperAdmin"=false WHERE email=$1`, [EMAIL]);
+  const narrow = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const narrowPage = await narrow.newPage();
+  await login(narrowPage);
+  await narrowPage.goto(`${BASE}/dashboard/products/ratesheets`);
+  await narrowPage.getByTestId("linked-file-import").first().waitFor();
+  const sideways = await narrowPage.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert.ok(sideways <= 0, `Ratesheets page scrolls sideways on a phone by ${sideways}px`);
+  await narrow.close();
+
   log("phone: the Import button sits on screen at the foot of the dialog");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const mobile = await phone.newPage();

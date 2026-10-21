@@ -56,6 +56,7 @@ export default async function EditProductPage({
           costCents: product.costCents,
           listPriceCents: product.listPriceCents,
           defaultTag: product.defaultTag,
+          serviceType: product.serviceType,
           unitOfMeasure: product.unitOfMeasure,
           softwareRate: product.softwareRate,
           softwareTerm: product.softwareTerm,

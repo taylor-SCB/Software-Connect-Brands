@@ -100,7 +100,7 @@ export function RatesheetsBoard({
   return (
     <div className="grid gap-5 lg:grid-cols-5">
       {/* ---------- Left column ---------- */}
-      <div className="order-2 space-y-5 lg:order-1 lg:col-span-2">
+      <div className="order-2 min-w-0 space-y-5 lg:order-1 lg:col-span-2">
         <Card lit id="summary">
           <CardHeader
             title="Summary"
@@ -179,14 +179,14 @@ export function RatesheetsBoard({
               {files.map((file) => (
                 <li
                   key={file.id}
-                  className="flex items-center justify-between gap-3 px-5 py-3"
+                  className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
                   style={
                     file.highlighted
                       ? { background: "color-mix(in srgb, var(--brand) 8%, transparent)" }
                       : undefined
                   }
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1 basis-56">
                     <p className="truncate text-sm font-medium">
                       {file.name}
                       {file.highlighted && (
@@ -241,7 +241,7 @@ export function RatesheetsBoard({
       </div>
 
       {/* ---------- Right column: tiles ---------- */}
-      <div className="order-1 lg:order-2 lg:col-span-3">
+      <div className="order-1 min-w-0 lg:order-2 lg:col-span-3">
         <Card lit>
           <CardHeader
             title="Ratesheets"

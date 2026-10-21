@@ -14,10 +14,13 @@ import { parseTag, parseUnit } from "@/lib/csv";
 import type { LineItemTagValue, UnitOfMeasureValue } from "@/lib/constants";
 import type { SheetTable } from "@/lib/price-list-file";
 
-// New products one sheet can add. Every row is still checked against
-// the catalog, so a 20,000-row manufacturer list updates every product
-// already carried even though it can't add all of them.
-export const MAX_NEW_PRODUCTS = 5000;
+// New products one sheet can add — the old Import CSV's limit. Every row
+// is still checked against the catalog, so a 20,000-row manufacturer
+// list updates every product already carried even though it can't add
+// all of them. Kept here because the Products list and the quote's
+// product picker still load every product (Oct 21, 2026: 8,600 products
+// made the Products page 44 MB and 24 seconds); raise it once they page.
+export const MAX_NEW_PRODUCTS = 2000;
 const MAX_ROWS_READ = 25_000;
 export const MAX_RATESHEET_BYTES = 4 * 1024 * 1024;
 // Money is cents in a Postgres integer; anything past this is a typo.
@@ -147,7 +150,10 @@ const MAYBE_TAG = ["category", "type", "group", "class", "kind"];
 // A header with one of these in it is never a price, whatever else it
 // says: "Qty Break Price", "% Change", "Price Effective Date", "Old Price".
 const NOT_MONEY = /\b(qty|quantity|break|date|percent|pct|change|increase|decrease|discount|margin|markup|weight|lbs|page|lead|old|previous|prior|was)\b|%/;
-const NEWER = /\b(new|current|now|effective)\b/;
+// "New Price" beats any other price column. "Current" is not on this
+// list: next to a "New Price" it is the old one, and on its own it is just
+// the price.
+const NEWER = /\b(new|now|effective)\b/;
 
 export function normalizeHeader(header: string) {
   return header.toLowerCase().replace(/%/g, " % ").replace(/[^a-z0-9#%]+/g, " ").trim();
@@ -296,7 +302,10 @@ export type TabLayout = {
   included: boolean;
 };
 
-const SKIPPED_TAB = /discontinu|obsolete|\beol\b|end of life|supersed|read ?me|instructions|notes|cover|terms/i;
+// Whole tab names, or the words that mean it: "Discontinued Items" and
+// "EOL" are left out, "Coverage Plans" and "Wall Plates & Covers" are not.
+const SKIPPED_TAB =
+  /discontinu|obsolete|\beol\b|end[- ]of[- ]life|supersed|^\s*(read ?me|instructions|notes|cover( sheet| page)?|terms( (and|&) conditions)?)\s*$/i;
 
 export function headerSignature(headers: string[]) {
   return headers.map(normalizeHeader).join("|");
@@ -481,11 +490,19 @@ export function describeRule(options: Pick<PricingOptions, "rule" | "basisPoints
 // Matching against the catalog
 // ------------------------------------------------------------------
 
-// "HID-5355", "hid 5355" and "HID.5355" are one part; so are "012345" and
-// the 12345 Excel leaves when it reads a part number as a number.
+// "HID-5355", "hid 5355" and "HID_5355" are one part; so are "012345" and
+// the 12345 Excel leaves when it reads a part number as a number. A dot or
+// a slash is part of the number: FUSE-1.5A is not FUSE-15A, and CPL-1/2 is
+// not CPL-12.
 export function skuKey(sku: string) {
-  const key = sku.trim().toLowerCase().replace(/[\s\-./_]+/g, "");
+  const key = sku.trim().toLowerCase().replace(/[\s\-_]+/g, "");
   return /^\d+$/.test(key) ? key.replace(/^0+(?=\d)/, "") : key;
+}
+
+// "N/A", "TBD", "-" in the part number column mean there isn't one; read
+// as a part number they would make every such row the same part.
+export function placeholderSku(sku: string) {
+  return /^(n\/?a|n\.a\.?|none|tbd|tba|null|nil|-+|—|\?+|\.+|x+|0+)$/i.test(sku.trim());
 }
 
 // Excel turns a long all-digit part number into 1.23457E+11; what is
@@ -502,7 +519,7 @@ function buildCatalogIndex(catalog: CatalogItem[]) {
   const bySku = new Map<string, CatalogItem[]>();
   const byName = new Map<string, CatalogItem[]>();
   for (const item of catalog) {
-    if (item.sku) {
+    if (item.sku && !placeholderSku(item.sku)) {
       const key = skuKey(item.sku);
       bySku.set(key, [...(bySku.get(key) ?? []), item]);
     }
@@ -531,7 +548,7 @@ function findMatch(
     if (exact) return { item: exact, by: "sku", ambiguous: false };
   }
   const named = (index.byName.get(nameKey(name)) ?? []).filter(
-    (item) => !(sku && item.sku && skuKey(item.sku) !== skuKey(sku)),
+    (item) => !(sku && item.sku && !placeholderSku(item.sku) && skuKey(item.sku) !== skuKey(sku)),
   );
   if (named.length > 1) return { item: null, by: null, ambiguous: true };
   if (named.length === 1) return { item: named[0], by: "name", ambiguous: false };
@@ -667,7 +684,7 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
     for (const { line, cells } of dataRows.slice(0, budget)) {
       budget -= 1;
       const cell = (position: number) => (position < 0 ? "" : (cells[position] ?? "").trim());
-      const rawSku = cell(col.sku).slice(0, 60);
+      const rawSku = placeholderSku(cell(col.sku)) ? "" : cell(col.sku).slice(0, 60);
       const skuDamaged = rawSku !== "" && damagedSku(rawSku);
       const sku = rawSku || null;
       let description = cell(col.description).slice(0, 2000);
@@ -892,7 +909,8 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
       const skuAt = tab.roles.indexOf("sku");
       const nameAt = tab.roles.indexOf("name") >= 0 ? tab.roles.indexOf("name") : tab.roles.indexOf("description");
       for (const { cells } of sheet.rows.slice(tab.headerIndex + 1)) {
-        const sku = skuAt >= 0 ? (cells[skuAt] ?? "").trim() : "";
+        const rawSku = skuAt >= 0 ? (cells[skuAt] ?? "").trim() : "";
+        const sku = placeholderSku(rawSku) ? "" : rawSku;
         const name = nameAt >= 0 ? (cells[nameAt] ?? "").trim() : "";
         if (!sku && !name) continue;
         const found = findMatch(index, sku && !damagedSku(sku) ? sku : null, name || sku, input.supplierId);

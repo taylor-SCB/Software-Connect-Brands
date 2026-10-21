@@ -150,8 +150,8 @@ is how I go back" back links, products (with manufacturer, COGS, unit of measure
 distributor and contacts; clone / delete / active toggle on the list),
 ratesheets (a sub-module under Products: publish a selection of products to
 partners with an expiry and a respond-by window, partner approve/decline
-links at `/r/<token>`, uploaded distributor price lists, CSV import of
-products with a preview and SKU-based updates), quotes (Simple +
+links at `/r/<token>`, uploaded distributor price lists, and **Import
+Ratesheet** — see below), quotes (Simple +
 Modern templates, tagged line items, tag totals grid), contracts
 (templates with a per-workspace type pick list and "+ Add new type",
 "Who can send?", merge-field chips grouped by screen, a two-column
@@ -308,6 +308,60 @@ Notes are not under the rule; the company page's Notes tabs split All ·
 Company · People · Personal. The favorite star is deliberately not
 linked between a person and their company.
 
+**Import Ratesheet (Oct 21, 2026).** Link Ratesheet → Import Ratesheet
+replaced Import CSV, which read a supplier's "Price" as the contractor's
+sell price and left COGS at $0. Taylor's rule: a ratesheet carries the
+contractor's **cost** and the **MSRP**; the sender is a "Distributor,
+manufacturer or software provider" (a *Vendor* is the Business that
+receives it — never call the sender a vendor). His flow: upload, we read
+it, show every product as it will land with tick boxes (all ticked to
+start, Select all / Remove all), Import or **Decline** with "what was
+wrong", which lands in /admin. The planner is `src/lib/price-list.ts`
+(pure; the browser's preview and the server's import run it on the same
+file, and the server only writes rows posted as ticked), files are read
+by `src/lib/price-list-file.ts` (read-excel-file 9.3.10 universal build,
+fflate to check an .xlsx's unpacked size and sheet dimension first,
+Windows-1252 decoded by hand), the screen is
+`src/app/dashboard/products/import-ratesheet.tsx`, the server is
+`ratesheets/import-actions.ts`. Sell is never detected from a sheet,
+only picked by hand. Matching: part number with case, spaces, dashes,
+underscores and leading zeros ignored (a dot or slash counts: FUSE-1.5A
+is not FUSE-15A; "N/A", "TBD", "-" are no part number); a name only when
+the SKUs can't disagree and the name is unique; the supplier's own
+product wins a tie. An existing product keeps its own name, description,
+tag and unit. Cost up keeps the margin, cost down keeps the price, a 2×
+move waits for a tick, a new product with no price can't be ticked, a
+price at or below the new cost is re-priced by the rule. Products get
+`listPriceCents`; a supplier remembers its rule (`priceRule`,
+`priceRuleBasisPoints`) and columns (`ratesheetColumns`, by header
+signature). LinkedRatesheet gains supplier, effective date and counts.
+A Decline is a `RatesheetImportIssue` (bytes omitted by default; a file
+over 4 MB comes as name and size only), listed in /admin with Mark
+fixed, and emailed to operators when email is on. The products pages'
+dialogs render through a portal on document.body: a long dialog was
+being placed against the page column and ran off the top. The product
+form links COGS, Markup %, Margin % and Unit price (a typed percentage
+holds while the cost is retyped) and has a controlled MSRP box; the
+Products list shows margin with markup under it.
+
+**Account types (Taylor, Oct 21, 2026 — decided, not built).** Five:
+Admin (the platform; Taylor) and four a company picks at signup, one per
+account: Business / Vendor, Distributor, Hardware / OEM, Software
+Provider. The type decides which buttons show (a Business imports
+ratesheets; a Distributor / OEM / Software Provider releases them); the
+logic behind a button is the same for all. A change of type is a
+request the Admin approves. The Admin creates a customer's account
+pre-approved, with an emailed set-password link (Spirit Security is a
+Business / Vendor). Releasing a ratesheet: Public (anyone can download),
+Private (any account may request access; the distributor accepts or
+declines), Customer Specific (pick a company or + Add New Company; a
+company not on the platform gets one person — first, last, email; one
+already on it, pick from its members), with an active date range.
+Taylor plans a subscription for vendors; Claude recommended keeping a
+no-account link free and charging for the full workspace — his call.
+Build order agreed: Import Ratesheet (done), then account types + Admin
+Create Account, then distributor publishing; screens shown before each.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -337,6 +391,29 @@ are all blocking before the first paying customer.
   "Send to partner" makes a link to copy and text or email by hand, and
   the Contract Coordinator's "Copy reminder", which copies a nudge with the signing
   link and logs it; the app says so on the screen.
+- **Import Ratesheet adds at most 2,000 new products per sheet** (it
+  still updates every product already carried), because the Products
+  list and the quote's product picker load every product: 8,600 products
+  made the Products page 44 MB and 24 seconds to load (Oct 21, 2026).
+  Paging and searching the Products list, and a searched product picker
+  on quotes, are what let a contractor bring in a distributor's whole
+  catalog; raise `MAX_NEW_PRODUCTS` in `src/lib/price-list.ts` after.
+- **PDF ratesheets aren't read.** Excel and CSV only; a PDF is refused in
+  words and can still be saved with Upload File or declined.
+- **A signed job's purchase order still prices at the cost captured when
+  the contract was made**, which is $0 for anything that came in through
+  the old Import CSV. Re-importing fixes the catalog cost, not the
+  snapshot. Order materials falling back to the catalog cost when the
+  snapshot is $0 is the fix (found Oct 21, 2026; Projects module, not
+  changed without asking).
+- **Open quotes aren't re-priced or flagged when a ratesheet moves a
+  cost.** A quote's lines keep the price they were written at.
+- **Any signed-in user can import a ratesheet**, like every other
+  Products action.
+- **A rep picked on an import is a DistributorContact, not a CRM
+  Contact** on the supplier's Company.
+- **A Decline sends one email per operator and has no throttle.** Fine
+  while declines are rare.
 - **"Link Distributor / Partner" is Coming Soon.** Public and
   Invite/Approve ratesheets are stored with their visibility but nobody in
   another workspace can search for them yet; every send today is a link.
@@ -469,7 +546,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-five** are checked in at
+suite, and the delete-confirmation suite. **Twenty-six** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -507,7 +584,18 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
-Contacts and claiming, the Notes split). **A suite that logs on a
+Contacts and claiming, the Notes split), and from Oct 21, 2026
+`import-ratesheet.cjs` (the Excel fixture with title rows, a Call row,
+a unit change and a Discontinued tab; ticks, a typed price, the
+import's costs, prices, MSRP, supplier switch and rep; Not on this sheet
+anymore; remembered columns; Decline into /admin; + Add New Distributor
+with a contact and MSRP less 10%; the product form; the Margin column;
+a 3,000-row sheet, 1.5 s through slow-db-proxy; the Sept-14-style audit
+fixes of Oct 21 in their own steps; the phone layout).
+`overlay-readability.cjs` step 6 (the deal picker on a new quote) is
+**flaky on the live code too** (Oct 21: 1 pass in 3 on both; the
+dropdown has closed by the time it is photographed) — not a regression.
+**A suite that logs on a
 company page with nobody ticked must tick `company-bypass-tick` first**
 or the log is refused. A suite that
 seeds and sends paperwork now gets calendar entries written for it, so

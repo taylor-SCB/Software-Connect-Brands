@@ -130,6 +130,10 @@ export function ProductForm({
     defaults?.costCents !== undefined ? centsToDollarInput(defaults.costCents) : "",
   );
   const [anchor, setAnchor] = useState<"price" | "markup" | "margin">("price");
+  // Held in state like the price, so a refused save doesn't wipe it.
+  const [listPrice, setListPrice] = useState(
+    defaults?.listPriceCents !== undefined && defaults.listPriceCents !== null ? centsToDollarInput(defaults.listPriceCents) : "",
+  );
   const roundPct = (value: number | null) => (value === null ? "" : String(Math.round(value * 100) / 100));
   const [markupText, setMarkupText] = useState(() =>
     defaults?.costCents && defaults.unitPriceCents ? roundPct(markupPercent(defaults.costCents, defaults.unitPriceCents)) : "",
@@ -158,11 +162,25 @@ export function ProductForm({
         setUnitPrice(centsToDollarInput(next));
         if (anchor === "markup") setMarginText(roundPct(marginPercent(costCents, next)));
         else setMarkupText(roundPct(markupPercent(costCents, next)));
-        return;
       }
+      // While the cost is being retyped (blank, or a single digit on the
+      // way to 100), the percentage typed is what holds — it is never
+      // recomputed from a half-typed cost.
+      return;
     }
     followFrom(costCents, dollarsToCents(unitPrice));
   }
+
+  // Why a typed percentage isn't moving the price, said next to it.
+  const percentProblem = (() => {
+    const text = anchor === "markup" ? markupText : anchor === "margin" ? marginText : "";
+    if (!text.trim()) return null;
+    const bp = percentToBasisPoints(text);
+    if (bp === null) return "Type a percentage of 0 or more, like 35 or 33.33.";
+    if (anchor === "margin" && bp >= 10_000) return "Margin has to be under 100%.";
+    if (dollarsToCents(cost) <= 0) return "Type the COGS and the price follows.";
+    return null;
+  })();
 
   function changePercent(kind: "markup" | "margin", value: string) {
     setAnchor(kind);
@@ -334,6 +352,11 @@ export function ProductForm({
                   {serviceTypes.map((name) => (
                     <option key={name} value={name}>{name}</option>
                   ))}
+                  {/* A saved type that has since left the list is offered
+                      back, or saving the form would quietly clear it. */}
+                  {defaults?.serviceType && !serviceTypes.includes(defaults.serviceType) && (
+                    <option value={defaults.serviceType}>{defaults.serviceType} (no longer in your list)</option>
+                  )}
                 </select>
                 <p className="faint mt-1 text-xs">
                   The kind of work this is sold under. A quote line picks it up, and a won job gives
@@ -433,7 +456,13 @@ export function ProductForm({
                     className="input"
                   />
                 </div>
-                <p className="faint col-span-2 text-xs">Type either one and the unit price follows.</p>
+                {percentProblem ? (
+                  <p role="alert" className="col-span-2 text-xs text-[var(--warn)]">
+                    {percentProblem}
+                  </p>
+                ) : (
+                  <p className="faint col-span-2 text-xs">Type either one and the unit price follows.</p>
+                )}
               </div>
               <div>
                 <label className="label" htmlFor="unitPrice">
@@ -451,19 +480,22 @@ export function ProductForm({
                 />
                 <p className="faint mt-1 text-xs">Used as the default value on quote line items.</p>
               </div>
-              <Field
-                label="MSRP ($)"
-                name="listPrice"
-                type="number"
-                step="0.01"
-                placeholder="189.99"
-                defaultValue={
-                  defaults?.listPriceCents !== undefined && defaults.listPriceCents !== null
-                    ? centsToDollarInput(defaults.listPriceCents)
-                    : ""
-                }
-                hint="The supplier's suggested price, from their ratesheet. Internal only."
-              />
+              <div>
+                <label className="label" htmlFor="listPrice">
+                  MSRP ($)
+                </label>
+                <input
+                  id="listPrice"
+                  name="listPrice"
+                  type="number"
+                  step="0.01"
+                  placeholder="189.99"
+                  value={listPrice}
+                  onChange={(event) => setListPrice(event.target.value)}
+                  className="input"
+                />
+                <p className="faint mt-1 text-xs">The supplier&apos;s suggested price, from their ratesheet. Internal only.</p>
+              </div>
               {hasUnits ? (
                 <div>
                   <label className="label" htmlFor="unitOfMeasure">
