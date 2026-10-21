@@ -281,7 +281,11 @@ export async function sendMarketingEmails(
     };
   }
 
-  const attachments = files.map((file) => ({ filename: file.fileName, content: Buffer.from(file.data) }));
+  // Marketing files are always kept in Postgres; only job photos live in
+  // object storage, so a missing body here is skipped rather than sent empty.
+  const attachments = files.flatMap((file) =>
+    file.data ? [{ filename: file.fileName, content: Buffer.from(file.data) }] : [],
+  );
   const byContact = new Map(eligible.map((contact) => [contact.id, contact]));
   const batchId = eligible.length > 1 ? randomUUID() : null;
   const failed: { name: string; error: string }[] = [];

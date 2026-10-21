@@ -415,6 +415,23 @@ customer owes rather than showing as something to chase. **Files** on a
 job hold the other party's own signed contract and anything else the job
 needs; a job's file needs a login, unlike a logo.
 
+**Job photos and videos** (Oct 17, 2026) — the top of a job's **Files**
+tab. Pick what they are (**Site walk**, **Finished install** or
+**Photo**), then take or choose photos and videos; they show as a grid
+grouped by those three, and videos play on the page. **Crew photo link**
+is one link per job to text an installer: it opens a phone page with no
+login, asks their name (remembered on the phone) and what the photos
+are, and sends — it can never show anything. **New link** retires the
+old one. **Shared with** makes look-only gallery links named for whoever
+holds them, inside the company or out, each turned off on its own and
+kept on the list as a record; only owners and admins make them. Links at
+`/p/<token>`; a paused workspace's links go dark. The files themselves
+live in **Vercel Blob** (private), not Postgres, up to 1 GB each: the
+phone sends them straight to the store with a signed ticket for one
+path, and `/files/<token>` checks who is asking and then redirects to an
+address that works for ten minutes (`src/lib/storage.ts`). A laptop
+without Blob keeps them in `.local-storage/` (`STORAGE_DRIVER=local`).
+
 **Crews and time** (Sept 14, 2026) — **Projects → Crews** is who does the
 work. A crew is either **your own people** or a **subcontractor**, and the
 difference is entirely about money: your own crew's hours are your cost, so

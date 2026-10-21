@@ -17,6 +17,7 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@sparticuz/chromium": "^149.0.0",
+    "@vercel/blob": "^2.8.2",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "fflate": "0.8.3",

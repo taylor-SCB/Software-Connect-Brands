@@ -449,6 +449,11 @@ export const PROJECT_FILE_CATEGORIES = [
   "Other",
 ] as const;
 
+// What a photo or video from a job is (Oct 17, 2026). The crew photo link
+// asks this first so the Files tab can show a site walk apart from the
+// finished work.
+export const PHOTO_CATEGORIES = ["Site walk", "Finished install", "Photo"] as const;
+
 // A contact with no company at all — a homeowner wanting a window quote —
 // reads as this company type on the list and in the filter. It is not a
 // pick-list row: it means "no company", so it can't be picked on a form.
