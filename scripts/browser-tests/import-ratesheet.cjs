@@ -369,6 +369,9 @@ async function product(org, sku) {
   )).rows[0];
   assert.deepEqual(bulk, { kept_margin: 1500, new_rule: 1500, total: 3000 });
   await page.getByRole("button", { name: "Done" }).click();
+  // The Products list still loads every product (a known gap), so the
+  // 3,000 come out again before the steps that open it.
+  await sql(`DELETE FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'BULK-%'`, [org]);
 
   log("audit fixes: the sheet reader (part numbers, placeholders, New Price, Windows Excel text, tabs, odd files)");
   await sql(
@@ -540,7 +543,7 @@ async function product(org, sku) {
   await page.getByRole("button", { name: "Done" }).click();
   // Back to a catalog a person would type by hand: the Products list
   // still loads every product (a known gap), and the steps below open it.
-  await sql(`DELETE FROM "Product" WHERE "organizationId"=$1 AND (sku LIKE 'XL-%' OR sku LIKE 'BULK-%')`, [org]);
+  await sql(`DELETE FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'XL-%'`, [org]);
 
   log("audit fixes: the product form (service type kept, COGS retyped under a markup, MSRP kept on a refusal, a margin it can't use)");
   await sql(`UPDATE "Product" SET "serviceType"='Retired Scope Type' WHERE id='prd_ir_hid'`);
