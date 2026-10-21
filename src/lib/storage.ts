@@ -57,6 +57,8 @@ export type UploadTicket = {
   organizationId: string;
   projectId: string;
   photoLinkId?: string;
+  photoGrantId?: string;
+  photoFolderId?: string;
   userId?: string;
   exp: number;
 };

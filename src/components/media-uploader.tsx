@@ -5,13 +5,10 @@ import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 import { FormError } from "@/components/ui";
 import { IconCheck, IconUpload } from "@/components/icons";
-import { PHOTO_CATEGORIES } from "@/lib/constants";
-import type { FileMeta, StartedUpload } from "@/lib/job-photos";
-
-type Finish = (
-  ticket: string,
-  input: { category: string; fileName: string; uploadedByName?: string },
-) => Promise<{ error?: string; ok?: true }>;
+import { PhotoTagPicker } from "@/components/photo-tag-picker";
+import type { PhotoAccess } from "@/lib/job-photos";
+import type { PhotoTagOption } from "@/lib/photo-tags";
+import { addPhotoTag, finishPhotoUpload, startPhotoUpload } from "@/app/dashboard/projects/photo-actions";
 
 type Row = { id: number; name: string; percent: number; state: "waiting" | "sending" | "done" | "failed"; error?: string };
 
@@ -49,25 +46,31 @@ function putLocal(key: string, ticket: string, file: File, type: string, onProgr
   });
 }
 
-// Pick what they are, take or choose photos and videos, and they go. One
-// at a time, so a weak signal finishes something rather than nothing.
-// Used by the Files tab and by an installer's crew photo link; the two
-// differ only in who the server says is sending.
+// Take or choose photos and videos and they go, tagged with whatever is
+// ticked (nothing ticked is General Project). One at a time, so a weak
+// signal finishes something rather than nothing. The Files tab, an
+// editor's link and an installer's crew link all use it; the server
+// decides from `access` who is sending and where the photos land.
 export function MediaUploader({
-  start,
-  finish,
+  access,
+  folderId = null,
+  tags: initialTags,
   askName = false,
+  canAddTags = true,
   testId = "media",
 }: {
-  start: (meta: FileMeta) => Promise<StartedUpload>;
-  finish: Finish;
+  access: PhotoAccess;
+  folderId?: string | null;
+  tags: PhotoTagOption[];
   askName?: boolean;
+  canAddTags?: boolean;
   testId?: string;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [category, setCategory] = useState<string>("");
   const whoRef = useRef<HTMLInputElement>(null);
+  const [tags, setTags] = useState(initialTags);
+  const [selected, setSelected] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -85,14 +88,19 @@ export function MediaUploader({
     } catch {}
   }
 
+  async function addTag(kind: PhotoTagOption["kind"], name: string) {
+    const result = await addPhotoTag(access, kind, name);
+    if (!("error" in result)) setTags((current) => (current.some((tag) => tag.id === result.id) ? current : [...current, result]));
+    return result;
+  }
+
   async function send(files: File[]) {
-    const who = whoRef.current?.value ?? "";
+    const who = whoRef.current?.value.trim() ?? "";
     setError(undefined);
-    if (!category) return setError("Pick what these are first.");
-    if (askName && !who.trim()) return setError("Put your name in first so the office knows who sent them.");
+    if (askName && !who) return setError("Put your name in first so the office knows who sent them.");
     if (askName) {
       try {
-        window.localStorage.setItem("crew-photo-name", who.trim());
+        window.localStorage.setItem("crew-photo-name", who);
       } catch {}
     }
 
@@ -108,7 +116,7 @@ export function MediaUploader({
       update(id, { state: "sending" });
       const type = typeOf(file);
       try {
-        const started = await start({ name: file.name, type, size: file.size });
+        const started = await startPhotoUpload(access, { name: file.name, type, size: file.size }, folderId);
         if ("error" in started) throw new Error(started.error);
         const onProgress = (percent: number) => update(id, { percent });
         if (started.driver === "local") {
@@ -123,7 +131,11 @@ export function MediaUploader({
             onUploadProgress: ({ percentage }) => onProgress(percentage),
           });
         }
-        const done = await finish(started.ticket, { category, fileName: file.name, uploadedByName: who.trim() || undefined });
+        const done = await finishPhotoUpload(access, started.ticket, {
+          fileName: file.name,
+          uploadedByName: who || undefined,
+          tagIds: selected,
+        });
         if (done.error) throw new Error(done.error);
         update(id, { state: "done", percent: 100 });
       } catch (caught) {
@@ -154,24 +166,13 @@ export function MediaUploader({
         </div>
       )}
 
-      <div>
-        <p className="label">What are these?</p>
-        <div className="grid grid-cols-3 gap-2" role="radiogroup">
-          {PHOTO_CATEGORIES.map((option) => (
-            <button
-              key={option}
-              type="button"
-              role="radio"
-              aria-checked={category === option}
-              onClick={() => setCategory(option)}
-              className={`btn ${category === option ? "btn-primary" : "btn-ghost"} justify-center py-3`}
-              data-testid={`${testId}-category-${option.toLowerCase().replace(/ /g, "-")}`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PhotoTagPicker
+        tags={tags}
+        selected={selected}
+        onChange={setSelected}
+        onAdd={canAddTags ? addTag : undefined}
+        testId={`${testId}-tags`}
+      />
 
       <input
         ref={inputRef}
@@ -190,7 +191,6 @@ export function MediaUploader({
       <button
         type="button"
         onClick={() => {
-          if (!category) return setError("Pick what these are first.");
           if (askName && !whoRef.current?.value.trim()) return setError("Put your name in first so the office knows who sent them.");
           setError(undefined);
           inputRef.current?.click();
@@ -200,7 +200,7 @@ export function MediaUploader({
         data-testid={`${testId}-pick`}
       >
         <IconUpload size={18} />
-        {busy ? "Sending…" : "Take or choose photos & videos"}
+        {busy ? "Sending…" : "Add photos & videos"}
       </button>
 
       <FormError message={error} />

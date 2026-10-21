@@ -121,6 +121,9 @@ model Organization {
   contactAccounts       ContactAccount[]
   statusChanges         StatusChange[]
   photoLinks            ProjectPhotoLink[]
+  photoTags             PhotoTag[]
+  photoFolders          PhotoFolder[]
+  photoGrants           PhotoGrant[]
 
   @@index([status])
 }
@@ -180,6 +183,8 @@ model User {
   calendarEvents        CalendarEvent[]
   uploadsSent           Upload[]               @relation("UploadedBy")
   photoLinksMade        ProjectPhotoLink[]     @relation("PhotoLinkCreatedBy")
+  photoFoldersMade      PhotoFolder[]          @relation("PhotoFolderCreatedBy")
+  photoGrantsMade       PhotoGrant[]           @relation("PhotoGrantCreatedBy")
 
   @@index([organizationId])
 }
@@ -364,6 +369,7 @@ model Contact {
   // Events this person is expected at, as distinct from the one they are
   // the point of contact for above.
   attending     CalendarEvent[]  @relation("EventAttendees")
+  photoGrants   PhotoGrant[]
 
   @@index([organizationId])
   @@index([companyId])
@@ -1362,6 +1368,15 @@ model Upload {
   // Who sent it from inside the app.
   uploadedById   String?
   uploadedBy     User?             @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  // Who sent it through their own access link as an editor (Oct 21, 2026).
+  photoGrantId   String?
+  photoGrant     PhotoGrant?       @relation("GrantUploads", fields: [photoGrantId], references: [id], onDelete: SetNull)
+  // A job photo's mini folder; null is the job's main folder. A clone is
+  // its own row pointing at the same stored file, so its tags and its
+  // folder are its own.
+  photoFolderId  String?
+  photoFolder    PhotoFolder?      @relation(fields: [photoFolderId], references: [id], onDelete: SetNull)
+  tags           UploadTag[]
   publicToken    String            @unique
   // When a COI or license runs out, so the compliance tile can flag it.
   expiresOn      DateTime?         @db.Date
@@ -1380,6 +1395,8 @@ model Upload {
   @@index([organizationId, kind])
   @@index([projectId])
   @@index([photoLinkId])
+  @@index([photoFolderId])
+  @@index([storageKey])
   @@index([userId])
   @@index([companyId])
   @@index([contactId])
@@ -1418,6 +1435,95 @@ model ProjectPhotoLink {
 
   @@index([projectId, kind])
   @@index([organizationId])
+}
+
+// Tags on job photos (Oct 21, 2026): what a photo is (TYPE: General
+// Project, Site Walk, Installation, Finished Install) and where it was
+// taken (LOCATION: Bathroom, Lobby...). One list per workspace, seeded
+// lazily like the other pick lists, added to from the Files tab, an
+// editor's link or an installer's phone.
+enum PhotoTagKind {
+  TYPE
+  LOCATION
+}
+
+model PhotoTag {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           PhotoTagKind
+  name           String
+  position       Int          @default(0)
+  createdAt      DateTime     @default(now())
+  uploads        UploadTag[]
+
+  @@unique([organizationId, kind, name])
+}
+
+model UploadTag {
+  uploadId String
+  upload   Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  tagId    String
+  tag      PhotoTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([uploadId, tagId])
+  @@index([tagId])
+}
+
+// A mini folder inside a job's photos. Photos are moved or cloned in;
+// each folder has its own list of who outside the company can open it.
+model PhotoFolder {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String
+  createdById    String?
+  createdBy      User?        @relation("PhotoFolderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  uploads        Upload[]
+  grants         PhotoGrant[]
+
+  @@unique([projectId, name])
+}
+
+// One person outside the company let into one folder of a job's photos:
+// the main folder (folderId null) or a mini folder. Their own link, so it
+// can be turned off on its own and shows when they last looked. VIEW
+// looks; EDIT also adds photos and changes tags. Nobody outside deletes.
+enum PhotoGrantRole {
+  VIEW
+  EDIT
+}
+
+model PhotoGrant {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String
+  project        Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  folderId       String?
+  folder         PhotoFolder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  // A CRM contact, or a name and email typed in for someone who isn't one.
+  contactId      String?
+  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  name           String
+  email          String?
+  role           PhotoGrantRole @default(VIEW)
+  token          String         @unique
+  active         Boolean        @default(true)
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  emailedAt      DateTime?
+  createdById    String?
+  createdBy      User?          @relation("PhotoGrantCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now())
+  uploads        Upload[]       @relation("GrantUploads")
+
+  @@index([projectId, folderId])
+  @@index([organizationId])
+  @@index([contactId])
 }
 
 // ------------------------------------------------------------------
@@ -1505,15 +1611,17 @@ model Project {
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
-  scopes      ProjectScope[]
-  contracts   Contract[]
-  uploads     Upload[]
-  timeEntries TimeEntry[]
-  events      CalendarEvent[]
-  tasks       ProjectTask[]
-  notes       Note[]
-  activities  Activity[]
-  photoLinks  ProjectPhotoLink[]
+  scopes       ProjectScope[]
+  contracts    Contract[]
+  uploads      Upload[]
+  timeEntries  TimeEntry[]
+  events       CalendarEvent[]
+  tasks        ProjectTask[]
+  notes        Note[]
+  activities   Activity[]
+  photoLinks   ProjectPhotoLink[]
+  photoFolders PhotoFolder[]
+  photoGrants  PhotoGrant[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])

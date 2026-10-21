@@ -1062,7 +1062,10 @@ export async function deleteProjectFile(formData: FormData) {
   if (!upload) return;
 
   await prisma.upload.deleteMany({ where: { id: id.data, organizationId, kind: "PROJECT_FILE" } });
-  await deleteObject(upload.storageDriver, upload.storageKey);
+  // A cloned photo shares its stored file; the file goes with the last copy.
+  if (upload.storageKey && (await prisma.upload.count({ where: { storageKey: upload.storageKey } })) === 0) {
+    await deleteObject(upload.storageDriver, upload.storageKey);
+  }
   if (upload.projectId) revalidatePath(`/dashboard/projects/${upload.projectId}/files`);
 }
 

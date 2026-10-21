@@ -11,7 +11,7 @@ import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 // ever sent back to the workspace that uploaded them.
 //
 // A job's photos and videos (Oct 17, 2026) are also open to whoever holds
-// a working look-only link to that job, passed as ?v=<link token>. Those
+// a working grant to that job's folder, passed as ?v=<grant token>. Those
 // kept in object storage are never streamed from here when it can be
 // helped: the check is made, then the browser is sent to an address that
 // works for ten minutes.
@@ -37,6 +37,7 @@ export async function GET(
       projectId: true,
       storageKey: true,
       storageDriver: true,
+      photoFolderId: true,
     },
   });
   if (!file) return new Response("Not found", { status: 404 });
@@ -88,19 +89,21 @@ export async function GET(
   });
 }
 
-// A look-only link opens the photos and videos of its own job, nothing
-// else: not that job's documents, not another job's anything.
+// A person's grant opens the photos and videos in its own folder of its
+// own job, nothing else: not that job's documents, not another folder,
+// not another job.
 async function viaViewLink(
   request: Request,
-  file: { projectId: string | null; organizationId: string; mimeType: string },
+  file: { projectId: string | null; organizationId: string; mimeType: string; photoFolderId: string | null },
 ) {
   const token = new URL(request.url).searchParams.get("v");
   if (!token || !file.projectId || !isMediaMime(file.mimeType)) return false;
   const link = await findPhotoLink(token);
   return Boolean(
     link?.usable &&
-      link.kind === "VIEW" &&
+      link.kind === "GRANT" &&
       link.project.id === file.projectId &&
-      link.organizationId === file.organizationId,
+      link.organizationId === file.organizationId &&
+      (link.folder?.id ?? null) === file.photoFolderId,
   );
 }

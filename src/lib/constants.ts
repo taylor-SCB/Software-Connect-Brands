@@ -449,10 +449,26 @@ export const PROJECT_FILE_CATEGORIES = [
   "Other",
 ] as const;
 
-// What a photo or video from a job is (Oct 17, 2026). The crew photo link
-// asks this first so the Files tab can show a site walk apart from the
-// finished work.
-export const PHOTO_CATEGORIES = ["Site walk", "Finished install", "Photo"] as const;
+// The starting tags on job photos (Oct 21, 2026). Photo Type says what a
+// photo is, and one with none is General Project; Location / Area says
+// where on the property it was taken, picked for the buildings a trade
+// contractor's customers run. Both lists grow with "+ Add new".
+export const PHOTO_TYPE_DEFAULTS = ["General Project", "Site Walk", "Installation", "Finished Install"] as const;
+export const DEFAULT_PHOTO_TYPE = "General Project";
+export const PHOTO_LOCATION_DEFAULTS = [
+  "Lobby",
+  "Office",
+  "Bathroom",
+  "Kitchen",
+  "Hallway",
+  "Unit / Apartment",
+  "Clubhouse",
+  "Fitness Center",
+  "Pool Area",
+  "Exterior",
+  "Roof",
+  "Parking Garage",
+] as const;
 
 // A contact with no company at all — a homeowner wanting a window quote —
 // reads as this company type on the list and in the filter. It is not a

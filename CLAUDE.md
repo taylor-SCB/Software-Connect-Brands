@@ -242,11 +242,14 @@ send logged on the contact's Activity; **40 emails per user per day** in
 the workspace's time zone, with a counter in the window and on Company
 Users; unsubscribes at `/u/<token>` mark every contact with that address),
 company logos and contact photos, **job photos and videos** (Oct 17,
-2026: the top of a job's Files tab, grouped Site walk / Finished install /
-Photo; a **crew photo link** per job that an installer opens on a phone
-with no login and can only send through; **Shared with** look-only
-gallery links for anyone in or outside the company, owners and admins
-only, each turned off on its own; files in Vercel Blob, see `DEPLOY.md`),
+2026; reworked Oct 21, 2026: photos belong to the job and carry tags —
+Photo Type, General Project when none, and Location / Area, both
+workspace lists with "+ Add"; square tiles with who, when and tags;
+stacking filter chips; a Main folder and mini folders with Move and Clone;
+**Grant access** per folder to the job's accounts, CRM contacts or a new
+email, View only or Editor, each person their own emailed link, owners
+and admins only, nobody outside deletes; a **crew photo link** per job
+for installers; files in Vercel Blob, see `DEPLOY.md`),
 and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
@@ -441,12 +444,22 @@ are all blocking before the first paying customer.
 - **Deleting a workspace or a job leaves its photos in Blob.** The rows
   cascade away; the files don't. Deleting one photo does remove it.
   A sweep by the `org/<id>/` prefix is the fix when it matters.
-- **A crew link has no upload limit.** Anyone holding it can send photos
-  and videos (1 GB each) to that job until it is turned off or replaced.
+- **A crew link or an Editor's link has no upload limit.** Anyone holding
+  one can send photos and videos (1 GB each) to that job until it is
+  turned off or replaced.
   Fine for a link texted to installers; a per-link daily cap is the fix if
   one leaks.
-- **A shared gallery is named, not tied to a CRM company.** "Who is it
-  for" is free text; it does not show on that company's page.
+- **A grant is one folder.** Access to the Main folder does not include
+  the job's mini folders; each is granted on its own. A photo's copies in
+  other folders are separate rows, so tagging one doesn't tag the others.
+- **Deleting a mini folder isn't built.** Folders are made from the bar or
+  from Move / Clone and stay; the schema drops a deleted folder's photos
+  back into the Main folder (SetNull) and its grants with it (Cascade)
+  for when it is.
+- **An invited person's link is a password.** Anyone they forward the
+  email to can open it at the same level, until it is turned off. Fine
+  for property managers and subs; a sign-in step is the fix if a customer
+  needs proof of who looked.
 - **"Receive in-app messages" is a stored switch only.** There is no
   in-app messaging yet.
 - **No billing.** Nothing charges anybody.
@@ -610,11 +623,17 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
 Contacts and claiming, the Notes split), from Oct 17, 2026
-`job-photos.cjs` (24: the photo uploader, the crew link on a phone, the
-shared gallery and what it can and can't open, turning links off, a
-paused workspace, Members, deletes, forged tickets; **it needs
-`STORAGE_DRIVER=local` in `.env`** and no `BLOB_READ_WRITE_TOKEN`, or
-every upload is refused as "Photo storage isn't switched on"), and from Oct 21, 2026
+`job-photos.cjs` (28 since Oct 21, 2026: tag lists and General
+Project, tiles, + Add from the uploader, a tile and a phone, stacking
+filters, mini folders, Move and Clone and a clone's own tags, deleting
+copies and the last one taking the file, the crew link, Grant Access with
+the job's accounts, Select all, CRM search and email invites, View only
+vs Editor on a person's link, a grant opening its own folder only,
+switching level, re-granting, turning off, Members, a paused workspace,
+forged tickets; **it needs `STORAGE_DRIVER=local`** and no
+`BLOB_READ_WRITE_TOKEN` in `.env`, plus the fake email settings
+`password-reset.cjs` uses, because it catches the grant emails on :3999;
+without storage every upload is refused as "Photo storage isn't switched on"), and from Oct 21, 2026
 `import-ratesheet.cjs` (the Excel fixture with title rows, a Call row,
 a unit change and a Discontinued tab; ticks, a typed price, the
 import's costs, prices, MSRP, supplier switch and rep; Not on this sheet

@@ -415,21 +415,36 @@ customer owes rather than showing as something to chase. **Files** on a
 job hold the other party's own signed contract and anything else the job
 needs; a job's file needs a login, unlike a logo.
 
-**Job photos and videos** (Oct 17, 2026) — the top of a job's **Files**
-tab. Pick what they are (**Site walk**, **Finished install** or
-**Photo**), then take or choose photos and videos; they show as a grid
-grouped by those three, and videos play on the page. **Crew photo link**
-is one link per job to text an installer: it opens a phone page with no
-login, asks their name (remembered on the phone) and what the photos
-are, and sends — it can never show anything. **New link** retires the
-old one. **Shared with** makes look-only gallery links named for whoever
-holds them, inside the company or out, each turned off on its own and
-kept on the list as a record; only owners and admins make them. Links at
-`/p/<token>`; a paused workspace's links go dark. The files themselves
-live in **Vercel Blob** (private), not Postgres, up to 1 GB each: the
-phone sends them straight to the store with a signed ticket for one
-path, and `/files/<token>` checks who is asking and then redirects to an
-address that works for ten minutes (`src/lib/storage.ts`). A laptop
+**Job photos and videos** (Oct 17, 2026; reworked Oct 21, 2026) — the
+top of a job's **Files** tab. Photos belong to the job; what they are is
+a tag. Two tag lists per workspace, each pick-many with "+ Add":
+**Photo Type** (General Project, Site Walk, Installation, Finished
+Install; a photo with none is General Project) and **Location / Area**
+(twelve starters: Lobby, Office, Bathroom, Kitchen, Hallway, Unit /
+Apartment, Clubhouse, Fitness Center, Pool Area, Exterior, Roof, Parking
+Garage). Each photo is a square tile with who sent it, when, and its tags;
+**Tags** changes them, chips across the top filter (types and locations
+stack). The job's **Main folder** and its **mini folders** sit on a bar;
+**Move** takes a photo out of where it is, **Clone** leaves it and puts a
+copy in each folder picked (a copy is its own row on the same stored file:
+own tags, own folder, and the file goes with the last copy), both with
+"Create Mini Folder". **Who can see the <folder>** — owners and admins
+**Grant access** per folder: the job's accounts (the customer, anyone
+with paperwork on it, subcontractor crews that logged time) with a Select
+all per account or people ticked one by one, plus **Invite Other Users**
+from the CRM or by email (someone new is added as a contact). **View
+only** looks; **Editor** also adds photos to that folder and changes tags;
+nobody outside deletes, moves or clones. Each person gets their own link
+at `/p/<token>`, emailed from the business if ticked, with Make editor /
+Make view only, Turn off, and when they last opened it; granting someone
+again changes their level rather than making a second link. Your own team
+sees everything. **Crew photo link** is one link per job for installers:
+name (remembered on the phone), optional tags (they can add new ones),
+send to the main folder; it never shows anything. Files live in **Vercel
+Blob** (private), up to 1 GB each, sent straight from the phone on a
+signed one-path ticket; `/files/<token>` checks who is asking (a grant
+only opens its own folder) and redirects to an address that works for ten
+minutes (`src/lib/storage.ts`, rules in `src/lib/job-photos.ts`). A laptop
 without Blob keeps them in `.local-storage/` (`STORAGE_DRIVER=local`).
 
 **Crews and time** (Sept 14, 2026) — **Projects → Crews** is who does the
