@@ -172,10 +172,28 @@ adds a rate and term with the total worked out on screen. A product can
 name its distributor and the people there — name, email and phone — picked
 from per-workspace lists that grow from the form itself. The list page can
 clone, delete, and flip a product between active and inactive in place.
-**Link Ratesheet → Import CSV** turns a spreadsheet into products: it
-previews the rows and the columns it matched, then creates new products
-and updates existing ones by SKU (or name) so a refreshed price list never
-duplicates the catalog.
+**Link Ratesheet → Import Ratesheet** (Oct 21, 2026) brings in a
+distributor's, manufacturer's or software provider's price list. The
+price on their sheet is **your cost** (COGS) and their **MSRP** is kept
+beside it on the product; your sell price comes from a markup, a margin,
+or their MSRP less a percentage — never from the sheet on its own. Excel
+(every tab; a Discontinued or Read Me tab starts unticked) or CSV
+(including Windows Excel's), the header row found under title rows,
+columns read by their names and by what the cells hold, each fixable
+from a dropdown and remembered per supplier. **Who sent it?** is
+required (+ Add New Distributor makes the Company too) with an optional
+point of contact. Every product is shown as it will land with a tick box
+(Select all / Remove all) and a sell price you can type over; only
+ticked rows import, in batches. A product you already carry keeps its
+own name, description, tag and unit: cost up keeps your margin, cost
+down keeps your price, a cost that more than doubles or halves waits for
+a tick, and "Call", "N/A" or $0 never wipes a cost. **Decline** asks
+what read wrong and sends the file and the note to the operator console
+(/admin → Ratesheet imports to look at). The file is saved under
+Ratesheets with what the import did, and a file uploaded there earlier
+gets **Import prices**. The product form links COGS, Markup %, Margin %
+and Unit price and has an MSRP box; the Products list shows margin with
+markup under it.
 
 **Ratesheets** — a sub-module under Products. A ratesheet is a named
 selection of your products published for partners: **Public**,
@@ -187,8 +205,9 @@ declines. The landing page shows a summary of every send with its status
 on the left and the ratesheet tiles (approved/sent, expires on) on the
 right; clicking a tile filters the summary. **+ Link Ratesheet** uploads a
 distributor's own price list (any file up to 4 MB, stored in the
-database) so it can be downloaded from the same page; linking another
-workspace's published sheet is marked *Coming Soon*.
+database) so it can be downloaded from the same page, or imports it (see
+Products); linking another workspace's published sheet is marked *Coming
+Soon*.
 
 **Quotes** — created against a customer *and* a deal (type to search the
 customer's deals, or **+ Add new deal**), with two templates, **Simple**
@@ -691,6 +710,9 @@ src/app/dashboard/...             the app: contacts, companies, deals,
                                   products, quotes, contracts, settings
 src/app/dashboard/products/ratesheets
                                   the Ratesheets sub-module
+src/lib/price-list.ts             Import Ratesheet's planner (columns, matching,
+                                  pricing), run in the browser and on the server
+src/lib/price-list-file.ts        reads a ratesheet's Excel or CSV file
 src/app/q/[token]                 public quote view
 src/app/c/[token]                 public contract view + e-signature
 src/app/r/[token]                 public ratesheet view + partner approve/decline

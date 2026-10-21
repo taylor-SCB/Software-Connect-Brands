@@ -14,17 +14,22 @@ import {
 import { ProductsSubnav } from "./products-subnav";
 import { ProductRowActions } from "./product-row-actions";
 import { LinkRatesheetButton } from "./link-ratesheet-button";
-import { toggleProductActive, importProductsCsv } from "./actions";
+import { toggleProductActive } from "./actions";
+import { loadRatesheetSuppliers } from "./lookups";
+import { marginPercent, markupPercent } from "@/lib/price-list";
 import { uploadLinkedRatesheet } from "./ratesheets/actions";
 
 export default async function ProductsPage() {
   const { organizationId } = await requireSession();
 
-  const products = await prisma.product.findMany({
-    where: { organizationId },
-    orderBy: [{ active: "desc" }, { name: "asc" }],
-    include: { manufacturer: { select: { name: true } } },
-  });
+  const [products, suppliers] = await Promise.all([
+    prisma.product.findMany({
+      where: { organizationId },
+      orderBy: [{ active: "desc" }, { name: "asc" }],
+      include: { manufacturer: { select: { name: true } } },
+    }),
+    loadRatesheetSuppliers(organizationId),
+  ]);
 
   return (
     <div>
@@ -34,7 +39,7 @@ export default async function ProductsPage() {
         subtitle="The items and services you pull into quotes."
         actions={
           <>
-            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} importAction={importProductsCsv} />
+            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} suppliers={suppliers} />
             <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
               <IconPlus size={14} />
               Create Ratesheet
@@ -72,6 +77,7 @@ export default async function ProductsPage() {
                   <th>Default tag</th>
                   <th className="hidden text-right md:table-cell">COGS</th>
                   <th className="text-right">Unit price</th>
+                  <th className="hidden text-right md:table-cell">Margin</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -121,6 +127,9 @@ export default async function ProductsPage() {
                           </p>
                         )}
                       </td>
+                      <td className="num hidden text-right text-xs md:table-cell" data-testid="product-margin">
+                        <MarginCell costCents={product.costCents} priceCents={product.unitPriceCents} />
+                      </td>
                       <td>
                         {/* The state and the button that flips it sit
                             together, so "Inactive" always reads as the
@@ -158,5 +167,19 @@ export default async function ProductsPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+// Margin first (what most of a sale you keep), markup under it (how far
+// over cost the price sits) — the two numbers a contractor prices by.
+function MarginCell({ costCents, priceCents }: { costCents: number; priceCents: number }) {
+  const margin = marginPercent(costCents, priceCents);
+  const markup = markupPercent(costCents, priceCents);
+  if (margin === null || costCents <= 0) return <span className="faint">—</span>;
+  return (
+    <>
+      <span className={margin < 0 ? "text-[var(--danger)]" : ""}>{Math.round(margin)}%</span>
+      {markup !== null && <p className="faint text-[0.7rem]">{Math.round(markup)}% markup</p>}
+    </>
   );
 }

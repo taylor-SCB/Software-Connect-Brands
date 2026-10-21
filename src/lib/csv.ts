@@ -1,6 +1,7 @@
-// CSV import for the product catalog. Pure functions with no server
-// dependencies, so the dialog can show a preview of exactly what the
-// server will do before the user commits to it.
+// CSV reading shared by the importers (contacts, and Import Ratesheet in
+// src/lib/price-list.ts), plus the tag and unit readers a ratesheet's
+// rows go through. Pure functions with no server dependencies, so a
+// preview in the browser reads a file exactly as the server will.
 
 import {
   LINE_ITEM_TAGS,
@@ -12,10 +13,6 @@ import {
   type LineItemTagValue,
   type UnitOfMeasureValue,
 } from "@/lib/constants";
-import { dollarsToCents } from "@/lib/format";
-
-export const MAX_IMPORT_ROWS = 2000;
-export const MAX_IMPORT_BYTES = 4 * 1024 * 1024;
 
 // RFC 4180: quoted fields, doubled quotes inside them, CRLF or LF line
 // ends, and the byte-order mark Excel likes to prepend. Also accepts
@@ -88,75 +85,6 @@ function pickDelimiter(line: string) {
   return counts[0][1] > 0 ? counts[0][0] : ",";
 }
 
-export const CSV_COLUMNS = [
-  "name",
-  "sku",
-  "description",
-  "price",
-  "cost",
-  "manufacturer",
-  "unit",
-  "tag",
-] as const;
-export type CsvColumn = (typeof CSV_COLUMNS)[number];
-
-export const CSV_COLUMN_LABELS: Record<CsvColumn, string> = {
-  name: "Name",
-  sku: "SKU",
-  description: "Description",
-  price: "Unit price",
-  cost: "COGS",
-  manufacturer: "Manufacturer",
-  unit: "Unit",
-  tag: "Tag",
-};
-
-// Header names people actually use, normalized to lower case with
-// punctuation collapsed to spaces. Exact matches win; a looser
-// "contains" pass mops up the rest, in this order so "unit price" lands
-// on price and "unit cost" on cost before either could land on unit.
-const HEADER_ALIASES: Record<CsvColumn, string[]> = {
-  name: ["name", "product", "product name", "item", "item name", "title", "service", "line item", "product service"],
-  sku: ["sku", "code", "product code", "item code", "part", "part number", "part no", "part #", "item #", "item number", "model", "model number", "mpn", "catalog #", "catalog number"],
-  description: ["description", "desc", "details", "notes", "product description", "long description"],
-  price: ["price", "unit price", "sell price", "sale price", "list price", "list", "msrp", "rate", "retail", "retail price", "selling price", "customer price", "unit sell", "price each"],
-  cost: ["cost", "cogs", "unit cost", "our cost", "dealer cost", "dealer price", "wholesale", "wholesale price", "net", "net price", "cost price", "your cost", "contractor price", "cost each"],
-  manufacturer: ["manufacturer", "oem", "brand", "mfg", "mfr", "make", "vendor", "maker", "oem manufacturer"],
-  unit: ["unit", "uom", "unit of measure", "unit of measurement", "units", "per", "measure", "sold by", "u m"],
-  tag: ["tag", "category", "type", "default tag", "group", "class", "kind"],
-};
-
-function normalizeHeader(header: string) {
-  return header.toLowerCase().replace(/[^a-z0-9#]+/g, " ").trim();
-}
-
-export function detectColumns(headers: string[]): Partial<Record<CsvColumn, number>> {
-  const normalized = headers.map(normalizeHeader);
-  const used = new Set<number>();
-  const result: Partial<Record<CsvColumn, number>> = {};
-
-  for (const column of CSV_COLUMNS) {
-    const index = normalized.findIndex((h, i) => !used.has(i) && HEADER_ALIASES[column].includes(h));
-    if (index >= 0) {
-      result[column] = index;
-      used.add(index);
-    }
-  }
-  for (const column of CSV_COLUMNS) {
-    if (result[column] !== undefined) continue;
-    const index = normalized.findIndex(
-      (h, i) =>
-        !used.has(i) &&
-        HEADER_ALIASES[column].some((alias) => alias.length > 3 && h.includes(alias)),
-    );
-    if (index >= 0) {
-      result[column] = index;
-      used.add(index);
-    }
-  }
-  return result;
-}
-
 export function parseTag(raw: string): { tag: LineItemTagValue; note?: string } {
   const value = raw.trim().toLowerCase();
   if (!value) return { tag: "MATERIALS" };
@@ -215,96 +143,4 @@ export function parseUnit(
     return { unit: null, note: `"${trimmed}" isn't a ${TAG_LABELS[tag]} unit — left blank` };
   }
   return { unit };
-}
-
-export type ImportRow = {
-  line: number;
-  name: string;
-  sku: string | null;
-  description: string;
-  unitPriceCents: number;
-  costCents: number;
-  manufacturer: string | null;
-  unitOfMeasure: UnitOfMeasureValue | null;
-  defaultTag: LineItemTagValue;
-  // Which cells were actually filled in, so an update of an existing
-  // product only touches what the file says and never blanks the rest.
-  present: Partial<Record<CsvColumn, boolean>>;
-  notes: string[];
-};
-
-export type ImportPlan = {
-  headers: string[];
-  columns: Partial<Record<CsvColumn, number>>;
-  rows: ImportRow[];
-  skippedBlankName: number;
-  // Later rows that repeat an earlier row's SKU (or, with no SKU, its
-  // name). The first one wins; the preview and the import agree on it.
-  skippedDuplicates: number;
-  truncated: number;
-};
-
-export function planImport(text: string): { ok: true; plan: ImportPlan } | { ok: false; error: string } {
-  const table = parseCsv(text);
-  if (table.length === 0) return { ok: false, error: "The file is empty." };
-
-  const headers = table[0].map((h) => h.trim());
-  const columns = detectColumns(headers);
-  if (columns.name === undefined) {
-    return {
-      ok: false,
-      error:
-        "Couldn't find a product name column. Make the first row headers such as Name, SKU, Unit price, COGS, Manufacturer, Unit, Tag.",
-    };
-  }
-
-  const dataRows = table.slice(1);
-  const truncated = Math.max(0, dataRows.length - MAX_IMPORT_ROWS);
-  const rows: ImportRow[] = [];
-  const seen = new Set<string>();
-  let skippedBlankName = 0;
-  let skippedDuplicates = 0;
-
-  dataRows.slice(0, MAX_IMPORT_ROWS).forEach((cells, index) => {
-    const cell = (column: CsvColumn) => {
-      const at = columns[column];
-      return at === undefined ? "" : (cells[at] ?? "").trim();
-    };
-    const name = cell("name").slice(0, 160);
-    if (!name) {
-      skippedBlankName += 1;
-      return;
-    }
-    const skuCell = cell("sku").slice(0, 60);
-    const key = skuCell ? `sku:${skuCell.toLowerCase()}` : `name:${name.toLowerCase()}`;
-    if (seen.has(key)) {
-      skippedDuplicates += 1;
-      return;
-    }
-    seen.add(key);
-    const notes: string[] = [];
-    const tag = parseTag(cell("tag"));
-    if (tag.note) notes.push(tag.note);
-    const unit = parseUnit(cell("unit"), tag.tag);
-    if (unit.note) notes.push(unit.note);
-
-    const present: ImportRow["present"] = {};
-    for (const column of CSV_COLUMNS) present[column] = cell(column) !== "";
-
-    rows.push({
-      line: index + 2,
-      name,
-      sku: cell("sku").slice(0, 60) || null,
-      description: cell("description").slice(0, 2000),
-      unitPriceCents: dollarsToCents(cell("price")),
-      costCents: Math.max(0, dollarsToCents(cell("cost"))),
-      manufacturer: cell("manufacturer").slice(0, 120) || null,
-      unitOfMeasure: unit.unit,
-      defaultTag: tag.tag,
-      present,
-      notes,
-    });
-  });
-
-  return { ok: true, plan: { headers, columns, rows, skippedBlankName, skippedDuplicates, truncated } };
 }
