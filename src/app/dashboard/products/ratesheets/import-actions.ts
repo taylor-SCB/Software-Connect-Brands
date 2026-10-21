@@ -490,15 +490,17 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   revalidatePath(PRODUCTS_PATH);
   revalidatePath(RATESHEETS_PATH);
 
-  const parts = [`${counts.addedCount} new`, `${counts.updatedCount} updated`];
+  const n = (value: number) => value.toLocaleString("en-US");
+  const parts = [`${n(counts.addedCount)} new`, `${n(counts.updatedCount)} updated`];
   const moved = [
-    counts.costUpCount ? `${counts.costUpCount} cost more` : "",
-    counts.costDownCount ? `${counts.costDownCount} cost less` : "",
+    counts.costUpCount ? `${n(counts.costUpCount)} cost more` : "",
+    counts.costDownCount ? `${n(counts.costDownCount)} cost less` : "",
   ].filter(Boolean);
-  let message = `Imported ${counts.addedCount + counts.updatedCount} products from ${supplier.name}: ${parts.join(", ")}`;
+  const total = counts.addedCount + counts.updatedCount;
+  let message = `Imported ${n(total)} ${total === 1 ? "product" : "products"} from ${supplier.name}: ${parts.join(", ")}`;
   if (moved.length) message += ` (${moved.join(", ")})`;
   message += ".";
-  if (deactivated) message += ` ${deactivated} no longer on their list marked inactive.`;
+  if (deactivated) message += ` ${n(deactivated)} no longer on their list marked inactive.`;
   return { ok: true, message, linkedRatesheetId: linkedId, supplierId: supplier.id };
 }
 

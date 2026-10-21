@@ -336,6 +336,40 @@ async function product(org, sku) {
   const hidRow = page.locator("tr", { hasText: "HID reader (mine)" });
   assert.match(await hidRow.getByTestId("product-margin").innerText(), /33%\s*50% markup/);
 
+  log("a 3,000-row sheet: 1,500 updates and 1,500 new products, in batches, inside a minute");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag","distributorId",active,"updatedAt")
+     SELECT 'prd_ir_bulk_' || g, $1, 'Bulk item ' || g, '', 'BULK-' || g, 2000, 1000, 'MATERIALS', 'dst_ir_spirit', true, now()
+       FROM generate_series(1, 1500) g`,
+    [org],
+  );
+  const big = path.join(OUT, "ir-spirit-big.csv");
+  const lines = ["Mfr Part #,Description,Dealer,MSRP"];
+  for (let i = 1; i <= 3000; i += 1) lines.push(`BULK-${i},Bulk item ${i},11.00,25.00`);
+  fs.writeFileSync(big, lines.join("\n") + "\n");
+  await openImport(page);
+  await page.setInputFiles("#ratesheet-import-file", big);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("dst_ir_spirit");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"), null, { timeout: 60_000 });
+  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /3,000 products on the sheet · 3,000 ticked/);
+  const started = Date.now();
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByTestId("ratesheet-done").waitFor({ timeout: 120_000 });
+  const seconds = (Date.now() - started) / 1000;
+  console.log(`     imported 3,000 rows in ${seconds.toFixed(1)}s`);
+  assert.match(await page.getByTestId("ratesheet-done").innerText(), /Imported 3,000 products from Spirit Supply: 1,500 new, 1,500 updated \(1,500 cost more\)/);
+  assert.ok(seconds < 60, `the import took ${seconds}s`);
+  const bulk = (await sql(
+    `SELECT count(*) FILTER (WHERE "costCents"=1100 AND "unitPriceCents"=2200 AND "listPriceCents"=2500)::int AS kept_margin,
+            count(*) FILTER (WHERE "costCents"=1100 AND "unitPriceCents"=1430)::int AS new_rule,
+            count(*)::int AS total
+       FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'BULK-%'`,
+    [org],
+  )).rows[0];
+  assert.deepEqual(bulk, { kept_margin: 1500, new_rule: 1500, total: 3000 });
+  await page.getByRole("button", { name: "Done" }).click();
+
   log("phone: the Import button sits on screen at the foot of the dialog");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const mobile = await phone.newPage();
