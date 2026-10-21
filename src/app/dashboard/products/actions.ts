@@ -19,8 +19,6 @@ import {
   unitAllowedForTag,
   unitGroupFor,
 } from "@/lib/constants";
-import { planImport, MAX_IMPORT_BYTES, type ImportRow } from "@/lib/csv";
-import type { Prisma } from "@/generated/prisma/client";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -102,6 +100,7 @@ type Resolved = {
     sku: string | null;
     unitPriceCents: number;
     costCents: number;
+    listPriceCents: number | null;
     defaultTag: (typeof LINE_ITEM_TAGS)[number];
     serviceType: string | null;
     unitOfMeasure: (typeof UNITS_OF_MEASURE)[number] | null;
@@ -131,6 +130,10 @@ async function resolveProductInput(
   const costCents = dollarsToCents(formData.get("cost"));
   if (costCents < 0) return { ok: false, error: "COGS can't be negative" };
   const unitPriceCents = dollarsToCents(formData.get("unitPrice"));
+  // The supplier's MSRP: blank means "not known", not $0.
+  const listRaw = formData.get("listPrice");
+  const listPriceCents = typeof listRaw === "string" && listRaw.trim() !== "" ? dollarsToCents(listRaw) : null;
+  if (listPriceCents !== null && listPriceCents < 0) return { ok: false, error: "MSRP can't be negative" };
 
   // Each unit list belongs to a tag: a Labor product can't be "Per
   // Gallon", and project services, shipping and taxes carry no unit at
@@ -242,6 +245,7 @@ async function resolveProductInput(
         sku: optionalText(formData.get("sku")),
         unitPriceCents,
         costCents,
+        listPriceCents,
         defaultTag: input.defaultTag,
         serviceType: input.serviceType ? input.serviceType : null,
         unitOfMeasure,
@@ -378,6 +382,7 @@ export async function cloneProduct(formData: FormData) {
       sku: null,
       unitPriceCents: source.unitPriceCents,
       costCents: source.costCents,
+      listPriceCents: source.listPriceCents,
       defaultTag: source.defaultTag,
       serviceType: source.serviceType,
       unitOfMeasure: source.unitOfMeasure,
@@ -413,105 +418,4 @@ export async function toggleProductActive(formData: FormData) {
 
   revalidatePath("/dashboard/products");
   revalidatePath(`/dashboard/products/${product.id}`);
-}
-
-// "Link Ratesheet → Import CSV". Rows become products. A row whose SKU
-// (or, failing that, exact name) already exists updates that product
-// instead of duplicating it, so re-importing a distributor's refreshed
-// price list is a refresh. On an update only the cells the file actually
-// filled in are written; a blank cell never wipes what was there.
-export async function importProductsCsv(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
-
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "Choose a CSV file to import" };
-  if (file.size > MAX_IMPORT_BYTES) return { error: "That file is over 4 MB. Split it and try again." };
-
-  const planned = planImport(await file.text());
-  if (!planned.ok) return { error: planned.error };
-  const { rows } = planned.plan;
-  if (rows.length === 0) return { error: "No rows with a product name to import" };
-
-  // Manufacturers named in the file that this workspace doesn't have yet.
-  const manufacturerNames = [...new Set(rows.map((row) => row.manufacturer).filter((n): n is string => !!n))];
-  const manufacturerIds = new Map<string, string>();
-  if (manufacturerNames.length > 0) {
-    await prisma.manufacturer.createMany({
-      data: manufacturerNames.map((name) => ({ organizationId, name })),
-      skipDuplicates: true,
-    });
-    const manufacturers = await prisma.manufacturer.findMany({
-      where: { organizationId, name: { in: manufacturerNames } },
-      select: { id: true, name: true },
-    });
-    for (const manufacturer of manufacturers) manufacturerIds.set(manufacturer.name, manufacturer.id);
-  }
-
-  const existing = await prisma.product.findMany({
-    where: { organizationId },
-    select: { id: true, sku: true, name: true },
-  });
-  const bySku = new Map<string, string>();
-  const byName = new Map<string, string>();
-  for (const product of existing) {
-    if (product.sku) bySku.set(product.sku.toLowerCase(), product.id);
-    byName.set(product.name.toLowerCase(), product.id);
-  }
-
-  const creates: Prisma.ProductCreateManyInput[] = [];
-  const updates: { id: string; data: Record<string, unknown> }[] = [];
-
-  const fieldsFor = (row: ImportRow) => ({
-    description: row.description,
-    sku: row.sku,
-    unitPriceCents: row.unitPriceCents,
-    costCents: row.costCents,
-    defaultTag: row.defaultTag,
-    unitOfMeasure: row.unitOfMeasure,
-    manufacturerId: row.manufacturer ? (manufacturerIds.get(row.manufacturer) ?? null) : null,
-  });
-
-  for (const row of rows) {
-    const existingId =
-      (row.sku ? bySku.get(row.sku.toLowerCase()) : undefined) ?? byName.get(row.name.toLowerCase());
-
-    if (!existingId) {
-      creates.push({ organizationId, name: row.name, active: true, ...fieldsFor(row) });
-      continue;
-    }
-
-    const all = fieldsFor(row);
-    const data: Record<string, unknown> = { name: row.name };
-    if (row.present.description) data.description = all.description;
-    if (row.present.sku) data.sku = all.sku;
-    if (row.present.price) data.unitPriceCents = all.unitPriceCents;
-    if (row.present.cost) data.costCents = all.costCents;
-    if (row.present.manufacturer) data.manufacturerId = all.manufacturerId;
-    if (row.present.tag) {
-      data.defaultTag = all.defaultTag;
-      // A tag with no unit list drops the old unit with it.
-      if (!tagHasUnits(all.defaultTag)) data.unitOfMeasure = null;
-    }
-    if (row.present.unit && all.unitOfMeasure) data.unitOfMeasure = all.unitOfMeasure;
-    if (data.unitOfMeasure !== undefined && !isSoftwareUnit(data.unitOfMeasure as string | null)) {
-      data.softwareRate = null;
-      data.softwareTerm = null;
-    }
-    updates.push({ id: existingId, data });
-  }
-
-  await prisma.$transaction([
-    ...updates.map((update) =>
-      prisma.product.updateMany({ where: { id: update.id, organizationId }, data: update.data }),
-    ),
-    ...(creates.length > 0 ? [prisma.product.createMany({ data: creates })] : []),
-  ]);
-
-  revalidatePath("/dashboard/products");
-
-  const parts = [`${creates.length} new`, `${updates.length} updated`];
-  const skipped = planned.plan.skippedDuplicates + planned.plan.skippedBlankName;
-  if (skipped > 0) parts.push(`${skipped} skipped`);
-  if (planned.plan.truncated > 0) parts.push(`${planned.plan.truncated} past the 2,000-row limit not imported`);
-  return { success: `Imported: ${parts.join(", ")}.` };
 }

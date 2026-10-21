@@ -1,14 +1,13 @@
 import { requireSession } from "@/lib/session";
 
-// A starter CSV for "Link Ratesheet → Import CSV": the headers the
-// importer recognises, with one row from each unit list so the shape is
-// obvious when it opens in a spreadsheet.
+// The example layout behind Import Ratesheet: what a supplier's sheet
+// usually looks like. The price column is your cost, MSRP is theirs; the
+// importer reads most other layouts too, this is just the plain one.
 const TEMPLATE = [
-  "Name,SKU,Description,Unit price,COGS,Manufacturer,Unit,Tag",
-  '"Journeyman labor",LAB-JRN,"Licensed journeyman, business hours",125.00,80.00,,Per Hour,Labor',
-  '"Copper pipe 3/4in",CU-34,,4.25,3.10,Mueller,Per LinearFt,Materials',
-  '"Monitoring seat",SW-MON,,10.00,4.00,Acme Software,Per Device,Software',
-  '"Permit handling",SVC-PERMIT,,150.00,0,,,Project Services',
+  "Mfr Part #,Description,Your Cost,MSRP,Manufacturer,Unit,Tag",
+  '"HID-5355AGN00","HID ProxPro card reader",112.50,189.99,HID,Each,Materials',
+  '"CAT6-1000","Cat6 cable, 1000 ft box",189.00,265.00,Belden,Each,Materials',
+  '"LIC-VMS-1","Video management license, 1 camera",85.00,120.00,Genetec,Per Device,Software',
   "",
 ].join("\r\n");
 
@@ -17,7 +16,7 @@ export async function GET() {
   return new Response(TEMPLATE, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": 'attachment; filename="products-template.csv"',
+      "Content-Disposition": 'attachment; filename="ratesheet-example.csv"',
       "Cache-Control": "private, no-store",
     },
   });

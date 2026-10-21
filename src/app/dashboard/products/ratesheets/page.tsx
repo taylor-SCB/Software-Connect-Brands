@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDay } from "@/lib/format";
 import { inviteState, ratesheetState, formatBytes } from "@/lib/ratesheets";
 import { PageHeader } from "@/components/ui";
 import { IconPlus } from "@/components/icons";
@@ -10,7 +10,8 @@ import { ProductsSubnav } from "../products-subnav";
 import { LinkRatesheetButton } from "../link-ratesheet-button";
 import { RatesheetsBoard, type BoardSheet, type BoardInvite, type BoardFile } from "./ratesheets-board";
 import { uploadLinkedRatesheet } from "./actions";
-import { importProductsCsv } from "../actions";
+import { loadRatesheetSuppliers } from "../lookups";
+import { priceListFileKind } from "@/lib/price-list-file";
 
 export default async function RatesheetsPage({
   searchParams,
@@ -26,7 +27,7 @@ export default async function RatesheetsPage({
   // the per-row state (which depends on the sheet's expiry and the
   // invite's own window) can't disagree. Same "every row" trade-off as the
   // other list pages; revisit with pagination.
-  const [organization, ratesheets, invites, files] = await Promise.all([
+  const [organization, ratesheets, invites, files, suppliers] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       where: { id: organizationId },
       select: { name: true },
@@ -44,7 +45,9 @@ export default async function RatesheetsPage({
     prisma.linkedRatesheet.findMany({
       where: { organizationId },
       orderBy: { createdAt: "desc" },
+      include: { distributor: { select: { name: true } } },
     }),
+    loadRatesheetSuppliers(organizationId),
   ]);
 
   const perSheet = new Map<string, { approved: number; sent: number }>();
@@ -87,6 +90,16 @@ export default async function RatesheetsPage({
     size: formatBytes(file.sizeBytes),
     uploadedAt: formatDate(file.createdAt, timeZone),
     highlighted: file.id === uploaded,
+    supplierId: file.distributorId,
+    supplierName: file.distributor?.name ?? null,
+    effectiveOn: file.effectiveOn ? formatDay(file.effectiveOn) : null,
+    importSummary: file.importedAt
+      ? `imported ${formatDate(file.importedAt, timeZone)}: ${file.addedCount ?? 0} new, ${file.updatedCount ?? 0} updated` +
+        ((file.costUpCount ?? 0) || (file.costDownCount ?? 0)
+          ? ` (${[file.costUpCount ? `${file.costUpCount} cost more` : "", file.costDownCount ? `${file.costDownCount} cost less` : ""].filter(Boolean).join(", ")})`
+          : "")
+      : null,
+    importable: priceListFileKind(file.fileName) !== null,
   }));
 
   return (
@@ -97,7 +110,7 @@ export default async function RatesheetsPage({
         subtitle="Price lists you publish to partners, and the ones you've linked in."
         actions={
           <>
-            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} importAction={importProductsCsv} />
+            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} suppliers={suppliers} />
             <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
               <IconPlus size={14} />
               Create Ratesheet
@@ -110,6 +123,7 @@ export default async function RatesheetsPage({
 
       <RatesheetsBoard
         organizationName={organization.name}
+        suppliers={suppliers}
         sheets={boardSheets}
         invites={boardInvites}
         files={boardFiles}

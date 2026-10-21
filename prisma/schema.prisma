@@ -104,6 +104,7 @@ model Organization {
   ratesheets          Ratesheet[]
   ratesheetInvites    RatesheetInvite[]
   linkedRatesheets    LinkedRatesheet[]
+  ratesheetImportIssues RatesheetImportIssue[]
   uploads             Upload[]
   payments            Payment[]
   serviceTypeOptions  ServiceTypeOption[]
@@ -170,6 +171,7 @@ model User {
   leadQuotes   Quote[] @relation("QuoteLeadRep")
   signerQuotes Quote[] @relation("QuoteContractSigner")
   emailSends   EmailSend[]
+  ratesheetImportIssues RatesheetImportIssue[]
   ownedDeals   Deal[]  @relation("DealOwner")
   statusChanges StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
@@ -575,6 +577,10 @@ model Product {
   // Cost of goods sold. Internal only — never rendered on anything a
   // customer or partner can open.
   costCents           Int                  @default(0)
+  // The supplier's MSRP / list price, from their ratesheet or typed in.
+  // Internal reference only, like costCents: it is what "sell at MSRP"
+  // prices from.
+  listPriceCents      Int?
   defaultTag          LineItemTag          @default(MATERIALS)
   // The kind of work this is sold under ("Access Control", "Painting"),
   // by name from the workspace's ServiceTypeOption list. Copied onto a
@@ -1108,6 +1114,13 @@ model Distributor {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
+  // How this workspace last priced a ratesheet from this supplier, so the
+  // next one from them opens with the same markup or margin.
+  priceRule            PriceRule?
+  priceRuleBasisPoints Int?
+  // Which column was which on this supplier's sheets, keyed by the header
+  // row, so a column fixed by hand once stays fixed next quarter.
+  ratesheetColumns     Json?
   // The company a purchase order to this distributor is addressed to.
   // Made the first time materials are ordered from them, so the money
   // owed to them lands on one record rather than two.
@@ -1116,8 +1129,10 @@ model Distributor {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  contacts DistributorContact[]
-  products Product[]
+  contacts         DistributorContact[]
+  products         Product[]
+  linkedRatesheets LinkedRatesheet[]
+  importIssues     RatesheetImportIssue[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -1235,6 +1250,16 @@ model LinkedRatesheet {
   fileName       String
   mimeType       String
   sizeBytes      Int
+  // Set once the file has been imported with Import Ratesheet: who sent
+  // it, the day its prices start, and what the import did.
+  distributorId  String?
+  distributor    Distributor? @relation(fields: [distributorId], references: [id], onDelete: SetNull)
+  effectiveOn    DateTime?    @db.Date
+  importedAt     DateTime?
+  addedCount     Int?
+  updatedCount   Int?
+  costUpCount    Int?
+  costDownCount  Int?
   // Excluded from every query by default (see src/lib/prisma.ts) so a
   // list page never drags megabytes through the server; only the download
   // route asks for it.
@@ -1243,6 +1268,42 @@ model LinkedRatesheet {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId])
+  @@index([distributorId])
+}
+
+enum PriceRule {
+  MARKUP
+  MARGIN
+  // Sell at the supplier's MSRP / list price.
+  LIST
+}
+
+// A ratesheet someone declined at the import preview because it read
+// wrong ("the MSRP came in as my cost"). Nothing was imported; the file
+// and their note wait in the operator console so the reader can be fixed
+// for that kind of sheet. The bytes are omitted from every query by
+// default, like LinkedRatesheet's.
+model RatesheetImportIssue {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  distributorId  String?
+  distributor    Distributor? @relation(fields: [distributorId], references: [id], onDelete: SetNull)
+  note           String
+  // What the app made of the sheet when it was declined: the sheet and
+  // header row it picked and the column each role came from.
+  detected       Json?
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  data           Bytes
+  createdAt      DateTime     @default(now())
+  resolvedAt     DateTime?
+
+  @@index([organizationId])
+  @@index([resolvedAt, createdAt])
 }
 
 // ------------------------------------------------------------------

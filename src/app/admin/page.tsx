@@ -2,8 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { requireSuperAdmin } from "@/lib/session";
 import { formatDate, formatDateTime, DEFAULT_TIME_ZONE } from "@/lib/format";
 import { PageHeader, Card, CardHeader, StatTile, EmptyState } from "@/components/ui";
-import { IconUsers } from "@/components/icons";
+import { IconUsers, IconDownload, IconFileText } from "@/components/icons";
 import { WorkspaceRow } from "./workspace-row";
+import { setRatesheetIssueResolved } from "./actions";
 
 // Operator console. Never cached: an approval has to show up the instant
 // it happens, and the list is a handful of rows.
@@ -51,6 +52,38 @@ export default async function AdminPage() {
       },
     },
   });
+
+  // Declined ratesheet imports: every open one (newest first, up to 200),
+  // then the last ten fixed. The open count is counted, not inferred from
+  // the rows shown.
+  const issueSelect = {
+    id: true,
+    note: true,
+    detected: true,
+    fileName: true,
+    sizeBytes: true,
+    createdAt: true,
+    resolvedAt: true,
+    organization: { select: { name: true } },
+    user: { select: { name: true, email: true } },
+    distributor: { select: { name: true } },
+  } as const;
+  const [openIssues, fixedIssues, openCount] = await Promise.all([
+    prisma.ratesheetImportIssue.findMany({
+      where: { resolvedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: issueSelect,
+    }),
+    prisma.ratesheetImportIssue.findMany({
+      where: { resolvedAt: { not: null } },
+      orderBy: { resolvedAt: "desc" },
+      take: 10,
+      select: issueSelect,
+    }),
+    prisma.ratesheetImportIssue.count({ where: { resolvedAt: null } }),
+  ]);
+  const issues = [...openIssues, ...fixedIssues];
 
   const counts = {
     pending: organizations.filter((o) => o.status === "PENDING").length,
@@ -110,6 +143,83 @@ export default async function AdminPage() {
               />
             ))}
           </div>
+        )}
+      </Card>
+
+      <Card lit className="mb-6" id="ratesheet-issues">
+        <CardHeader
+          title="Ratesheet imports to look at"
+          subtitle={
+            openCount > 0
+              ? `${openCount} declined because the sheet read wrong. Nothing was imported from them.`
+              : issues.length > 0
+                ? "Nothing open. The last ones fixed are below."
+                : "Nobody has declined an import."
+          }
+        />
+        {issues.length === 0 ? (
+          <EmptyState
+            icon={<IconFileText size={20} />}
+            title="Nothing declined"
+            body="When someone declines a ratesheet import, the file and their note land here."
+          />
+        ) : (
+          <ul className="divide-y divide-[var(--border)]" data-testid="ratesheet-issues">
+            {issues.map((issue) => {
+              const detected = (issue.detected ?? {}) as {
+                supplier?: string | null;
+                rule?: string | null;
+                tabs?: { name: string; headers: string[]; chosenRoles: string[] | null; detectedRoles: string[] }[];
+              };
+              return (
+                <li key={issue.id} className="space-y-1 px-5 py-3" style={issue.resolvedAt ? { opacity: 0.55 } : undefined}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {issue.organization.name} · {issue.fileName}
+                        {issue.resolvedAt && <span className="faint text-xs font-normal"> · fixed</span>}
+                      </p>
+                      <p className="faint text-xs">
+                        {issue.user ? `${issue.user.name} (${issue.user.email})` : "A removed user"} ·{" "}
+                        {formatDateTime(issue.createdAt, timeZone)}
+                        {(issue.distributor?.name ?? detected.supplier) && ` · from ${issue.distributor?.name ?? detected.supplier}`}
+                        {detected.rule && ` · ${detected.rule}`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      {issue.sizeBytes > 0 && (
+                        <a href={`/admin/ratesheet-issues/${issue.id}`} className="btn btn-ghost btn-sm">
+                          <IconDownload size={12} />
+                          File
+                        </a>
+                      )}
+                      <form action={setRatesheetIssueResolved}>
+                        <input type="hidden" name="issueId" value={issue.id} />
+                        <input type="hidden" name="resolved" value={issue.resolvedAt ? "0" : "1"} />
+                        <button type="submit" className="btn btn-ghost btn-sm">
+                          {issue.resolvedAt ? "Reopen" : "Mark fixed"}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                  <p className="text-sm">&ldquo;{issue.note}&rdquo;</p>
+                  {detected.tabs?.map((tab) => (
+                    <p key={tab.name} className="faint text-xs">
+                      {tab.name}:{" "}
+                      {tab.headers
+                        .map((header, index) => `${header || `Column ${index + 1}`} → ${(tab.chosenRoles ?? tab.detectedRoles)[index] ?? "?"}`)
+                        .join(" · ")}
+                    </p>
+                  ))}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {openCount > openIssues.length && (
+          <p className="faint px-5 pb-4 text-xs">
+            …and {openCount - openIssues.length} older open ones. Mark some fixed to see them.
+          </p>
         )}
       </Card>
 
