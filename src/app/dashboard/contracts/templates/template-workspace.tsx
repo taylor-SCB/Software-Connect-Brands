@@ -70,7 +70,10 @@ export function TemplateWorkspace({
   // boxes: one missing from it was cleared on purpose.
   const was = (field: string, fallback: string) => (state?.kept ? state.kept[field] ?? "" : fallback);
 
-  const [body, setBody] = useState(defaults?.body ?? "");
+  // A saved body comes back with the \r\n line breaks the form posted;
+  // the editor works in \n, as an upload does, so Suggest fields and the
+  // limits count a stored agreement the same as a freshly read one.
+  const [body, setBody] = useState((defaults?.body ?? "").replace(/\r\n/g, "\n"));
   const [type, setType] = useState(defaults?.type ?? pickers.typeOptions[0] ?? "Custom");
   const savedInUse = (forType: string) => Boolean(defaults?.isDefault) && forType === defaults?.type;
   const [useForType, setUseForType] = useState(savedInUse(type));
@@ -91,15 +94,29 @@ export function TemplateWorkspace({
 
   // Replace with my own / Restore the original swap the whole body in the
   // editor; nothing is saved until Save, and Undo puts back what was there
-  // before. Swaps in a row with no typing between them (Replace twice, two
-  // uploads) keep the first snapshot, or Undo would only reach the empty
-  // editor the first one left.
-  const [swap, setSwap] = useState<{ previous: string; next: string; note: string } | null>(null);
+  // before. A swap made while the editor is empty (Replace clicked twice,
+  // or Replace then an upload) keeps the snapshot before it, or Undo would
+  // only reach the empty editor; any other swap, such as putting fields
+  // into an upload, undoes just itself.
+  const [swap, setSwap] = useState<{ previous: string; note: string } | null>(null);
   function swapBody(next: string, note: string) {
-    setSwap((current) => ({ previous: current && current.next === body ? current.previous : body, next, note }));
+    setSwap((current) => ({ previous: current && body === "" ? current.previous : body, note }));
     setBody(next);
     setPreviewing(false);
     pendingCaret.current = 0;
+  }
+
+  // Once per save result, during render (React's way to follow a value
+  // without an effect): a saved body has nothing left to Undo, and a type
+  // added with "+ Add new type…" is now the type it was saved as — left on
+  // "+ Add new type…", the next Save was blocked on an empty name box.
+  const [seenState, setSeenState] = useState(state);
+  if (state !== seenState) {
+    setSeenState(state);
+    if (state?.success) {
+      setSwap(null);
+      if (type === NEW_TYPE_VALUE && defaults?.type && defaults.type !== NEW_TYPE_VALUE) setType(defaults.type);
+    }
   }
   // Upload a Word / PDF / text agreement into the editor.
   const fileRef = useRef<HTMLInputElement>(null);

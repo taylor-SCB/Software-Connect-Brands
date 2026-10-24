@@ -15,7 +15,12 @@
  * agreement just under 60,000 characters with hundreds of line breaks
  * saves; a cut-off answer from Claude is a message, not a dead page; a
  * suggestion that changes words besides its blank is dropped and each
- * one says what it changes; the 20-a-day allowance.
+ * one says what it changes; the 20-a-day allowance. Second pass (fixes to
+ * those fixes): Undo after putting fields into an upload takes only the
+ * fields out; a Save closes Undo; a Word file whose main part isn't named
+ * .xml is still counted; a saved full-length agreement can be checked
+ * after reopening and a contract made from it saves; a refusal says
+ * declined; two clicks on the day's last suggestion ask Claude once.
  *
  * Claude is never called: the server has to be started with
  *   ANTHROPIC_API_KEY=test-key
@@ -299,7 +304,7 @@ function makePdf(pages) {
   await editorIntact("MULTI-BIDS SUBCONTRACT AGREEMENT");
   reply = { text: "not json at all", stop: "end_turn" };
   await page.click("[data-testid=template-suggest]");
-  await page.locator("[data-testid=template-import-error]").getByText("came back cut short").waitFor();
+  await page.locator("[data-testid=template-import-error]").getByText("came back unreadable").waitFor();
   await editorIntact("MULTI-BIDS SUBCONTRACT AGREEMENT");
   reply = {
     text: JSON.stringify({
@@ -343,6 +348,79 @@ function makePdf(pages) {
   await page.click("[data-testid=template-suggest]");
   await panel.getByText("No spots for fields found").waitFor();
   assert.equal(requests.length, asked + 1);
+
+  log("audit fixes (second pass): Undo after putting fields into an upload takes only the fields out; a Save closes Undo");
+  reply = { text: JSON.stringify({ suggestions: SUGGESTIONS }), stop: "end_turn" };
+  await upload(path.join(FIXTURES, "agreement.docx"));
+  await page.locator("[data-testid=template-swap-note]").getByText("Read from agreement.docx").waitFor();
+  await page.click("[data-testid=template-suggest]");
+  await panel.getByText("3 suggested fields").waitFor();
+  await panel.locator("[data-testid=template-apply-suggestions]").click();
+  await page.locator("[data-testid=template-swap-note]").getByText("Put 3 fields in").waitFor();
+  await page.locator("[data-testid=template-swap-note]").getByRole("button", { name: "Undo" }).click();
+  text = await body();
+  assert.ok(text.startsWith("MULTI-BIDS SUBCONTRACT AGREEMENT"), "the upload is still there");
+  assert.match(text, /Contact person: \[Client Name\]/, "only the fields came out");
+  await upload({ name: "renamed.txt", mimeType: "text/plain", buffer: Buffer.from("A short agreement that is long enough to keep.") });
+  await page.locator("[data-testid=template-swap-note]").getByText("Read from renamed.txt").waitFor();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.locator("[data-testid=template-swap-note]").waitFor({ state: "detached" });
+
+  log("audit fixes (second pass): a Word file whose main part isn't named .xml is still counted");
+  const disguised = zipSync({ ...parts, "word/document.bin": Buffer.alloc(13 * 1024 * 1024, "<w:p/>") });
+  await upload({ name: "disguised.docx", mimeType: DOCX, buffer: Buffer.from(disguised) });
+  await page.locator("[data-testid=template-import-error]").getByText("unpacks to far more than an agreement").waitFor();
+
+  log("audit fixes (second pass): a saved full-length agreement can be checked after reopening, and a contract made from it saves");
+  await upload({ name: "long.txt", mimeType: "text/plain", buffer: Buffer.from(long) });
+  await page.locator("[data-testid=template-swap-note]").getByText("Read from long.txt").waitFor();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.locator("[data-testid=template-swap-note]").waitFor({ state: "detached" });
+  await page.reload();
+  let before20 = requests.length;
+  await page.click("[data-testid=template-suggest]");
+  await panel.getByText("No spots for fields found").waitFor();
+  assert.equal(requests.length, before20 + 1, "checked, not refused as too long");
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,email,"updatedAt") VALUES ('ctc_tpi',$1,'Dana Buyer','dana@example.com',now())`, [org]);
+  const number = (await sql(`UPDATE "Organization" SET "nextContractNumber" = "nextContractNumber" + 1 WHERE id=$1 RETURNING "nextContractNumber" - 1 AS n`, [org])).rows[0].n;
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId",number,title,type,body,"publicToken","updatedAt")
+     VALUES ('con_tpi',$1,'ctc_tpi',$2,'Long agreement','Sales Order',$3,'tok_con_tpi_0123456789',now())`,
+    [org, number, long.replace(/\n/g, "\r\n")],
+  );
+  await page.goto(`${BASE}/dashboard/contracts/con_tpi`);
+  const contractForm = page.locator("form", { has: page.locator("textarea[name=body]") });
+  await contractForm.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Contract saved").waitFor();
+
+  log("audit fixes (second pass): a refusal says declined, not too long");
+  await page.goto(`${BASE}/dashboard/contracts/templates/${salesOrder.id}`);
+  reply = { text: "I can't help with that one.", stop: "refusal" };
+  await page.click("[data-testid=template-suggest]");
+  await page.locator("[data-testid=template-import-error]").getByText("declined this one").waitFor();
+  await editorIntact();
+
+  log("audit fixes (second pass): two clicks on the day's last suggestion ask Claude exactly once");
+  reply = { text: JSON.stringify({ suggestions: SUGGESTIONS }), stop: "end_turn" };
+  await sql(`DELETE FROM "AiRequest" WHERE "organizationId"=$1`, [org]);
+  for (let i = 0; i < 19; i += 1) {
+    await sql(`INSERT INTO "AiRequest" (id,"organizationId",kind) VALUES ($1,$2,'SUGGEST_FIELDS')`, [`air_tpi_last_${i}`, org]);
+  }
+  const second = await page.context().newPage();
+  await second.goto(`${BASE}/dashboard/contracts/templates/${salesOrder.id}`);
+  await page.reload();
+  before20 = requests.length;
+  await Promise.all([page.click("[data-testid=template-suggest]"), second.click("[data-testid=template-suggest]")]);
+  const outcome = async (p) => {
+    const refused = p.locator("[data-testid=template-import-error]").getByText("used 20 times in your workspace");
+    const answered = p.locator("[data-testid=template-suggestions]");
+    await refused.or(answered).first().waitFor();
+    return (await refused.count()) ? "refused" : "answered";
+  };
+  const outcomes = (await Promise.all([outcome(page), outcome(second)])).sort();
+  assert.deepEqual(outcomes, ["answered", "refused"]);
+  assert.equal(requests.length, before20 + 1);
+  await second.close();
 
   await browser.close();
   fakeClaude.close();

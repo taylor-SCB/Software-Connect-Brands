@@ -24,15 +24,22 @@ export const DAILY_SUGGEST_LIMIT = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Takes one of the workspace's calls for the last 24 hours, or says the
-// day's are used. The row goes in before the count so two clicks at the
-// same moment can't both take the last one.
+// day's are used. The row goes in first and each request counts only the
+// rows up to and including its own, so two clicks on the last one give
+// it to exactly one of them: counting every row, both saw 21 and both
+// were turned away.
 export async function claimSuggestion(organizationId: string, userId: string): Promise<string | null> {
   const row = await prisma.aiRequest.create({
     data: { organizationId, userId, kind: "SUGGEST_FIELDS" },
-    select: { id: true },
+    select: { id: true, createdAt: true },
   });
   const used = await prisma.aiRequest.count({
-    where: { organizationId, kind: "SUGGEST_FIELDS", createdAt: { gte: new Date(Date.now() - DAY_MS) } },
+    where: {
+      organizationId,
+      kind: "SUGGEST_FIELDS",
+      createdAt: { gte: new Date(Date.now() - DAY_MS) },
+      OR: [{ createdAt: { lt: row.createdAt } }, { createdAt: row.createdAt, id: { lte: row.id } }],
+    },
   });
   if (used <= DAILY_SUGGEST_LIMIT) return null;
   await prisma.aiRequest.delete({ where: { id: row.id } });
@@ -101,30 +108,36 @@ export async function suggestFieldPlacements(body: string): Promise<{ suggestion
   // five-minute limit on a request, so a slow answer comes back as a
   // message instead of a dead page.
   const client = new Anthropic({ baseURL: process.env.ANTHROPIC_ENDPOINT || undefined, timeout: 90_000, maxRetries: 1 });
+  // create, not parse: parse reads the answer before handing it back, so a
+  // refusal or a cut-off answer with some text in it surfaced as a parse
+  // error and was reported as the wrong thing. The stop reason is checked
+  // first, then the answer is read here.
+  const format = betaZodOutputFormat(suggestionSchema);
   let parsed: z.infer<typeof suggestionSchema> | null = null;
   try {
-    const response = await client.beta.messages.parse({
+    const response = await client.beta.messages.create({
       model: "claude-opus-5-5",
       max_tokens: 16000,
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
       system: SYSTEM,
       messages: [{ role: "user", content: `<agreement>\n${body}\n</agreement>` }],
-      output_config: { effort: "medium", format: betaZodOutputFormat(suggestionSchema) },
+      output_config: { effort: "medium", format },
     });
     if (response.stop_reason === "refusal") return { error: "The suggestion service declined this one. Place the fields by hand." };
     if (response.stop_reason === "max_tokens") return { error: tooLongToCheck };
-    parsed = response.parsed_output;
+    const text = response.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+    try {
+      parsed = format.parse(text);
+    } catch {
+      return { error: "The suggestion came back unreadable. Try again, or place the fields by hand." };
+    }
   } catch (error) {
     if (error instanceof Anthropic.RateLimitError) return { error: "Too many requests just now. Try again in a minute." };
     if (error instanceof Anthropic.APIConnectionTimeoutError) {
       return { error: "The suggestion service took too long. Try again, or place the fields by hand." };
     }
     if (error instanceof Anthropic.APIError) return { error: "The suggestion service didn't answer. Try again, or place the fields by hand." };
-    // The answer came back but wasn't the list asked for: cut off on a
-    // long agreement, or not JSON at all. The SDK raises its base error
-    // for that, which is not an APIError.
-    if (error instanceof Anthropic.AnthropicError) return { error: tooLongToCheck };
     console.error("[suggest-fields]", error);
     return { error: "Suggest fields hit a problem. Try again, or place the fields by hand." };
   }

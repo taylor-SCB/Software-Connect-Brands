@@ -14,7 +14,9 @@
  * keeps the Type, the in-use box and the typed name, so the next save
  * writes what is on screen (ticked and unticked); Replace twice then Undo
  * brings back the wording from before the first; a workspace from before
- * the release gets Restore the original on its Compliance Agreement.
+ * the release gets Restore the original on its Compliance Agreement;
+ * a type added with "+ Add new type…" is the type on screen after Save,
+ * so a second Save goes through.
  *
  *   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/scb_test \
  *   NODE_PATH=$(npm root -g):$(pwd)/node_modules \
@@ -286,6 +288,26 @@ async function sql(text, params) {
   await page.locator("[data-testid=template-restore]").waitFor();
   await page.click("[data-testid=template-restore]");
   assert.equal((await page.locator("#body").inputValue()).replace(/\r\n/g, "\n").trim(), compliance.body.replace(/\r\n/g, "\n").trim());
+
+  log("audit fixes (second pass): a type added with + Add new type is the type on screen after Save, and a second Save goes through");
+  await page.goto(`${BASE}/dashboard/contracts/templates/${compliance.id}`);
+  await page.selectOption("#type", "__new__");
+  await page.fill("[name=newType]", "Commission Agreement");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Template saved").waitFor();
+  await page.waitForFunction(() => document.querySelector("#type")?.value === "Commission Agreement");
+  assert.equal(await page.locator("[name=newType]").count(), 0, "the new-type box is gone");
+  assert.equal((await sql(`SELECT type FROM "ContractTemplate" WHERE id=$1`, [compliance.id])).rows[0].type, "Commission Agreement");
+  await page.fill("#body", MINE + "\n\nSecond save.");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  for (let i = 0; i < 50; i += 1) {
+    const saved = (await sql(`SELECT body FROM "ContractTemplate" WHERE id=$1`, [compliance.id])).rows[0].body;
+    if (saved.includes("Second save.")) break;
+    if (i === 49) assert.fail("the second save never landed");
+    await page.waitForTimeout(200);
+  }
+  assert.equal((await sql(`SELECT type FROM "ContractTemplate" WHERE id=$1`, [compliance.id])).rows[0].type, "Commission Agreement");
+  await oneInUsePerType();
 
   await browser.close();
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);

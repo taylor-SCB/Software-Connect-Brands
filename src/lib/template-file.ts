@@ -34,6 +34,8 @@ export async function readAgreementFile(file: File): Promise<{ text: string } | 
       const buffer = await file.arrayBuffer();
       const problem = inspectDocx(new Uint8Array(buffer));
       if (problem) return { error: problem };
+      // mammoth's browser build takes arrayBuffer (its Node build wants a
+      // Buffer instead, which is one more reason this runs only here).
       const mammoth = await import("mammoth");
       text = (await mammoth.extractRawText({ arrayBuffer: buffer })).value;
     } else if (name.endsWith(".pdf")) {
@@ -79,17 +81,19 @@ function tidy(text: string) {
     .trim();
 }
 
-// Unpacks the .docx's XML parts as a stream, counting as it goes, and
-// stops at the limit: the sizes a zip declares can lie, the bytes can't.
-// Pictures and embedded fonts are skipped; the Word reader never opens
-// them.
+// Unpacks the .docx a few kilobytes at a time, counting what comes out,
+// and stops at the limit: the sizes a zip declares can lie, the bytes
+// can't, and fed whole a small file would unpack in one piece before the
+// count saw it. Pictures, embedded files and fonts are skipped; the Word
+// reader never opens them. Every other part counts, whatever it is named.
+const DOCX_FEED_BYTES = 16 * 1024;
 function inspectDocx(bytes: Uint8Array): string | null {
   let unpacked = 0;
   let problem: string | null = null;
   const unzip = new Unzip();
   unzip.register(UnzipInflate);
   unzip.onfile = (file) => {
-    if (problem || !/\.(xml|rels)$/i.test(file.name)) return;
+    if (problem || /^word\/(media|embeddings|fonts)\//i.test(file.name)) return;
     file.ondata = (error, chunk) => {
       if (error || problem) return;
       unpacked += chunk.length;
@@ -101,7 +105,9 @@ function inspectDocx(bytes: Uint8Array): string | null {
     file.start();
   };
   try {
-    unzip.push(bytes, true);
+    for (let at = 0; at < bytes.length && !problem; at += DOCX_FEED_BYTES) {
+      unzip.push(bytes.subarray(at, at + DOCX_FEED_BYTES), at + DOCX_FEED_BYTES >= bytes.length);
+    }
   } catch {
     // Not a zip at all: the Word reader says so in its own words.
   }

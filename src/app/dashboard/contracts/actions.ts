@@ -405,7 +405,15 @@ export async function updateContractBody(_prev: ActionState, formData: FormData)
     z.object({
       contractId: idSchema,
       title: z.string().trim().min(1, "Title is required").max(160),
-      body: z.string().trim().min(20, "The contract body looks too short").max(60000),
+      // A contract is its template with the fields filled in, so it is
+      // allowed past the template's 60,000: a full-length template whose
+      // fields fill in longer could otherwise never be edited. Line breaks
+      // count as one character, the way the template's limit counts them.
+      body: z
+        .string()
+        .trim()
+        .min(20, "The contract body looks too short")
+        .refine((body) => body.replace(/\r\n/g, "\n").length <= 80000, "That contract is longer than it can hold (80,000 characters)."),
     }),
     {
       contractId: formData.get("contractId"),
@@ -662,7 +670,8 @@ export async function suggestTemplateFields(body: string): Promise<{ suggestions
   const { organizationId, userId } = await requireSession();
   const text = typeof body === "string" ? body.trim() : "";
   if (text.length < 20) return { error: "Put the agreement in the body first." };
-  if (text.length > 60000) return { error: "That agreement is too long to check in one go." };
+  // Counted the way Save counts it, a line break as one character.
+  if (text.replace(/\r\n/g, "\n").length > 60000) return { error: "That agreement is too long to check in one go." };
   const used = await claimSuggestion(organizationId, userId);
   if (used) return { error: used };
   return suggestFieldPlacements(text);

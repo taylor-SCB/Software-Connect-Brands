@@ -333,13 +333,21 @@ ticked fields in"; `src/lib/template-import.ts`). Nothing is saved until
 Save. **The file is read in the browser** (`src/lib/template-file.ts`,
 Oct 24, 2026), never posted: the readers unpack a whole file in memory,
 and a 750 KB Word file built to unpack to 200 MB ran the server out of
-memory for every workspace on it. Up to 20 MB, a Word file's XML parts
-counted as they unpack and refused past 12 MB, a PDF refused past 300
-pages and read page by page. **Suggest fields is 20 a day per
-workspace** (rolling 24 hours, counted from `AiRequest` rows, the row
-written before the count so two clicks can't share the last one); its
-call waits 90 seconds with one retry, and a cut-off or unreadable answer
-is a message, not a dead page. Every type has exactly one template **in use**
+memory for every workspace on it. Up to 20 MB; a Word file is fed to
+the unzipper 16 KB at a time and refused once its parts (all but
+pictures, embedded files and fonts, whatever they are named) pass 12
+MB; a PDF is refused past 300 pages and read page by page. The editor
+works in `\n` (a saved body's `\r\n` is turned back on load) and every
+limit counts a line break as one character. Undo undoes the last swap;
+a swap made on an empty editor keeps the snapshot before it, and a Save
+clears it. **Suggest fields is 20 a day per workspace** (rolling 24
+hours, counted from `AiRequest` rows; each request counts the rows up
+to its own, so two clicks on the last one give it to exactly one); the
+call is `messages.create` with the zod format, the stop reason checked
+before the answer is read, a 90-second wait with one retry, and a
+refusal, a cut-off answer or an unreadable one is its own message, not
+a dead page. A contract body may run to 80,000 characters, so a
+full-length template whose fields fill in longer can still be edited. Every type has exactly one template **in use**
 (`ContractTemplate.isDefault`, kept by `setTemplateDefault` /
 `repairTemplateDefault` in `src/lib/contract-templates.ts`): it is what the
 Contract Coordinator, Award without paperwork, Order materials and change
@@ -675,15 +683,18 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
 Contacts and claiming, the Notes split), from Oct 7, 2026
-`template-replace.cjs` (17: Replace with my own, Restore the original,
+`template-replace.cjs` (18: Replace with my own, Restore the original,
 the one template in use per type and the Coordinator following it; the
 Oct 24 audit fixes — a refused save keeps Type, the in-use box and the
 name, Undo after two swaps, an existing workspace's Compliance
-Agreement) and `template-import.cjs` (17: Word / PDF / scan / .doc
-uploads and Suggest fields; the Oct 24 audit fixes — nothing posted, a
-6 MB Word file, a Word bomb and a 301-page PDF refused, ANSI and UTF-16
-.txt, line breaks at the 60,000 limit, a cut-off answer, a reworded
-suggestion dropped, the 20-a-day allowance; needs `ANTHROPIC_API_KEY=test-key` and
+Agreement, a newly added type after Save) and `template-import.cjs`
+(22: Word / PDF / scan / .doc uploads and Suggest fields; the Oct 24
+audit fixes — nothing posted, a 6 MB Word file, Word bombs (also one
+not named .xml) and a 301-page PDF refused, ANSI and UTF-16 .txt, line
+breaks at the 60,000 limit, a saved full-length agreement checked after
+reopening and its contract saved, a cut-off answer, a refusal, a
+reworded suggestion dropped, Undo after putting fields into an upload,
+the 20-a-day allowance and two clicks on its last one; needs `ANTHROPIC_API_KEY=test-key` and
 `ANTHROPIC_ENDPOINT=http://localhost:3998` in `.env`, and answers as
 Claude itself, so nothing leaves the machine), from Oct 17, 2026
 `job-photos.cjs` (28 since Oct 21, 2026: tag lists and General
