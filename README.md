@@ -172,10 +172,28 @@ adds a rate and term with the total worked out on screen. A product can
 name its distributor and the people there — name, email and phone — picked
 from per-workspace lists that grow from the form itself. The list page can
 clone, delete, and flip a product between active and inactive in place.
-**Link Ratesheet → Import CSV** turns a spreadsheet into products: it
-previews the rows and the columns it matched, then creates new products
-and updates existing ones by SKU (or name) so a refreshed price list never
-duplicates the catalog.
+**Link Ratesheet → Import Ratesheet** (Oct 21, 2026) brings in a
+distributor's, manufacturer's or software provider's price list. The
+price on their sheet is **your cost** (COGS) and their **MSRP** is kept
+beside it on the product; your sell price comes from a markup, a margin,
+or their MSRP less a percentage — never from the sheet on its own. Excel
+(every tab; a Discontinued or Read Me tab starts unticked) or CSV
+(including Windows Excel's), the header row found under title rows,
+columns read by their names and by what the cells hold, each fixable
+from a dropdown and remembered per supplier. **Who sent it?** is
+required (+ Add New Distributor makes the Company too) with an optional
+point of contact. Every product is shown as it will land with a tick box
+(Select all / Remove all) and a sell price you can type over; only
+ticked rows import, in batches. A product you already carry keeps its
+own name, description, tag and unit: cost up keeps your margin, cost
+down keeps your price, a cost that more than doubles or halves waits for
+a tick, and "Call", "N/A" or $0 never wipes a cost. **Decline** asks
+what read wrong and sends the file and the note to the operator console
+(/admin → Ratesheet imports to look at). The file is saved under
+Ratesheets with what the import did, and a file uploaded there earlier
+gets **Import prices**. The product form links COGS, Markup %, Margin %
+and Unit price and has an MSRP box; the Products list shows margin with
+markup under it.
 
 **Ratesheets** — a sub-module under Products. A ratesheet is a named
 selection of your products published for partners: **Public**,
@@ -187,8 +205,9 @@ declines. The landing page shows a summary of every send with its status
 on the left and the ratesheet tiles (approved/sent, expires on) on the
 right; clicking a tile filters the summary. **+ Link Ratesheet** uploads a
 distributor's own price list (any file up to 4 MB, stored in the
-database) so it can be downloaded from the same page; linking another
-workspace's published sheet is marked *Coming Soon*.
+database) so it can be downloaded from the same page, or imports it (see
+Products); linking another workspace's published sheet is marked *Coming
+Soon*.
 
 **Quotes** — created against a customer *and* a deal (type to search the
 customer's deals, or **+ Add new deal**), with two templates, **Simple**
@@ -395,6 +414,38 @@ pushes that bar up, and a credit pulls it down and comes off what the
 customer owes rather than showing as something to chase. **Files** on a
 job hold the other party's own signed contract and anything else the job
 needs; a job's file needs a login, unlike a logo.
+
+**Job photos and videos** (Oct 17, 2026; reworked Oct 21, 2026) — the
+top of a job's **Files** tab. Photos belong to the job; what they are is
+a tag. Two tag lists per workspace, each pick-many with "+ Add":
+**Photo Type** (General Project, Site Walk, Installation, Finished
+Install; a photo with none is General Project) and **Location / Area**
+(twelve starters: Lobby, Office, Bathroom, Kitchen, Hallway, Unit /
+Apartment, Clubhouse, Fitness Center, Pool Area, Exterior, Roof, Parking
+Garage). Each photo is a square tile with who sent it, when, and its tags;
+**Tags** changes them, chips across the top filter (types and locations
+stack). The job's **Main folder** and its **mini folders** sit on a bar;
+**Move** takes a photo out of where it is, **Clone** leaves it and puts a
+copy in each folder picked (a copy is its own row on the same stored file:
+own tags, own folder, and the file goes with the last copy), both with
+"Create Mini Folder". **Who can see the <folder>** — owners and admins
+**Grant access** per folder: the job's accounts (the customer, anyone
+with paperwork on it, subcontractor crews that logged time) with a Select
+all per account or people ticked one by one, plus **Invite Other Users**
+from the CRM or by email (someone new is added as a contact). **View
+only** looks; **Editor** also adds photos to that folder and changes tags;
+nobody outside deletes, moves or clones. Each person gets their own link
+at `/p/<token>`, emailed from the business if ticked, with Make editor /
+Make view only, Turn off, and when they last opened it; granting someone
+again changes their level rather than making a second link. Your own team
+sees everything. **Crew photo link** is one link per job for installers:
+name (remembered on the phone), optional tags (they can add new ones),
+send to the main folder; it never shows anything. Files live in **Vercel
+Blob** (private), up to 1 GB each, sent straight from the phone on a
+signed one-path ticket; `/files/<token>` checks who is asking (a grant
+only opens its own folder) and redirects to an address that works for ten
+minutes (`src/lib/storage.ts`, rules in `src/lib/job-photos.ts`). A laptop
+without Blob keeps them in `.local-storage/` (`STORAGE_DRIVER=local`).
 
 **Crews and time** (Sept 14, 2026) — **Projects → Crews** is who does the
 work. A crew is either **your own people** or a **subcontractor**, and the
@@ -674,6 +725,9 @@ src/app/dashboard/...             the app: contacts, companies, deals,
                                   products, quotes, contracts, settings
 src/app/dashboard/products/ratesheets
                                   the Ratesheets sub-module
+src/lib/price-list.ts             Import Ratesheet's planner (columns, matching,
+                                  pricing), run in the browser and on the server
+src/lib/price-list-file.ts        reads a ratesheet's Excel or CSV file
 src/app/q/[token]                 public quote view
 src/app/c/[token]                 public contract view + e-signature
 src/app/r/[token]                 public ratesheet view + partner approve/decline

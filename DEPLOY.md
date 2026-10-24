@@ -173,6 +173,26 @@ and changed nothing about the existing ones.
   deploys never wipe contacts or quotes.
 - **Check it on your phone.** It's built to work there.
 
+## Switching on job photos (Vercel Blob)
+
+Job photos and videos are kept in **Vercel Blob**, Vercel's file
+storage, not in the database. Until it is switched on, the photo button
+on a job says "Photo storage isn't switched on" and nothing else
+changes. One time:
+
+1. Vercel → project `software-connect-brands` → **Storage** tab.
+2. **Create** → **Blob**. Name it `job-photos`, and choose **Private**
+   if it asks.
+3. Connect it to the project for **all environments**. That adds a
+   setting called `BLOB_READ_WRITE_TOKEN` on its own — nothing to copy
+   or paste.
+4. **Deployments** → the newest one → **Redeploy**, so the site picks
+   the setting up.
+
+Storage is billed by how much is kept and how much is viewed; a job's
+photos are pennies a month. The store's own **Browser** in that tab
+shows every file under `org/<workspace>/projects/<job>/`.
+
 ## Approving who gets in
 
 Signing up no longer opens a workspace. A new signup is stored as **waiting**

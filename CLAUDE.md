@@ -150,8 +150,8 @@ is how I go back" back links, products (with manufacturer, COGS, unit of measure
 distributor and contacts; clone / delete / active toggle on the list),
 ratesheets (a sub-module under Products: publish a selection of products to
 partners with an expiry and a respond-by window, partner approve/decline
-links at `/r/<token>`, uploaded distributor price lists, CSV import of
-products with a preview and SKU-based updates), quotes (Simple +
+links at `/r/<token>`, uploaded distributor price lists, and **Import
+Ratesheet** — see below), quotes (Simple +
 Modern templates, tagged line items, tag totals grid), contracts
 (templates with a per-workspace type pick list and "+ Add new type",
 "Who can send?", merge-field chips grouped by screen, a two-column
@@ -241,7 +241,16 @@ person, the business address and an unsubscribe link at the foot, every
 send logged on the contact's Activity; **40 emails per user per day** in
 the workspace's time zone, with a counter in the window and on Company
 Users; unsubscribes at `/u/<token>` mark every contact with that address),
-company logos and contact photos, and an operator console at `/admin` where signups
+company logos and contact photos, **job photos and videos** (Oct 17,
+2026; reworked Oct 21, 2026: photos belong to the job and carry tags —
+Photo Type, General Project when none, and Location / Area, both
+workspace lists with "+ Add"; square tiles with who, when and tags;
+stacking filter chips; a Main folder and mini folders with Move and Clone;
+**Grant access** per folder to the job's accounts, CRM contacts or a new
+email, View only or Editor, each person their own emailed link, owners
+and admins only, nobody outside deletes; a **crew photo link** per job
+for installers; files in Vercel Blob, see `DEPLOY.md`),
+and an operator console at `/admin` where signups
 are approved, paused or deleted.
 
 **Users vs Company (Sept 30, 2026).** The sidebar is Overview, Calendar,
@@ -330,6 +339,60 @@ and 4 live in Settings → Connectors and wait on the Google and Adobe app
 registrations; Multi-Bids' Google admin trusting the app domain-wide is
 what lets full Gmail run without Google's paid security review.
 
+**Import Ratesheet (Oct 21, 2026).** Link Ratesheet → Import Ratesheet
+replaced Import CSV, which read a supplier's "Price" as the contractor's
+sell price and left COGS at $0. Taylor's rule: a ratesheet carries the
+contractor's **cost** and the **MSRP**; the sender is a "Distributor,
+manufacturer or software provider" (a *Vendor* is the Business that
+receives it — never call the sender a vendor). His flow: upload, we read
+it, show every product as it will land with tick boxes (all ticked to
+start, Select all / Remove all), Import or **Decline** with "what was
+wrong", which lands in /admin. The planner is `src/lib/price-list.ts`
+(pure; the browser's preview and the server's import run it on the same
+file, and the server only writes rows posted as ticked), files are read
+by `src/lib/price-list-file.ts` (read-excel-file 9.3.10 universal build,
+fflate to check an .xlsx's unpacked size and sheet dimension first,
+Windows-1252 decoded by hand), the screen is
+`src/app/dashboard/products/import-ratesheet.tsx`, the server is
+`ratesheets/import-actions.ts`. Sell is never detected from a sheet,
+only picked by hand. Matching: part number with case, spaces, dashes,
+underscores and leading zeros ignored (a dot or slash counts: FUSE-1.5A
+is not FUSE-15A; "N/A", "TBD", "-" are no part number); a name only when
+the SKUs can't disagree and the name is unique; the supplier's own
+product wins a tie. An existing product keeps its own name, description,
+tag and unit. Cost up keeps the margin, cost down keeps the price, a 2×
+move waits for a tick, a new product with no price can't be ticked, a
+price at or below the new cost is re-priced by the rule. Products get
+`listPriceCents`; a supplier remembers its rule (`priceRule`,
+`priceRuleBasisPoints`) and columns (`ratesheetColumns`, by header
+signature). LinkedRatesheet gains supplier, effective date and counts.
+A Decline is a `RatesheetImportIssue` (bytes omitted by default; a file
+over 4 MB comes as name and size only), listed in /admin with Mark
+fixed, and emailed to operators when email is on. The products pages'
+dialogs render through a portal on document.body: a long dialog was
+being placed against the page column and ran off the top. The product
+form links COGS, Markup %, Margin % and Unit price (a typed percentage
+holds while the cost is retyped) and has a controlled MSRP box; the
+Products list shows margin with markup under it.
+
+**Account types (Taylor, Oct 21, 2026 — decided, not built).** Five:
+Admin (the platform; Taylor) and four a company picks at signup, one per
+account: Business / Vendor, Distributor, Hardware / OEM, Software
+Provider. The type decides which buttons show (a Business imports
+ratesheets; a Distributor / OEM / Software Provider releases them); the
+logic behind a button is the same for all. A change of type is a
+request the Admin approves. The Admin creates a customer's account
+pre-approved, with an emailed set-password link (Spirit Security is a
+Business / Vendor). Releasing a ratesheet: Public (anyone can download),
+Private (any account may request access; the distributor accepts or
+declines), Customer Specific (pick a company or + Add New Company; a
+company not on the platform gets one person — first, last, email; one
+already on it, pick from its members), with an active date range.
+Taylor plans a subscription for vendors; Claude recommended keeping a
+no-account link free and charging for the full workspace — his call.
+Build order agreed: Import Ratesheet (done), then account types + Admin
+Create Account, then distributor publishing; screens shown before each.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -363,7 +426,6 @@ are all blocking before the first paying customer.
 - **An uploaded agreement keeps its words, not its look.** Bold, tables,
   columns and logos from the Word or PDF file don't come across; the
   Phase 4 PDF designer is where formatting lives.
-
 - **Email goes out for three things only:** password reset, Company Users
   invitations and email marketing (Sept 27, 2026). No approval notice, no
   receipts, no invoices. Everything else waiting on email still is. That
@@ -371,14 +433,66 @@ are all blocking before the first paying customer.
   "Send to partner" makes a link to copy and text or email by hand, and
   the Contract Coordinator's "Copy reminder", which copies a nudge with the signing
   link and logs it; the app says so on the screen.
+- **Import Ratesheet adds at most 2,000 new products per sheet** (it
+  still updates every product already carried), because the Products
+  list and the quote's product picker load every product: 8,600 products
+  made the Products page 44 MB and 24 seconds to load (Oct 21, 2026).
+  Paging and searching the Products list, and a searched product picker
+  on quotes, are what let a contractor bring in a distributor's whole
+  catalog; raise `MAX_NEW_PRODUCTS` in `src/lib/price-list.ts` after.
+- **PDF ratesheets aren't read.** Excel and CSV only; a PDF is refused in
+  words and can still be saved with Upload File or declined.
+- **A signed job's purchase order still prices at the cost captured when
+  the contract was made**, which is $0 for anything that came in through
+  the old Import CSV. Re-importing fixes the catalog cost, not the
+  snapshot. Order materials falling back to the catalog cost when the
+  snapshot is $0 is the fix (found Oct 21, 2026; Projects module, not
+  changed without asking).
+- **Open quotes aren't re-priced or flagged when a ratesheet moves a
+  cost.** A quote's lines keep the price they were written at.
+- **Any signed-in user can import a ratesheet**, like every other
+  Products action.
+- **A rep picked on an import is a DistributorContact, not a CRM
+  Contact** on the supplier's Company.
+- **A Decline sends one email per operator and has no throttle.** Fine
+  while declines are rare.
 - **"Link Distributor / Partner" is Coming Soon.** Public and
   Invite/Approve ratesheets are stored with their visibility but nobody in
   another workspace can search for them yet; every send today is a link.
-- **Uploaded files live in Postgres** — ratesheets, compliance and
-  marketing documents (4 MB cap), logos and photos (2 MB). Fine at this
-  scale; object storage is the real answer when files get bigger. Logo and
-  photo links (`/files/<token>`) are public by design so they render on the
-  customer's copy of a document; documents need a login.
+- **Uploaded files live in Postgres, except job photos and videos** —
+  ratesheets, compliance and marketing documents (4 MB cap), logos and
+  photos (2 MB) are in the database. Logo and photo links
+  (`/files/<token>`) are public by design so they render on the
+  customer's copy of a document; documents need a login. Job photos and
+  videos (Oct 17, 2026) are in Vercel Blob, private, up to 1 GB.
+- **Job photos are in Vercel Blob only, not the customer's Google or
+  Microsoft account yet.** Taylor wants OAuth to Google Drive and
+  OneDrive per customer next; `src/lib/storage.ts` is the one place a
+  new driver goes (tickets, stat, delete, a short-lived view address).
+- **The Vercel Blob path could not be tested from a session.** The
+  browser suite runs the identical flow against the local driver; Blob
+  itself (client upload, `head`, presigned private reads, the streaming
+  fallback) is first exercised on the live site. Check the runtime logs
+  for `[storage]` after the first real upload.
+- **Deleting a workspace or a job leaves its photos in Blob.** The rows
+  cascade away; the files don't. Deleting one photo does remove it.
+  A sweep by the `org/<id>/` prefix is the fix when it matters.
+- **A crew link or an Editor's link has no upload limit.** Anyone holding
+  one can send photos and videos (1 GB each) to that job until it is
+  turned off or replaced.
+  Fine for a link texted to installers; a per-link daily cap is the fix if
+  one leaks.
+- **A grant is one folder.** Access to the Main folder does not include
+  the job's mini folders; each is granted on its own. A photo's copies in
+  other folders are separate rows, so tagging one doesn't tag the others.
+- **Deleting a mini folder isn't built.** Folders are made from the bar or
+  from Move / Clone and stay; the schema drops a deleted folder's photos
+  back into the Main folder (SetNull) and its grants with it (Cascade)
+  for when it is.
+- **An invited person's link is a password.** Anyone they forward the
+  email to can open it at the same level, until it is turned off. Fine
+  for property managers and subs; a sign-in step is the fix if a customer
+  needs proof of who looked.
 - **"Receive in-app messages" is a stored switch only.** There is no
   in-app messaging yet.
 - **No billing.** Nothing charges anybody.
@@ -503,7 +617,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-seven** are checked in at
+suite, and the delete-confirmation suite. **Twenty-nine** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -541,13 +655,35 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
-Contacts and claiming, the Notes split), and from Oct 7, 2026
+Contacts and claiming, the Notes split), from Oct 7, 2026
 `template-replace.cjs` (13: Replace with my own, Restore the original,
 the one template in use per type and the Coordinator following it) and
 `template-import.cjs` (11: Word / PDF / scan / .doc uploads and Suggest
 fields; needs `ANTHROPIC_API_KEY=test-key` and
 `ANTHROPIC_ENDPOINT=http://localhost:3998` in `.env`, and answers as
-Claude itself, so nothing leaves the machine). **A suite that logs on a
+Claude itself, so nothing leaves the machine), from Oct 17, 2026
+`job-photos.cjs` (28 since Oct 21, 2026: tag lists and General
+Project, tiles, + Add from the uploader, a tile and a phone, stacking
+filters, mini folders, Move and Clone and a clone's own tags, deleting
+copies and the last one taking the file, the crew link, Grant Access with
+the job's accounts, Select all, CRM search and email invites, View only
+vs Editor on a person's link, a grant opening its own folder only,
+switching level, re-granting, turning off, Members, a paused workspace,
+forged tickets; **it needs `STORAGE_DRIVER=local`** and no
+`BLOB_READ_WRITE_TOKEN` in `.env`, plus the fake email settings
+`password-reset.cjs` uses, because it catches the grant emails on :3999;
+without storage every upload is refused as "Photo storage isn't switched on"), and from Oct 21, 2026
+`import-ratesheet.cjs` (the Excel fixture with title rows, a Call row,
+a unit change and a Discontinued tab; ticks, a typed price, the
+import's costs, prices, MSRP, supplier switch and rep; Not on this sheet
+anymore; remembered columns; Decline into /admin; + Add New Distributor
+with a contact and MSRP less 10%; the product form; the Margin column;
+a 3,000-row sheet, 1.5 s through slow-db-proxy; the Sept-14-style audit
+fixes of Oct 21 in their own steps; the phone layout).
+`overlay-readability.cjs` step 6 (the deal picker on a new quote) is
+**flaky on the live code too** (Oct 21: 1 pass in 3 on both; the
+dropdown has closed by the time it is photographed) — not a regression.
+**A suite that logs on a
 company page with nobody ticked must tick `company-bypass-tick` first**
 or the log is refused. A suite that
 seeds and sends paperwork now gets calendar entries written for it, so

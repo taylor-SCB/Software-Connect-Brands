@@ -51,3 +51,17 @@ export async function deleteOrganization(formData: FormData) {
   await prisma.organization.delete({ where: { id: organizationId } });
   revalidatePath("/admin");
 }
+
+// A declined ratesheet import, dealt with: the reader was fixed for that
+// kind of sheet, or there was nothing to fix. Reopening puts it back.
+export async function setRatesheetIssueResolved(formData: FormData) {
+  await requireSuperAdmin();
+  const id = z.string().min(1).safeParse(formData.get("issueId"));
+  if (!id.success) return;
+  const resolved = formData.get("resolved") === "1";
+  await prisma.ratesheetImportIssue.updateMany({
+    where: { id: id.data },
+    data: { resolvedAt: resolved ? new Date() : null },
+  });
+  revalidatePath("/admin");
+}
