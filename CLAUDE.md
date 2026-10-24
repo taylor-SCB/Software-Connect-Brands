@@ -335,7 +335,8 @@ Contract Coordinator, Award without paperwork, Order materials and change
 orders reach for, where before they took whichever row came first. A
 second template of a type says "You already have one", saves as an
 Alternate, and takes over only when "Use this one" is ticked. Phases 3
-and 4 live in Settings → Connectors and wait on the Google and Adobe app
+and 4 are not built (no Settings → Connectors page exists yet; it is
+where they are planned) and wait on the Google and Adobe app
 registrations; Multi-Bids' Google admin trusting the app domain-wide is
 what lets full Gmail run without Google's paid security review.
 
