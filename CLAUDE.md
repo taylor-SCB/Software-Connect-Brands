@@ -322,13 +322,24 @@ wording, 2 upload + AI fields, 3 Google, 4 Adobe Sign + PDF designer).**
 Phases 1 and 2 are built. A template page's Body has **Replace with my
 own** (empties the editor in place, Undo puts it back), **Restore the
 original** (the built-in wording, via `ContractTemplate.baseline`), **Upload
-Word or PDF** (.docx via mammoth, text PDFs via unpdf, .txt; a scan, a
-.doc or an empty file is refused in words; a Google Doc comes in as its
-Word download) and **Suggest fields** (Claude proposes `{{field}}`
-spots as tick boxes; a suggestion whose snippet isn't in the body exactly
-once or names no real field is dropped; nothing changes until "Put
+Word or PDF** (.docx via mammoth, text PDFs via unpdf, .txt in UTF-8,
+Windows-1252 or UTF-16; a scan, a .doc or an empty file is refused in
+words; a Google Doc comes in as its Word download) and **Suggest fields**
+(Claude proposes `{{field}}` spots as tick boxes; a suggestion whose
+snippet isn't in the body exactly once, names no real field, or changes
+anything besides the one blank or value it fills is dropped; each says
+"“[Client Name]” becomes {{client_name}}"; nothing changes until "Put
 ticked fields in"; `src/lib/template-import.ts`). Nothing is saved until
-Save. Every type has exactly one template **in use**
+Save. **The file is read in the browser** (`src/lib/template-file.ts`,
+Oct 24, 2026), never posted: the readers unpack a whole file in memory,
+and a 750 KB Word file built to unpack to 200 MB ran the server out of
+memory for every workspace on it. Up to 20 MB, a Word file's XML parts
+counted as they unpack and refused past 12 MB, a PDF refused past 300
+pages and read page by page. **Suggest fields is 20 a day per
+workspace** (rolling 24 hours, counted from `AiRequest` rows, the row
+written before the count so two clicks can't share the last one); its
+call waits 90 seconds with one retry, and a cut-off or unreadable answer
+is a message, not a dead page. Every type has exactly one template **in use**
 (`ContractTemplate.isDefault`, kept by `setTemplateDefault` /
 `repairTemplateDefault` in `src/lib/contract-templates.ts`): it is what the
 Contract Coordinator, Award without paperwork, Order materials and change
@@ -416,10 +427,17 @@ are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
 
-- **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel.** Without it the
-  button simply isn't shown. It sends the agreement's text to Claude
-  (claude-opus-5-5, server-side fallback on) and costs about a cent a
-  click.
+- **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel** (`DEPLOY.md`).
+  Without it the button simply isn't shown. It sends the agreement's
+  text to Claude (claude-opus-5-5, server-side fallback on) and costs
+  about a cent on a short agreement, up to about 40 cents on a
+  60,000-character one, on the site's own key. 20 a day per workspace
+  caps it at roughly $8 a workspace a day; a spend limit on the
+  Anthropic account is the backstop.
+- **A booby-trapped Word or PDF file can still freeze the uploader's own
+  tab.** It is read in their browser, so nobody else is affected and the
+  limits above stop the common ones, but one page of a PDF built to
+  unpack to gigabytes is not caught before the reader opens it.
 - **Contract templates are not limited to Owners and Admins.** The
   template actions only check for a signed-in user, so a Member can edit
   or replace one despite the Company Users rule. Found Oct 7, 2026; not
@@ -657,10 +675,15 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
 Contacts and claiming, the Notes split), from Oct 7, 2026
-`template-replace.cjs` (13: Replace with my own, Restore the original,
-the one template in use per type and the Coordinator following it) and
-`template-import.cjs` (11: Word / PDF / scan / .doc uploads and Suggest
-fields; needs `ANTHROPIC_API_KEY=test-key` and
+`template-replace.cjs` (17: Replace with my own, Restore the original,
+the one template in use per type and the Coordinator following it; the
+Oct 24 audit fixes — a refused save keeps Type, the in-use box and the
+name, Undo after two swaps, an existing workspace's Compliance
+Agreement) and `template-import.cjs` (17: Word / PDF / scan / .doc
+uploads and Suggest fields; the Oct 24 audit fixes — nothing posted, a
+6 MB Word file, a Word bomb and a 301-page PDF refused, ANSI and UTF-16
+.txt, line breaks at the 60,000 limit, a cut-off answer, a reworded
+suggestion dropped, the 20-a-day allowance; needs `ANTHROPIC_API_KEY=test-key` and
 `ANTHROPIC_ENDPOINT=http://localhost:3998` in `.env`, and answers as
 Claude itself, so nothing leaves the machine), from Oct 17, 2026
 `job-photos.cjs` (28 since Oct 21, 2026: tag lists and General

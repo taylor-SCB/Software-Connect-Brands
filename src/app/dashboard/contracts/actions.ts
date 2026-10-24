@@ -4,10 +4,10 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { extractAgreementText, suggestFieldPlacements, type FieldSuggestion } from "@/lib/template-import";
+import { claimSuggestion, suggestFieldPlacements, type FieldSuggestion } from "@/lib/template-import";
 import { setTemplateDefault, repairTemplateDefault } from "@/lib/contract-templates";
 import { requireSession } from "@/lib/session";
-import { parseForm, type ActionState } from "@/lib/forms";
+import { parseForm, keepFields, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
 import { renderMergeFields, type MergeContext } from "@/lib/merge";
 import { loadMergeContext } from "@/lib/merge-data";
@@ -53,7 +53,15 @@ const templateSchema = z.object({
   type: z.string().trim().min(1, "Pick a type").max(60, "Keep the type under 60 characters"),
   newType: z.string().trim().max(60, "Keep the type under 60 characters").optional(),
   description: z.string().trim().max(500).optional(),
-  body: z.string().trim().min(20, "The template body looks too short").max(60000),
+  // A form posts every line break as \r\n, so the limit is counted with
+  // each break as one character, the way the editor and the upload count
+  // it; otherwise a 59,800-character agreement read in from Word was
+  // refused on Save.
+  body: z
+    .string()
+    .trim()
+    .min(20, "The template body looks too short")
+    .refine((body) => body.replace(/\r\n/g, "\n").length <= 60000, "That agreement is longer than a template can hold (60,000 characters)."),
   allUsersCanSend: z.enum(["true", "false"]),
   senderUserIds: z.array(z.string().trim().min(1)).max(500),
   isDefault: z.boolean(),
@@ -116,13 +124,19 @@ async function settleTemplateInput(
   return { ok: true, type, allUsersCanSend, senderUserIds };
 }
 
+// What a refused save hands back so the boxes React empties come back as
+// typed (src/lib/forms.ts). The body, type, senders and the in-use box are
+// held in the editor's own state.
+const TEMPLATE_KEPT = ["name", "description", "newType"] as const;
+
 export async function createTemplate(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
+  const refuse = (error: string): ActionState => ({ error, kept: keepFields(formData, TEMPLATE_KEPT) });
 
   const parsed = readTemplateForm(formData);
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return refuse(parsed.error);
   const settled = await settleTemplateInput(organizationId, parsed.data);
-  if (!settled.ok) return { error: settled.error };
+  if (!settled.ok) return refuse(settled.error);
 
   const template = await prisma.$transaction(async (tx) => {
     const created = await tx.contractTemplate.create({
@@ -148,20 +162,21 @@ export async function createTemplate(_prev: ActionState, formData: FormData): Pr
 
 export async function updateTemplate(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
+  const refuse = (error: string): ActionState => ({ error, kept: keepFields(formData, TEMPLATE_KEPT) });
 
   const id = idSchema.safeParse(formData.get("templateId"));
-  if (!id.success) return { error: "Missing template reference" };
+  if (!id.success) return refuse("Missing template reference");
 
   const parsed = readTemplateForm(formData);
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return refuse(parsed.error);
   const settled = await settleTemplateInput(organizationId, parsed.data);
-  if (!settled.ok) return { error: settled.error };
+  if (!settled.ok) return refuse(settled.error);
 
   const before = await prisma.contractTemplate.findFirst({
     where: { id: id.data, organizationId },
     select: { type: true, isDefault: true },
   });
-  if (!before) return { error: "Template not found" };
+  if (!before) return refuse("Template not found");
 
   await prisma.$transaction(async (tx) => {
     const typeChanged = before.type !== settled.type;
@@ -637,23 +652,18 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
   return { success: "Signed" };
 }
 
-/* --------------------------- Import + suggest --------------------------- */
+/* ------------------------------ Suggest ------------------------------ */
 
-// Reads an uploaded Word / PDF / text agreement into plain text for the
-// template editor. Nothing is saved here; the text lands in the editor and
-// the person saves it like any other edit.
-export async function importTemplateFile(formData: FormData): Promise<{ text: string } | { error: string }> {
-  await requireSession();
-  const file = formData.get("file");
-  if (!(file instanceof File)) return { error: "Pick a file to upload." };
-  return extractAgreementText(file);
-}
+// Uploaded agreements are read in the browser (src/lib/template-file.ts);
+// the text reaches the server only when the person saves.
 
 // Where merge fields belong in the wording, as suggestions to tick.
 export async function suggestTemplateFields(body: string): Promise<{ suggestions: FieldSuggestion[] } | { error: string }> {
-  await requireSession();
+  const { organizationId, userId } = await requireSession();
   const text = typeof body === "string" ? body.trim() : "";
   if (text.length < 20) return { error: "Put the agreement in the body first." };
   if (text.length > 60000) return { error: "That agreement is too long to check in one go." };
+  const used = await claimSuggestion(organizationId, userId);
+  if (used) return { error: used };
   return suggestFieldPlacements(text);
 }

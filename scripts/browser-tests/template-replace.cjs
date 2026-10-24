@@ -10,6 +10,12 @@
  * becomes the one the Contract Coordinator reaches for; deleting it hands
  * the type back.
  *
+ * Oct 24, 2026 audit fixes (their own steps at the end): a refused save
+ * keeps the Type, the in-use box and the typed name, so the next save
+ * writes what is on screen (ticked and unticked); Replace twice then Undo
+ * brings back the wording from before the first; a workspace from before
+ * the release gets Restore the original on its Compliance Agreement.
+ *
  *   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/scb_test \
  *   NODE_PATH=$(npm root -g):$(pwd)/node_modules \
  *   node scripts/browser-tests/template-replace.cjs
@@ -196,6 +202,90 @@ async function sql(text, params) {
   const perType = (await sql(`SELECT type, count(*) FILTER (WHERE "isDefault")::int n FROM "ContractTemplate" WHERE "organizationId"=$1 GROUP BY type`, [org])).rows;
   for (const row of perType) assert.equal(row.n, 1, row.type);
   assert.equal(perType.find((r) => r.type === "Sales Order"), undefined);
+
+  const byName = (name) => seeded.find((row) => row.name === name);
+  const invoice = byName("Invoice");
+  const changeOrder = byName("Change Order");
+  const serviceAgreement = byName("Service Agreement");
+  const compliance = byName("Compliance Agreement");
+  const everyone = page.getByRole("switch", { name: "All company users can send" });
+  const oneInUsePerType = async () => {
+    const counts = (await sql(`SELECT type, count(*) FILTER (WHERE "isDefault")::int n FROM "ContractTemplate" WHERE "organizationId"=$1 GROUP BY type`, [org])).rows;
+    for (const row of counts) assert.equal(row.n, 1, row.type);
+  };
+
+  log("audit fixes: a refused save keeps the Type, the ticked in-use box and the typed name; the next save writes them");
+  await page.goto(`${BASE}/dashboard/contracts/templates/${invoice.id}`);
+  await page.selectOption("#type", "Change Order");
+  await page.check("[data-testid=template-is-default]");
+  await page.fill("[name=name]", "Invoice turned Change Order");
+  await everyone.click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Pick at least one person who can send").waitFor();
+  assert.equal(await page.locator("#type").inputValue(), "Change Order");
+  assert.equal(await page.locator("[data-testid=template-is-default]").isChecked(), true);
+  assert.equal(await page.locator("[name=name]").inputValue(), "Invoice turned Change Order");
+  await everyone.click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Template saved").waitFor();
+  assert.deepEqual((await sql(`SELECT name, type, "isDefault" FROM "ContractTemplate" WHERE id=$1`, [invoice.id])).rows[0], {
+    name: "Invoice turned Change Order",
+    type: "Change Order",
+    isDefault: true,
+  });
+  assert.equal((await sql(`SELECT "isDefault" FROM "ContractTemplate" WHERE id=$1`, [changeOrder.id])).rows[0].isDefault, false);
+  assert.deepEqual((await sql(`SELECT type, "isDefault" FROM "ContractTemplate" WHERE id=$1`, [serviceAgreement.id])).rows[0], {
+    type: "Service Agreement",
+    isDefault: true,
+  });
+  await oneInUsePerType();
+
+  log("audit fixes: unticked, refused, then saved: the box stays unticked and the type goes to the other one");
+  await page.reload();
+  await page.uncheck("[data-testid=template-is-default]");
+  await everyone.click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Pick at least one person who can send").waitFor();
+  assert.equal(await page.locator("[data-testid=template-is-default]").isChecked(), false);
+  assert.equal(await page.locator("#type").inputValue(), "Change Order");
+  await everyone.click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Template saved").waitFor();
+  assert.equal((await sql(`SELECT "isDefault" FROM "ContractTemplate" WHERE id=$1`, [invoice.id])).rows[0].isDefault, false);
+  assert.equal((await sql(`SELECT "isDefault" FROM "ContractTemplate" WHERE id=$1`, [changeOrder.id])).rows[0].isDefault, true);
+  await oneInUsePerType();
+
+  log("audit fixes: Replace twice, then Undo, brings back the wording from before the first Replace");
+  await page.goto(`${BASE}/dashboard/contracts/templates/${serviceAgreement.id}`);
+  await page.locator("[data-testid=template-replace]").waitFor();
+  const wordingBefore = await page.locator("#body").inputValue();
+  assert.ok(wordingBefore.length > 100);
+  await page.click("[data-testid=template-replace]");
+  await page.click("[data-testid=template-replace]");
+  await page.locator("[data-testid=template-swap-note]").getByRole("button", { name: "Undo" }).click();
+  assert.equal(await page.locator("#body").inputValue(), wordingBefore);
+
+  log("audit fixes: a workspace from before the release gets Restore the original on its Compliance Agreement");
+  assert.equal(compliance.type, "Compliance");
+  const migrationUpdate = (dir) => {
+    const text = fs.readFileSync(path.join(__dirname, "..", "..", "prisma", "migrations", dir, "migration.sql"), "utf8");
+    const at = text.indexOf('UPDATE "ContractTemplate"');
+    return text.slice(at, text.indexOf(";", at) + 1);
+  };
+  await sql(`UPDATE "ContractTemplate" SET baseline = NULL WHERE "organizationId"=$1`, [org]);
+  await sql(migrationUpdate("20261007120000_template_default_baseline"));
+  await sql(migrationUpdate("20261024120000_ai_requests_compliance_baseline"));
+  assert.equal((await sql(`SELECT baseline FROM "ContractTemplate" WHERE id=$1`, [compliance.id])).rows[0].baseline, "Compliance Agreement");
+  assert.equal((await sql(`SELECT baseline FROM "ContractTemplate" WHERE id=$1`, [changeOrder.id])).rows[0].baseline, "Change Order");
+  await page.goto(`${BASE}/dashboard/contracts/templates/${compliance.id}`);
+  await page.click("[data-testid=template-replace]");
+  await page.fill("#body", MINE);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Template saved").waitFor();
+  await page.reload();
+  await page.locator("[data-testid=template-restore]").waitFor();
+  await page.click("[data-testid=template-restore]");
+  assert.equal((await page.locator("#body").inputValue()).replace(/\r\n/g, "\n").trim(), compliance.body.replace(/\r\n/g, "\n").trim());
 
   await browser.close();
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);

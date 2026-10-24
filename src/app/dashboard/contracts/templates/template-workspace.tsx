@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useCallback, useLayoutEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import { Card, CardHeader, Field, FormError, FormSuccess } from "@/components/ui";
 import { IconEdit, IconExternal } from "@/components/icons";
 import { MergeBody, MergeFieldPalette } from "@/components/merge-fields";
@@ -12,7 +12,7 @@ import { NEW_TYPE_VALUE } from "@/lib/contracts";
 import type { ActionState } from "@/lib/forms";
 import type { ContractPickers } from "@/lib/contract-pickers";
 import type { TemplateSibling } from "@/lib/contract-templates";
-import { createContract, previewMergeContext, importTemplateFile, suggestTemplateFields } from "../actions";
+import { createContract, previewMergeContext, suggestTemplateFields } from "../actions";
 import type { FieldSuggestion } from "@/lib/template-import";
 
 // A form posts line breaks as \r\n, so a saved body and the built-in can
@@ -58,18 +58,45 @@ export function TemplateWorkspace({
   // Suggest fields needs the AI key set on the site.
   aiEnabled?: boolean;
 }) {
-  const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
+  // Counts every result, so the name and description boxes are redrawn
+  // with what a refused save handed back (`kept`).
+  const [attempt, setAttempt] = useState(0);
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(async (previous, formData) => {
+    const result = await action(previous, formData);
+    setAttempt((n) => n + 1);
+    return result;
+  }, {});
+  // Once a save has been refused, `kept` is the whole truth about those
+  // boxes: one missing from it was cleared on purpose.
+  const was = (field: string, fallback: string) => (state?.kept ? state.kept[field] ?? "" : fallback);
 
   const [body, setBody] = useState(defaults?.body ?? "");
   const [type, setType] = useState(defaults?.type ?? pickers.typeOptions[0] ?? "Custom");
+  const savedInUse = (forType: string) => Boolean(defaults?.isDefault) && forType === defaults?.type;
+  const [useForType, setUseForType] = useState(savedInUse(type));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingCaret = useRef<number | null>(null);
 
+  // React resets the form's DOM once a save returns, refused or not. A
+  // controlled <select> or checkbox whose value hasn't changed gets no
+  // re-render, so nothing puts it back: the Type box showed its first
+  // option while the page still said Invoice, and the next Save moved the
+  // template to that type and made it the one in use there.
+  const typeRef = useRef<HTMLSelectElement>(null);
+  const useForTypeRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (typeRef.current) typeRef.current.value = type;
+    if (useForTypeRef.current) useForTypeRef.current.checked = useForType;
+  }, [state, type, useForType]);
+
   // Replace with my own / Restore the original swap the whole body in the
-  // editor; nothing is saved until Save, and Undo puts the last one back.
-  const [swap, setSwap] = useState<{ previous: string; note: string } | null>(null);
+  // editor; nothing is saved until Save, and Undo puts back what was there
+  // before. Swaps in a row with no typing between them (Replace twice, two
+  // uploads) keep the first snapshot, or Undo would only reach the empty
+  // editor the first one left.
+  const [swap, setSwap] = useState<{ previous: string; next: string; note: string } | null>(null);
   function swapBody(next: string, note: string) {
-    setSwap({ previous: body, note });
+    setSwap((current) => ({ previous: current && current.next === body ? current.previous : body, next, note }));
     setBody(next);
     setPreviewing(false);
     pendingCaret.current = 0;
@@ -83,10 +110,16 @@ export function TemplateWorkspace({
     event.target.value = "";
     if (!file) return;
     setImportError(null);
-    const data = new FormData();
-    data.set("file", file);
+    // Read here in the browser, never sent to the server: see
+    // src/lib/template-file.ts.
     startImport(async () => {
-      const result = await importTemplateFile(data);
+      let result: { text: string } | { error: string };
+      try {
+        const { readAgreementFile } = await import("@/lib/template-file");
+        result = await readAgreementFile(file);
+      } catch {
+        result = { error: "That file couldn't be read. If it opens fine on your computer, save it again as .docx and retry." };
+      }
       if ("error" in result) setImportError(result.error);
       else {
         setSuggestions(null);
@@ -103,12 +136,19 @@ export function TemplateWorkspace({
   function suggest() {
     setSuggestError(null);
     startSuggest(async () => {
-      const result = await suggestTemplateFields(body);
-      if ("error" in result) {
-        setSuggestError(result.error);
+      try {
+        const result = await suggestTemplateFields(body);
+        if ("error" in result) {
+          setSuggestError(result.error);
+          setSuggestions(null);
+        } else {
+          setSuggestions({ list: result.suggestions, ticked: result.suggestions.map(() => true) });
+        }
+      } catch {
+        // A dropped connection or a server crash: say so here rather than
+        // let it take the editor, and the unsaved wording, with it.
+        setSuggestError("Suggest fields couldn't get an answer. Check your connection and try again.");
         setSuggestions(null);
-      } else {
-        setSuggestions({ list: result.suggestions, ticked: result.suggestions.map(() => true) });
       }
     });
   }
@@ -209,10 +249,11 @@ export function TemplateWorkspace({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
+                key={`name-${attempt}`}
                 label="Template name"
                 name="name"
                 placeholder="Service Agreement"
-                defaultValue={defaults?.name ?? ""}
+                defaultValue={was("name", defaults?.name ?? "")}
                 required
               />
               <div>
@@ -220,10 +261,14 @@ export function TemplateWorkspace({
                   Type
                 </label>
                 <select
+                  ref={typeRef}
                   id="type"
                   name="type"
                   value={type}
-                  onChange={(event) => setType(event.target.value)}
+                  onChange={(event) => {
+                    setType(event.target.value);
+                    setUseForType(savedInUse(event.target.value));
+                  }}
                   className="select"
                 >
                   {typeOptions.map((option) => (
@@ -235,7 +280,9 @@ export function TemplateWorkspace({
                 </select>
                 {type === NEW_TYPE_VALUE && (
                   <input
+                    key={`newType-${attempt}`}
                     name="newType"
+                    defaultValue={was("newType", "")}
                     placeholder="Commission Agreement, mNDA, Tradeshow Sponsor…"
                     aria-label="New type name"
                     autoFocus
@@ -248,10 +295,11 @@ export function TemplateWorkspace({
             </div>
 
             <Field
+              key={`description-${attempt}`}
               label="Description"
               name="description"
               placeholder="Master agreement for a new engagement."
-              defaultValue={defaults?.description ?? ""}
+              defaultValue={was("description", defaults?.description ?? "")}
             />
 
             <SenderPicker
@@ -283,18 +331,19 @@ export function TemplateWorkspace({
                 <input type="hidden" name="isDefaultShown" value="1" />
                 <label className="flex items-start gap-2">
                   <input
-                    key={type}
+                    ref={useForTypeRef}
                     type="checkbox"
                     name="isDefault"
                     data-testid="template-is-default"
-                    defaultChecked={Boolean(defaults?.isDefault) && type === defaults?.type}
+                    checked={useForType}
+                    onChange={(event) => setUseForType(event.target.checked)}
                     className="mt-0.5"
                   />
                   <span>
                     Use this one for every {type} the app makes on its own
                     <span className="faint block text-xs">
                       Contract Coordinator, Award without paperwork, Order materials and change orders.
-                      {inUse && !(defaults?.isDefault && type === defaults?.type) && (
+                      {inUse && !savedInUse(type) && (
                         <> In use now: {inUse.name}.</>
                       )}
                     </span>
@@ -411,9 +460,10 @@ export function TemplateWorkspace({
                               />
                               <span className="min-w-0">
                                 <span className="font-medium">{item.label}</span>
-                                <span className="faint block break-words">
-                                  {item.find} → {item.replaceWith}
+                                <span className="block break-words" data-testid="template-suggestion-change">
+                                  “{item.replaced}” becomes {`{{${item.key}}}`}
                                 </span>
+                                <span className="faint block break-words">in: {item.find}</span>
                               </span>
                             </label>
                           </li>
