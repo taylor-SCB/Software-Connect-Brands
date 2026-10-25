@@ -749,9 +749,11 @@ stacking filters, the quote's Add from catalog box, the Create Ratesheet
 picker, Order materials at catalog cost after a $0 capture, the phone)
 and `products-load-test.cjs` (25,000 products and a 25,000-row import,
 timed; **run it through the slow proxy**, like `import-slow-db.cjs`).
-`overlay-readability.cjs` step 6 (the deal picker on a new quote) is
-**flaky on the live code too** (Oct 21: 1 pass in 3 on both; the
-dropdown has closed by the time it is photographed) — not a regression.
+`overlay-readability.cjs` step 6 (the deal picker on a new quote) used
+to pass one run in three: it photographed the panel while the page was
+still fading in. It waits for the fade now (Oct 25, 2026); **a pixel
+check on anything right after a page opens has to wait for
+`document.getAnimations()` to settle.**
 **A suite that logs on a
 company page with nobody ticked must tick `company-bypass-tick` first**
 or the log is refused. A suite that

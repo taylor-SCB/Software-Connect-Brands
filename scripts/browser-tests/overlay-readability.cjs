@@ -297,6 +297,18 @@ async function withOldGlass(page, selector, body) {
   await page.fill("#dealTitle", "Roof");
   const dealPanel = page.locator('ul[role="listbox"]').first();
   await dealPanel.waitFor();
+  // This step passed about one run in three (Oct 21, 2026). The page fades
+  // up for a third of a second as it opens, and the panel was typed open
+  // and photographed inside that, so one photo caught it part-faded and the
+  // two never matched. Wait for the fade to end (the endless pulses on
+  // other things are not it). And blanking the page for the second photo
+  // takes focus off the box, which closes the picker 120 ms later, so that
+  // focus loss is kept from it while it is measured. What is measured, the
+  // panel's back, is unchanged.
+  await page.waitForFunction(() =>
+    document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getTiming().iterations === Infinity),
+  );
+  await page.locator("#dealTitle").evaluate((el) => el.addEventListener("focusout", (event) => event.stopPropagation()));
   await assertOpaqueSurface(dealPanel, "deal picker dropdown");
   const dealBleed = await bleedThrough(page, dealPanel, "03-deal-picker");
   assert.equal(dealBleed, 0, `deal picker is see-through: ${pct(dealBleed)} shows through`);
