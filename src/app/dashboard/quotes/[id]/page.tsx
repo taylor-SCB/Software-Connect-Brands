@@ -38,7 +38,10 @@ export default async function QuoteBuilderPage({
 
   const timeZone = await getTimeZone();
 
-  const [quote, products, serviceTypes] = await Promise.all([
+  // The catalog isn't loaded here: the "Add from catalog" box searches it
+  // (/dashboard/products/search), so a quote opens as fast with fifty
+  // thousand products as with five.
+  const [quote, serviceTypes] = await Promise.all([
     prisma.quote.findFirst({
       where: { id, organizationId },
       include: {
@@ -46,21 +49,6 @@ export default async function QuoteBuilderPage({
         deal: { select: { id: true, title: true, stage: true } },
         lineItems: { orderBy: { position: "asc" } },
         payments: { orderBy: { position: "asc" } },
-      },
-    }),
-    prisma.product.findMany({
-      where: { organizationId, active: true },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        unitPriceCents: true,
-        defaultTag: true,
-        serviceType: true,
-        unitOfMeasure: true,
-        softwareRate: true,
-        softwareTerm: true,
       },
     }),
     getServiceTypes(organizationId),
@@ -164,14 +152,16 @@ export default async function QuoteBuilderPage({
       )}
 
       <div className="space-y-5">
-        <Card lit>
+        {/* Above the cards after it: every card is its own layer (the glass
+            blur), so the Add from catalog list opening downward was drawn
+            under the Payment table and lost its taps there. */}
+        <Card lit className="z-20">
           <CardHeader
             title="Line items"
             subtitle="Each line carries a product description, project-specific notes and a tag."
           />
           <LineItemsEditor
             quoteId={quote.id}
-            products={products}
             initialLines={quote.lineItems.map((item) => ({
               id: item.id,
               productId: item.productId,

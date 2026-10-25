@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useState } from "react";
 import { Field, FormError, FormSuccess, Card, CardHeader, TagBadge } from "@/components/ui";
 import { IconSearch } from "@/components/icons";
 import { formatCents } from "@/lib/format";
@@ -11,6 +11,7 @@ import {
   type LineItemTagValue,
 } from "@/lib/constants";
 import type { ActionState } from "@/lib/forms";
+import { useSearch } from "@/lib/use-search";
 
 export type PickerProduct = {
   id: string;
@@ -42,14 +43,24 @@ const VISIBILITY_NOTES: Partial<Record<RatesheetVisibilityValue, string>> = {
   PARTNER_SPECIFIC: "Nothing is emailed yet: you get a link to copy and send yourself.",
 };
 
+// Searching the catalog, 50 matches at a time, instead of being handed
+// all of it: a distributor's sheet can bring in tens of thousands.
+const SHOWN = 50;
+// The most products one ratesheet holds (ratesheets/actions.ts).
+const RATESHEET_MAX = 2000;
+
 export function RatesheetForm({
   action,
-  products,
+  productTotal,
+  selectedProducts = [],
   defaults,
   submitLabel,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
-  products: PickerProduct[];
+  // How many products the workspace has, for "3 of 1,240 selected".
+  productTotal: number;
+  // The products already on the sheet, so they show ticked by name.
+  selectedProducts?: PickerProduct[];
   defaults?: RatesheetFormDefaults;
   submitLabel: string;
 }) {
@@ -60,34 +71,107 @@ export function RatesheetForm({
     (defaults?.visibility as RatesheetVisibilityValue | undefined) ?? "PARTNER_SPECIFIC",
   );
   const [query, setQuery] = useState("");
+  const needle = query.trim();
+  const searchUrl = (params: string) => `/dashboard/products/search?q=${encodeURIComponent(needle)}${params}`;
   const [selected, setSelected] = useState<Set<string>>(() => new Set(defaults?.productIds ?? []));
+  const { results, loading } = useSearch<PickerProduct>(searchUrl(`&take=${SHOWN}`));
+  // "Show 50 more" pages for the search on screen; a new search starts over.
+  const [more, setMore] = useState<{ query: string; rows: PickerProduct[]; pages: number; done: boolean }>({
+    query: "",
+    rows: [],
+    pages: 0,
+    done: false,
+  });
+  const extra = more.query === needle ? more : { query: needle, rows: [], pages: 0, done: false };
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Every product seen so far, so a ticked one keeps its name and price
+  // after the search moves on.
+  const [known, setKnown] = useState<Map<string, PickerProduct>>(
+    () => new Map(selectedProducts.map((product) => [product.id, product])),
+  );
+  function remember(product: PickerProduct) {
+    if (!known.has(product.id)) setKnown((current) => new Map(current).set(product.id, product));
+  }
+  function rememberAll(rows: PickerProduct[]) {
+    setKnown((current) => {
+      const next = new Map(current);
+      for (const row of rows) next.set(row.id, row);
+      return next;
+    });
+  }
+  // With no search, what is ticked comes first, then the catalog from the
+  // top; with a search, just what matches. Each product once.
+  const ticked = needle
+    ? []
+    : [...selected].map((id) => known.get(id)).filter((product): product is PickerProduct => Boolean(product));
+  const listedIds = new Set<string>();
+  const filtered = [...ticked, ...results, ...extra.rows].filter((product) =>
+    listedIds.has(product.id) ? false : (listedIds.add(product.id), true),
+  );
+  const moreToShow = !extra.done && results.length >= SHOWN;
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return products;
-    return products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(needle) ||
-        (product.sku ?? "").toLowerCase().includes(needle),
-    );
-  }, [products, query]);
+  async function fetchRows(params: string): Promise<PickerProduct[]> {
+    const response = await fetch(searchUrl(params), { credentials: "same-origin" });
+    return response.ok ? ((await response.json()) as PickerProduct[]) : [];
+  }
+  async function showMore() {
+    setBusy(true);
+    try {
+      const page = await fetchRows(`&take=${SHOWN}&skip=${SHOWN * (extra.pages + 1)}`);
+      setMore({ query: needle, rows: [...extra.rows, ...page], pages: extra.pages + 1, done: page.length < SHOWN });
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Every match, not just the ones on screen, up to what a ratesheet holds:
+  // ticking only the shown 50 left the rest of a catalog out of reach.
+  async function selectAll() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const rows = await fetchRows("&all=1");
+      rememberAll(rows);
+      setSelected((current) => {
+        const next = new Set(current);
+        for (const row of rows) next.add(row.id);
+        return next;
+      });
+      if (rows.length >= RATESHEET_MAX) {
+        setNotice(
+          `A ratesheet holds up to ${RATESHEET_MAX.toLocaleString()} products, so the first ${RATESHEET_MAX.toLocaleString()} ${needle ? "matches" : "in your catalog"} are ticked.`,
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function clearAll() {
+    setNotice(null);
+    if (!needle) {
+      setSelected(new Set());
+      return;
+    }
+    setBusy(true);
+    try {
+      const rows = await fetchRows("&all=1");
+      setSelected((current) => {
+        const next = new Set(current);
+        for (const row of rows) next.delete(row.id);
+        return next;
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  function toggle(id: string) {
+  function toggle(product: PickerProduct) {
+    remember(product);
+    const id = product.id;
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  }
-
-  function selectAllVisible(on: boolean) {
-    setSelected((current) => {
-      const next = new Set(current);
-      for (const product of filtered) {
-        if (on) next.add(product.id);
-        else next.delete(product.id);
-      }
       return next;
     });
   }
@@ -194,7 +278,7 @@ export function RatesheetForm({
         <Card lit className="lg:col-span-2">
           <CardHeader
             title="Products on this sheet"
-            subtitle={`${selected.size} of ${products.length} selected · inactive products stay hidden from partners`}
+            subtitle={`${selected.size.toLocaleString()} of ${productTotal.toLocaleString()} selected · inactive products stay hidden from partners`}
           />
           <div className="space-y-3 p-4">
             <div className="relative">
@@ -206,26 +290,32 @@ export function RatesheetForm({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search products…"
+                placeholder="Search name or part #…"
                 aria-label="Search products"
                 className="input input-sm pl-8"
               />
             </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => selectAllVisible(true)} className="btn btn-ghost btn-sm">
-                Select all{query ? " shown" : ""}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={selectAll} disabled={busy || productTotal === 0} className="btn btn-ghost btn-sm">
+                {needle ? "Select all matching" : `Select all ${productTotal.toLocaleString()}`}
               </button>
-              <button type="button" onClick={() => selectAllVisible(false)} className="btn btn-ghost btn-sm">
-                Clear{query ? " shown" : ""}
+              <button type="button" onClick={clearAll} disabled={busy || selected.size === 0} className="btn btn-ghost btn-sm">
+                {needle ? "Clear matching" : "Clear"}
               </button>
             </div>
+            {notice && <p className="text-xs text-[var(--warn)]">{notice}</p>}
+            {selected.size > RATESHEET_MAX && (
+              <p className="text-xs text-[var(--danger)]">
+                That&apos;s more than the {RATESHEET_MAX.toLocaleString()} a ratesheet holds. Untick some before saving.
+              </p>
+            )}
 
-            {products.length === 0 ? (
+            {productTotal === 0 ? (
               <p className="faint py-6 text-center text-xs">
                 No products in your catalog yet. Add some first, then build the sheet.
               </p>
             ) : filtered.length === 0 ? (
-              <p className="faint py-6 text-center text-xs">Nothing matches that search.</p>
+              <p className="faint py-6 text-center text-xs">{loading ? "Searching…" : "Nothing matches that search."}</p>
             ) : (
               <ul className="max-h-[28rem] space-y-1 overflow-y-auto pr-1">
                 {filtered.map((product) => {
@@ -242,7 +332,7 @@ export function RatesheetForm({
                         <input
                           type="checkbox"
                           checked={on}
-                          onChange={() => toggle(product.id)}
+                          onChange={() => toggle(product)}
                           aria-label={`Include ${product.name}`}
                           className="h-4 w-4 shrink-0 accent-[var(--brand)]"
                         />
@@ -262,6 +352,14 @@ export function RatesheetForm({
                   );
                 })}
               </ul>
+            )}
+            {moreToShow && (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button type="button" onClick={showMore} disabled={busy} className="btn btn-ghost btn-sm">
+                  Show {SHOWN} more
+                </button>
+                <span className="faint text-xs">or search by name or part number</span>
+              </div>
             )}
           </div>
         </Card>

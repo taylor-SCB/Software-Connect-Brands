@@ -72,9 +72,13 @@ async function until(fn, what) {
   throw new Error(`timed out waiting for ${what}`);
 }
 const status = async (table, id) => (await sql(`SELECT status FROM "${table}" WHERE id=$1`, [id])).rows[0].status;
+// A day as the workspace sees it, in its time zone (America/Chicago unless
+// changed): a UTC date runs a day ahead every evening after 7 pm Central,
+// and the suite failed between then and midnight (Oct 24, 2026).
 function isoDaysAgo(n) {
-  const d = new Date(Date.now() - n * 86_400_000);
-  return d.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    new Date(Date.now() - n * 86_400_000),
+  );
 }
 
 (async () => {
@@ -164,7 +168,7 @@ function isoDaysAgo(n) {
   const nicForm = nic.locator("[data-testid=log-activity-form]");
   await nicForm.getByRole("button", { name: "Meeting", exact: true }).click();
   await nicForm.locator("textarea[name=body]").fill("Walkthrough at their office");
-  const nextWeek = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  const nextWeek = isoDaysAgo(-7);
   await nicForm.locator("[data-testid=activity-when]").fill(nextWeek);
   await nicForm.locator("[data-testid=activity-submit]").click();
   await nic.getByText(/Scheduled for/).waitFor();

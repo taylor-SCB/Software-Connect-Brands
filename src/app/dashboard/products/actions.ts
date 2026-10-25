@@ -357,7 +357,13 @@ export async function deleteProduct(formData: FormData) {
   await prisma.product.deleteMany({ where: { id: id.data, organizationId } });
 
   revalidatePath("/dashboard/products");
-  redirect("/dashboard/products");
+  // Back to the view the delete was made from — the search, filters and
+  // page — so clearing out a supplier's old items isn't a fresh search each
+  // time. Only ever the Products list itself.
+  const returnTo = formData.get("returnTo");
+  redirect(
+    typeof returnTo === "string" && /^\/dashboard\/products(\?[^#\\]*)?$/.test(returnTo) ? returnTo : "/dashboard/products",
+  );
 }
 
 // Copies every field onto a new product and lands on its edit page, since

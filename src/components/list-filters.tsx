@@ -229,7 +229,7 @@ export function ListFilters({
   );
 }
 
-function Toggle({ on, onClick, children, testId }: { on: boolean; onClick: () => void; children: React.ReactNode; testId: string }) {
+export function Toggle({ on, onClick, children, testId }: { on: boolean; onClick: () => void; children: React.ReactNode; testId: string }) {
   return (
     <button
       type="button"
@@ -243,7 +243,7 @@ function Toggle({ on, onClick, children, testId }: { on: boolean; onClick: () =>
   );
 }
 
-function Chip({ children, onRemove }: { children: React.ReactNode; onRemove: () => void }) {
+export function Chip({ children, onRemove }: { children: React.ReactNode; onRemove: () => void }) {
   return (
     <span className="badge gap-1 border-[var(--border-strong)]">
       {children}
@@ -316,7 +316,7 @@ function Dropdown({
   );
 }
 
-function MultiSelect({
+export function MultiSelect({
   label,
   values,
   choices,
@@ -324,6 +324,7 @@ function MultiSelect({
   onToggle,
   onClear,
   empty,
+  searchable = false,
 }: {
   label: string;
   values: string[];
@@ -334,17 +335,37 @@ function MultiSelect({
   onToggle: (value: string) => void;
   onClear: () => void;
   empty: string;
+  // A box to narrow a long list (a catalog's manufacturers), shown once
+  // there are more than a dozen to scroll through.
+  searchable?: boolean;
 }) {
   // Anything ticked that is no longer on offer (an industry filter changed
   // underneath a type pick) stays listed so it can be unticked.
   const all = Array.from(new Set([...choices, ...values]));
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const shown = needle ? all.filter((choice) => (labels?.[choice] ?? choice).toLowerCase().includes(needle)) : all;
   return (
     <Dropdown label={label} count={values.length} testId={`filter-${label.toLowerCase().replace(/\s+/g, "-")}`}>
       {() => (
         <>
+          {searchable && all.length > 12 && (
+            <div className="border-b border-[var(--border)] p-2">
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={`Search ${label.toLowerCase()}…`}
+                aria-label={`Search ${label.toLowerCase()}`}
+                autoFocus
+                className="input input-sm"
+              />
+            </div>
+          )}
           <ul role="listbox" aria-label={label} aria-multiselectable="true" className="max-h-64 overflow-y-auto">
             {all.length === 0 && <li className="faint px-3 py-3 text-xs">{empty}</li>}
-            {all.map((choice) => {
+            {all.length > 0 && shown.length === 0 && <li className="faint px-3 py-3 text-xs">Nothing matches.</li>}
+            {shown.map((choice) => {
               const on = values.includes(choice);
               return (
                 <li key={choice}>

@@ -10,9 +10,12 @@ import { cloneProduct, deleteProduct } from "./actions";
 export function ProductRowActions({
   productId,
   productName,
+  returnTo,
 }: {
   productId: string;
   productName: string;
+  // The list view this row is on, so a delete lands back on it.
+  returnTo: string;
 }) {
   return (
     <div className="flex items-center justify-end gap-1.5">
@@ -33,6 +36,7 @@ export function ProductRowActions({
         label={`Delete ${productName}`}
         question={`Delete ${productName}?`}
         note="Quotes already built keep their own copy of the name and price."
+        extraFields={{ returnTo }}
       />
     </div>
   );

@@ -522,10 +522,9 @@ async function login(page) {
   await page.fill("#title", "Regression quote");
   await page.getByRole("button", { name: "Create quote" }).click();
   await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/]+$/);
-  const catalog = page.getByLabel("Add product from catalog");
-  const options = await catalog.locator("option").allTextContents();
-  assert.ok(options.some((o) => o.startsWith("Journeyman labor")), "product should be in the catalog picker");
-  await catalog.selectOption({ label: options.find((o) => o.startsWith("Journeyman labor")) });
+  // A search box since Oct 25, 2026, not a dropdown of the whole catalog.
+  await page.getByLabel("Add product from catalog").fill("journeyman");
+  await page.getByTestId("catalog-results").getByRole("option", { name: /Journeyman labor/ }).click();
   await page.getByLabel("Line 1 product", { exact: true }).waitFor();
   assert.equal(await page.getByLabel("Line 1 unit value").inputValue(), "130.00");
   assert.equal(await page.getByLabel("Line 1 tag").inputValue(), "LABOR");

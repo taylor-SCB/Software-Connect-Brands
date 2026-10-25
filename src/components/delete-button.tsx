@@ -14,6 +14,7 @@ export function DeleteButton({
   label,
   question,
   note,
+  extraFields,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   hiddenName: string;
@@ -21,6 +22,8 @@ export function DeleteButton({
   label: string;
   question: string;
   note?: string;
+  // More hidden fields for the action, e.g. the list view to land back on.
+  extraFields?: Record<string, string>;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -59,6 +62,9 @@ export function DeleteButton({
       className="inline-flex max-w-xs flex-col gap-2 rounded-lg border border-[rgb(251_113_133/0.35)] bg-[rgb(251_113_133/0.08)] px-3 py-2 text-left"
     >
       <input type="hidden" name={hiddenName} value={hiddenValue} />
+      {Object.entries(extraFields ?? {}).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
       <p className="text-xs font-medium">{question}</p>
       {note && <p className="faint text-[0.7rem] leading-relaxed">{note}</p>}
       <div className="flex items-center gap-2">

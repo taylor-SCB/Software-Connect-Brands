@@ -21,6 +21,7 @@ import {
 import { IconPlus, IconTrash } from "@/components/icons";
 import { FormError, FormSuccess } from "@/components/ui";
 import { SupplierCell, type SupplierOption } from "./supplier-cell";
+import { CatalogPicker } from "./catalog-picker";
 import {
   DiscountInput,
   discountAsStored,
@@ -167,7 +168,6 @@ export function LineItemsEditor({
   quoteId,
   initialLines,
   initialDiscount,
-  products,
   serviceTypes,
   suppliers,
   readOnly = false,
@@ -177,7 +177,6 @@ export function LineItemsEditor({
   // The discount on the whole quote as stored: cents, and the percent it
   // was typed as when it was one.
   initialDiscount: { discountCents: number; discountPercent: number | null };
-  products: EditorProduct[];
   // The workspace's kinds of work, for splitting the quote by scope.
   serviceTypes: string[];
   // Companies tagged Distributor, plus any already linked to a line here.
@@ -269,9 +268,9 @@ export function LineItemsEditor({
     ]);
   }
 
-  function addProductLine(productId: string) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) return;
+  // The product comes from the catalog search (CatalogPicker), not a list
+  // of every product handed to the page.
+  function addProductLine(product: EditorProduct) {
     const term = splitTerm(
       product.softwareRate === "PER_MONTH"
         ? product.softwareTerm
@@ -712,21 +711,7 @@ export function LineItemsEditor({
 
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3">
-          <select
-            value=""
-            onChange={(event) => {
-              if (event.target.value) addProductLine(event.target.value);
-            }}
-            aria-label="Add product from catalog"
-            className="select input-sm w-56"
-          >
-            <option value="">Add from catalog…</option>
-            {products.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name} · {formatCents(product.unitPriceCents)}
-              </option>
-            ))}
-          </select>
+          <CatalogPicker onPick={addProductLine} />
           <button type="button" onClick={addBlankLine} className="btn btn-ghost btn-sm">
             <IconPlus size={13} />
             Blank line

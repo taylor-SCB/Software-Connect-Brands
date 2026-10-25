@@ -395,6 +395,53 @@ form links COGS, Markup %, Margin % and Unit price (a typed percentage
 holds while the cost is retyped) and has a controlled MSRP box; the
 Products list shows margin with markup under it.
 
+**Products at full size (Release 1, Oct 25, 2026).** The Products list
+pages at 10 / 50 / 100 with a search box (each word matched against
+name, SKU, description and manufacturer) and stacking Supplier,
+Manufacturer, Tag, Service type and Status filters, the Contacts
+pattern (`src/lib/product-list-params.ts` for what the address bar
+holds, shared with the browser's bar; `src/lib/product-list.ts` for the
+queries; `products/product-filters.tsx`). `MultiSelect` in
+`list-filters.tsx` is exported and takes `searchable` (off on Contacts).
+The quote's **Add from catalog** is a search box (`quotes/[id]/
+catalog-picker.tsx`: a typed part number first, arrows and Enter, the box
+stays open for the next; Enter pressed before the search answers — a
+barcode scanner — fetches that search and adds its first match, never
+the last search's row; the Line items card sits above the cards after
+it, because every `.card` is its own layer and the list was drawn under
+the Payment table). The Create Ratesheet picker searches too, with
+**Select all N** / **Select all matching** ticking every match up to the
+2,000 a sheet holds, **Show 50 more**, and **Clear matching**; both ask
+`/dashboard/products/search` (`skip`, `all=1`), and no page loads the
+catalog. A delete on the Products list lands back on the same view
+(`returnTo`, only ever `/dashboard/products…`). `cleanSearch` turns a
+backslash into a space like % and _ (a trailing one made Postgres refuse
+the match). The import's name matching is constant-time per row
+(`buildCatalogIndex` keeps each name's products split by whether they
+carry a part number): 8,000 rows all named Classic Tee against 8,000
+carried took 17.5 s to plan, on every tick, and takes 0.15 s; "Style #"
+and SanMar's "STYLE#" read as the part number (a bare "Style" doesn't).
+`MAX_NEW_PRODUCTS` is the 25,000 rows a sheet can hold.
+`products-load-test.cjs` proves it through the slow proxy: 25,000
+products, every page under half a second and about 320 KB (was 44 MB
+and 24 s at 8,600), the picker's search in 0.12 s, a 25,000-row sheet
+imported in 9 s, and the 8,000 same-named tees previewed in 2.3 s and
+imported in 4 s. **Order materials** prices a row at the catalog cost
+when its contract captured $0 (Taylor, Oct 25, 2026); a real captured
+cost is kept. The agreed next releases, in order: 2 account types +
+Admin Create Account; 3 the deeper catalog (each ratesheet a row with
+its own search and a See product list pop-out with COGS discount and a
+required minimum markup and Cancel / Save and accept; per-supplier
+sub-rows in a product, each with its own COGS, discount, MSRP and
+minimum margin % shown in $; variation labels UoM / Colors / Sizes /
+custom groups; images; custom labels); 4 AI upload of PDF, Word and
+photos plus a decline queue that suggests its fix; 5 distributor
+publishing; 6 inventory and pipeline quantities by stage; 7 the apparel
+pack, with AI renderings at $2 an image on the account's monthly
+invoice (no billing yet: meter per account per month, invoice by hand;
+an image service with vector output for screen printers; famous logos
+are refused, so a school uploads its own).
+
 **Account types (Taylor, Oct 21, 2026 — decided, not built).** Five:
 Admin (the platform; Taylor) and four a company picks at signup, one per
 account: Business / Vendor, Distributor, Hardware / OEM, Software
@@ -460,21 +507,16 @@ are all blocking before the first paying customer.
   "Send to partner" makes a link to copy and text or email by hand, and
   the Contract Coordinator's "Copy reminder", which copies a nudge with the signing
   link and logs it; the app says so on the screen.
-- **Import Ratesheet adds at most 2,000 new products per sheet** (it
-  still updates every product already carried), because the Products
-  list and the quote's product picker load every product: 8,600 products
-  made the Products page 44 MB and 24 seconds to load (Oct 21, 2026).
-  Paging and searching the Products list, and a searched product picker
-  on quotes, are what let a contractor bring in a distributor's whole
-  catalog; raise `MAX_NEW_PRODUCTS` in `src/lib/price-list.ts` after.
+- **A ratesheet is read up to 25,000 rows.** Past that the rest are
+  left out and the preview says so; a bigger catalog comes in as two
+  sheets. There is no unit for a box, roll or case yet (the units are a
+  fixed list); custom units are Release 3.
 - **PDF ratesheets aren't read.** Excel and CSV only; a PDF is refused in
   words and can still be saved with Upload File or declined.
-- **A signed job's purchase order still prices at the cost captured when
-  the contract was made**, which is $0 for anything that came in through
-  the old Import CSV. Re-importing fixes the catalog cost, not the
-  snapshot. Order materials falling back to the catalog cost when the
-  snapshot is $0 is the fix (found Oct 21, 2026; Projects module, not
-  changed without asking).
+- **Only Order materials falls back to the catalog cost.** A contract
+  row that captured $0 still reads $0 on the contract itself and in the
+  job's Expected cost on file; the purchase order made from it is priced
+  right (Oct 25, 2026).
 - **Open quotes aren't re-priced or flagged when a ratesheet moves a
   cost.** A quote's lines keep the price they were written at.
 - **Any signed-in user can import a ratesheet**, like every other
@@ -530,8 +572,10 @@ are all blocking before the first paying customer.
 - **Contacts and Companies page; the other lists still load every row.**
   Contacts, Companies, their pickers and the company page's People list
   are paged and searched in the database (Sept 13, 2026, proven at
-  200,000 contacts by `scripts/browser-tests/load-test.cjs`). Pipeline,
-  Quotes, Contracts, Products and the dashboard still load everything,
+  200,000 contacts by `scripts/browser-tests/load-test.cjs`), and so are
+  Products and every product picker (Oct 25, 2026, proven at 50,000 by
+  `products-load-test.cjs`). Pipeline, Quotes, Contracts and the
+  dashboard still load everything,
   and the **New quote, New contract and Contract Coordinator pages still ship the
   whole contact list to the browser** for their pickers. Fine at demo
   scale; the next thing to fix for a workspace that has imported a big
@@ -644,7 +688,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-nine** are checked in at
+suite, and the delete-confirmation suite. **Thirty-one** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -714,10 +758,21 @@ import's costs, prices, MSRP, supplier switch and rep; Not on this sheet
 anymore; remembered columns; Decline into /admin; + Add New Distributor
 with a contact and MSRP less 10%; the product form; the Margin column;
 a 3,000-row sheet, 1.5 s through slow-db-proxy; the Sept-14-style audit
-fixes of Oct 21 in their own steps; the phone layout).
-`overlay-readability.cjs` step 6 (the deal picker on a new quote) is
-**flaky on the live code too** (Oct 21: 1 pass in 3 on both; the
-dropdown has closed by the time it is photographed) — not a regression.
+fixes of Oct 21 in their own steps; the phone layout), and from Oct 25,
+2026 `products-scale.cjs` (18: the Products list's pages, search and
+stacking filters, the quote's Add from catalog box, the Create Ratesheet
+picker, Order materials at catalog cost after a $0 capture, the phone;
+the Oct 25 audit fixes — Enter before the search answers, an early arrow
+key, the list above the Payment table, a backslash, a delete keeping the
+view, Select all / Show 50 more / Clear matching) and
+`products-load-test.cjs` (25,000 products, a 25,000-row import and an
+8,000-row same-name apparel sheet, timed; **run it through the slow
+proxy**, like `import-slow-db.cjs`).
+`overlay-readability.cjs` step 6 (the deal picker on a new quote) used
+to pass one run in three: it photographed the panel while the page was
+still fading in. It waits for the fade now (Oct 25, 2026); **a pixel
+check on anything right after a page opens has to wait for
+`document.getAnimations()` to settle.**
 **A suite that logs on a
 company page with nobody ticked must tick `company-bypass-tick` first**
 or the log is refused. A suite that

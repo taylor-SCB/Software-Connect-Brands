@@ -908,8 +908,8 @@ export function ImportRatesheet({
             {(plan.skippedBlank > 0 || plan.skippedDuplicates > 0 || plan.truncated > 0 || plan.counts.tooManyNew > 0) && (
               <p className="faint text-xs">
                 {[
-                  plan.skippedBlank > 0 && `${plan.skippedBlank} blank or heading rows skipped`,
-                  plan.skippedDuplicates > 0 && `${plan.skippedDuplicates} repeated rows skipped`,
+                  plan.skippedBlank > 0 && `${plan.skippedBlank.toLocaleString()} blank or heading rows skipped`,
+                  plan.skippedDuplicates > 0 && `${plan.skippedDuplicates.toLocaleString()} repeated rows skipped`,
                   plan.truncated > 0 && `${plan.truncated.toLocaleString()} rows past the 25,000-row limit not read`,
                   plan.counts.tooManyNew > 0 && `${plan.counts.tooManyNew.toLocaleString()} new products past the ${MAX_NEW_PRODUCTS.toLocaleString()} limit left out`,
                 ]
@@ -1027,7 +1027,7 @@ export function ImportRatesheet({
             {plan.missing && plan.missing.length > 0 && (
               <div className="rounded-xl border border-[var(--border)] px-3 py-2.5 text-xs">
                 <p>
-                  <strong>{plan.missing.length}</strong> {plan.missing.length === 1 ? "product" : "products"} you buy
+                  <strong>{plan.missing.length.toLocaleString()}</strong> {plan.missing.length === 1 ? "product" : "products"} you buy
                   from {supplier?.name ?? "this supplier"} {plan.missing.length === 1 ? "isn't" : "aren't"} on this sheet
                   anymore.{" "}
                   <button type="button" onClick={() => setShowMissing(!showMissing)} className="link">
@@ -1042,7 +1042,7 @@ export function ImportRatesheet({
                         {item.sku ? ` (${item.sku})` : ""}
                       </li>
                     ))}
-                    {plan.missing.length > 50 && <li>…and {plan.missing.length - 50} more.</li>}
+                    {plan.missing.length > 50 && <li>…and {(plan.missing.length - 50).toLocaleString()} more.</li>}
                   </ul>
                 )}
                 <label className="mt-1 flex items-center gap-2">
