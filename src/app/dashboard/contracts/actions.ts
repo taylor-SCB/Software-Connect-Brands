@@ -4,8 +4,10 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { claimSuggestion, suggestFieldPlacements, type FieldSuggestion } from "@/lib/template-import";
+import { setTemplateDefault, repairTemplateDefault } from "@/lib/contract-templates";
 import { requireSession } from "@/lib/session";
-import { parseForm, type ActionState } from "@/lib/forms";
+import { parseForm, keepFields, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
 import { renderMergeFields, type MergeContext } from "@/lib/merge";
 import { loadMergeContext } from "@/lib/merge-data";
@@ -51,9 +53,18 @@ const templateSchema = z.object({
   type: z.string().trim().min(1, "Pick a type").max(60, "Keep the type under 60 characters"),
   newType: z.string().trim().max(60, "Keep the type under 60 characters").optional(),
   description: z.string().trim().max(500).optional(),
-  body: z.string().trim().min(20, "The template body looks too short").max(60000),
+  // A form posts every line break as \r\n, so the limit is counted with
+  // each break as one character, the way the editor and the upload count
+  // it; otherwise a 59,800-character agreement read in from Word was
+  // refused on Save.
+  body: z
+    .string()
+    .trim()
+    .min(20, "The template body looks too short")
+    .refine((body) => body.replace(/\r\n/g, "\n").length <= 60000, "That agreement is longer than a template can hold (60,000 characters)."),
   allUsersCanSend: z.enum(["true", "false"]),
   senderUserIds: z.array(z.string().trim().min(1)).max(500),
+  isDefault: z.boolean(),
 });
 
 type TemplateInput = z.infer<typeof templateSchema>;
@@ -67,6 +78,7 @@ function readTemplateForm(formData: FormData) {
     body: formData.get("body"),
     allUsersCanSend: formData.get("allUsersCanSend") ?? "true",
     senderUserIds: formData.getAll("senderUserIds").filter((v) => typeof v === "string"),
+    isDefault: formData.get("isDefault") === "on",
   });
 }
 
@@ -112,24 +124,36 @@ async function settleTemplateInput(
   return { ok: true, type, allUsersCanSend, senderUserIds };
 }
 
+// What a refused save hands back so the boxes React empties come back as
+// typed (src/lib/forms.ts). The body, type, senders and the in-use box are
+// held in the editor's own state.
+const TEMPLATE_KEPT = ["name", "description", "newType"] as const;
+
 export async function createTemplate(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
+  const refuse = (error: string): ActionState => ({ error, kept: keepFields(formData, TEMPLATE_KEPT) });
 
   const parsed = readTemplateForm(formData);
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return refuse(parsed.error);
   const settled = await settleTemplateInput(organizationId, parsed.data);
-  if (!settled.ok) return { error: settled.error };
+  if (!settled.ok) return refuse(settled.error);
 
-  const template = await prisma.contractTemplate.create({
-    data: {
-      organizationId,
-      name: parsed.data.name,
-      type: settled.type,
-      description: parsed.data.description ?? "",
-      body: parsed.data.body,
-      allUsersCanSend: settled.allUsersCanSend,
-      senderUserIds: settled.senderUserIds,
-    },
+  const template = await prisma.$transaction(async (tx) => {
+    const created = await tx.contractTemplate.create({
+      data: {
+        organizationId,
+        name: parsed.data.name,
+        type: settled.type,
+        description: parsed.data.description ?? "",
+        body: parsed.data.body,
+        allUsersCanSend: settled.allUsersCanSend,
+        senderUserIds: settled.senderUserIds,
+      },
+    });
+    // The first of its type is the one in use; a later one only when ticked.
+    if (parsed.data.isDefault) await setTemplateDefault(tx, organizationId, created.id);
+    else await repairTemplateDefault(tx, organizationId, settled.type);
+    return created;
   });
 
   revalidatePath("/dashboard/contracts/templates");
@@ -138,27 +162,53 @@ export async function createTemplate(_prev: ActionState, formData: FormData): Pr
 
 export async function updateTemplate(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
+  const refuse = (error: string): ActionState => ({ error, kept: keepFields(formData, TEMPLATE_KEPT) });
 
   const id = idSchema.safeParse(formData.get("templateId"));
-  if (!id.success) return { error: "Missing template reference" };
+  if (!id.success) return refuse("Missing template reference");
 
   const parsed = readTemplateForm(formData);
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return refuse(parsed.error);
   const settled = await settleTemplateInput(organizationId, parsed.data);
-  if (!settled.ok) return { error: settled.error };
+  if (!settled.ok) return refuse(settled.error);
 
-  const result = await prisma.contractTemplate.updateMany({
+  const before = await prisma.contractTemplate.findFirst({
     where: { id: id.data, organizationId },
-    data: {
-      name: parsed.data.name,
-      type: settled.type,
-      description: parsed.data.description ?? "",
-      body: parsed.data.body,
-      allUsersCanSend: settled.allUsersCanSend,
-      senderUserIds: settled.senderUserIds,
-    },
+    select: { type: true, isDefault: true },
   });
-  if (result.count === 0) return { error: "Template not found" };
+  if (!before) return refuse("Template not found");
+
+  await prisma.$transaction(async (tx) => {
+    const typeChanged = before.type !== settled.type;
+    await tx.contractTemplate.update({
+      where: { id: id.data },
+      data: {
+        name: parsed.data.name,
+        type: settled.type,
+        description: parsed.data.description ?? "",
+        body: parsed.data.body,
+        allUsersCanSend: settled.allUsersCanSend,
+        senderUserIds: settled.senderUserIds,
+        // Moving to another type doesn't carry "the one in use" with it.
+        ...(typeChanged ? { isDefault: false } : {}),
+      },
+    });
+    if (parsed.data.isDefault) await setTemplateDefault(tx, organizationId, id.data);
+    // The box is only shown when the type has others to fall back to, so
+    // unticking it hands the type to the next one in line.
+    else if (!typeChanged && before.isDefault && formData.get("isDefaultShown") === "1") {
+      await tx.contractTemplate.update({ where: { id: id.data }, data: { isDefault: false } });
+      const next = await tx.contractTemplate.findFirst({
+        where: { organizationId, type: settled.type, id: { not: id.data } },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      if (next) await setTemplateDefault(tx, organizationId, next.id);
+      else await setTemplateDefault(tx, organizationId, id.data);
+    }
+    await repairTemplateDefault(tx, organizationId, settled.type);
+    if (typeChanged) await repairTemplateDefault(tx, organizationId, before.type);
+  });
 
   revalidatePath("/dashboard/contracts/templates");
   revalidatePath(`/dashboard/contracts/templates/${id.data}`);
@@ -170,7 +220,15 @@ export async function deleteTemplate(formData: FormData) {
   const id = idSchema.safeParse(formData.get("templateId"));
   if (!id.success) return;
 
-  await prisma.contractTemplate.deleteMany({ where: { id: id.data, organizationId } });
+  await prisma.$transaction(async (tx) => {
+    const template = await tx.contractTemplate.findFirst({
+      where: { id: id.data, organizationId },
+      select: { type: true },
+    });
+    if (!template) return;
+    await tx.contractTemplate.delete({ where: { id: id.data } });
+    await repairTemplateDefault(tx, organizationId, template.type);
+  });
   revalidatePath("/dashboard/contracts/templates");
   redirect("/dashboard/contracts/templates");
 }
@@ -347,7 +405,15 @@ export async function updateContractBody(_prev: ActionState, formData: FormData)
     z.object({
       contractId: idSchema,
       title: z.string().trim().min(1, "Title is required").max(160),
-      body: z.string().trim().min(20, "The contract body looks too short").max(60000),
+      // A contract is its template with the fields filled in, so it is
+      // allowed past the template's 60,000: a full-length template whose
+      // fields fill in longer could otherwise never be edited. Line breaks
+      // count as one character, the way the template's limit counts them.
+      body: z
+        .string()
+        .trim()
+        .min(20, "The contract body looks too short")
+        .refine((body) => body.replace(/\r\n/g, "\n").length <= 80000, "That contract is longer than it can hold (80,000 characters)."),
     }),
     {
       contractId: formData.get("contractId"),
@@ -592,4 +658,21 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
 
   revalidateContract(contract);
   return { success: "Signed" };
+}
+
+/* ------------------------------ Suggest ------------------------------ */
+
+// Uploaded agreements are read in the browser (src/lib/template-file.ts);
+// the text reaches the server only when the person saves.
+
+// Where merge fields belong in the wording, as suggestions to tick.
+export async function suggestTemplateFields(body: string): Promise<{ suggestions: FieldSuggestion[] } | { error: string }> {
+  const { organizationId, userId } = await requireSession();
+  const text = typeof body === "string" ? body.trim() : "";
+  if (text.length < 20) return { error: "Put the agreement in the body first." };
+  // Counted the way Save counts it, a line break as one character.
+  if (text.replace(/\r\n/g, "\n").length > 60000) return { error: "That agreement is too long to check in one go." };
+  const used = await claimSuggestion(organizationId, userId);
+  if (used) return { error: used };
+  return suggestFieldPlacements(text);
 }

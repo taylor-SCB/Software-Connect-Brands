@@ -193,6 +193,28 @@ Storage is billed by how much is kept and how much is viewed; a job's
 photos are pennies a month. The store's own **Browser** in that tab
 shows every file under `org/<workspace>/projects/<job>/`.
 
+## Switching on Suggest fields (Claude)
+
+**Suggest fields** on a contract template asks Claude where the
+customer's details go. Until it's switched on, the button simply isn't
+there. One time:
+
+1. At **console.anthropic.com**, create an API key for this site and set
+   a monthly spend limit you're comfortable with — the backstop if
+   anything ever runs away. Ask Claude to walk you through those
+   screens one at a time.
+2. Go to **Settings → Environment Variables** in your Vercel project and
+   add a variable:
+   - **Name:** `ANTHROPIC_API_KEY`
+   - **Value:** the key from step 1. It is a secret: put it here and
+     nowhere else, not in a chat.
+   - **Environments:** Production.
+3. **Deployments** → the newest one → **Redeploy**, so the site picks
+   the setting up.
+
+Each click costs about a cent on a short agreement and up to about 40
+cents on a very long one. A workspace gets 20 a day.
+
 ## Approving who gets in
 
 Signing up no longer opens a workspace. A new signup is stored as **waiting**

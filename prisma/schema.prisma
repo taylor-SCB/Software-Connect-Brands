@@ -118,6 +118,7 @@ model Organization {
   properties            Property[]
   marketingTemplates    MarketingTemplate[]
   emailSends            EmailSend[]
+  aiRequests            AiRequest[]
   contactAccounts       ContactAccount[]
   statusChanges         StatusChange[]
   photoLinks            ProjectPhotoLink[]
@@ -175,6 +176,7 @@ model User {
   leadQuotes            Quote[]                @relation("QuoteLeadRep")
   signerQuotes          Quote[]                @relation("QuoteContractSigner")
   emailSends            EmailSend[]
+  aiRequests            AiRequest[]
   ratesheetImportIssues RatesheetImportIssue[]
   ownedDeals            Deal[]                 @relation("DealOwner")
   statusChanges         StatusChange[]
@@ -838,12 +840,40 @@ model ContractTemplate {
   // kept when the switch is turned back on, so it survives a toggle.
   allUsersCanSend Boolean      @default(true)
   senderUserIds   String[]     @default([])
+  // The one the app reaches for when it needs "the Sales Order" on its
+  // own (the Contract Coordinator, Award without paperwork, Order
+  // materials, change orders). Exactly one per type while the type has any
+  // template; kept so by setTemplateDefault / repairTemplateDefault in
+  // src/lib/contract-templates.ts. A second template of a type is an
+  // alternate picked by hand.
+  isDefault       Boolean      @default(false)
+  // The built-in this template started as ("Sales Order"), so "Restore the
+  // original" knows which wording to put back. Null for a template the
+  // workspace wrote from scratch.
+  baseline        String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
   contracts Contract[]
 
   @@index([organizationId])
+}
+
+// One call to Claude made on a workspace's behalf, on the site's own key
+// (Suggest fields on a contract template). The daily allowance is counted
+// from these.
+model AiRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // SetNull: a removed user must not take the day's count down with them.
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // "SUGGEST_FIELDS" today.
+  kind           String
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, kind, createdAt])
 }
 
 enum ContractStatus {

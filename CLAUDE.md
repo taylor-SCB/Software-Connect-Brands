@@ -317,6 +317,48 @@ Notes are not under the rule; the company page's Notes tabs split All ·
 Company · People · Personal. The favorite star is deliberately not
 linked between a person and their company.
 
+**Contracts v2 (Oct 7, 2026; Taylor's four-phase plan: 1 replace
+wording, 2 upload + AI fields, 3 Google, 4 Adobe Sign + PDF designer).**
+Phases 1 and 2 are built. A template page's Body has **Replace with my
+own** (empties the editor in place, Undo puts it back), **Restore the
+original** (the built-in wording, via `ContractTemplate.baseline`), **Upload
+Word or PDF** (.docx via mammoth, text PDFs via unpdf, .txt in UTF-8,
+Windows-1252 or UTF-16; a scan, a .doc or an empty file is refused in
+words; a Google Doc comes in as its Word download) and **Suggest fields**
+(Claude proposes `{{field}}` spots as tick boxes; a suggestion whose
+snippet isn't in the body exactly once, names no real field, or changes
+anything besides the one blank or value it fills is dropped; each says
+"“[Client Name]” becomes {{client_name}}"; nothing changes until "Put
+ticked fields in"; `src/lib/template-import.ts`). Nothing is saved until
+Save. **The file is read in the browser** (`src/lib/template-file.ts`,
+Oct 24, 2026), never posted: the readers unpack a whole file in memory,
+and a 750 KB Word file built to unpack to 200 MB ran the server out of
+memory for every workspace on it. Up to 20 MB; a Word file is fed to
+the unzipper 16 KB at a time and refused once its parts (all but
+pictures, embedded files and fonts, whatever they are named) pass 12
+MB; a PDF is refused past 300 pages and read page by page. The editor
+works in `\n` (a saved body's `\r\n` is turned back on load) and every
+limit counts a line break as one character. Undo undoes the last swap;
+a swap made on an empty editor keeps the snapshot before it, and a Save
+clears it. **Suggest fields is 20 a day per workspace** (rolling 24
+hours, counted from `AiRequest` rows; each request counts the rows up
+to its own, so two clicks on the last one give it to exactly one); the
+call is `messages.create` with the zod format, the stop reason checked
+before the answer is read, a 90-second wait with one retry, and a
+refusal, a cut-off answer or an unreadable one is its own message, not
+a dead page. A contract body may run to 80,000 characters, so a
+full-length template whose fields fill in longer can still be edited. Every type has exactly one template **in use**
+(`ContractTemplate.isDefault`, kept by `setTemplateDefault` /
+`repairTemplateDefault` in `src/lib/contract-templates.ts`): it is what the
+Contract Coordinator, Award without paperwork, Order materials and change
+orders reach for, where before they took whichever row came first. A
+second template of a type says "You already have one", saves as an
+Alternate, and takes over only when "Use this one" is ticked. Phases 3
+and 4 are not built (no Settings → Connectors page exists yet; it is
+where they are planned) and wait on the Google and Adobe app
+registrations; Multi-Bids' Google admin trusting the app domain-wide is
+what lets full Gmail run without Google's paid security review.
+
 **Import Ratesheet (Oct 21, 2026).** Link Ratesheet → Import Ratesheet
 replaced Import CSV, which read a supplier's "Price" as the contractor's
 sell price and left COGS at $0. Taylor's rule: a ratesheet carries the
@@ -393,6 +435,24 @@ are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
 
+- **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel** (`DEPLOY.md`).
+  Without it the button simply isn't shown. It sends the agreement's
+  text to Claude (claude-opus-5-5, server-side fallback on) and costs
+  about a cent on a short agreement, up to about 40 cents on a
+  60,000-character one, on the site's own key. 20 a day per workspace
+  caps it at roughly $8 a workspace a day; a spend limit on the
+  Anthropic account is the backstop.
+- **A booby-trapped Word or PDF file can still freeze the uploader's own
+  tab.** It is read in their browser, so nobody else is affected and the
+  limits above stop the common ones, but one page of a PDF built to
+  unpack to gigabytes is not caught before the reader opens it.
+- **Contract templates are not limited to Owners and Admins.** The
+  template actions only check for a signed-in user, so a Member can edit
+  or replace one despite the Company Users rule. Found Oct 7, 2026; not
+  changed without asking.
+- **An uploaded agreement keeps its words, not its look.** Bold, tables,
+  columns and logos from the Word or PDF file don't come across; the
+  Phase 4 PDF designer is where formatting lives.
 - **Email goes out for three things only:** password reset, Company Users
   invitations and email marketing (Sept 27, 2026). No approval notice, no
   receipts, no invoices. Everything else waiting on email still is. That
@@ -584,7 +644,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Twenty-seven** are checked in at
+suite, and the delete-confirmation suite. **Twenty-nine** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -622,7 +682,21 @@ Meeting Set, skipped-step dates, the 90/180 rule, Stats), and from Oct
 4, 2026 `follow-ups-status-filter.cjs` (17: the Status filter on both
 lists and the follow-up box after a logged touch) and
 `company-bypass.cjs` (12: the company-page rule, the bypass box, Other
-Contacts and claiming, the Notes split), from Oct 17, 2026
+Contacts and claiming, the Notes split), from Oct 7, 2026
+`template-replace.cjs` (18: Replace with my own, Restore the original,
+the one template in use per type and the Coordinator following it; the
+Oct 24 audit fixes — a refused save keeps Type, the in-use box and the
+name, Undo after two swaps, an existing workspace's Compliance
+Agreement, a newly added type after Save) and `template-import.cjs`
+(22: Word / PDF / scan / .doc uploads and Suggest fields; the Oct 24
+audit fixes — nothing posted, a 6 MB Word file, Word bombs (also one
+not named .xml) and a 301-page PDF refused, ANSI and UTF-16 .txt, line
+breaks at the 60,000 limit, a saved full-length agreement checked after
+reopening and its contract saved, a cut-off answer, a refusal, a
+reworded suggestion dropped, Undo after putting fields into an upload,
+the 20-a-day allowance and two clicks on its last one; needs `ANTHROPIC_API_KEY=test-key` and
+`ANTHROPIC_ENDPOINT=http://localhost:3998` in `.env`, and answers as
+Claude itself, so nothing leaves the machine), from Oct 17, 2026
 `job-photos.cjs` (28 since Oct 21, 2026: tag lists and General
 Project, tiles, + Add from the uploader, a tile and a phone, stacking
 filters, mini folders, Move and Clone and a clone's own tags, deleting

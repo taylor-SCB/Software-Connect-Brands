@@ -69,6 +69,8 @@ export async function signup(_prevState: { error?: string }, formData: FormData)
               type: template.type,
               description: template.description,
               body: template.body,
+              isDefault: true,
+              baseline: template.name,
             })),
           },
         },

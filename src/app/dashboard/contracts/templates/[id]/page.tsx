@@ -2,9 +2,11 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { loadContractPickers } from "@/lib/contract-pickers";
+import { loadTemplatesByType, baselineBody } from "@/lib/contract-templates";
 import { Card, CardHeader, BackLink, PageHeader, Badge } from "@/components/ui";
 import { IconTrash } from "@/components/icons";
 import { TemplateWorkspace } from "../template-workspace";
+import { aiConfigured } from "@/lib/template-import";
 import { updateTemplate, deleteTemplate } from "../../actions";
 
 export default async function EditTemplatePage({
@@ -15,12 +17,13 @@ export default async function EditTemplatePage({
   const { id } = await params;
   const { organizationId, userId } = await requireSession();
 
-  const [template, pickers] = await Promise.all([
+  const [template, pickers, templatesByType] = await Promise.all([
     prisma.contractTemplate.findFirst({
       where: { id, organizationId },
       include: { _count: { select: { contracts: true } } },
     }),
     loadContractPickers(organizationId),
+    loadTemplatesByType(organizationId, id),
   ]);
   if (!template) notFound();
 
@@ -39,6 +42,9 @@ export default async function EditTemplatePage({
         submitLabel="Save changes"
         currentUserId={userId}
         pickers={pickers}
+        templatesByType={templatesByType}
+        aiEnabled={aiConfigured()}
+        baselineBody={baselineBody(template.baseline)}
         defaults={{
           id: template.id,
           name: template.name,
@@ -47,6 +53,7 @@ export default async function EditTemplatePage({
           body: template.body,
           allUsersCanSend: template.allUsersCanSend,
           senderUserIds: template.senderUserIds,
+          isDefault: template.isDefault,
         }}
       />
 
