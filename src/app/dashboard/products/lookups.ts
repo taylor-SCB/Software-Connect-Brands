@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { getServiceTypes } from "@/lib/service-types";
 import { COLUMN_ROLES, type ColumnRole } from "@/lib/price-list";
+import { LINK_STATUS, loadPlatformSuppliers, stillListed } from "@/lib/platform-suppliers";
 import type { RatesheetSupplier } from "./import-ratesheet";
 
-// The two pick lists on the product form, scoped to the workspace. Both
-// pages that render the form need the same shape, so it lives here.
+// The pick lists on the product form, scoped to the workspace, plus the
+// suppliers on Software Connect Brands it can pick from. Both pages that
+// render the form need the same shape, so it lives here.
 export async function loadProductLookups(organizationId: string) {
-  const [manufacturers, distributors, serviceTypes] = await Promise.all([
+  const [manufacturers, distributorRows, serviceTypes, platformSuppliers] = await Promise.all([
     prisma.manufacturer.findMany({
       where: { organizationId },
       orderBy: { name: "asc" },
@@ -18,6 +20,8 @@ export async function loadProductLookups(organizationId: string) {
       select: {
         id: true,
         name: true,
+        platformOrganizationId: true,
+        ...LINK_STATUS,
         contacts: {
           orderBy: { name: "asc" },
           select: { id: true, name: true, email: true, phone: true },
@@ -25,8 +29,14 @@ export async function loadProductLookups(organizationId: string) {
       },
     }),
     getServiceTypes(organizationId),
+    loadPlatformSuppliers(organizationId),
   ]);
-  return { manufacturers, distributors, serviceTypes };
+  const distributors = distributorRows.map(({ platformOrganization, platformOrganizationId, ...row }) => ({
+    ...row,
+    linked: platformOrganizationId !== null,
+    onPlatform: stillListed(platformOrganization),
+  }));
+  return { manufacturers, distributors, serviceTypes, platformSuppliers };
 }
 
 // "Who sent it?" on Import Ratesheet: every supplier with its people, and
@@ -39,6 +49,8 @@ export async function loadRatesheetSuppliers(organizationId: string): Promise<Ra
     select: {
       id: true,
       name: true,
+      platformOrganizationId: true,
+      ...LINK_STATUS,
       priceRule: true,
       priceRuleBasisPoints: true,
       ratesheetColumns: true,
@@ -49,7 +61,7 @@ export async function loadRatesheetSuppliers(organizationId: string): Promise<Ra
     },
   });
   const roles = new Set<string>(COLUMN_ROLES);
-  return suppliers.map((supplier) => {
+  return suppliers.map(({ platformOrganization, platformOrganizationId, ...supplier }) => {
     const raw = supplier.ratesheetColumns;
     let columns: Record<string, ColumnRole[]> | null = null;
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -60,6 +72,11 @@ export async function loadRatesheetSuppliers(organizationId: string): Promise<Ra
         }
       }
     }
-    return { ...supplier, ratesheetColumns: columns };
+    return {
+      ...supplier,
+      linked: platformOrganizationId !== null,
+      onPlatform: stillListed(platformOrganization),
+      ratesheetColumns: columns,
+    };
   });
 }

@@ -11,6 +11,15 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { IconCheck, IconUpload, IconX } from "@/components/icons";
 import { FormError } from "@/components/ui";
 import { formatCents } from "@/lib/format";
+import {
+  LINKED_SUPPLIER_SUFFIX,
+  PLATFORM_SECTION_LABEL,
+  PLATFORM_SUPPLIER_PREFIX,
+  platformSupplierLabel,
+  platformSupplierNamed,
+  platformTwin,
+  type PlatformSupplier,
+} from "@/lib/account-types";
 import { readPriceListFile, type SheetTable } from "@/lib/price-list-file";
 import {
   COLUMN_ROLES,
@@ -50,6 +59,10 @@ import {
 export type RatesheetSupplier = {
   id: string;
   name: string;
+  // Linked to an account on Software Connect Brands (linked), and that
+  // account still listed (onPlatform).
+  linked: boolean;
+  onPlatform: boolean;
   contacts: { id: string; name: string; email: string | null; phone: string | null }[];
   priceRule: PriceRuleKind | null;
   priceRuleBasisPoints: number | null;
@@ -123,11 +136,14 @@ function matchesFilter(row: PlanRow, filter: Filter) {
 
 export function ImportRatesheet({
   suppliers,
+  platformSuppliers = [],
   savedFile,
   onBack,
   onDone,
 }: {
   suppliers: RatesheetSupplier[];
+  // Accounts on Software Connect Brands this workspace hasn't linked yet.
+  platformSuppliers?: PlatformSupplier[];
   savedFile?: SavedRatesheetFile;
   onBack?: () => void;
   onDone: () => void;
@@ -176,12 +192,26 @@ export function ImportRatesheet({
   const [pending, startTransition] = useTransition();
   const [, startCatalog] = useTransition();
 
-  const supplier = suppliers.find((item) => item.id === supplierChoice) ?? null;
+  // Picked from "On Software Connect Brands". When a supplier of that
+  // name is already on file it is that supplier — its people, its
+  // remembered columns and pricing, its products in the preview — because
+  // the import links the account onto it (linkPlatformSupplier). Otherwise
+  // it is a new supplier, made and linked when the import goes in.
+  const platformChoice = supplierChoice.startsWith(PLATFORM_SUPPLIER_PREFIX)
+    ? (platformSuppliers.find((item) => `${PLATFORM_SUPPLIER_PREFIX}${item.id}` === supplierChoice) ?? null)
+    : null;
+  const supplier =
+    suppliers.find((item) => item.id === supplierChoice) ?? platformTwin(platformChoice, suppliers);
   const supplierId = supplier?.id ?? null;
   const typedMatch =
     supplierChoice === NEW && newSupplierName.trim()
       ? (suppliers.find((item) => item.name.trim().toLowerCase() === newSupplierName.trim().toLowerCase()) ?? null)
       : null;
+  const typedPlatform =
+    supplierChoice === NEW && !typedMatch ? platformSupplierNamed(newSupplierName, platformSuppliers) : null;
+  // A supplier still to be made has nobody on file, so its point of
+  // contact is typed in.
+  const newSupplier = (supplierChoice === NEW && !typedMatch) || (platformChoice !== null && !supplier);
 
   // Only the newest pick may land: a big file picked by mistake and still
   // being read must not replace the right one picked after it.
@@ -267,7 +297,9 @@ export function ImportRatesheet({
   function applySupplier(id: string, readSheets: SheetTable[] | null, freshRead: boolean) {
     setSupplierChoice(id);
     setContactChoice("");
-    const chosen = suppliers.find((item) => item.id === id);
+    const chosen =
+      suppliers.find((item) => item.id === id) ??
+      platformTwin(platformSuppliers.find((item) => `${PLATFORM_SUPPLIER_PREFIX}${item.id}` === id) ?? null, suppliers);
     if (!chosen) return;
     if (readSheets && (freshRead || !rolesEdited) && chosen.ratesheetColumns) {
       const remembered = chosen.ratesheetColumns;
@@ -477,6 +509,8 @@ export function ImportRatesheet({
     else if (file) form.set("file", file);
     if (typedMatch) form.set("supplierId", typedMatch.id);
     else if (supplierChoice === NEW) form.set("newSupplierName", newSupplierName.trim());
+    else if (supplierChoice.startsWith(PLATFORM_SUPPLIER_PREFIX))
+      form.set("platformSupplierId", supplierChoice.slice(PLATFORM_SUPPLIER_PREFIX.length));
     else if (supplierChoice) form.set("supplierId", supplierChoice);
     form.set(
       "tabs",
@@ -500,7 +534,7 @@ export function ImportRatesheet({
       setError(`${badPrices} sell ${badPrices === 1 ? "price doesn't" : "prices don't"} read as a price. Fix ${badPrices === 1 ? "it" : "them"} or clear the box.`);
       return;
     }
-    const typingContact = contactChoice === NEW || (supplierChoice === NEW && !typedMatch);
+    const typingContact = contactChoice === NEW || newSupplier;
     if (
       typingContact &&
       (newContact.email || newContact.phone) &&
@@ -512,7 +546,7 @@ export function ImportRatesheet({
     }
     const form = buildForm();
     if (contactChoice && contactChoice !== NEW && supplier) form.set("contactId", contactChoice);
-    else if (contactChoice === NEW || (supplierChoice === NEW && !typedMatch)) {
+    else if (contactChoice === NEW || newSupplier) {
       if (newContact.firstName || newContact.lastName || newContact.email || newContact.phone) {
         form.set("newContact", JSON.stringify(newContact));
       }
@@ -629,8 +663,18 @@ export function ImportRatesheet({
                 {suppliers.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
+                    {item.onPlatform ? LINKED_SUPPLIER_SUFFIX : ""}
                   </option>
                 ))}
+                {platformSuppliers.length > 0 && (
+                  <optgroup label={PLATFORM_SECTION_LABEL}>
+                    {platformSuppliers.map((item) => (
+                      <option key={item.id} value={`${PLATFORM_SUPPLIER_PREFIX}${item.id}`}>
+                        {platformSupplierLabel(item)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 <option value={NEW}>+ Add New Distributor</option>
               </select>
               <p className="faint mt-1 text-xs">Distributor, manufacturer or software provider.</p>
@@ -654,6 +698,18 @@ export function ImportRatesheet({
                       className="btn btn-ghost btn-sm mt-2"
                     >
                       Use {typedMatch.name} (already in your list)
+                    </button>
+                  )}
+                  {typedPlatform && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        applySupplier(`${PLATFORM_SUPPLIER_PREFIX}${typedPlatform.id}`, sheets, false);
+                        setNewSupplierName("");
+                      }}
+                      className="btn btn-ghost btn-sm mt-2"
+                    >
+                      Use {typedPlatform.name} (on Software Connect Brands)
                     </button>
                   )}
                 </>
@@ -701,7 +757,7 @@ export function ImportRatesheet({
                   + Add point of contact
                 </button>
               )}
-              {(contactChoice === NEW || (supplierChoice === NEW && !typedMatch)) && (
+              {(contactChoice === NEW || newSupplier) && (
                 <div className="mt-2 grid gap-2 sm:grid-cols-4">
                   <input
                     aria-label="Contact first name"

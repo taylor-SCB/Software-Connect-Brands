@@ -7,6 +7,7 @@ import { IconPlus, IconUpload, IconX, IconUsers, IconFileText } from "@/componen
 import { FormError } from "@/components/ui";
 import type { ActionState } from "@/lib/forms";
 import { ImportRatesheet, type RatesheetSupplier } from "./import-ratesheet";
+import type { PlatformSupplier } from "@/lib/account-types";
 
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
@@ -20,9 +21,11 @@ type FormAction = (state: ActionState, formData: FormData) => Promise<ActionStat
 export function LinkRatesheetButton({
   uploadAction,
   suppliers,
+  platformSuppliers = [],
 }: {
   uploadAction: FormAction;
   suppliers: RatesheetSupplier[];
+  platformSuppliers?: PlatformSupplier[];
 }) {
   const [open, setOpen] = useState(false);
   const [choice, setChoice] = useState<Choice>("menu");
@@ -143,7 +146,10 @@ export function LinkRatesheetButton({
 
               {choice === "upload" && <UploadForm action={uploadAction} onBack={() => setChoice("menu")} />}
               {choice === "csv" && (
-                <ImportRatesheet suppliers={suppliers} onBack={() => setChoice("menu")} onDone={() => setOpen(false)} />
+                <ImportRatesheet
+                  suppliers={suppliers}
+                  platformSuppliers={platformSuppliers}
+                  onBack={() => setChoice("menu")} onDone={() => setOpen(false)} />
               )}
             </div>
           </div>,

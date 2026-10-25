@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { startTransition, useActionState, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -29,6 +29,15 @@ import { centsToDollarInput, dollarsToCents, formatCents } from "@/lib/format";
 import { marginPercent, markupPercent, percentToBasisPoints, priceFromRule } from "@/lib/price-list";
 import { IconPlus, IconTrash, IconMail, IconPhone, IconEdit, IconCheck } from "@/components/icons";
 import type { ActionState } from "@/lib/forms";
+import {
+  LINKED_SUPPLIER_SUFFIX,
+  PLATFORM_SECTION_LABEL,
+  PLATFORM_SUPPLIER_PREFIX,
+  platformSupplierLabel,
+  platformSupplierNamed,
+  platformTwin,
+  type PlatformSupplier,
+} from "@/lib/account-types";
 
 export type FormManufacturer = { id: string; name: string };
 export type FormDistributorContact = {
@@ -37,7 +46,15 @@ export type FormDistributorContact = {
   email: string | null;
   phone: string | null;
 };
-export type FormDistributor = { id: string; name: string; contacts: FormDistributorContact[] };
+export type FormDistributor = {
+  id: string;
+  name: string;
+  // Linked to an account on Software Connect Brands (linked), and that
+  // account still listed (onPlatform).
+  linked?: boolean;
+  onPlatform?: boolean;
+  contacts: FormDistributorContact[];
+};
 
 export type ProductFormDefaults = {
   id?: string;
@@ -75,6 +92,7 @@ export function ProductForm({
   submitLabel,
   manufacturers,
   distributors,
+  platformSuppliers = [],
   serviceTypes,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
@@ -82,6 +100,8 @@ export function ProductForm({
   submitLabel: string;
   manufacturers: FormManufacturer[];
   distributors: FormDistributor[];
+  // Accounts on Software Connect Brands this workspace hasn't linked yet.
+  platformSuppliers?: PlatformSupplier[];
   serviceTypes: string[];
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
@@ -213,7 +233,13 @@ export function ProductForm({
   const totalCents =
     software && Number.isInteger(termCount) && termCount > 0 ? priceCents * termCount : null;
 
-  const distributor = distributors.find((item) => item.id === distributorId) ?? null;
+  // An account picked from Software Connect Brands that a supplier of the
+  // same name is already on file for: that supplier, people and all.
+  const platformPick = distributorId.startsWith(PLATFORM_SUPPLIER_PREFIX)
+    ? (platformSuppliers.find((item) => `${PLATFORM_SUPPLIER_PREFIX}${item.id}` === distributorId) ?? null)
+    : null;
+  const twin = platformTwin(platformPick, distributors);
+  const distributor = distributors.find((item) => item.id === distributorId) ?? twin;
   const showContacts = distributorId !== "";
 
   // A successful save re-renders this form with fresh props: the contacts
@@ -223,6 +249,13 @@ export function ProductForm({
   // the first save made. Done during render (React's "adjusting state
   // when a prop changes" pattern) rather than in an effect, so there is
   // no frame where the stale rows are still on screen.
+  // The same goes for the distributor: one typed in with "+ Add new" or
+  // picked from Software Connect Brands is an ordinary row once saved, and
+  // the box has to point at that row — its old value is no longer among
+  // the options, and a <select> showing a value it doesn't have falls
+  // back to the first one, which the next Save would write.
+  const savedDistributorId = defaults?.distributorId ?? "";
+  const choosingNew = distributorId === NEW || distributorId.startsWith(PLATFORM_SUPPLIER_PREFIX);
   const [seenState, setSeenState] = useState(state);
   if (state !== seenState) {
     setSeenState(state);
@@ -230,11 +263,34 @@ export function ProductForm({
       setNewContacts([]);
       setContactEdits({});
       setSelectedContacts(new Set(defaults?.contactIds ?? []));
+      if (choosingNew) setDistributorId(savedDistributorId);
     }
+  }
+  const [seenSaved, setSeenSaved] = useState(savedDistributorId);
+  if (savedDistributorId !== seenSaved) {
+    setSeenSaved(savedDistributorId);
+    if (choosingNew || distributorId === seenSaved) setDistributorId(savedDistributorId);
+  }
+  const [typedDistributor, setTypedDistributor] = useState("");
+  const typedPlatform =
+    distributorId === NEW &&
+    !distributors.some((item) => item.name.trim().toLowerCase() === typedDistributor.trim().toLowerCase())
+      ? platformSupplierNamed(typedDistributor, platformSuppliers)
+      : null;
+
+  // The supplier a box value means: a platform pick with a same-named
+  // supplier on file means that supplier.
+  function supplierFor(value: string) {
+    if (!value.startsWith(PLATFORM_SUPPLIER_PREFIX)) return value;
+    const pick = platformSuppliers.find((item) => `${PLATFORM_SUPPLIER_PREFIX}${item.id}` === value) ?? null;
+    return platformTwin(pick, distributors)?.id ?? value;
   }
 
   function changeDistributor(next: string) {
+    const same = supplierFor(next) === supplierFor(distributorId);
     setDistributorId(next);
+    // The same supplier picked from the other list keeps its people.
+    if (same) return;
     // A different distributor means different people; nothing carries over.
     setSelectedContacts(new Set());
     setContactEdits({});
@@ -296,7 +352,21 @@ export function ProductForm({
   );
 
   return (
-    <form action={formAction} className="space-y-5">
+    <form
+      // Submitted by hand rather than through `action`: React resets a form
+      // whose action is a function when it finishes, saved or refused, and
+      // a reset puts every <select> back on the option the page first
+      // loaded with while the box's state still says otherwise. After a
+      // save the tag, unit and distributor boxes showed the old values and
+      // the next Save wrote them back; after a refusal every typed field
+      // was emptied.
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        startTransition(() => formAction(formData));
+      }}
+      className="space-y-5"
+    >
       {defaults?.id && <input type="hidden" name="productId" value={defaults.id} />}
       <input type="hidden" name="newContacts" value={newContactsPayload} />
       <input type="hidden" name="contactEdits" value={contactEditsPayload} />
@@ -632,19 +702,51 @@ export function ProductForm({
                 {distributors.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
+                    {item.onPlatform ? LINKED_SUPPLIER_SUFFIX : ""}
                   </option>
                 ))}
+                {platformSuppliers.length > 0 && (
+                  <optgroup label={PLATFORM_SECTION_LABEL}>
+                    {platformSuppliers.map((item) => (
+                      <option key={item.id} value={`${PLATFORM_SUPPLIER_PREFIX}${item.id}`}>
+                        {platformSupplierLabel(item)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
                 <option value={NEW}>+ Add new distributor…</option>
               </select>
+              {twin && (
+                <p className="faint mt-1 text-xs" data-testid="distributor-twin">
+                  Your {twin.name} will be linked to this account when you save.
+                </p>
+              )}
               {distributorId === NEW && (
-                <input
-                  name="newDistributorName"
-                  placeholder="Distributor name"
-                  aria-label="New distributor name"
-                  required
-                  autoFocus
-                  className="input mt-2"
-                />
+                <>
+                  <input
+                    name="newDistributorName"
+                    placeholder="Distributor name"
+                    aria-label="New distributor name"
+                    required
+                    autoFocus
+                    onChange={(event) => setTypedDistributor(event.target.value)}
+                    className="input mt-2"
+                  />
+                  {typedPlatform && (
+                    <button
+                      type="button"
+                      // Not changeDistributor: the people typed in for this
+                      // new supplier are for this one, so they stay.
+                      onClick={() => {
+                        setDistributorId(`${PLATFORM_SUPPLIER_PREFIX}${typedPlatform.id}`);
+                        setTypedDistributor("");
+                      }}
+                      className="btn btn-ghost btn-sm mt-2"
+                    >
+                      Use {typedPlatform.name} (on Software Connect Brands)
+                    </button>
+                  )}
+                </>
               )}
             </div>
 

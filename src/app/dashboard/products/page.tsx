@@ -16,6 +16,7 @@ import { ProductRowActions } from "./product-row-actions";
 import { LinkRatesheetButton } from "./link-ratesheet-button";
 import { toggleProductActive } from "./actions";
 import { loadRatesheetSuppliers } from "./lookups";
+import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
 import { marginPercent, markupPercent } from "@/lib/price-list";
 import { uploadLinkedRatesheet } from "./ratesheets/actions";
 import { pageWindow } from "@/lib/list-params";
@@ -38,11 +39,12 @@ export default async function ProductsPage({
   const params = parseProductListParams(await searchParams);
   const where = productWhere(organizationId, params);
 
-  const [total, unfiltered, options, suppliers] = await Promise.all([
+  const [total, unfiltered, options, suppliers, platformSuppliers] = await Promise.all([
     prisma.product.count({ where }),
     prisma.product.count({ where: { organizationId } }),
     getProductFilterOptions(organizationId, params),
     loadRatesheetSuppliers(organizationId),
+    loadPlatformSuppliers(organizationId),
   ]);
   const window = pageWindow(total, params.per, params.page);
   const products = await prisma.product.findMany({
@@ -65,7 +67,11 @@ export default async function ProductsPage({
         }
         actions={
           <>
-            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} suppliers={suppliers} />
+            <LinkRatesheetButton
+              uploadAction={uploadLinkedRatesheet}
+              suppliers={suppliers}
+              platformSuppliers={platformSuppliers}
+            />
             <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
               <IconPlus size={14} />
               Create Ratesheet

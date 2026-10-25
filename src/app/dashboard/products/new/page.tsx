@@ -6,7 +6,7 @@ import { loadProductLookups } from "../lookups";
 
 export default async function NewProductPage() {
   const { organizationId } = await requireSession();
-  const { manufacturers, distributors, serviceTypes } = await loadProductLookups(organizationId);
+  const { manufacturers, distributors, serviceTypes, platformSuppliers } = await loadProductLookups(organizationId);
 
   return (
     <div className="max-w-6xl">
@@ -17,6 +17,7 @@ export default async function NewProductPage() {
         submitLabel="Save product"
         manufacturers={manufacturers}
         distributors={distributors}
+        platformSuppliers={platformSuppliers}
         serviceTypes={serviceTypes}
       />
     </div>

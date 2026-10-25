@@ -3,8 +3,10 @@ import { requireSuperAdmin } from "@/lib/session";
 import { formatDate, formatDateTime, DEFAULT_TIME_ZONE } from "@/lib/format";
 import { PageHeader, Card, CardHeader, StatTile, EmptyState } from "@/components/ui";
 import { IconUsers, IconDownload, IconFileText } from "@/components/icons";
+import { ACCOUNT_TYPE_LABELS } from "@/lib/account-types";
 import { WorkspaceRow } from "./workspace-row";
-import { setRatesheetIssueResolved } from "./actions";
+import { CreateAccountForm } from "./create-account-form";
+import { decideAccountTypeRequest, setRatesheetIssueResolved } from "./actions";
 
 // Operator console. Never cached: an approval has to show up the instant
 // it happens, and the list is a handful of rows.
@@ -34,6 +36,8 @@ export default async function AdminPage() {
       id: true,
       name: true,
       status: true,
+      accountType: true,
+      createdBy: { select: { name: true } },
       createdAt: true,
       reviewedAt: true,
       users: {
@@ -85,8 +89,38 @@ export default async function AdminPage() {
   ]);
   const issues = [...openIssues, ...fixedIssues];
 
+  // Requests to change an account's type: every open one, then the last
+  // ten answered.
+  const requestSelect = {
+    id: true,
+    fromType: true,
+    toType: true,
+    note: true,
+    status: true,
+    createdAt: true,
+    decidedAt: true,
+    organization: { select: { name: true } },
+    requestedBy: { select: { name: true, email: true } },
+    decidedBy: { select: { name: true } },
+  } as const;
+  const [openRequests, decidedRequests] = await Promise.all([
+    prisma.accountTypeRequest.findMany({
+      where: { status: "PENDING" },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+      select: requestSelect,
+    }),
+    prisma.accountTypeRequest.findMany({
+      where: { status: { in: ["APPROVED", "DECLINED"] } },
+      orderBy: { decidedAt: "desc" },
+      take: 10,
+      select: requestSelect,
+    }),
+  ]);
+
   const counts = {
-    pending: organizations.filter((o) => o.status === "PENDING").length,
+    // Signups and type changes both wait on the operator.
+    pending: organizations.filter((o) => o.status === "PENDING").length + openRequests.length,
     active: organizations.filter((o) => o.status === "ACTIVE").length,
     paused: organizations.filter((o) => o.status === "PAUSED").length,
   };
@@ -103,11 +137,19 @@ export default async function AdminPage() {
       />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Waiting on you" value={counts.pending} accent="#fbbf24" />
+        <StatTile label="Waiting on you" value={counts.pending} hint="Signups and account type changes" accent="#fbbf24" />
         <StatTile label="Active" value={counts.active} accent="#34d399" />
         <StatTile label="Paused" value={counts.paused} accent="#f97316" />
         <StatTile label="Total workspaces" value={organizations.length} />
       </div>
+
+      <Card lit className="mb-6" id="create-account">
+        <CardHeader
+          title="Create an account"
+          subtitle="For a customer you set up yourself. It opens already approved."
+        />
+        <CreateAccountForm />
+      </Card>
 
       <Card lit className="mb-6">
         <CardHeader
@@ -131,6 +173,7 @@ export default async function AdminPage() {
                 key={organization.id}
                 organization={{
                   ...organization,
+                  createdByName: organization.createdBy?.name ?? null,
                   createdAt: formatDate(organization.createdAt, timeZone),
                   reviewedAt: null,
                   users: organization.users.map((user) => ({
@@ -143,6 +186,78 @@ export default async function AdminPage() {
               />
             ))}
           </div>
+        )}
+      </Card>
+
+      <Card lit className="mb-6" id="type-requests">
+        <CardHeader
+          title="Account type changes"
+          subtitle={
+            openRequests.length > 0
+              ? `${openRequests.length} waiting. Nothing changes until you approve.`
+              : decidedRequests.length > 0
+                ? "Nothing waiting. The last ones answered are below."
+                : "Nobody has asked to change their account type."
+          }
+        />
+        {openRequests.length + decidedRequests.length === 0 ? (
+          <EmptyState
+            icon={<IconUsers size={20} />}
+            title="Nothing to decide"
+            body="When a workspace asks to become a Distributor, Hardware / OEM, Software Provider or Business / Vendor, it lands here."
+          />
+        ) : (
+          <ul className="divide-y divide-[var(--border)]" data-testid="type-requests">
+            {[...openRequests, ...decidedRequests].map((request) => (
+              <li
+                key={request.id}
+                className="space-y-1 px-5 py-3"
+                style={request.status !== "PENDING" ? { opacity: 0.55 } : undefined}
+                data-testid="type-request"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">
+                      {request.organization.name}: {ACCOUNT_TYPE_LABELS[request.fromType]} → {ACCOUNT_TYPE_LABELS[request.toType]}
+                      {request.status !== "PENDING" && (
+                        <span className="faint text-xs font-normal">
+                          {" "}
+                          · {request.status === "APPROVED" ? "approved" : "declined"}
+                          {request.decidedBy ? ` by ${request.decidedBy.name}` : ""}
+                          {request.decidedAt ? ` ${formatDate(request.decidedAt, timeZone)}` : ""}
+                        </span>
+                      )}
+                    </p>
+                    <p className="faint text-xs">
+                      {request.requestedBy
+                        ? `${request.requestedBy.name} (${request.requestedBy.email})`
+                        : "A removed user"}{" "}
+                      · {formatDateTime(request.createdAt, timeZone)}
+                    </p>
+                  </div>
+                  {request.status === "PENDING" && (
+                    <div className="flex shrink-0 gap-1.5">
+                      <form action={decideAccountTypeRequest}>
+                        <input type="hidden" name="requestId" value={request.id} />
+                        <input type="hidden" name="decision" value="APPROVED" />
+                        <button type="submit" className="btn btn-primary btn-sm">
+                          Approve
+                        </button>
+                      </form>
+                      <form action={decideAccountTypeRequest}>
+                        <input type="hidden" name="requestId" value={request.id} />
+                        <input type="hidden" name="decision" value="DECLINED" />
+                        <button type="submit" className="btn btn-ghost btn-sm">
+                          Decline
+                        </button>
+                      </form>
+                    </div>
+                  )}
+                </div>
+                {request.note && <p className="text-sm">&ldquo;{request.note}&rdquo;</p>}
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 
@@ -238,6 +353,7 @@ export default async function AdminPage() {
                 key={organization.id}
                 organization={{
                   ...organization,
+                  createdByName: organization.createdBy?.name ?? null,
                   createdAt: formatDate(organization.createdAt, timeZone),
                   reviewedAt: organization.reviewedAt
                     ? formatDate(organization.reviewedAt, timeZone)

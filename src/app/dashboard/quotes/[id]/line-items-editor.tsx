@@ -21,6 +21,7 @@ import {
 import { IconPlus, IconTrash } from "@/components/icons";
 import { FormError, FormSuccess } from "@/components/ui";
 import { SupplierCell, type SupplierOption } from "./supplier-cell";
+import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
 import {
   DiscountInput,
@@ -170,6 +171,7 @@ export function LineItemsEditor({
   initialDiscount,
   serviceTypes,
   suppliers,
+  platformSuppliers = [],
   readOnly = false,
 }: {
   quoteId: string;
@@ -181,6 +183,8 @@ export function LineItemsEditor({
   serviceTypes: string[];
   // Companies tagged Distributor, plus any already linked to a line here.
   suppliers: SupplierOption[];
+  // Accounts on Software Connect Brands this workspace hasn't linked yet.
+  platformSuppliers?: PlatformSupplier[];
   readOnly?: boolean;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
@@ -325,9 +329,18 @@ export function LineItemsEditor({
 
   function addSupplierOption(option: SupplierOption) {
     setSupplierOptions((current) =>
-      current.some((item) => item.id === option.id) ? current : [...current, option],
+      current.some((item) => item.id === option.id)
+        ? current.map((item) =>
+            item.id === option.id ? { ...item, onPlatform: item.onPlatform || option.onPlatform } : item,
+          )
+        : [...current, option],
     );
   }
+  // Accounts on Software Connect Brands linked from a row drop out of
+  // every row's "On Software Connect Brands" list: they are one of this
+  // workspace's own suppliers now.
+  const [linkedPlatformIds, setLinkedPlatformIds] = useState<string[]>([]);
+  const unlinkedPlatformSuppliers = platformSuppliers.filter((item) => !linkedPlatformIds.includes(item.id));
 
   function removeRow(uid: string) {
     mutate(rows.filter((row) => row.uid !== uid));
@@ -667,8 +680,10 @@ export function LineItemsEditor({
                     <SupplierCell
                       value={row.supplierCompanyId}
                       options={supplierOptions}
+                      platformSuppliers={unlinkedPlatformSuppliers}
                       onChange={(companyId) => updateRow(row.uid, { supplierCompanyId: companyId })}
                       onOptionAdded={addSupplierOption}
+                      onPlatformLinked={(id) => setLinkedPlatformIds((current) => [...current, id])}
                       label={`Line ${index + 1} supplier`}
                       disabled={readOnly}
                     />
