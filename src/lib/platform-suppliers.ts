@@ -56,6 +56,11 @@ export async function findPlatformSupplier(
   });
 }
 
+// A name as every supplier comparison reads it: trimmed, runs of spaces
+// as one. An account's own name can carry two spaces (Branding only
+// trims); the screen and linkDistributorCompany both squeeze them.
+export const squeeze = (name: string) => name.trim().replace(/\s+/g, " ");
+
 export const NOT_LISTED = "That company isn't listed on Software Connect Brands any more. Pick another supplier.";
 
 type Linked = { ok: true; distributorId: string; companyId: string; name: string } | { ok: false; error: string };
@@ -82,7 +87,8 @@ export async function linkPlatformSupplier(organizationId: string, platformOrgan
   if (existing) return existing;
 
   const place = [platform.city, platform.state].filter(Boolean).join(", ");
-  const names = [platform.name, place ? `${platform.name} (${place})` : null, `${platform.name} (2)`].filter(
+  const base = squeeze(platform.name);
+  const names = [base, place ? `${base} (${place})` : null, `${base} (2)`].filter(
     (name): name is string => Boolean(name),
   );
   for (const name of names) {
@@ -91,7 +97,8 @@ export async function linkPlatformSupplier(organizationId: string, platformOrgan
     // linkDistributorCompany touches its company.
     const sameName = await prisma.$queryRaw<{ platformOrganizationId: string | null }[]>`
       SELECT "platformOrganizationId" FROM "Distributor"
-       WHERE "organizationId" = ${organizationId} AND lower("name") = lower(${name})
+       WHERE "organizationId" = ${organizationId}
+         AND lower(regexp_replace(btrim("name"), '\\s+', ' ', 'g')) = lower(${name})
        ORDER BY "createdAt" ASC LIMIT 1`;
     if (sameName[0]?.platformOrganizationId && sameName[0].platformOrganizationId !== platform.id) continue;
     const pair = await linkDistributorCompany(organizationId, name);

@@ -36,7 +36,11 @@ export async function requestAccountTypeChange(_prev: ActionState, formData: For
     where: { id: session.organizationId },
     select: { name: true, accountType: true },
   });
+  // Both refusals below mean this page is out of date (another tab or
+  // admin asked, or the operator changed the type), so it is refreshed:
+  // the card then shows what is really waiting, with its Cancel button.
   if (parsed.data.toType === organization.accountType) {
+    revalidatePath(PATH);
     return { error: `You're already a ${ACCOUNT_TYPE_LABELS[organization.accountType]} account.`, kept };
   }
 
@@ -55,7 +59,8 @@ export async function requestAccountTypeChange(_prev: ActionState, formData: For
     });
   } catch (error) {
     if ((error as { code?: string })?.code === "P2002") {
-      return { error: "A change is already waiting for approval. Cancel it first to ask for a different one." };
+      revalidatePath(PATH);
+      return { error: "A change is already waiting for approval. Cancel it first to ask for a different one.", kept };
     }
     throw error;
   }
@@ -98,7 +103,7 @@ export async function requestAccountTypeChange(_prev: ActionState, formData: For
   return { success: "Sent. It changes once it's approved." };
 }
 
-export async function cancelAccountTypeRequest(_prev: ActionState, _formData: FormData): Promise<ActionState> {
+export async function cancelAccountTypeRequest(): Promise<ActionState> {
   const session = await requireAdminSession();
   if (!session.allowed) return { error: "Only owners and admins can change this." };
 

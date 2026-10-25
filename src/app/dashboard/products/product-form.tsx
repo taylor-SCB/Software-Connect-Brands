@@ -353,13 +353,14 @@ export function ProductForm({
 
   return (
     <form
-      // Submitted by hand rather than through `action`: React resets a form
-      // whose action is a function when it finishes, saved or refused, and
-      // a reset puts every <select> back on the option the page first
-      // loaded with while the box's state still says otherwise. After a
-      // save the tag, unit and distributor boxes showed the old values and
-      // the next Save wrote them back; after a refusal every typed field
-      // was emptied.
+      // `action` posts the form before the page's JavaScript has loaded;
+      // once it has, onSubmit takes over and sends the same data inside a
+      // transition, which React does not follow with a form reset. A reset
+      // puts every <select> back on the option the page first loaded with
+      // while the box's state still says otherwise: after a save the tag,
+      // unit and distributor boxes showed the old values and the next Save
+      // wrote them back, and after a refusal every typed field was emptied.
+      action={formAction}
       onSubmit={(event) => {
         event.preventDefault();
         const formData = new FormData(event.currentTarget);

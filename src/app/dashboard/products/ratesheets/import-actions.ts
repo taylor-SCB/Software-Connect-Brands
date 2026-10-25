@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/session";
 import { linkDistributorCompany } from "@/lib/distributors";
-import { findPlatformSupplier, linkPlatformSupplier, NOT_LISTED } from "@/lib/platform-suppliers";
+import { findPlatformSupplier, linkPlatformSupplier, NOT_LISTED, squeeze } from "@/lib/platform-suppliers";
 import { readPriceListFile, priceListFileKind, unsupportedFileMessage } from "@/lib/price-list-file";
 import { isEmailConfigured, sendEmail } from "@/lib/email";
 import { absoluteUrl } from "@/lib/app-url";
@@ -404,10 +404,11 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
       select: { id: true, name: true },
     });
     if (!existingSupplier) {
+      // Spaces squeezed on both sides, as the screen compares them.
       const twins = await prisma.$queryRaw<{ id: string; name: string }[]>`
         SELECT "id", "name" FROM "Distributor"
          WHERE "organizationId" = ${organizationId}
-           AND lower("name") = lower(${platformSupplier.name})
+           AND lower(regexp_replace(btrim("name"), '\\s+', ' ', 'g')) = lower(${squeeze(platformSupplier.name)})
            AND "platformOrganizationId" IS NULL
          ORDER BY "createdAt" ASC
          LIMIT 1`;

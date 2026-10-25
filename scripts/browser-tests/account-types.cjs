@@ -97,10 +97,6 @@ async function login(page, who) {
   await page.waitForURL(/\/dashboard$/, { timeout: 20000 });
 }
 
-async function logout(page) {
-  await page.context().clearCookies();
-}
-
 async function signup(page, who, type) {
   await page.goto(`${BASE}/signup`);
   await page.fill('input[name="companyName"]', who.company);
@@ -372,6 +368,12 @@ let browser;
   await ownerPage.waitForFunction(() => /already waiting|Waiting on approval/.test(document.body.innerText));
   const open = (await sql(`SELECT * FROM "AccountTypeRequest" WHERE "organizationId"=$1 AND status='PENDING'`, [spirit.id])).rows;
   assert.equal(open.length, 1, "the database keeps one open request");
+  // audit fix: the tab that lost is refreshed, so it shows the request
+  // that is waiting and the Cancel it is told to use.
+  for (const tab of [ownerPage, tabB]) {
+    await tab.getByTestId("account-type-waiting").waitFor();
+    assert.ok(await tab.getByTestId("account-type-card").getByRole("button", { name: "Cancel request" }).isVisible());
+  }
   await tabB.close();
 
   log("Decline leaves the type alone and the card says so");
@@ -547,6 +549,10 @@ let browser;
 
   log("Import Ratesheet links a platform supplier onto the same-named one already on file, not a second one");
   const cloudOrg = await orgNamed("Test AT Cloud");
+  // audit fix: an account's own name can carry two spaces (Branding only
+  // trims); the screen and the server must still agree it is the same
+  // supplier, or a picked point of contact is refused every time.
+  await sql(`UPDATE "Organization" SET name='Test AT  Cloud' WHERE id=$1`, [cloudOrg.id]);
   await sql(
     `INSERT INTO "Distributor" (id,"organizationId",name,"priceRule","priceRuleBasisPoints","updatedAt")
      VALUES ('dst_at_cloud',$1,'Test AT Cloud','MARGIN',2500,now())`,
@@ -569,7 +575,7 @@ let browser;
   await ownerPage.setInputFiles("#ratesheet-import-file", csv);
   await ownerPage.getByTestId("ratesheet-summary").waitFor();
   listed = await platformOptions(ownerPage, "#ratesheet-supplier");
-  assert.ok(listed.includes("Test AT Cloud — Software Provider"), `Cloud listed in Who sent it: ${listed}`);
+  assert.ok(listed.includes("Test AT  Cloud — Software Provider"), `Cloud listed in Who sent it: ${listed}`);
   await ownerPage.selectOption("#ratesheet-supplier", `platform:${cloudOrg.id}`);
   // It is the Test AT Cloud already on file: its pricing and its people.
   assert.equal(await ownerPage.inputValue("#ratesheet-rule"), "MARGIN", "the supplier's remembered rule");
@@ -671,6 +677,9 @@ let browser;
     `INSERT INTO "Company" (id,"organizationId",name,"createdAt","updatedAt") VALUES ('cmp_at_oldbolt',$1,'TEST AT BOLT',now() - interval '1 year',now())`,
     [spirit.id],
   );
+  // audit fix: someone took Distributor off the supplier's company; adding
+  // it by name again puts the type back, so it returns to the pickers.
+  await sql(`UPDATE "Company" SET "companyTypes"='{}' WHERE id=$1`, [boltLocal.companyId]);
   await ownerPage.reload();
   await ownerPage.getByLabel("Line 1 supplier", { exact: true }).selectOption("__new__");
   await ownerPage.getByLabel("Line 1 supplier new name", { exact: true }).fill("Test AT Bolt");
@@ -678,6 +687,11 @@ let browser;
   await ownerPage.getByLabel("Line 1 supplier", { exact: true }).waitFor();
   const boltAfter = (await sql(`SELECT "companyId" FROM "Distributor" WHERE id=$1`, [boltLocal.id])).rows[0];
   assert.equal(boltAfter.companyId, boltLocal.companyId, "the bridge stayed where it was");
+  assert.deepEqual(
+    (await sql(`SELECT "companyTypes" FROM "Company" WHERE id=$1`, [boltLocal.companyId])).rows[0].companyTypes,
+    ["Distributor"],
+    "the supplier's own company is a Distributor again",
+  );
   const oldBolt = (await sql(`SELECT "companyTypes" FROM "Company" WHERE id='cmp_at_oldbolt'`)).rows[0];
   assert.deepEqual(oldBolt.companyTypes, [], "the older company wasn't turned into a supplier");
 
@@ -744,6 +758,25 @@ let browser;
   );
   assert.ok(askedRequests > 3, `asked ${askedRequests} times`);
   assert.equal(askedEmails, 3);
+
+  log("audit fix: the product form still saves when sent before the page's JavaScript has loaded");
+  const noJs = await browser.newContext({ javaScriptEnabled: false });
+  await noJs.addCookies(await ownerPage.context().cookies());
+  const noJsPage = await noJs.newPage();
+  await noJsPage.goto(`${BASE}/dashboard/products/new`);
+  await noJsPage.fill("#name", "AT No Script");
+  // Enter submits it the way the button does. A click waits for the button
+  // to hold still, and the page's fade-in can keep it "moving" without
+  // JavaScript to finish it.
+  await Promise.all([noJsPage.waitForNavigation(), noJsPage.press("#name", "Enter")]);
+  for (let i = 0; i < 50 && (await sql(`SELECT count(*) FROM "Product" WHERE "organizationId"=$1 AND name='AT No Script'`, [spirit.id])).rows[0].count === "0"; i++) {
+    await noJsPage.waitForTimeout(100);
+  }
+  assert.equal(
+    (await sql(`SELECT count(*) FROM "Product" WHERE "organizationId"=$1 AND name='AT No Script'`, [spirit.id])).rows[0].count,
+    "1",
+  );
+  await noJs.close();
 
   log("an operator taken off their workspace is out of the console too");
   await sql(`UPDATE "User" SET "removedAt"=now() WHERE id=$1`, [operatorId]);

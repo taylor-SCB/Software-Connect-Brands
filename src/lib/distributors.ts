@@ -140,15 +140,32 @@ export async function linkDistributorCompany(
   // one (a customer renamed to match, say), tag it a Distributor and move
   // this supplier's bridge onto it — after which its purchase orders go
   // to the wrong company.
-  const bridged = await prisma.$queryRaw<{ id: string; companyId: string; companyName: string }[]>`
-    SELECT d."id", d."companyId", c."name" AS "companyName"
+  // Its company gets the Distributor type back if someone took it off, as
+  // a company found by name always has, or the supplier stays out of
+  // every quote's supplier list.
+  const bridged = await prisma.$queryRaw<
+    { id: string; companyId: string; companyName: string; companyTypes: string[]; industries: string[] }[]
+  >`
+    SELECT d."id", d."companyId", c."name" AS "companyName", c."companyTypes", c."industries"
       FROM "Distributor" d JOIN "Company" c ON c."id" = d."companyId"
      WHERE d."organizationId" = ${organizationId}
        AND lower(d."name") = lower(${name})
      ORDER BY d."createdAt" ASC
      LIMIT 1`;
   if (bridged.length > 0) {
-    return { companyId: bridged[0].companyId, distributorId: bridged[0].id, name: bridged[0].companyName };
+    const pair = bridged[0];
+    if (!pair.companyTypes.some((type) => type.toLowerCase() === typeName.toLowerCase())) {
+      await prisma.company.update({
+        where: { id: pair.companyId },
+        data: {
+          companyTypes: [...pair.companyTypes, typeName],
+          industries: pair.industries.some((i) => i.toLowerCase() === SERVICE_PROVIDER_INDUSTRY.toLowerCase())
+            ? pair.industries
+            : [...pair.industries, SERVICE_PROVIDER_INDUSTRY],
+        },
+      });
+    }
+    return { companyId: pair.companyId, distributorId: pair.id, name: pair.companyName };
   }
 
   // lower() rather than Prisma's insensitive equals, which compiles to

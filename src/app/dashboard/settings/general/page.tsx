@@ -9,25 +9,32 @@ import { AccountTypeCard } from "./account-type-card";
 // How long an answered type request is still mentioned on the card.
 const ANSWER_SHOWN_DAYS = 30;
 
-export default async function CompanyGeneralPage() {
-  const session = await requireSession();
-  const [organization, openRequest, lastAnswer] = await Promise.all([
-    prisma.organization.findUniqueOrThrow({
-      where: { id: session.organizationId },
-    }),
+// The workspace's open type request, and the last one answered lately.
+function loadTypeRequests(organizationId: string) {
+  return Promise.all([
     prisma.accountTypeRequest.findFirst({
-      where: { organizationId: session.organizationId, status: "PENDING" },
+      where: { organizationId, status: "PENDING" },
       select: { toType: true, createdAt: true, requestedBy: { select: { name: true } } },
     }),
     prisma.accountTypeRequest.findFirst({
       where: {
-        organizationId: session.organizationId,
+        organizationId,
         status: { in: ["APPROVED", "DECLINED"] },
         decidedAt: { gte: new Date(Date.now() - ANSWER_SHOWN_DAYS * 24 * 60 * 60 * 1000) },
       },
       orderBy: { decidedAt: "desc" },
       select: { toType: true, status: true, decidedAt: true },
     }),
+  ]);
+}
+
+export default async function CompanyGeneralPage() {
+  const session = await requireSession();
+  const [organization, [openRequest, lastAnswer]] = await Promise.all([
+    prisma.organization.findUniqueOrThrow({
+      where: { id: session.organizationId },
+    }),
+    loadTypeRequests(session.organizationId),
   ]);
   const canEdit = session.role === "OWNER" || session.role === "ADMIN";
 

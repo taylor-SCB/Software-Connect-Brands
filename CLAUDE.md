@@ -429,7 +429,7 @@ imported in 9 s, and the 8,000 same-named tees previewed in 2.3 s and
 imported in 4 s. **Order materials** prices a row at the catalog cost
 when its contract captured $0 (Taylor, Oct 25, 2026); a real captured
 cost is kept. The agreed next releases, in order: 2 account types +
-Admin Create Account; 3 the deeper catalog (each ratesheet a row with
+Admin Create Account (done Oct 25, below); 3 the deeper catalog (each ratesheet a row with
 its own search and a See product list pop-out with COGS discount and a
 required minimum markup and Cancel / Save and accept; per-supplier
 sub-rows in a product, each with its own COGS, discount, MSRP and
@@ -442,23 +442,54 @@ invoice (no billing yet: meter per account per month, invoice by hand;
 an image service with vector output for screen printers; famous logos
 are refused, so a school uploads its own).
 
-**Account types (Taylor, Oct 21, 2026 — decided, not built).** Five:
-Admin (the platform; Taylor) and four a company picks at signup, one per
-account: Business / Vendor, Distributor, Hardware / OEM, Software
-Provider. The type decides which buttons show (a Business imports
-ratesheets; a Distributor / OEM / Software Provider releases them); the
-logic behind a button is the same for all. A change of type is a
-request the Admin approves. The Admin creates a customer's account
-pre-approved, with an emailed set-password link (Spirit Security is a
-Business / Vendor). Releasing a ratesheet: Public (anyone can download),
+**Account types (Release 2, Oct 25, 2026).** Five: Admin (the platform;
+Taylor — `User.isSuperAdmin`, not a type) and four a company picks at
+signup, one per account (`Organization.accountType`; every account that
+existed before is a Business / Vendor): Business / Vendor (picked to
+start), Distributor, Hardware / OEM, Software Provider
+(`src/lib/account-types.ts`). **Taylor, Oct 25: every account can do
+everything; the type turns no button on or off.** It is what lets a
+company pick a real supplier: the three supplier pickers — a product's
+Distributor, Import Ratesheet's Who sent it?, a quote line's Supplier /
+Contractor — have an **On Software Connect Brands** section listing every
+approved Distributor, Hardware / OEM and Software Provider account but
+your own, by name, city and state, automatically (Taylor's pick; a
+Business / Vendor is never listed). Picking one links your own supplier
+record to it (`Distributor.platformOrganizationId`, one per account per
+workspace; `platformLinkedAs` / `platformLinkedAt` record how it read
+when linked; `src/lib/platform-suppliers.ts`). Nothing else of theirs is
+shared until Release 5 uses the link to deliver ratesheets. A supplier of
+the same name already on file *is* that supplier — its people,
+remembered columns and pricing, its products in the preview — and gets
+linked, not doubled; one already linked to a different account of that
+name makes "<name> (City, ST)". A quote line asks "Link <name> as a
+supplier?" before writing anything (arrow keys walk a closed select one
+change at a time). "+ Add new" with a listed account's exact name offers
+"Use <name> (on Software Connect Brands)". A linked supplier reads "· on
+Software Connect Brands" while its account is still listed. A change of
+type is a request: Settings → General → Request a change (owners and
+admins; one open per workspace, held by the unique
+`AccountTypeRequest.openFor`), Cancel, and the answer shown for 30 days.
+It lands in /admin → **Account type changes** with Approve / Decline,
+counts in Waiting on you, and emails the operators (the first three a
+workspace sends in an hour). The operator can also set any workspace's
+type from its row, which answers a waiting request (approved if it asked
+for that type, declined if not). **Create Account** on /admin makes a
+customer's workspace already approved (`createWorkspace` in
+`src/lib/workspaces.ts`, shared with signup) from the company name, type,
+owner's first and last name and email, and an optional phone, city and
+state; the owner gets "Your <Company> account is ready" from Software
+Connect Brands, replying to the operator, with the 7-day, one-use
+set-password link a Company Users invite uses, and the row offers
+**Resend invite** (older links die) until they log in. Releasing a
+ratesheet is Release 5, as decided Oct 21: Public (anyone can download),
 Private (any account may request access; the distributor accepts or
 declines), Customer Specific (pick a company or + Add New Company; a
 company not on the platform gets one person — first, last, email; one
-already on it, pick from its members), with an active date range.
-Taylor plans a subscription for vendors; Claude recommended keeping a
-no-account link free and charging for the full workspace — his call.
-Build order agreed: Import Ratesheet (done), then account types + Admin
-Create Account, then distributor publishing; screens shown before each.
+already on it, pick from its members), with an active date range; any
+account may release (Oct 25). Taylor plans a subscription for vendors;
+Claude recommended keeping a no-account link free and charging for the
+full workspace — his call.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
@@ -528,6 +559,26 @@ are all blocking before the first paying customer.
 - **"Link Distributor / Partner" is Coming Soon.** Public and
   Invite/Approve ratesheets are stored with their visibility but nobody in
   another workspace can search for them yet; every send today is a link.
+- **A listed supplier's name, city and state are its own.** An approved
+  Distributor can rename itself in Branding and no operator sees it, so a
+  name under On Software Connect Brands is self-asserted, and a workspace
+  that picks it links its same-named supplier to it. Nothing travels over
+  a link yet, and `platformLinkedAs` keeps the name each link was made
+  under. Before Release 5 delivers ratesheets over links, Taylor decides
+  whether a rename takes a supplier off the list until it is reviewed.
+- **A supplier spelled differently from its account can't be linked by
+  hand, and nothing unlinks.** "ADI" on file and "ADI Global" on the
+  platform: picking the account makes a second supplier and company. A
+  suppliers screen with Link / Unlink is the fix.
+- **The On Software Connect Brands list stops at 200 accounts a picker**,
+  alphabetical, in a native select with no search, and the typed-name
+  match only knows those 200. A searched box once the platform has that
+  many suppliers.
+- **A Hardware / OEM or Software Provider picked as a supplier is filed in
+  the CRM as Company Type "Distributor"**, like every supplier.
+- **Nobody is emailed when a type request is answered**; the requester
+  sees it on Settings → General. **Create Account needs email switched
+  on**, and refuses before making anything without it.
 - **Uploaded files live in Postgres, except job photos and videos** —
   ratesheets, compliance and marketing documents (4 MB cap), logos and
   photos (2 MB) are in the database. Logo and photo links
@@ -688,7 +739,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-one** are checked in at
+suite, and the delete-confirmation suite. **Thirty-two** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -767,7 +818,20 @@ key, the list above the Payment table, a backslash, a delete keeping the
 view, Select all / Show 50 more / Clear matching) and
 `products-load-test.cjs` (25,000 products, a 25,000-row import and an
 8,000-row same-name apparel sheet, timed; **run it through the slow
-proxy**, like `import-slow-db.cjs`).
+proxy**, like `import-slow-db.cjs`), and `account-types.cjs` (34, Oct
+25, 2026: the four types at signup and a refused signup keeping them, a
+taken email in other capitals, the operator console's pending type,
+Approve, Create Account with a duplicate refused and kept, the owner's
+email and password, Resend invite killing the old link, the type
+select, Settings → General's Request a change / Cancel / two tabs
+racing / Decline / Approve / a direct change answering it / a Member,
+who is listed in the three supplier pickers and who never is, linking
+from the product form, Import Ratesheet onto a same-named supplier with
+its rule and contact, a quote line that asks first, forged ids, a
+bridge not moved, a merge keeping the link, a paused account losing the
+mark, the email throttle, a removed operator, the product form without
+JavaScript, the phone; **it needs the fake email settings
+`password-reset.cjs` uses**).
 `overlay-readability.cjs` step 6 (the deal picker on a new quote) used
 to pass one run in three: it photographed the panel while the page was
 still fading in. It waits for the fade now (Oct 25, 2026); **a pixel
@@ -834,7 +898,14 @@ fires twice, because two saves in a row report the same words — compare
 the state object instead. And React empties a form whose action is a
 server function, including when that function refuses, so an action that
 can refuse has to hand the typed values back (`keepFields` in
-`src/lib/forms.ts`).
+`src/lib/forms.ts`). The product form goes further (Oct 25, 2026): it
+keeps `action` for a post before the JavaScript loads, but its onSubmit
+prevents the default and sends the same FormData in a `startTransition`,
+which React does not follow with a reset. The reset had been putting
+every controlled `<select>` back on the option the page loaded with —
+tag, unit and distributor showed old values after a save and the next
+Save wrote them back. A form full of controlled selects should do the
+same.
 
 **Anything that floats over other content must be opaque.** The app's
 look is glass — `.card` is about 4% white with a blur behind it — which
