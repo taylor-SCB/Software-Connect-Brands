@@ -73,7 +73,9 @@ export async function requireSuperAdmin() {
   if (!session?.user?.id) redirect("/login");
 
   const user = await currentUser(session.user.id);
-  if (!user?.isSuperAdmin) notFound();
+  // A login taken off its workspace is out everywhere, the console too:
+  // from here an operator creates whole accounts.
+  if (!user?.isSuperAdmin || user.removedAt) notFound();
 
   return { userId: user.id, name: user.name, email: user.email };
 }

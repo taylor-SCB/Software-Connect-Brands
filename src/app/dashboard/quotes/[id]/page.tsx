@@ -17,6 +17,7 @@ import {
 import { IconTrash, IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { LineItemsEditor } from "./line-items-editor";
+import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
 import { QuotePaymentTable } from "./quote-payment-table";
 import { QuoteMetaForm } from "./quote-meta-form";
 import { dateToIso, todayIso, quoteBaselineRows } from "@/lib/payments";
@@ -60,12 +61,15 @@ export default async function QuoteBuilderPage({
 
   // Suppliers already on a line are fetched back even if they have since
   // stopped being distributors, so the picker can offer the linked one.
-  const suppliers = await loadDistributorCompanies(
-    organizationId,
-    quote.lineItems
-      .map((item) => item.supplierCompanyId)
-      .filter((value): value is string => Boolean(value)),
-  );
+  const [suppliers, platformSuppliers] = await Promise.all([
+    loadDistributorCompanies(
+      organizationId,
+      quote.lineItems
+        .map((item) => item.supplierCompanyId)
+        .filter((value): value is string => Boolean(value)),
+    ),
+    loadPlatformSuppliers(organizationId),
+  ]);
 
   const publicPath = `/q/${quote.publicToken}`;
   const today = todayIso(timeZone);
@@ -182,6 +186,7 @@ export default async function QuoteBuilderPage({
             initialDiscount={{ discountCents: quote.discountCents, discountPercent: quote.discountPercent }}
             serviceTypes={serviceTypes}
             suppliers={suppliers}
+            platformSuppliers={platformSuppliers}
           />
         </Card>
 

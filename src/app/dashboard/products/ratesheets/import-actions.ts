@@ -11,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/session";
 import { linkDistributorCompany } from "@/lib/distributors";
+import { findPlatformSupplier, linkPlatformSupplier, NOT_LISTED, squeeze } from "@/lib/platform-suppliers";
 import { readPriceListFile, priceListFileKind, unsupportedFileMessage } from "@/lib/price-list-file";
 import { isEmailConfigured, sendEmail } from "@/lib/email";
 import { absoluteUrl } from "@/lib/app-url";
@@ -380,13 +381,39 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   // then says no.
   const supplierId = text(formData, "supplierId", 60);
   const newSupplierName = text(formData, "newSupplierName", 160);
+  const platformSupplierId = text(formData, "platformSupplierId", 60);
   let existingSupplier: { id: string; name: string } | null = null;
+  let platformSupplier: { id: string; name: string } | null = null;
+  // The supplier already on file that a platform pick lands on: the one
+  // the preview used for its products, people and settings.
+  let platformTwin: { id: string; name: string } | null = null;
   if (supplierId) {
     existingSupplier = await prisma.distributor.findFirst({
       where: { id: supplierId, organizationId },
       select: { id: true, name: true },
     });
     if (!existingSupplier) return { ok: false, error: "That supplier no longer exists. Pick who sent the ratesheet again." };
+  } else if (platformSupplierId) {
+    // Picked from "On Software Connect Brands". Linked only once the
+    // import is sure to go in, like a new name; one linked here already is
+    // simply that supplier.
+    platformSupplier = await findPlatformSupplier(organizationId, platformSupplierId);
+    if (!platformSupplier) return { ok: false, error: NOT_LISTED };
+    existingSupplier = await prisma.distributor.findUnique({
+      where: { organizationId_platformOrganizationId: { organizationId, platformOrganizationId: platformSupplier.id } },
+      select: { id: true, name: true },
+    });
+    if (!existingSupplier) {
+      // Spaces squeezed on both sides, as the screen compares them.
+      const twins = await prisma.$queryRaw<{ id: string; name: string }[]>`
+        SELECT "id", "name" FROM "Distributor"
+         WHERE "organizationId" = ${organizationId}
+           AND lower(regexp_replace(btrim("name"), '\\s+', ' ', 'g')) = lower(${squeeze(platformSupplier.name)})
+           AND "platformOrganizationId" IS NULL
+         ORDER BY "createdAt" ASC
+         LIMIT 1`;
+      platformTwin = twins[0] ?? null;
+    }
   } else if (!newSupplierName) {
     return { ok: false, error: "Pick who sent this ratesheet: a distributor, manufacturer or software provider." };
   }
@@ -394,10 +421,11 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   const pickedContact = text(formData, "contactId", 60);
   const typedRaw = readJson(formData, "newContact");
   let typed: { name: string; email: string | null; phone: string | null } | null = null;
+  const contactOwner = existingSupplier ?? platformTwin;
   if (pickedContact) {
-    if (!existingSupplier) return { ok: false, error: "Pick the point of contact again." };
+    if (!contactOwner) return { ok: false, error: "Pick the point of contact again." };
     const owned = await prisma.distributorContact.findFirst({
-      where: { id: pickedContact, organizationId, distributorId: existingSupplier.id },
+      where: { id: pickedContact, organizationId, distributorId: contactOwner.id },
       select: { id: true },
     });
     if (!owned) return { ok: false, error: "That point of contact isn't on this supplier anymore. Pick them again." };
@@ -435,7 +463,8 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     });
     return { catalog, plan };
   };
-  let { catalog, plan } = await planFor(existingSupplier?.id ?? null);
+  const plannedFor = existingSupplier?.id ?? platformTwin?.id ?? null;
+  let { catalog, plan } = await planFor(plannedFor);
   if (!plan.rows.some((row) => row.included)) return { ok: false, error: "Tick at least one product to import." };
 
   // Who sent it: an existing supplier, or a new one (which also makes the
@@ -444,6 +473,11 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   let supplier: { id: string; name: string };
   if (existingSupplier) {
     supplier = existingSupplier;
+  } else if (platformSupplier) {
+    const linked = await linkPlatformSupplier(organizationId, platformSupplier.id);
+    if (!linked.ok) return { ok: false, error: linked.error };
+    supplier = { id: linked.distributorId, name: linked.name };
+    if (supplier.id !== plannedFor) ({ catalog, plan } = await planFor(supplier.id));
   } else {
     const linked = await linkDistributorCompany(organizationId, newSupplierName);
     if (!linked) return { ok: false, error: "Type the distributor's name." };
@@ -455,7 +489,9 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   // same name when there is no email) is reused rather than made twice —
   // compared here in code, since Prisma's case-insensitive equals is a
   // LIKE that reads _ and % in an address as wildcards.
-  let contactId: string | null = pickedContact || null;
+  // A contact picked off the supplier the preview showed, if the account
+  // went onto a different one after all, isn't theirs.
+  let contactId: string | null = pickedContact && contactOwner?.id === supplier.id ? pickedContact : null;
   if (typed) {
     const people = await prisma.distributorContact.findMany({
       where: { organizationId, distributorId: supplier.id },
@@ -680,9 +716,12 @@ export async function declineRatesheet(formData: FormData): Promise<{ ok: true; 
   const supplier = supplierId
     ? await prisma.distributor.findFirst({ where: { id: supplierId, organizationId }, select: { id: true, name: true } })
     : null;
+  // A supplier picked from Software Connect Brands is only named here;
+  // a decline links nothing.
+  const platformSupplier = await findPlatformSupplier(organizationId, text(formData, "platformSupplierId", 60));
   const detected = {
     readError: read.ok ? null : read.error,
-    supplier: supplier?.name ?? (text(formData, "newSupplierName", 160) || null),
+    supplier: supplier?.name ?? platformSupplier?.name ?? (text(formData, "newSupplierName", 160) || null),
     rule: pricing.success ? describeRule(pricing.data) : null,
     tabs: detectedTabs.map((tab) => {
       const posted = postedTabs.success ? postedTabs.data.find((item) => item.sheetIndex === tab.sheetIndex) : undefined;

@@ -2,14 +2,14 @@
 
 import { useActionState } from "react";
 import Link from "next/link";
-import { signup } from "./actions";
+import { signup, type SignupState } from "./actions";
 import { FormError } from "@/components/ui";
+import { ACCOUNT_TYPES, ACCOUNT_TYPE_BLURBS, ACCOUNT_TYPE_LABELS } from "@/lib/account-types";
 
 export default function SignupPage() {
-  const [state, formAction, pending] = useActionState<{ error?: string }, FormData>(
-    signup,
-    { error: undefined },
-  );
+  const [state, formAction, pending] = useActionState<SignupState, FormData>(signup, {});
+  const kept = state.kept ?? {};
+  const pickedType = kept.accountType ?? "BUSINESS";
 
   return (
     <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-12">
@@ -30,10 +30,34 @@ export default function SignupPage() {
                 id="companyName"
                 name="companyName"
                 placeholder="Acme Plumbing"
+                defaultValue={kept.companyName}
                 required
                 className="input"
               />
             </div>
+            <fieldset>
+              <legend className="label">What kind of company are you?</legend>
+              <div className="space-y-1.5" data-testid="signup-account-type">
+                {ACCOUNT_TYPES.map((type) => (
+                  <label
+                    key={type}
+                    className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-[var(--border)] px-3 py-2 has-[:checked]:border-[color-mix(in_srgb,var(--brand)_55%,transparent)] has-[:checked]:bg-[color-mix(in_srgb,var(--brand)_9%,transparent)]"
+                  >
+                    <input
+                      type="radio"
+                      name="accountType"
+                      value={type}
+                      defaultChecked={pickedType === type}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{ACCOUNT_TYPE_LABELS[type]}</span>
+                      <span className="faint block text-xs">{ACCOUNT_TYPE_BLURBS[type]}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div>
               <label className="label" htmlFor="name">
                 Your name
@@ -43,6 +67,7 @@ export default function SignupPage() {
                 name="name"
                 placeholder="Jamie Rivera"
                 autoComplete="name"
+                defaultValue={kept.name}
                 required
                 className="input"
               />
@@ -57,6 +82,7 @@ export default function SignupPage() {
                 type="email"
                 placeholder="you@company.com"
                 autoComplete="email"
+                defaultValue={kept.email}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -75,6 +101,7 @@ export default function SignupPage() {
                 type="tel"
                 placeholder="(402) 555-0148"
                 autoComplete="tel"
+                defaultValue={kept.phone}
                 required
                 className="input"
               />

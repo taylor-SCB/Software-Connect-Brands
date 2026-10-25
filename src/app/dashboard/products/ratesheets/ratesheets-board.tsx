@@ -11,6 +11,7 @@ import { RATESHEET_VISIBILITY_LABELS, type RatesheetVisibilityValue } from "@/li
 import type { InviteState, RatesheetState } from "@/lib/ratesheets";
 import { toggleRatesheetActive, deleteRatesheet, deleteLinkedRatesheet } from "./actions";
 import { ImportRatesheet, type RatesheetSupplier } from "../import-ratesheet";
+import type { PlatformSupplier } from "@/lib/account-types";
 
 export type BoardSheet = {
   id: string;
@@ -66,12 +67,14 @@ const VISIBILITY_COLORS: Record<string, string> = {
 export function RatesheetsBoard({
   organizationName,
   suppliers,
+  platformSuppliers = [],
   sheets,
   invites,
   files,
 }: {
   organizationName: string;
   suppliers: RatesheetSupplier[];
+  platformSuppliers?: PlatformSupplier[];
   sheets: BoardSheet[];
   invites: BoardInvite[];
   files: BoardFile[];
@@ -414,6 +417,7 @@ export function RatesheetsBoard({
               </div>
               <ImportRatesheet
                 suppliers={suppliers}
+                platformSuppliers={platformSuppliers}
                 savedFile={{ id: importing.id, fileName: importing.fileName, distributorId: importing.supplierId }}
                 onDone={() => setImporting(null)}
               />

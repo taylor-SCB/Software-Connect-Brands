@@ -122,7 +122,9 @@ export async function mergeCompanies(organizationId: string, keepId: string, oth
 
   const rows = await prisma.company.findMany({
     where: { organizationId, id: { in: [keepId, ...others] } },
-    include: { distributor: { select: { id: true } } },
+    include: {
+      distributor: { select: { id: true, platformOrganizationId: true, platformLinkedAs: true, platformLinkedAt: true } },
+    },
   });
   const keep = rows.find((row) => row.id === keepId);
   const gone = rows.filter((row) => row.id !== keepId);
@@ -139,9 +141,24 @@ export async function mergeCompanies(organizationId: string, keepId: string, oth
   const companyTypes = gone.reduce((all, row) => mergeTags(all, row.companyTypes), keep.companyTypes);
 
   // A distributor is one per company. The keeper's stays; if it has none,
-  // the first of the others' moves over. Any further one is left on no
-  // company, never deleted: it carries price lists.
-  const donorDistributor = keep.distributor ? null : gone.find((row) => row.distributor)?.distributor ?? null;
+  // the first of the others' moves over — one linked to Software Connect
+  // Brands first. Any further one is left on no company, never deleted: it
+  // carries price lists.
+  const donorDistributor = keep.distributor
+    ? null
+    : (gone.find((row) => row.distributor?.platformOrganizationId)?.distributor ??
+      gone.find((row) => row.distributor)?.distributor ??
+      null);
+  // The link to a Software Connect Brands account follows the business:
+  // when the keeper's supplier has none, it takes a merged one's, so the
+  // link isn't stranded on a supplier with no company. Cleared off the
+  // donor before it is set on the keeper — one link per account.
+  const keeperDistributor = keep.distributor ?? donorDistributor;
+  const linkDonor =
+    keeperDistributor && !keeperDistributor.platformOrganizationId
+      ? (gone.find((row) => row.distributor?.platformOrganizationId && row.distributor.id !== keeperDistributor.id)
+          ?.distributor ?? null)
+      : null;
 
   const moved = { companyId: keepId };
   const from = { organizationId, companyId: { in: goneIds } };
@@ -170,6 +187,22 @@ export async function mergeCompanies(organizationId: string, keepId: string, oth
     prisma.contactAccount.deleteMany({ where: { companyId: keepId, contact: { companyId: keepId } } }),
     ...(donorDistributor
       ? [prisma.distributor.update({ where: { id: donorDistributor.id }, data: { companyId: keepId } })]
+      : []),
+    ...(linkDonor && keeperDistributor
+      ? [
+          prisma.distributor.update({
+            where: { id: linkDonor.id },
+            data: { platformOrganizationId: null, platformLinkedAs: null, platformLinkedAt: null },
+          }),
+          prisma.distributor.update({
+            where: { id: keeperDistributor.id },
+            data: {
+              platformOrganizationId: linkDonor.platformOrganizationId,
+              platformLinkedAs: linkDonor.platformLinkedAs,
+              platformLinkedAt: linkDonor.platformLinkedAt,
+            },
+          }),
+        ]
       : []),
     prisma.company.deleteMany({ where: { organizationId, id: { in: goneIds } } }),
     prisma.company.update({

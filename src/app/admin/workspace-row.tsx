@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useActionState, useState } from "react";
 import { StatusBadge } from "@/components/ui";
-import { IconMail, IconPhone, IconTrash } from "@/components/icons";
-import { setOrganizationStatus, deleteOrganization } from "./actions";
+import { IconMail, IconPhone, IconSend, IconTrash } from "@/components/icons";
+import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABELS, type AccountTypeValue } from "@/lib/account-types";
+import type { ActionState } from "@/lib/forms";
+import { setOrganizationStatus, deleteOrganization, resendOwnerInvite, setOrganizationType } from "./actions";
 
 type Person = {
   name: string;
@@ -18,6 +20,9 @@ export type AdminWorkspace = {
   id: string;
   name: string;
   status: string;
+  accountType: AccountTypeValue;
+  // The operator who made it from Create Account; null for a signup.
+  createdByName: string | null;
   createdAt: string;
   reviewedAt: string | null;
   users: Person[];
@@ -46,6 +51,59 @@ function StatusButton({
   );
 }
 
+// The operator's direct change of a workspace's type. Saves as soon as a
+// type is picked, like the role select on Company Users; keyed on the
+// saved type so a revalidated row shows what is stored.
+function TypeSelect({ organizationId, accountType }: { organizationId: string; accountType: AccountTypeValue }) {
+  return (
+    <form action={setOrganizationType} className="flex items-center gap-1.5">
+      <input type="hidden" name="organizationId" value={organizationId} />
+      <label className="faint text-xs" htmlFor={`type-${organizationId}`}>
+        Type
+      </label>
+      <select
+        id={`type-${organizationId}`}
+        key={accountType}
+        name="accountType"
+        defaultValue={accountType}
+        onChange={(event) => event.currentTarget.form?.requestSubmit()}
+        aria-label="Account type"
+        className="select input-sm py-1 pr-7 text-xs"
+        data-testid="workspace-type"
+      >
+        {ACCOUNT_TYPES.map((type) => (
+          <option key={type} value={type}>
+            {ACCOUNT_TYPE_LABELS[type]}
+          </option>
+        ))}
+      </select>
+    </form>
+  );
+}
+
+function ResendOwnerInvite({ organizationId }: { organizationId: string }) {
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(resendOwnerInvite, {});
+  return (
+    <form action={formAction} className="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="organizationId" value={organizationId} />
+      <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
+        <IconSend size={12} />
+        {pending ? "Sending…" : "Resend invite"}
+      </button>
+      {state.error && (
+        <span role="alert" className="text-xs text-[var(--danger)]">
+          {state.error}
+        </span>
+      )}
+      {state.success && (
+        <span role="status" className="text-xs text-[var(--ok)]">
+          {state.success}
+        </span>
+      )}
+    </form>
+  );
+}
+
 export function WorkspaceRow({ organization }: { organization: AdminWorkspace }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [typedName, setTypedName] = useState("");
@@ -66,6 +124,9 @@ export function WorkspaceRow({ organization }: { organization: AdminWorkspace })
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold">{organization.name}</h3>
             <StatusBadge status={organization.status} />
+            <span className="faint text-xs" data-testid="workspace-type-label">
+              {ACCOUNT_TYPE_LABELS[organization.accountType]}
+            </span>
           </div>
 
           {owner && (
@@ -85,10 +146,20 @@ export function WorkspaceRow({ organization }: { organization: AdminWorkspace })
           )}
 
           <div className="faint mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            <span>Signed up {organization.createdAt}</span>
+            <span>
+              {organization.createdByName
+                ? `Created by ${organization.createdByName} on ${organization.createdAt}`
+                : `Signed up ${organization.createdAt}`}
+            </span>
             {organization.reviewedAt && <span>Reviewed {organization.reviewedAt}</span>}
             <span>{lastSeen ? `Last login ${lastSeen}` : "Never logged in"}</span>
           </div>
+
+          {organization.createdByName && owner && !owner.lastLoginAt && (
+            <div className="mt-2">
+              <ResendOwnerInvite organizationId={organization.id} />
+            </div>
+          )}
 
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
             <span className="num">{organization._count.users} people</span>
@@ -99,6 +170,7 @@ export function WorkspaceRow({ organization }: { organization: AdminWorkspace })
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <TypeSelect organizationId={organization.id} accountType={organization.accountType} />
           {organization.status === "PENDING" && (
             <>
               <StatusButton organizationId={organization.id} status="ACTIVE" variant="primary">

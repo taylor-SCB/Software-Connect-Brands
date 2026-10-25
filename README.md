@@ -170,7 +170,10 @@ from the Labor list, Materials from Materials, Software from Software;
 Project Services, Shipping and Taxes carry no unit — and a software unit
 adds a rate and term with the total worked out on screen. A product can
 name its distributor and the people there — name, email and phone — picked
-from per-workspace lists that grow from the form itself. The list page can
+from per-workspace lists that grow from the form itself; every supplier
+picker also lists the approved Distributor, Hardware / OEM and Software
+Provider accounts on Software Connect Brands, and picking one links your
+supplier record to that account (Oct 25, 2026). The list page can
 clone, delete, and flip a product between active and inactive in place.
 Since Oct 25, 2026 it pages at 10 / 50 / 100 with a search box (every
 word matched against name, part number, description and manufacturer)
@@ -680,7 +683,8 @@ the form.
 **Settings** — two sub-panes. **My Account**: name, job title, email,
 mobile, a "Receive in-app messages" switch (stored, not yet acted on), a
 profile picture, and change password. **Company Information** with five
-tiles: **General** (address, phone, email, website, About us, Company
+tiles: **General** (the account type with Request a change, which the
+operator approves; address, phone, email, website, About us, Company
 history — all available as merge fields under the Settings tab), **Branding**
 (the original settings page: name, logo — now uploaded as a file or pasted
 as a URL, one logo shared with General — color and time zone),
@@ -697,7 +701,13 @@ whoever runs the product. Signups land in a `PENDING` state and cannot log
 in until they are approved; each row shows the owner's contact details, when
 they last logged in, and how much they have in the workspace, with Approve,
 Reject, Pause and Delete. Pause locks a workspace without touching its data,
-which is the intended answer to a customer who stops paying.
+which is the intended answer to a customer who stops paying. Since Oct 25,
+2026 each row also shows the account type (Business / Vendor, Distributor,
+Hardware / OEM, Software Provider — picked at signup) with a select to
+change it; **Create Account** sets a customer up already approved and
+emails the owner a link to set their own password (Resend invite until
+they log in); and **Account type changes** lists workspaces' requests to
+change type, with Approve and Decline.
 
 ## How multi-tenancy works
 

@@ -23,6 +23,23 @@ enum OrganizationStatus {
   REJECTED
 }
 
+// What kind of company an account is (Release 2, Oct 25, 2026). The
+// fifth type, Admin, is the platform itself: User.isSuperAdmin, not a
+// value here.
+enum AccountType {
+  BUSINESS
+  DISTRIBUTOR
+  HARDWARE_OEM
+  SOFTWARE_PROVIDER
+}
+
+enum AccountTypeRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  CANCELLED
+}
+
 // A tenant. Each small business/service provider using the white-labeled
 // CRM gets one Organization. Every other model is scoped to an
 // organizationId so tenants never see each other's data.
@@ -82,6 +99,17 @@ model Organization {
   // three of them. Empty means none.
   quoteFollowUpDays       Int[]              @default([3])
   contractFollowUpDays    Int[]              @default([3])
+  // Picked at signup or by the operator, and changed after that only by a
+  // request the operator approves. It turns no feature on or off — every
+  // account can do everything. It is what lets other workspaces find a
+  // supplier: approved Distributor, Hardware / OEM and Software Provider
+  // accounts are listed in every supplier picker
+  // (src/lib/platform-suppliers.ts); a Business / Vendor never is.
+  accountType             AccountType        @default(BUSINESS)
+  // The operator who made it from /admin → Create Account. Null when the
+  // company signed itself up.
+  createdById             String?
+  createdBy               User?              @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt               DateTime           @default(now())
   updatedAt               DateTime           @updatedAt
 
@@ -125,8 +153,37 @@ model Organization {
   photoTags             PhotoTag[]
   photoFolders          PhotoFolder[]
   photoGrants           PhotoGrant[]
+  accountTypeRequests   AccountTypeRequest[]
+  // Other workspaces' supplier records that point at this account.
+  platformSupplierLinks Distributor[]        @relation("PlatformSupplier")
 
   @@index([status])
+  @@index([accountType, status])
+}
+
+// "We're a Distributor now" — a workspace asking the operator to change
+// its account type. At most one is open per workspace at a time: openFor
+// holds the organizationId while the request is PENDING and is cleared
+// when it is decided or cancelled, and it is unique, so two clicks or two
+// tabs cannot leave two open requests behind.
+model AccountTypeRequest {
+  id             String                   @id @default(cuid())
+  organizationId String
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedById  String?
+  requestedBy    User?                    @relation("AccountTypeRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  fromType       AccountType
+  toType         AccountType
+  note           String                   @default("")
+  status         AccountTypeRequestStatus @default(PENDING)
+  openFor        String?                  @unique
+  decidedAt      DateTime?
+  decidedById    String?
+  decidedBy      User?                    @relation("AccountTypeDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime                 @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([status, createdAt])
 }
 
 enum Role {
@@ -187,6 +244,9 @@ model User {
   photoLinksMade        ProjectPhotoLink[]     @relation("PhotoLinkCreatedBy")
   photoFoldersMade      PhotoFolder[]          @relation("PhotoFolderCreatedBy")
   photoGrantsMade       PhotoGrant[]           @relation("PhotoGrantCreatedBy")
+  organizationsCreated  Organization[]         @relation("OrganizationCreator")
+  accountTypeRequests   AccountTypeRequest[]   @relation("AccountTypeRequester")
+  accountTypeDecisions  AccountTypeRequest[]   @relation("AccountTypeDecider")
 
   @@index([organizationId])
 }
@@ -1166,6 +1226,16 @@ model Distributor {
   // owed to them lands on one record rather than two.
   companyId            String?      @unique
   company              Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  // The account on Software Connect Brands this supplier is (Release 2):
+  // set when it was picked from "On Software Connect Brands" in a
+  // supplier picker. One supplier record per account per workspace.
+  platformOrganizationId String?
+  platformOrganization   Organization? @relation("PlatformSupplier", fields: [platformOrganizationId], references: [id], onDelete: SetNull)
+  // How the account read when it was linked ("ADI Global — Distributor ·
+  // Omaha, NE") and when. An account's name is its own to change, so a
+  // link made under a name it later dropped can still be found.
+  platformLinkedAs       String?
+  platformLinkedAt       DateTime?
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 
@@ -1175,7 +1245,9 @@ model Distributor {
   importIssues     RatesheetImportIssue[]
 
   @@unique([organizationId, name])
+  @@unique([organizationId, platformOrganizationId])
   @@index([organizationId])
+  @@index([platformOrganizationId])
 }
 
 // A person at a distributor. A product can point at several of them (the

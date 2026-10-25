@@ -8,6 +8,8 @@ import { requireSession } from "@/lib/session";
 import { parseForm, optionalText, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
 import { linkDistributorCompany } from "@/lib/distributors";
+import { linkPlatformSupplier } from "@/lib/platform-suppliers";
+import { PLATFORM_SUPPLIER_PREFIX } from "@/lib/account-types";
 import {
   LINE_ITEM_TAGS,
   TAG_LABELS,
@@ -195,6 +197,12 @@ async function resolveProductInput(
     // Distributor record leaves the business invisible to the CRM side.
     const linked = await linkDistributorCompany(organizationId, name);
     if (!linked) return { ok: false, error: "Type the distributor's name" };
+    distributorId = linked.distributorId;
+  } else if (input.distributorId?.startsWith(PLATFORM_SUPPLIER_PREFIX)) {
+    // Picked from "On Software Connect Brands": this workspace's own
+    // supplier for that account, made or found and linked to it.
+    const linked = await linkPlatformSupplier(organizationId, input.distributorId.slice(PLATFORM_SUPPLIER_PREFIX.length));
+    if (!linked.ok) return { ok: false, error: linked.error };
     distributorId = linked.distributorId;
   } else if (input.distributorId) {
     const distributor = await prisma.distributor.findFirst({

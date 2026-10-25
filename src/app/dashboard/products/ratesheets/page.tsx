@@ -11,6 +11,7 @@ import { LinkRatesheetButton } from "../link-ratesheet-button";
 import { RatesheetsBoard, type BoardSheet, type BoardInvite, type BoardFile } from "./ratesheets-board";
 import { uploadLinkedRatesheet } from "./actions";
 import { loadRatesheetSuppliers } from "../lookups";
+import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
 import { priceListFileKind } from "@/lib/price-list-file";
 
 export default async function RatesheetsPage({
@@ -27,7 +28,7 @@ export default async function RatesheetsPage({
   // the per-row state (which depends on the sheet's expiry and the
   // invite's own window) can't disagree. Same "every row" trade-off as the
   // other list pages; revisit with pagination.
-  const [organization, ratesheets, invites, files, suppliers] = await Promise.all([
+  const [organization, ratesheets, invites, files, suppliers, platformSuppliers] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       where: { id: organizationId },
       select: { name: true },
@@ -48,6 +49,7 @@ export default async function RatesheetsPage({
       include: { distributor: { select: { name: true } } },
     }),
     loadRatesheetSuppliers(organizationId),
+    loadPlatformSuppliers(organizationId),
   ]);
 
   const perSheet = new Map<string, { approved: number; sent: number }>();
@@ -110,7 +112,11 @@ export default async function RatesheetsPage({
         subtitle="Price lists you publish to partners, and the ones you've linked in."
         actions={
           <>
-            <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} suppliers={suppliers} />
+            <LinkRatesheetButton
+              uploadAction={uploadLinkedRatesheet}
+              suppliers={suppliers}
+              platformSuppliers={platformSuppliers}
+            />
             <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
               <IconPlus size={14} />
               Create Ratesheet
@@ -124,6 +130,7 @@ export default async function RatesheetsPage({
       <RatesheetsBoard
         organizationName={organization.name}
         suppliers={suppliers}
+        platformSuppliers={platformSuppliers}
         sheets={boardSheets}
         invites={boardInvites}
         files={boardFiles}

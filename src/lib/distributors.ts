@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ensureIndustryOptions, type IndustryPickList } from "@/lib/industries";
 import { DISTRIBUTOR_COMPANY_TYPE } from "@/lib/distributor-type";
+import { stillListed } from "@/lib/account-types";
 
 export { DISTRIBUTOR_COMPANY_TYPE } from "@/lib/distributor-type";
 
@@ -61,10 +62,17 @@ export async function distributorTypeName(organizationId: string): Promise<strin
 export async function loadDistributorCompanies(
   organizationId: string,
   keepIds: string[] = [],
-): Promise<{ id: string; name: string; stillADistributor: boolean }[]> {
+): Promise<{ id: string; name: string; stillADistributor: boolean; onPlatform: boolean }[]> {
   await backfillDistributorCompanies(organizationId);
   const typeName = await distributorTypeName(organizationId);
 
+  // onPlatform: its supplier record is linked to an account on Software
+  // Connect Brands.
+  const select = {
+    id: true,
+    name: true,
+    distributor: { select: { platformOrganization: { select: { status: true, accountType: true } } } },
+  } as const;
   const listed = await prisma.company.findMany({
     where: {
       organizationId,
@@ -73,7 +81,7 @@ export async function loadDistributorCompanies(
     },
     orderBy: [{ favorite: "desc" }, { name: "asc" }],
     take: 300,
-    select: { id: true, name: true },
+    select,
   });
 
   const listedIds = new Set(listed.map((company) => company.id));
@@ -81,14 +89,16 @@ export async function loadDistributorCompanies(
   const kept = missing.length
     ? await prisma.company.findMany({
         where: { id: { in: missing }, organizationId },
-        select: { id: true, name: true },
+        select,
       })
     : [];
 
-  return [
-    ...listed.map((company) => ({ ...company, stillADistributor: true })),
-    ...kept.map((company) => ({ ...company, stillADistributor: false })),
-  ];
+  const option = ({ distributor, ...company }: (typeof listed)[number], stillADistributor: boolean) => ({
+    ...company,
+    stillADistributor,
+    onPlatform: stillListed(distributor?.platformOrganization),
+  });
+  return [...listed.map((company) => option(company, true)), ...kept.map((company) => option(company, false))];
 }
 
 // Distributors added from the Products page before this existed have no
@@ -124,6 +134,39 @@ export async function linkDistributorCompany(
   // does not carry — an orphan type renders under "Other" and would be
   // invisible to the supplier picker.
   const typeName = await ensureDistributorTypeName(organizationId);
+
+  // A supplier of this name that already has its company is that pair,
+  // untouched. Searching companies first could find an older same-named
+  // one (a customer renamed to match, say), tag it a Distributor and move
+  // this supplier's bridge onto it — after which its purchase orders go
+  // to the wrong company.
+  // Its company gets the Distributor type back if someone took it off, as
+  // a company found by name always has, or the supplier stays out of
+  // every quote's supplier list.
+  const bridged = await prisma.$queryRaw<
+    { id: string; companyId: string; companyName: string; companyTypes: string[]; industries: string[] }[]
+  >`
+    SELECT d."id", d."companyId", c."name" AS "companyName", c."companyTypes", c."industries"
+      FROM "Distributor" d JOIN "Company" c ON c."id" = d."companyId"
+     WHERE d."organizationId" = ${organizationId}
+       AND lower(d."name") = lower(${name})
+     ORDER BY d."createdAt" ASC
+     LIMIT 1`;
+  if (bridged.length > 0) {
+    const pair = bridged[0];
+    if (!pair.companyTypes.some((type) => type.toLowerCase() === typeName.toLowerCase())) {
+      await prisma.company.update({
+        where: { id: pair.companyId },
+        data: {
+          companyTypes: [...pair.companyTypes, typeName],
+          industries: pair.industries.some((i) => i.toLowerCase() === SERVICE_PROVIDER_INDUSTRY.toLowerCase())
+            ? pair.industries
+            : [...pair.industries, SERVICE_PROVIDER_INDUSTRY],
+        },
+      });
+    }
+    return { companyId: pair.companyId, distributorId: pair.id, name: pair.companyName };
+  }
 
   // lower() rather than Prisma's insensitive equals, which compiles to
   // ILIKE and would read % and _ in a company name as wildcards.
@@ -215,4 +258,58 @@ export async function linkDistributorCompany(
   const distributor = { id: distributorId };
 
   return { companyId, distributorId: distributor.id, name: companyName };
+}
+
+// A supplier record with no company of its own gets one: the company of
+// its name that no other supplier has claimed, tagged Distributor, or a
+// new one. Unlike linkDistributorCompany this never hands back a
+// different supplier's pair — it is for one particular record, such as a
+// supplier linked to Software Connect Brands whose company was merged
+// away. Returns the company id, or null when the record isn't there.
+export async function bridgeDistributor(organizationId: string, distributorId: string): Promise<string | null> {
+  const row = await prisma.distributor.findFirst({
+    where: { id: distributorId, organizationId },
+    select: { name: true, companyId: true },
+  });
+  if (!row) return null;
+  if (row.companyId) return row.companyId;
+
+  const typeName = await ensureDistributorTypeName(organizationId);
+  const free = await prisma.$queryRaw<{ id: string; companyTypes: string[]; industries: string[] }[]>`
+    SELECT c."id", c."companyTypes", c."industries" FROM "Company" c
+     WHERE c."organizationId" = ${organizationId}
+       AND lower(c."name") = lower(${row.name})
+       AND NOT EXISTS (SELECT 1 FROM "Distributor" d WHERE d."companyId" = c."id")
+     ORDER BY c."createdAt" ASC
+     LIMIT 1`;
+  let companyId: string;
+  if (free[0]) {
+    companyId = free[0].id;
+    if (!free[0].companyTypes.some((type) => type.toLowerCase() === typeName.toLowerCase())) {
+      await prisma.company.update({
+        where: { id: companyId },
+        data: {
+          companyTypes: [...free[0].companyTypes, typeName],
+          industries: free[0].industries.some((i) => i.toLowerCase() === SERVICE_PROVIDER_INDUSTRY.toLowerCase())
+            ? free[0].industries
+            : [...free[0].industries, SERVICE_PROVIDER_INDUSTRY],
+        },
+      });
+    }
+  } else {
+    companyId = (
+      await prisma.company.create({
+        data: { organizationId, name: row.name, industries: [SERVICE_PROVIDER_INDUSTRY], companyTypes: [typeName] },
+        select: { id: true },
+      })
+    ).id;
+  }
+  try {
+    await prisma.distributor.updateMany({ where: { id: distributorId, companyId: null }, data: { companyId } });
+  } catch (error) {
+    // Claimed by another supplier a moment ago.
+    if ((error as { code?: string })?.code !== "P2002") throw error;
+  }
+  const bridged = await prisma.distributor.findUnique({ where: { id: distributorId }, select: { companyId: true } });
+  return bridged?.companyId ?? null;
 }
