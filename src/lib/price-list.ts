@@ -14,14 +14,13 @@ import { parseTag, parseUnit } from "@/lib/csv";
 import type { LineItemTagValue, UnitOfMeasureValue } from "@/lib/constants";
 import type { SheetTable } from "@/lib/price-list-file";
 
-// New products one sheet can add — the old Import CSV's limit. Every row
-// is still checked against the catalog, so a 20,000-row manufacturer
-// list updates every product already carried even though it can't add
-// all of them. Kept here because the Products list and the quote's
-// product picker still load every product (Oct 21, 2026: 8,600 products
-// made the Products page 44 MB and 24 seconds); raise it once they page.
-export const MAX_NEW_PRODUCTS = 2000;
+// Rows read from one sheet, and so the most new products it can add. It
+// was 2,000 new products while the Products list and the quote's product
+// picker loaded every product (Oct 21, 2026: 8,600 made the Products page
+// 44 MB and 24 seconds); since they page and search (Oct 25, 2026), a
+// distributor's whole catalog can come in.
 const MAX_ROWS_READ = 25_000;
+export const MAX_NEW_PRODUCTS = MAX_ROWS_READ;
 export const MAX_RATESHEET_BYTES = 4 * 1024 * 1024;
 // Money is cents in a Postgres integer; anything past this is a typo.
 export const MAX_CENTS = 2_000_000_000;

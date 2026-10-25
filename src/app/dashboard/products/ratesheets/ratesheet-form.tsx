@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useState } from "react";
 import { Field, FormError, FormSuccess, Card, CardHeader, TagBadge } from "@/components/ui";
 import { IconSearch } from "@/components/icons";
 import { formatCents } from "@/lib/format";
@@ -11,6 +11,7 @@ import {
   type LineItemTagValue,
 } from "@/lib/constants";
 import type { ActionState } from "@/lib/forms";
+import { useSearch } from "@/lib/use-search";
 
 export type PickerProduct = {
   id: string;
@@ -42,14 +43,22 @@ const VISIBILITY_NOTES: Partial<Record<RatesheetVisibilityValue, string>> = {
   PARTNER_SPECIFIC: "Nothing is emailed yet: you get a link to copy and send yourself.",
 };
 
+// Searching the catalog, 50 matches at a time, instead of being handed
+// all of it: a distributor's sheet can bring in tens of thousands.
+const SHOWN = 50;
+
 export function RatesheetForm({
   action,
-  products,
+  productTotal,
+  selectedProducts = [],
   defaults,
   submitLabel,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
-  products: PickerProduct[];
+  // How many products the workspace has, for "3 of 1,240 selected".
+  productTotal: number;
+  // The products already on the sheet, so they show ticked by name.
+  selectedProducts?: PickerProduct[];
   defaults?: RatesheetFormDefaults;
   submitLabel: string;
 }) {
@@ -61,18 +70,28 @@ export function RatesheetForm({
   );
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(defaults?.productIds ?? []));
+  const { results, loading } = useSearch<PickerProduct>(
+    `/dashboard/products/search?take=${SHOWN}&q=${encodeURIComponent(query.trim())}`,
+  );
+  // Every product seen so far, so a ticked one keeps its name and price
+  // after the search moves on.
+  const [known, setKnown] = useState<Map<string, PickerProduct>>(
+    () => new Map(selectedProducts.map((product) => [product.id, product])),
+  );
+  function remember(product: PickerProduct) {
+    if (!known.has(product.id)) setKnown((current) => new Map(current).set(product.id, product));
+  }
+  // With no search, what is ticked comes first, then the catalog from the
+  // top; with a search, just what matches.
+  const ticked = query.trim()
+    ? []
+    : [...selected].map((id) => known.get(id)).filter((product): product is PickerProduct => Boolean(product));
+  const filtered = [...ticked, ...results.filter((product) => !ticked.some((row) => row.id === product.id))];
+  const allShown = !query.trim() && productTotal <= results.length;
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return products;
-    return products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(needle) ||
-        (product.sku ?? "").toLowerCase().includes(needle),
-    );
-  }, [products, query]);
-
-  function toggle(id: string) {
+  function toggle(product: PickerProduct) {
+    remember(product);
+    const id = product.id;
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -82,6 +101,13 @@ export function RatesheetForm({
   }
 
   function selectAllVisible(on: boolean) {
+    if (on) {
+      setKnown((current) => {
+        const next = new Map(current);
+        for (const product of filtered) next.set(product.id, product);
+        return next;
+      });
+    }
     setSelected((current) => {
       const next = new Set(current);
       for (const product of filtered) {
@@ -194,7 +220,7 @@ export function RatesheetForm({
         <Card lit className="lg:col-span-2">
           <CardHeader
             title="Products on this sheet"
-            subtitle={`${selected.size} of ${products.length} selected · inactive products stay hidden from partners`}
+            subtitle={`${selected.size.toLocaleString()} of ${productTotal.toLocaleString()} selected · inactive products stay hidden from partners`}
           />
           <div className="space-y-3 p-4">
             <div className="relative">
@@ -206,26 +232,27 @@ export function RatesheetForm({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search products…"
+                placeholder="Search name or part #…"
                 aria-label="Search products"
                 className="input input-sm pl-8"
               />
             </div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => selectAllVisible(true)} className="btn btn-ghost btn-sm">
-                Select all{query ? " shown" : ""}
+              {/* Waits for the search, or it would tick nothing. */}
+              <button type="button" onClick={() => selectAllVisible(true)} disabled={loading} className="btn btn-ghost btn-sm">
+                Select all{allShown ? "" : " shown"}
               </button>
               <button type="button" onClick={() => selectAllVisible(false)} className="btn btn-ghost btn-sm">
-                Clear{query ? " shown" : ""}
+                Clear{allShown ? "" : " shown"}
               </button>
             </div>
 
-            {products.length === 0 ? (
+            {productTotal === 0 ? (
               <p className="faint py-6 text-center text-xs">
                 No products in your catalog yet. Add some first, then build the sheet.
               </p>
             ) : filtered.length === 0 ? (
-              <p className="faint py-6 text-center text-xs">Nothing matches that search.</p>
+              <p className="faint py-6 text-center text-xs">{loading ? "Searching…" : "Nothing matches that search."}</p>
             ) : (
               <ul className="max-h-[28rem] space-y-1 overflow-y-auto pr-1">
                 {filtered.map((product) => {
@@ -242,7 +269,7 @@ export function RatesheetForm({
                         <input
                           type="checkbox"
                           checked={on}
-                          onChange={() => toggle(product.id)}
+                          onChange={() => toggle(product)}
                           aria-label={`Include ${product.name}`}
                           className="h-4 w-4 shrink-0 accent-[var(--brand)]"
                         />
@@ -262,6 +289,11 @@ export function RatesheetForm({
                   );
                 })}
               </ul>
+            )}
+            {!allShown && results.length >= SHOWN && (
+              <p className="faint text-center text-xs">
+                Showing the first {SHOWN}. Search by name or part number to find the rest.
+              </p>
             )}
           </div>
         </Card>

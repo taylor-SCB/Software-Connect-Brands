@@ -18,25 +18,51 @@ import { toggleProductActive } from "./actions";
 import { loadRatesheetSuppliers } from "./lookups";
 import { marginPercent, markupPercent } from "@/lib/price-list";
 import { uploadLinkedRatesheet } from "./ratesheets/actions";
+import { pageWindow } from "@/lib/list-params";
+import { getProductFilterOptions, productWhere } from "@/lib/product-list";
+import { parseProductListParams, productListHref } from "@/lib/product-list-params";
+import { Pagination } from "@/components/pagination";
+import { ProductFilters } from "./product-filters";
 
-export default async function ProductsPage() {
+const BASE_PATH = "/dashboard/products";
+
+// One page of products at a time, searched and filtered in the database:
+// the whole catalog on one page was 44 MB and 24 seconds at 8,600
+// products (Oct 21, 2026), and a distributor's full catalog is more.
+export default async function ProductsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { organizationId } = await requireSession();
+  const params = parseProductListParams(await searchParams);
+  const where = productWhere(organizationId, params);
 
-  const [products, suppliers] = await Promise.all([
-    prisma.product.findMany({
-      where: { organizationId },
-      orderBy: [{ active: "desc" }, { name: "asc" }],
-      include: { manufacturer: { select: { name: true } } },
-    }),
+  const [total, unfiltered, options, suppliers] = await Promise.all([
+    prisma.product.count({ where }),
+    prisma.product.count({ where: { organizationId } }),
+    getProductFilterOptions(organizationId, params),
     loadRatesheetSuppliers(organizationId),
   ]);
+  const window = pageWindow(total, params.per, params.page);
+  const products = await prisma.product.findMany({
+    where,
+    orderBy: [{ active: "desc" }, { name: "asc" }, { id: "asc" }],
+    skip: window.skip,
+    take: params.per,
+    include: { manufacturer: { select: { name: true } } },
+  });
 
   return (
     <div>
       <PageHeader
         eyebrow="Catalog"
         title="Products"
-        subtitle="The items and services you pull into quotes."
+        subtitle={
+          unfiltered === 0
+            ? "The items and services you pull into quotes."
+            : `${total.toLocaleString()} ${total === 1 ? "product" : "products"}${params.q ? ` matching “${params.q}”` : ""}`
+        }
         actions={
           <>
             <LinkRatesheetButton uploadAction={uploadLinkedRatesheet} suppliers={suppliers} />
@@ -54,8 +80,21 @@ export default async function ProductsPage() {
 
       <ProductsSubnav current="products" />
 
+      {unfiltered > 0 && <ProductFilters basePath={BASE_PATH} params={params} options={options} />}
+
       <Card lit>
-        {products.length === 0 ? (
+        {unfiltered > 0 && total === 0 ? (
+          <EmptyState
+            icon={<IconBox size={20} />}
+            title="No products match"
+            body="Nothing in your catalog fits this search and these filters. Clear one to see more."
+            action={
+              <Link href={BASE_PATH} className="btn btn-ghost btn-sm">
+                Clear search and filters
+              </Link>
+            }
+          />
+        ) : products.length === 0 ? (
           <EmptyState
             icon={<IconBox size={20} />}
             title="No products yet"
@@ -164,6 +203,17 @@ export default async function ProductsPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {total > 0 && (
+          <Pagination
+            total={total}
+            from={window.from}
+            to={window.to}
+            page={window.current}
+            pages={window.pages}
+            hrefFor={(page) => productListHref(BASE_PATH, params, { page })}
+            noun="products"
+          />
         )}
       </Card>
     </div>

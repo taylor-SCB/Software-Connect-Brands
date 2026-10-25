@@ -7,11 +7,8 @@ import { createRatesheet } from "../actions";
 export default async function NewRatesheetPage() {
   const { organizationId } = await requireSession();
 
-  const products = await prisma.product.findMany({
-    where: { organizationId },
-    orderBy: [{ active: "desc" }, { name: "asc" }],
-    select: { id: true, name: true, sku: true, unitPriceCents: true, defaultTag: true, active: true },
-  });
+  // The picker searches the catalog itself; only the count is needed here.
+  const productTotal = await prisma.product.count({ where: { organizationId } });
 
   return (
     <div className="max-w-6xl">
@@ -21,7 +18,7 @@ export default async function NewRatesheetPage() {
         title="Create Ratesheet"
         subtitle="Pick the products, name the sheet, and decide who can use it."
       />
-      <RatesheetForm action={createRatesheet} products={products} submitLabel="Create ratesheet" />
+      <RatesheetForm action={createRatesheet} productTotal={productTotal} submitLabel="Create ratesheet" />
     </div>
   );
 }

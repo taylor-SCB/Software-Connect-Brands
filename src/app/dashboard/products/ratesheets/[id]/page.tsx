@@ -26,19 +26,23 @@ export default async function EditRatesheetPage({
   const timeZone = await getTimeZone();
   const now = new Date();
 
-  const [ratesheet, products] = await Promise.all([
+  // Only the products on this sheet are loaded, for the picker to show
+  // ticked; it searches the rest of the catalog itself.
+  const [ratesheet, productTotal] = await Promise.all([
     prisma.ratesheet.findFirst({
       where: { id, organizationId },
       include: {
-        items: { select: { productId: true }, orderBy: { position: "asc" } },
+        items: {
+          select: {
+            productId: true,
+            product: { select: { id: true, name: true, sku: true, unitPriceCents: true, defaultTag: true, active: true } },
+          },
+          orderBy: { position: "asc" },
+        },
         invites: { orderBy: { sentAt: "desc" } },
       },
     }),
-    prisma.product.findMany({
-      where: { organizationId },
-      orderBy: [{ active: "desc" }, { name: "asc" }],
-      select: { id: true, name: true, sku: true, unitPriceCents: true, defaultTag: true, active: true },
-    }),
+    prisma.product.count({ where: { organizationId } }),
   ]);
   if (!ratesheet) notFound();
 
@@ -158,7 +162,8 @@ export default async function EditRatesheetPage({
 
       <RatesheetForm
         action={updateRatesheet}
-        products={products}
+        productTotal={productTotal}
+        selectedProducts={ratesheet.items.map((item) => item.product)}
         submitLabel="Save changes"
         defaults={{
           id: ratesheet.id,

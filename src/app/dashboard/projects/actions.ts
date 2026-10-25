@@ -546,6 +546,15 @@ export async function todayInZone() {
 
 /* --------------------------- Ordering materials --------------------------- */
 
+// What a row is ordered at: the cost captured when the contract was made,
+// or the product's catalog cost now when that is $0 or missing — which is
+// what the old Import CSV left on every product it brought in, so a job
+// signed then would otherwise order its materials at nothing (Taylor,
+// Oct 25, 2026).
+function orderUnitCost(snapshotCents: number | null, catalogCents: number | null | undefined) {
+  return snapshotCents && snapshotCents > 0 ? snapshotCents : catalogCents ?? 0;
+}
+
 // The suppliers behind the materials on a job, from the distributor on
 // each product, with what has not been ordered from them yet.
 export async function materialsToOrder(projectId: string) {
@@ -573,7 +582,7 @@ export async function materialsToOrder(projectId: string) {
         select: {
           id: true,
           product: {
-            select: { id: true, name: true, distributor: { select: { id: true, name: true, companyId: true } } },
+            select: { id: true, name: true, costCents: true, distributor: { select: { id: true, name: true, companyId: true } } },
           },
         },
       },
@@ -605,7 +614,7 @@ export async function materialsToOrder(projectId: string) {
       id: line.id,
       name: line.name,
       quantity: line.quantity,
-      costCents: Math.round((line.unitCostCents ?? 0) * line.quantity),
+      costCents: Math.round(orderUnitCost(line.unitCostCents, line.quoteLineItem?.product?.costCents) * line.quantity),
     });
     bySupplier.set(distributor.id, entry);
   }
@@ -672,6 +681,7 @@ export async function orderFromSupplier(
       serviceType: true,
       scopeId: true,
       quoteLineItemId: true,
+      quoteLineItem: { select: { product: { select: { costCents: true } } } },
     },
   });
 
@@ -764,18 +774,21 @@ export async function orderFromSupplier(
 
     // Priced at what the material costs, which is what a purchase order
     // is: the sell price is the customer's business, not the supplier's.
-    const lineItems = lines.map((line, position) => ({
-      name: line.name,
-      description: line.description,
-      quantity: line.quantity,
-      unitPriceCents: line.unitCostCents ?? 0,
-      tag: line.tag,
-      serviceType: line.serviceType,
-      unitCostCents: line.unitCostCents,
-      scopeId: line.scopeId,
-      quoteLineItemId: line.quoteLineItemId,
-      position,
-    }));
+    const lineItems = lines.map((line, position) => {
+      const unitCostCents = orderUnitCost(line.unitCostCents, line.quoteLineItem?.product?.costCents);
+      return {
+        name: line.name,
+        description: line.description,
+        quantity: line.quantity,
+        unitPriceCents: unitCostCents,
+        tag: line.tag,
+        serviceType: line.serviceType,
+        unitCostCents,
+        scopeId: line.scopeId,
+        quoteLineItemId: line.quoteLineItemId,
+        position,
+      };
+    });
     const totalCents = contractTotalCents(lineItems);
 
     const contract = await tx.contract.create({

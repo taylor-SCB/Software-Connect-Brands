@@ -172,6 +172,13 @@ adds a rate and term with the total worked out on screen. A product can
 name its distributor and the people there — name, email and phone — picked
 from per-workspace lists that grow from the form itself. The list page can
 clone, delete, and flip a product between active and inactive in place.
+Since Oct 25, 2026 it pages at 10 / 50 / 100 with a search box (every
+word matched against name, part number, description and manufacturer)
+and stacking Supplier, Manufacturer, Tag, Service type and Status filters,
+like Contacts; the quote's **Add from catalog** box and the Create
+Ratesheet picker search the catalog instead of loading all of it, so a
+distributor's full catalog of tens of thousands of products opens as
+fast as five (proven at 50,000 by `products-load-test.cjs`).
 **Link Ratesheet → Import Ratesheet** (Oct 21, 2026) brings in a
 distributor's, manufacturer's or software provider's price list. The
 price on their sheet is **your cost** (COGS) and their **MSRP** is kept
@@ -404,7 +411,9 @@ to copy, and the screen says so.
 
 *Who I owe.* Materials on the job whose product carries a distributor can
 be turned into that supplier's **purchase order at what they cost you**,
-in one tap, and the supplier gets a company record tagged *Distributor*
+in one tap — the cost captured when the contract was made, or the
+product's catalog cost today when that was $0 (the old Import CSV left
+$0 on everything it brought in) — and the supplier gets a company record tagged *Distributor*
 so it shows up in the CRM like anybody else. Bills are grouped by
 supplier with what is paid of what was ordered. A draft order counts as
 Committed, never Spent.
@@ -728,6 +737,8 @@ src/app/dashboard/products/ratesheets
 src/lib/price-list.ts             Import Ratesheet's planner (columns, matching,
                                   pricing), run in the browser and on the server
 src/lib/price-list-file.ts        reads a ratesheet's Excel or CSV file
+src/lib/product-list*.ts          the Products list's filters and its queries
+src/app/dashboard/products/search the catalog search behind the pickers
 src/app/q/[token]                 public quote view
 src/app/c/[token]                 public contract view + e-signature
 src/app/r/[token]                 public ratesheet view + partner approve/decline

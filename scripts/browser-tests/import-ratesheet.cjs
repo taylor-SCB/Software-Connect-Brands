@@ -512,7 +512,7 @@ async function product(org, sku) {
   assert.deepEqual([declined[2].fileName, declined[2].sizeBytes], ["ir-audit-huge.csv", 0]);
   assert.match(declined[2].note, /too big to attach/);
 
-  log("audit fixes: a 6,600-row sheet still finds the 600 products you carry past row 6,000; new ones stop at 2,000");
+  log("audit fixes: a 6,600-row sheet still finds the 600 products you carry past row 6,000, and all 6,000 new ones come in");
   await sql(
     `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag",active,"updatedAt")
      SELECT 'prd_ir_xl_' || g, $1, 'XL item ' || g, '', 'XL-' || g, 3000, 2000, 'MATERIALS', true, now()
@@ -529,8 +529,10 @@ async function product(org, sku) {
   await page.locator("#ratesheet-supplier").selectOption("dst_ir_adi");
   await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"), null, { timeout: 60_000 });
   assert.match(await page.getByTestId("ratesheet-filter-update").innerText(), /You carry 600/);
-  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /6,600 products on the sheet · 2,600 ticked/);
-  assert.ok(await page.getByText("4,000 new products past the 2,000 limit left out").isVisible());
+  // Until Oct 25, 2026 new products stopped at 2,000 a sheet, because the
+  // Products list loaded every product; it pages now.
+  assert.match(await page.getByTestId("ratesheet-summary").innerText(), /6,600 products on the sheet · 6,600 ticked/);
+  assert.equal(await page.getByText(/new products past the .* limit left out/).count(), 0);
   await page.getByTestId("ratesheet-import").click();
   await page.getByTestId("ratesheet-done").waitFor({ timeout: 120_000 });
   const xlCount = (await sql(
@@ -539,10 +541,10 @@ async function product(org, sku) {
        FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'XL-%'`,
     [org],
   )).rows[0];
-  assert.deepEqual(xlCount, { n: 2600, skus: 2600, updated: 600 }, "600 updated, 2,000 new, no duplicates");
+  assert.deepEqual(xlCount, { n: 6600, skus: 6600, updated: 600 }, "600 updated, 6,000 new, no duplicates");
   await page.getByRole("button", { name: "Done" }).click();
-  // Back to a catalog a person would type by hand: the Products list
-  // still loads every product (a known gap), and the steps below open it.
+  // Back to a catalog a person would type by hand, so the steps below
+  // read the products they expect on the first page.
   await sql(`DELETE FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'XL-%'`, [org]);
 
   log("audit fixes: the product form (service type kept, COGS retyped under a markup, MSRP kept on a refusal, a margin it can't use)");
