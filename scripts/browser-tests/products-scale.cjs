@@ -12,6 +12,13 @@
  * materials pricing a row whose contract captured $0 at the catalog cost
  * now, and leaving a real captured cost alone; the phone layout.
  *
+ * Oct 25, 2026 audit fixes (their own steps at the end): Enter pressed
+ * before the search answers adds what was typed, not the last search's
+ * first row; an arrow key before the list loads; the catalog list drawn
+ * above the Payment table and taking taps there; a backslash in a search;
+ * a delete landing back on the same filtered page; Create Ratesheet's
+ * Select all reaching the whole catalog, Show 50 more, Clear matching.
+ *
  * Runs against a built app and a local Postgres that has had `prisma
  * migrate deploy` run. Signs up its own workspace and deletes it at the
  * end. Never point it at the live database.
@@ -260,8 +267,8 @@ async function signAs(browser, token, name) {
   log("Create Ratesheet: the picker searches, keeps a tick through a search, and saves it");
   await page.goto(`${BASE}/dashboard/products/ratesheets/new`);
   await page.getByText("0 of 130 selected").waitFor();
-  await page.getByRole("button", { name: "Select all shown" }).waitFor();
-  await page.getByText("Showing the first 50").waitFor();
+  await page.getByRole("button", { name: "Select all 130" }).waitFor();
+  await page.getByRole("button", { name: "Show 50 more" }).waitFor();
   await page.getByLabel("Search products").fill("copper");
   await page.getByLabel("Include Copper pipe 3/4in").check();
   await page.getByLabel("Search products").fill("cat6");
@@ -360,6 +367,86 @@ async function signAs(browser, token, name) {
   const box = await mobile.getByLabel("Add product from catalog").boundingBox();
   assert.ok(box && box.width > 300, `catalog box ${box?.width}px wide`);
   await phone.close();
+
+  log("audit fixes: Enter pressed before the search answers adds what was typed, not the last search's first row");
+  await page.goto(`${BASE}/dashboard/quotes/quo_ps`);
+  // The scanner's search answers slowly; the empty box's list is on screen.
+  await page.route(/\/dashboard\/products\/search\?active=1&q=HID-5355$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.continue();
+  });
+  await catalog.focus();
+  await results.getByRole("option").first().waitFor();
+  const linesBefore = await page.locator("[aria-label$=' product'][aria-label^='Line ']").count();
+  await catalog.fill("HID-5355");
+  await catalog.press("Enter");
+  const scanned = page.getByLabel(`Line ${linesBefore + 1} product`, { exact: true });
+  await scanned.waitFor();
+  assert.equal(await scanned.inputValue(), "Prox card reader");
+  await page.unroute(/\/dashboard\/products\/search/);
+
+  log("audit fixes: an arrow key pressed before the list loads still leaves Enter working");
+  await page.goto(`${BASE}/dashboard/quotes/quo_ps`);
+  await page.route(/\/dashboard\/products\/search\?active=1&q=$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
+  await catalog.focus();
+  await catalog.press("ArrowDown");
+  await results.getByRole("option").first().waitFor();
+  assert.equal(await results.locator("[aria-selected=true]").count(), 1, "a row is highlighted");
+  await page.unroute(/\/dashboard\/products\/search/);
+  await page.keyboard.press("Escape");
+
+  log("audit fixes: the catalog list is drawn above the Payment table and takes taps there");
+  await page.goto(`${BASE}/dashboard/quotes/quo_ps`);
+  await catalog.focus();
+  await results.getByRole("option").nth(10).waitFor();
+  const lowest = await results.evaluate((list) => {
+    const box = list.getBoundingClientRect();
+    const rows = [...list.querySelectorAll("[role=option]")].filter((row) => row.getBoundingClientRect().bottom <= box.bottom);
+    const row = rows[rows.length - 1];
+    const rect = row.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return { name: row.querySelector("p")?.textContent, onTop: Boolean(hit && hit.closest("[data-testid=catalog-results]")) };
+  });
+  assert.equal(lowest.onTop, true, "the list's lowest visible row is not covered");
+  const linesNow = await page.locator("[aria-label$=' product'][aria-label^='Line ']").count();
+  await results.getByRole("option", { name: lowest.name }).click();
+  assert.equal(await page.getByLabel(`Line ${linesNow + 1} product`, { exact: true }).inputValue(), lowest.name);
+
+  log("audit fixes: a backslash in a search is just a character, not an error");
+  const status = await page.evaluate(async () => (await fetch("/dashboard/products/search?active=1&q=%5C")).status);
+  assert.equal(status, 200);
+  await catalog.fill("CAT\\");
+  await results.getByRole("option", { name: /Cat6 cable/ }).waitFor();
+
+  log("audit fixes: deleting a product from a filtered page lands back on that page");
+  await page.goto(`${BASE}/dashboard/products?q=widget&per=10&page=2`);
+  await page.waitForFunction(() => document.querySelector("[data-testid=page-summary]")?.textContent?.startsWith("Showing 11–20 of 120"));
+  await page.getByRole("button", { name: "Delete Widget 015" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("[data-testid=page-summary]")?.textContent?.startsWith("Showing 11–20 of 119"));
+  const landed = new URL(page.url());
+  assert.deepEqual([landed.pathname, landed.searchParams.get("q"), landed.searchParams.get("per"), landed.searchParams.get("page")], ["/dashboard/products", "widget", "10", "2"]);
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Product" WHERE id='prd_ps_15'`)).rows[0].n, 0);
+
+  log("audit fixes: Create Ratesheet's Select all reaches the whole catalog; Show 50 more; Clear matching");
+  await page.goto(`${BASE}/dashboard/products/ratesheets/new`);
+  const total = await count("true");
+  await page.getByText(`0 of ${total} selected`).waitFor();
+  const boxes = page.locator("label[class*=cursor-pointer] input[type=checkbox]");
+  await page.getByRole("button", { name: "Show 50 more" }).click();
+  await page.waitForFunction(() => document.querySelectorAll("label[class*=cursor-pointer] input[type=checkbox]").length === 100);
+  await page.getByRole("button", { name: `Select all ${total}` }).click();
+  await page.getByText(`${total} of ${total} selected`).waitFor();
+  assert.equal(await boxes.count(), total, "with everything ticked, everything is listed");
+  await page.getByLabel("Search products").fill("cat6");
+  await page.getByLabel("Include Cat6 jack").waitFor();
+  await page.getByRole("button", { name: "Clear matching" }).click();
+  await page.getByText(`${total - 2} of ${total} selected`).waitFor();
+  await page.getByRole("button", { name: "Select all matching" }).click();
+  await page.getByText(`${total} of ${total} selected`).waitFor();
 
   await browser.close();
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);

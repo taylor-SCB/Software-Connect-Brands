@@ -6,7 +6,10 @@
  * SQL, times the pages and searches a user opens, and then brings in a
  * 25,000-row ratesheet for a new supplier through Import Ratesheet, which
  * used to stop at 2,000 new products. It fails if a page is over its
- * budget.
+ * budget. Last, an apparel-style sheet where every row has the same name
+ * and its own part number, against 8,000 products of that name: the
+ * import's name matching used to scan every same-named product for every
+ * row, which froze the preview (found by the Oct 25, 2026 audit).
  *
  * Run it against a server pointed through the slow proxy, so the times
  * are the live site's, not the local database's:
@@ -198,6 +201,41 @@ async function timedSearch(page, label, query) {
   await timed(page, "Products filtered to the new supplier", `${BASE}/dashboard/products?supplier=dst_pl_new`, row);
   const bc = await timedSearch(page, "Picker, a new part number", "BC-24999");
   assert.equal(bc.first, "Big catalog item 24999");
+
+  log("an apparel sheet: 8,000 rows all named Classic Tee, against 8,000 Classic Tees already carried");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag","distributorId",active,"updatedAt")
+     SELECT 'prd_pl_tee_' || g, $1, 'Classic Tee', '', 'CT-' || g, 1500, 900, 'MATERIALS', 'dst_pl_3', true, now()
+       FROM generate_series(1, 8000) g`,
+    [org],
+  );
+  const tees = path.join(OUT, "classic-tees.csv");
+  const teeLines = ["Style #,Product,Dealer,MSRP"];
+  for (let i = 1; i <= 8000; i += 1) teeLines.push(`NT-${i},Classic Tee,${(5 + (i % 9)).toFixed(2)},${(15 + (i % 9)).toFixed(2)}`);
+  fs.writeFileSync(tees, teeLines.join("\n") + "\n");
+  await page.goto(`${BASE}/dashboard/products`);
+  await page.getByRole("button", { name: "Link Ratesheet" }).click();
+  await page.getByRole("button", { name: /Import Ratesheet/ }).click();
+  const previewStart = Date.now();
+  await page.setInputFiles("#ratesheet-import-file", tees);
+  await page.getByTestId("ratesheet-summary").waitFor({ timeout: 60000 });
+  await page.locator("#ratesheet-supplier").selectOption("dst_pl_new");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"), null, { timeout: 120_000 });
+  await page.getByTestId("ratesheet-summary").getByText(/8,000 products on the sheet/).waitFor({ timeout: 60000 });
+  const previewSeconds = (Date.now() - previewStart) / 1000;
+  console.log(`     ${previewSeconds.toFixed(1)}s  preview of 8,000 same-named rows`);
+  assert.ok(previewSeconds < 15, `the preview took ${previewSeconds.toFixed(1)}s`);
+  const teeStart = Date.now();
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByTestId("ratesheet-done").waitFor({ timeout: 280_000 });
+  const teeSeconds = (Date.now() - teeStart) / 1000;
+  console.log(`     ${teeSeconds.toFixed(1)}s  import of 8,000 same-named rows`);
+  assert.ok(teeSeconds < 60, `the import took ${teeSeconds.toFixed(0)}s`);
+  const teeCount = (await sql(
+    `SELECT count(*)::int n FROM "Product" WHERE "organizationId"=$1 AND name='Classic Tee' AND sku LIKE 'NT-%'`,
+    [org],
+  )).rows[0].n;
+  assert.equal(teeCount, 8000, "each new style number is its own product, none merged by name");
 
   await browser.close();
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);

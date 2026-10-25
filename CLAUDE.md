@@ -405,13 +405,28 @@ queries; `products/product-filters.tsx`). `MultiSelect` in
 `list-filters.tsx` is exported and takes `searchable` (off on Contacts).
 The quote's **Add from catalog** is a search box (`quotes/[id]/
 catalog-picker.tsx`: a typed part number first, arrows and Enter, the box
-stays open for the next) and the Create Ratesheet picker searches too;
-both ask `/dashboard/products/search`, and no page loads the catalog.
+stays open for the next; Enter pressed before the search answers — a
+barcode scanner — fetches that search and adds its first match, never
+the last search's row; the Line items card sits above the cards after
+it, because every `.card` is its own layer and the list was drawn under
+the Payment table). The Create Ratesheet picker searches too, with
+**Select all N** / **Select all matching** ticking every match up to the
+2,000 a sheet holds, **Show 50 more**, and **Clear matching**; both ask
+`/dashboard/products/search` (`skip`, `all=1`), and no page loads the
+catalog. A delete on the Products list lands back on the same view
+(`returnTo`, only ever `/dashboard/products…`). `cleanSearch` turns a
+backslash into a space like % and _ (a trailing one made Postgres refuse
+the match). The import's name matching is constant-time per row
+(`buildCatalogIndex` keeps each name's products split by whether they
+carry a part number): 8,000 rows all named Classic Tee against 8,000
+carried took 17.5 s to plan, on every tick, and takes 0.15 s; "Style #"
+and SanMar's "STYLE#" read as the part number (a bare "Style" doesn't).
 `MAX_NEW_PRODUCTS` is the 25,000 rows a sheet can hold.
 `products-load-test.cjs` proves it through the slow proxy: 25,000
 products, every page under half a second and about 320 KB (was 44 MB
 and 24 s at 8,600), the picker's search in 0.12 s, a 25,000-row sheet
-imported in 9 s. **Order materials** prices a row at the catalog cost
+imported in 9 s, and the 8,000 same-named tees previewed in 2.3 s and
+imported in 4 s. **Order materials** prices a row at the catalog cost
 when its contract captured $0 (Taylor, Oct 25, 2026); a real captured
 cost is kept. The agreed next releases, in order: 2 account types +
 Admin Create Account; 3 the deeper catalog (each ratesheet a row with
@@ -744,11 +759,15 @@ anymore; remembered columns; Decline into /admin; + Add New Distributor
 with a contact and MSRP less 10%; the product form; the Margin column;
 a 3,000-row sheet, 1.5 s through slow-db-proxy; the Sept-14-style audit
 fixes of Oct 21 in their own steps; the phone layout), and from Oct 25,
-2026 `products-scale.cjs` (12: the Products list's pages, search and
+2026 `products-scale.cjs` (18: the Products list's pages, search and
 stacking filters, the quote's Add from catalog box, the Create Ratesheet
-picker, Order materials at catalog cost after a $0 capture, the phone)
-and `products-load-test.cjs` (25,000 products and a 25,000-row import,
-timed; **run it through the slow proxy**, like `import-slow-db.cjs`).
+picker, Order materials at catalog cost after a $0 capture, the phone;
+the Oct 25 audit fixes — Enter before the search answers, an early arrow
+key, the list above the Payment table, a backslash, a delete keeping the
+view, Select all / Show 50 more / Clear matching) and
+`products-load-test.cjs` (25,000 products, a 25,000-row import and an
+8,000-row same-name apparel sheet, timed; **run it through the slow
+proxy**, like `import-slow-db.cjs`).
 `overlay-readability.cjs` step 6 (the deal picker on a new quote) used
 to pass one run in three: it photographed the panel while the page was
 still fading in. It waits for the fade now (Oct 25, 2026); **a pixel

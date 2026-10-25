@@ -115,7 +115,12 @@ const SKU_ALIASES: string[][] = [
     "manufacturer part number", "manufacturer part #", "vendor part", "vendor part #", "mpn", "model", "model #",
     "model number", "model no",
   ],
-  ["sku", "sku #", "part", "part #", "part number", "part no", "part num", "catalog #", "catalog number", "cat #", "product code"],
+  // Apparel lists key on the style number ("Style #", SanMar's "STYLE#");
+  // a bare "Style" is left alone, since elsewhere it can mean a finish.
+  [
+    "sku", "sku #", "part", "part #", "part number", "part no", "part num", "catalog #", "catalog number", "cat #", "product code",
+    "style #", "style#", "style no", "style number", "style code", "style id",
+  ],
   ["item #", "item number", "item no", "item code", "code", "stock #", "stock number", "stock no"],
 ];
 
@@ -514,16 +519,29 @@ function nameKey(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+// Built once per plan. Each name keeps its products split into those with
+// a real part number and those without, so a row is matched in constant
+// time: a 25,000-row sheet of "T-Shirt" in every size used to scan every
+// same-named product for every row, which froze the preview.
 function buildCatalogIndex(catalog: CatalogItem[]) {
   const bySku = new Map<string, CatalogItem[]>();
-  const byName = new Map<string, CatalogItem[]>();
+  const byName = new Map<string, { all: CatalogItem[]; skuless: CatalogItem[] }>();
   for (const item of catalog) {
-    if (item.sku && !placeholderSku(item.sku)) {
-      const key = skuKey(item.sku);
-      bySku.set(key, [...(bySku.get(key) ?? []), item]);
+    const hasSku = Boolean(item.sku && !placeholderSku(item.sku));
+    if (hasSku) {
+      const key = skuKey(item.sku as string);
+      const list = bySku.get(key);
+      if (list) list.push(item);
+      else bySku.set(key, [item]);
     }
     const key = nameKey(item.name);
-    byName.set(key, [...(byName.get(key) ?? []), item]);
+    let bucket = byName.get(key);
+    if (!bucket) {
+      bucket = { all: [], skuless: [] };
+      byName.set(key, bucket);
+    }
+    bucket.all.push(item);
+    if (!hasSku) bucket.skuless.push(item);
   }
   return { bySku, byName };
 }
@@ -546,9 +564,11 @@ function findMatch(
     const exact = bySku.find((item) => supplierId && item.distributorId === supplierId) ?? bySku[0];
     if (exact) return { item: exact, by: "sku", ambiguous: false };
   }
-  const named = (index.byName.get(nameKey(name)) ?? []).filter(
-    (item) => !(sku && item.sku && !placeholderSku(item.sku) && skuKey(item.sku) !== skuKey(sku)),
-  );
+  // A row with a part number got here because no product carries it, so
+  // every same-named product with a part number disagrees with it: only
+  // those without one can be the same thing.
+  const bucket = index.byName.get(nameKey(name));
+  const named = bucket ? (sku ? bucket.skuless : bucket.all) : [];
   if (named.length > 1) return { item: null, by: null, ambiguous: true };
   if (named.length === 1) return { item: named[0], by: "name", ambiguous: false };
   return { item: null, by: null, ambiguous: false };

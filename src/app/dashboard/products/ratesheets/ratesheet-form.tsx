@@ -46,6 +46,8 @@ const VISIBILITY_NOTES: Partial<Record<RatesheetVisibilityValue, string>> = {
 // Searching the catalog, 50 matches at a time, instead of being handed
 // all of it: a distributor's sheet can bring in tens of thousands.
 const SHOWN = 50;
+// The most products one ratesheet holds (ratesheets/actions.ts).
+const RATESHEET_MAX = 2000;
 
 export function RatesheetForm({
   action,
@@ -69,10 +71,20 @@ export function RatesheetForm({
     (defaults?.visibility as RatesheetVisibilityValue | undefined) ?? "PARTNER_SPECIFIC",
   );
   const [query, setQuery] = useState("");
+  const needle = query.trim();
+  const searchUrl = (params: string) => `/dashboard/products/search?q=${encodeURIComponent(needle)}${params}`;
   const [selected, setSelected] = useState<Set<string>>(() => new Set(defaults?.productIds ?? []));
-  const { results, loading } = useSearch<PickerProduct>(
-    `/dashboard/products/search?take=${SHOWN}&q=${encodeURIComponent(query.trim())}`,
-  );
+  const { results, loading } = useSearch<PickerProduct>(searchUrl(`&take=${SHOWN}`));
+  // "Show 50 more" pages for the search on screen; a new search starts over.
+  const [more, setMore] = useState<{ query: string; rows: PickerProduct[]; pages: number; done: boolean }>({
+    query: "",
+    rows: [],
+    pages: 0,
+    done: false,
+  });
+  const extra = more.query === needle ? more : { query: needle, rows: [], pages: 0, done: false };
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   // Every product seen so far, so a ticked one keeps its name and price
   // after the search moves on.
   const [known, setKnown] = useState<Map<string, PickerProduct>>(
@@ -81,13 +93,77 @@ export function RatesheetForm({
   function remember(product: PickerProduct) {
     if (!known.has(product.id)) setKnown((current) => new Map(current).set(product.id, product));
   }
+  function rememberAll(rows: PickerProduct[]) {
+    setKnown((current) => {
+      const next = new Map(current);
+      for (const row of rows) next.set(row.id, row);
+      return next;
+    });
+  }
   // With no search, what is ticked comes first, then the catalog from the
-  // top; with a search, just what matches.
-  const ticked = query.trim()
+  // top; with a search, just what matches. Each product once.
+  const ticked = needle
     ? []
     : [...selected].map((id) => known.get(id)).filter((product): product is PickerProduct => Boolean(product));
-  const filtered = [...ticked, ...results.filter((product) => !ticked.some((row) => row.id === product.id))];
-  const allShown = !query.trim() && productTotal <= results.length;
+  const listedIds = new Set<string>();
+  const filtered = [...ticked, ...results, ...extra.rows].filter((product) =>
+    listedIds.has(product.id) ? false : (listedIds.add(product.id), true),
+  );
+  const moreToShow = !extra.done && results.length >= SHOWN;
+
+  async function fetchRows(params: string): Promise<PickerProduct[]> {
+    const response = await fetch(searchUrl(params), { credentials: "same-origin" });
+    return response.ok ? ((await response.json()) as PickerProduct[]) : [];
+  }
+  async function showMore() {
+    setBusy(true);
+    try {
+      const page = await fetchRows(`&take=${SHOWN}&skip=${SHOWN * (extra.pages + 1)}`);
+      setMore({ query: needle, rows: [...extra.rows, ...page], pages: extra.pages + 1, done: page.length < SHOWN });
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Every match, not just the ones on screen, up to what a ratesheet holds:
+  // ticking only the shown 50 left the rest of a catalog out of reach.
+  async function selectAll() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const rows = await fetchRows("&all=1");
+      rememberAll(rows);
+      setSelected((current) => {
+        const next = new Set(current);
+        for (const row of rows) next.add(row.id);
+        return next;
+      });
+      if (rows.length >= RATESHEET_MAX) {
+        setNotice(
+          `A ratesheet holds up to ${RATESHEET_MAX.toLocaleString()} products, so the first ${RATESHEET_MAX.toLocaleString()} ${needle ? "matches" : "in your catalog"} are ticked.`,
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function clearAll() {
+    setNotice(null);
+    if (!needle) {
+      setSelected(new Set());
+      return;
+    }
+    setBusy(true);
+    try {
+      const rows = await fetchRows("&all=1");
+      setSelected((current) => {
+        const next = new Set(current);
+        for (const row of rows) next.delete(row.id);
+        return next;
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function toggle(product: PickerProduct) {
     remember(product);
@@ -96,24 +172,6 @@ export function RatesheetForm({
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  }
-
-  function selectAllVisible(on: boolean) {
-    if (on) {
-      setKnown((current) => {
-        const next = new Map(current);
-        for (const product of filtered) next.set(product.id, product);
-        return next;
-      });
-    }
-    setSelected((current) => {
-      const next = new Set(current);
-      for (const product of filtered) {
-        if (on) next.add(product.id);
-        else next.delete(product.id);
-      }
       return next;
     });
   }
@@ -237,15 +295,20 @@ export function RatesheetForm({
                 className="input input-sm pl-8"
               />
             </div>
-            <div className="flex gap-2">
-              {/* Waits for the search, or it would tick nothing. */}
-              <button type="button" onClick={() => selectAllVisible(true)} disabled={loading} className="btn btn-ghost btn-sm">
-                Select all{allShown ? "" : " shown"}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={selectAll} disabled={busy || productTotal === 0} className="btn btn-ghost btn-sm">
+                {needle ? "Select all matching" : `Select all ${productTotal.toLocaleString()}`}
               </button>
-              <button type="button" onClick={() => selectAllVisible(false)} className="btn btn-ghost btn-sm">
-                Clear{allShown ? "" : " shown"}
+              <button type="button" onClick={clearAll} disabled={busy || selected.size === 0} className="btn btn-ghost btn-sm">
+                {needle ? "Clear matching" : "Clear"}
               </button>
             </div>
+            {notice && <p className="text-xs text-[var(--warn)]">{notice}</p>}
+            {selected.size > RATESHEET_MAX && (
+              <p className="text-xs text-[var(--danger)]">
+                That&apos;s more than the {RATESHEET_MAX.toLocaleString()} a ratesheet holds. Untick some before saving.
+              </p>
+            )}
 
             {productTotal === 0 ? (
               <p className="faint py-6 text-center text-xs">
@@ -290,10 +353,13 @@ export function RatesheetForm({
                 })}
               </ul>
             )}
-            {!allShown && results.length >= SHOWN && (
-              <p className="faint text-center text-xs">
-                Showing the first {SHOWN}. Search by name or part number to find the rest.
-              </p>
+            {moreToShow && (
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button type="button" onClick={showMore} disabled={busy} className="btn btn-ghost btn-sm">
+                  Show {SHOWN} more
+                </button>
+                <span className="faint text-xs">or search by name or part number</span>
+              </div>
             )}
           </div>
         </Card>

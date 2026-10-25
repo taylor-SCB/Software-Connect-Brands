@@ -20,9 +20,8 @@ export function CatalogPicker({ onPick }: { onPick: (product: CatalogResult) => 
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { results, loading } = useSearch<CatalogResult>(
-    open ? `/dashboard/products/search?active=1&q=${encodeURIComponent(query.trim())}` : null,
-  );
+  const searchUrl = (text: string) => `/dashboard/products/search?active=1&q=${encodeURIComponent(text.trim())}`;
+  const { results, loading } = useSearch<CatalogResult>(open ? searchUrl(query) : null);
 
   useEffect(() => {
     if (!open) return;
@@ -32,6 +31,20 @@ export function CatalogPicker({ onPick }: { onPick: (product: CatalogResult) => 
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  // Enter while the list still shows the last search's answer (typing
+  // fast, or a barcode scanner, which types and presses Enter in a few
+  // milliseconds) asks for this search's answer and adds its first match:
+  // picking from the list on screen added the previous search's product.
+  async function pickFirstMatch(text: string) {
+    try {
+      const response = await fetch(searchUrl(text), { credentials: "same-origin" });
+      const rows = response.ok ? ((await response.json()) as CatalogResult[]) : [];
+      if (rows[0]) pick(rows[0]);
+    } catch {
+      // The list catches up on its own and says what it found.
+    }
+  }
 
   function pick(product: CatalogResult) {
     onPick(product);
@@ -63,14 +76,15 @@ export function CatalogPicker({ onPick }: { onPick: (product: CatalogResult) => 
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setOpen(true);
-            setHighlight(Math.min(current + 1, results.length - 1));
+            setHighlight(Math.max(0, Math.min(current + 1, results.length - 1)));
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
             setHighlight(Math.max(current - 1, 0));
           } else if (event.key === "Enter") {
             // Never submits a form around it.
             event.preventDefault();
-            if (open && results[current]) pick(results[current]);
+            if (loading) void pickFirstMatch(query);
+            else if (open && results[current]) pick(results[current]);
           } else if (event.key === "Escape") {
             setOpen(false);
           }

@@ -152,7 +152,10 @@ export default async function QuoteBuilderPage({
       )}
 
       <div className="space-y-5">
-        <Card lit>
+        {/* Above the cards after it: every card is its own layer (the glass
+            blur), so the Add from catalog list opening downward was drawn
+            under the Payment table and lost its taps there. */}
+        <Card lit className="z-20">
           <CardHeader
             title="Line items"
             subtitle="Each line carries a product description, project-specific notes and a tag."

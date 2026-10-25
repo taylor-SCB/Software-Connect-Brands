@@ -195,7 +195,11 @@ export default async function ProductsPage({
                         </div>
                       </td>
                       <td className="text-right">
-                        <ProductRowActions productId={product.id} productName={product.name} />
+                        <ProductRowActions
+                          productId={product.id}
+                          productName={product.name}
+                          returnTo={productListHref(BASE_PATH, params, { page: window.current })}
+                        />
                       </td>
                     </tr>
                   );

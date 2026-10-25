@@ -23,7 +23,7 @@ const ratesheetSchema = z.object({
     .union([z.literal(""), z.email("Enter the partner's email address")])
     .optional(),
   partnerName: z.string().trim().max(120).optional(),
-  productIds: z.array(z.string().trim().min(1)).max(2000),
+  productIds: z.array(z.string().trim().min(1)).max(2000, "A ratesheet holds up to 2,000 products. Untick some and save again."),
 });
 
 async function resolveRatesheetInput(formData: FormData, organizationId: string) {

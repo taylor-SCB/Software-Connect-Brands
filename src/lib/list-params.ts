@@ -47,9 +47,12 @@ function list(value: string | string[] | undefined): string[] {
 
 // The search box's text. % and _ are SQL wildcards inside a "contains"
 // match and Prisma passes them through, so they become spaces here: a
-// search for "%" then finds nothing instead of everything.
+// search for "%" then finds nothing instead of everything. A backslash is
+// the match's escape character, and one at the end made the database
+// refuse the search outright (the catalog search, Oct 25, 2026), so it
+// goes the same way.
 export function cleanSearch(value: string | undefined) {
-  return (value ?? "").replace(/[%_]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  return (value ?? "").replace(/[%_\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams {
