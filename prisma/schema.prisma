@@ -117,6 +117,8 @@ model Organization {
   companies             Company[]
   contacts              Contact[]
   deals                 Deal[]
+  opportunities         Opportunity[]
+  leadLabelOptions      LeadLabelOption[]
   notes                 Note[]
   activities            Activity[]
   products              Product[]
@@ -155,7 +157,7 @@ model Organization {
   photoGrants           PhotoGrant[]
   accountTypeRequests   AccountTypeRequest[]
   // Other workspaces' supplier records that point at this account.
-  platformSupplierLinks Distributor[]        @relation("PlatformSupplier")
+  platformSupplierLinks Distributor[]          @relation("PlatformSupplier")
 
   @@index([status])
   @@index([accountType, status])
@@ -236,6 +238,8 @@ model User {
   aiRequests            AiRequest[]
   ratesheetImportIssues RatesheetImportIssue[]
   ownedDeals            Deal[]                 @relation("DealOwner")
+  ownedOpportunities    Opportunity[]          @relation("OpportunityOwner")
+  opportunityLogs       OpportunityLog[]
   statusChanges         StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
   // must not take the company's schedule with them.
@@ -416,26 +420,28 @@ model Contact {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  emailSends    EmailSend[]
+  emailSends      EmailSend[]
   // Other companies this person is part of, beyond `company` above: an
   // entrepreneur who owns three businesses. `company` stays the one their
   // quotes and contracts are filed under.
-  accounts      ContactAccount[]
-  statusChanges StatusChange[]
-  deals         Deal[]
-  notes         Note[]
-  activities    Activity[]
-  quotes        Quote[]
-  contracts     Contract[]
-  uploads       Upload[]
-  projects      Project[]
-  crews         Crew[]
-  events        CalendarEvent[]
-  properties    Property[]
+  accounts        ContactAccount[]
+  statusChanges   StatusChange[]
+  deals           Deal[]
+  opportunities   OpportunityContact[]
+  opportunityLogs OpportunityLog[]
+  notes           Note[]
+  activities      Activity[]
+  quotes          Quote[]
+  contracts       Contract[]
+  uploads         Upload[]
+  projects        Project[]
+  crews           Crew[]
+  events          CalendarEvent[]
+  properties      Property[]
   // Events this person is expected at, as distinct from the one they are
   // the point of contact for above.
-  attending     CalendarEvent[]  @relation("EventAttendees")
-  photoGrants   PhotoGrant[]
+  attending       CalendarEvent[]      @relation("EventAttendees")
+  photoGrants     PhotoGrant[]
 
   @@index([organizationId])
   @@index([companyId])
@@ -545,6 +551,9 @@ model Deal {
   project       Project?
   events        CalendarEvent[]
   statusChanges StatusChange[]
+  // The opportunity it came from (Oct 27, 2026). Every deal has one; the
+  // link lives on Opportunity.dealId.
+  opportunity   Opportunity?
 
   @@index([organizationId])
   @@index([contactId])
@@ -1214,22 +1223,22 @@ model Manufacturer {
 }
 
 model Distributor {
-  id                   String       @id @default(cuid())
-  organizationId       String
-  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name                 String
+  id                     String        @id @default(cuid())
+  organizationId         String
+  organization           Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                   String
   // How this workspace last priced a ratesheet from this supplier, so the
   // next one from them opens with the same markup or margin.
-  priceRule            PriceRule?
-  priceRuleBasisPoints Int?
+  priceRule              PriceRule?
+  priceRuleBasisPoints   Int?
   // Which column was which on this supplier's sheets, keyed by the header
   // row, so a column fixed by hand once stays fixed next quarter.
-  ratesheetColumns     Json?
+  ratesheetColumns       Json?
   // The company a purchase order to this distributor is addressed to.
   // Made the first time materials are ordered from them, so the money
   // owed to them lands on one record rather than two.
-  companyId            String?      @unique
-  company              Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  companyId              String?       @unique
+  company                Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
   // The account on Software Connect Brands this supplier is (Release 2):
   // set when it was picked from "On Software Connect Brands" in a
   // supplier picker. One supplier record per account per workspace.
@@ -1240,8 +1249,8 @@ model Distributor {
   // link made under a name it later dropped can still be found.
   platformLinkedAs       String?
   platformLinkedAt       DateTime?
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
 
   contacts         DistributorContact[]
   products         Product[]
@@ -2138,4 +2147,128 @@ model EmailSend {
 
   @@index([organizationId, userId, createdAt])
   @@index([contactId])
+}
+
+// ---------------------------------------------------------------------
+// Opportunities (Oct 27, 2026). One tile on the Pipeline: a sale being
+// worked, from the meeting that set it to the deal it becomes. A meeting
+// with several people is one opportunity with all of them on it; a later
+// meeting with any of them joins it while it is open (no deal yet, or a
+// deal not Won or Lost). It turns into at most one deal, and there is no
+// deal without one (`ensureOpportunityForDeal` in src/lib/opportunities.ts).
+// Until it has a deal its column is `stage`; from then on the deal's.
+enum OpportunityStage {
+  MEETING_SET
+  MEETING_COMPLETED
+  // Lost before any deal: what the board showed as a contact card in Lost
+  // before opportunities existed.
+  LOST
+}
+
+// A person's place on an opportunity: the Primary POC (exactly one), an
+// Associated POC, or Do Not List (still on it, so the meeting they were in
+// stays theirs, but off the tile and without its log entries).
+enum PocRole {
+  PRIMARY
+  ASSOCIATED
+  HIDDEN
+}
+
+model Opportunity {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  stage          OpportunityStage @default(MEETING_SET)
+  // A built-in label (src/lib/lead-labels.ts) or a LeadLabelOption name;
+  // null reads N/A.
+  leadLabel      String?
+  // The rep: whoever set the meeting, changeable from the tile.
+  ownerId        String?
+  owner          User?            @relation("OpportunityOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  dealId         String?          @unique
+  deal           Deal?            @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  // When it first reached Meeting Completed (or a deal, whichever came
+  // first): the moment "Opportunity Created" is dated.
+  completedAt    DateTime?
+  // When its deal first reached Quote Sent or later: "Deal Created".
+  convertedAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  contacts OpportunityContact[]
+  meetings OpportunityMeeting[]
+  logs     OpportunityLog[]
+
+  @@index([organizationId, stage])
+}
+
+model OpportunityContact {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  role          PocRole     @default(ASSOCIATED)
+  // On it because they were in one of its meetings, rather than added by
+  // hand from the tile.
+  fromMeeting   Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  @@unique([opportunityId, contactId])
+  @@index([contactId])
+}
+
+// One meeting date on an opportunity. The activity or calendar entry it
+// came from, when there is one, so logging a booked meeting as done
+// updates its row instead of adding a second.
+model OpportunityMeeting {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  on            DateTime
+  activityId    String?
+  eventId       String?
+  createdAt     DateTime    @default(now())
+
+  @@index([opportunityId])
+  @@index([eventId])
+}
+
+enum OpportunityLogKind {
+  OPPORTUNITY_CREATED
+  DEAL_CREATED
+}
+
+// The two special lines on a person's activity log: "Opportunity
+// Created" and "Deal Created", written once per person per opportunity.
+// Their Primary / Associated tag and the deal's stage are read live when
+// shown, so they follow the tile. Kept apart from Activity so they never
+// count as a touch (Calls, Last Contacted By, the Contacted step).
+model OpportunityLog {
+  id             String             @id @default(cuid())
+  organizationId String
+  opportunityId  String
+  opportunity    Opportunity        @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  kind           OpportunityLogKind
+  userId         String?
+  user           User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  occurredAt     DateTime
+  createdAt      DateTime           @default(now())
+
+  @@unique([opportunityId, contactId, kind])
+  @@index([contactId])
+}
+
+// A lead label someone added with "+ Add Custom Lead Label".
+model LeadLabelOption {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, name])
 }

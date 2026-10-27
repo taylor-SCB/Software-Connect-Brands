@@ -507,6 +507,49 @@ on contacts, and on companies only where the app had copied them up.
 `scripts/browser-tests/contacts-mobile.cjs` (13 steps) covers it; the
 import suites' sample numbers carry an area code since.
 
+**The Pipeline as opportunities (Oct 27, 2026).** One tile per
+`Opportunity` (rules in `src/lib/opportunities.ts`, board in
+`src/app/dashboard/deals/`). A meeting with several people is one tile
+with all of them (`attachMeeting`, called from `markMeetingSet` on every
+meeting path); a later meeting with any of them joins it while it is
+open; Won or Lost closes it and the next meeting starts a new one. One
+deal per opportunity (`Opportunity.dealId`), and **no deal without one**
+(`ensureOpportunityForDeal` in `resolveDeal` and "Add deal"). Only a
+deal sits in Quote Sent or further — Taylor: converting is the only way
+there, no "no deal yet" tiles. Meeting Set ↔ Meeting Completed moves
+with no prompt; into a deal column opens "Do you want to convert this to
+a deal?" (Quote / Contract / Signed / Won / Lost, then Build Quote — the
+deal plus a new quote on it — or Manual Input with a value, then Save and
+Accept; Cancel is the way out); a deal never goes back to a meeting
+column; a deal moves between deal columns dated today. Drag, or the
+stage menu on the tile. Click a tile for its panel: name, Lead Label,
+rep, value (until it has quotes), meeting dates, quotes, and People with
+Primary POC / Associated POC / Do Not List (one each, the other two grey
+out, one Primary; ticking Primary moves the old one to Associated;
++ Add contact). The deal is filed under the Primary. A meeting's own
+Activity rows are never changed by the panel. `OpportunityLog` writes
+"Opportunity Created" (Meeting Completed or a deal) and "Deal Created"
+(Quote Sent or further) once per listed person per opportunity, dated
+when the tile got there; the Primary / Associated tag and the deal's
+stage are read live on the contact's feed; Do Not List removes a
+person's lines. Kept out of Activity so they never count as a touch.
+Lead Labels per opportunity (`src/lib/lead-labels.ts`): N/A light gray
+with red letters, Residential / Client / Vendor / Software Integration /
+Reseller each a fixed colour, custom ones (`LeadLabelOption`) neon yellow
+on a blank chip. Search (person, company or tile name) and a stacking
+Lead Label filter, in the address bar. A second scrollbar above the
+board. `reconcileOpportunities` runs when the board opens: every deal and
+everyone in the pipeline by status without an open opportunity gets one
+(people in the same latest meeting share it), with fixed ids so two tabs
+write each row once, and no log lines back-written. A status moved by
+hand on a contact's page moves their open opportunity only as far as
+Meeting Completed (`followContactStatus`). Every floating menu that used
+to be drawn inside its card is now `FloatingMenu`
+(`src/components/floating-menu.tsx`): drawn on the body, kept on screen,
+flipping up when there's more room — the status picker was cut off by
+the first column and the sidebar. `pipeline-opportunities.cjs` (22
+steps) covers it; `crm-pipeline-stats.cjs` was moved onto the tiles.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -735,8 +778,12 @@ are all blocking before the first paying customer.
 - **Stats' "time between steps" only knows dates from Sept 30, 2026 on.**
   Before that nobody recorded when a status changed; the migration moved
   existing records onto the ladder without dates.
-- **The Pipeline's meeting columns show 100 people each** and say "and N
-  more" past that; the deal columns still load every deal.
+- **The Pipeline loads up to 1,000 opportunities** (newest first) and
+  every one of them is a tile; search and the Lead Label filter narrow
+  it. Paging per column is the fix when a workspace outgrows that.
+- **Stats' time-between-steps skips the steps a conversion jumps.**
+  Converting straight to Contract or Won dates only that stage; Quote
+  Sent in between gets no date.
 - **The 90 / 180-day contract rule runs when the Pipeline or Stats is
   opened.** A workspace nobody opens for a month catches up on the next
   visit, all at once.

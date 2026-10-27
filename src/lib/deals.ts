@@ -1,3 +1,4 @@
+import { syncOpportunityForDeal } from "@/lib/opportunities";
 import { prisma } from "@/lib/prisma";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { DEAL_STAGES, OPEN_DEAL_STAGES, type DealStageValue } from "@/lib/constants";
@@ -99,4 +100,5 @@ export async function advanceDealStage(
   ]);
   const status = statusForDealStage(target);
   if (status) await advanceContact({ organizationId, userId }, deal.contactId, status, { on: now, dealId });
+  await syncOpportunityForDeal({ organizationId, userId }, dealId);
 }

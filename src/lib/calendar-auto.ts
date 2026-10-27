@@ -670,7 +670,9 @@ export async function logEventDone(input: {
   });
   const who = { organizationId: input.organizationId, userId: input.userId };
   await markContacted(who, { contactIds, companyId: contactIds.length ? null : event.companyId }, occurredAt);
-  if (input.activityType === "MEETING") await markMeetingSet(who, contactIds, occurredAt);
+  if (input.activityType === "MEETING") {
+    await markMeetingSet(who, contactIds, occurredAt, { activityId: written[0].id, eventId: event.id });
+  }
   return { ok: true as const, contactIds, companyId: event.companyId };
 }
 
