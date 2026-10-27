@@ -97,6 +97,22 @@ export async function mergeContacts(organizationId: string, keepId: string, othe
     }),
     // Their status history comes along, so Stats still counts them.
     prisma.statusChange.updateMany({ where: from, data: moved }),
+    // Their places on opportunities and those log lines come along too;
+    // where the keeper is already on the same one, the keeper's row stays.
+    prisma.$executeRaw`
+      INSERT INTO "OpportunityContact" ("id", "opportunityId", "contactId", "role", "fromMeeting", "createdAt")
+      SELECT DISTINCT ON (oc."opportunityId") gen_random_uuid()::text, oc."opportunityId", ${keepId}, oc."role", oc."fromMeeting", oc."createdAt"
+        FROM "OpportunityContact" oc
+       WHERE oc."contactId" = ANY(${goneIds})
+       ORDER BY oc."opportunityId", oc."role"
+      ON CONFLICT DO NOTHING`,
+    prisma.$executeRaw`
+      INSERT INTO "OpportunityLog" ("id", "organizationId", "opportunityId", "contactId", "kind", "userId", "occurredAt", "createdAt")
+      SELECT DISTINCT ON (ol."opportunityId", ol."kind") gen_random_uuid()::text, ol."organizationId", ol."opportunityId", ${keepId}, ol."kind", ol."userId", ol."occurredAt", ol."createdAt"
+        FROM "OpportunityLog" ol
+       WHERE ol."contactId" = ANY(${goneIds})
+       ORDER BY ol."opportunityId", ol."kind", ol."occurredAt"
+      ON CONFLICT DO NOTHING`,
     prisma.contact.deleteMany({ where: { organizationId, id: { in: goneIds } } }),
     prisma.contact.update({
       where: { id: keepId },

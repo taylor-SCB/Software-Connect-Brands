@@ -75,6 +75,21 @@ export default async function ContactDetailPage({
         orderBy: { occurredAt: "desc" },
         include: { user: { select: { name: true } } },
       },
+      // "Opportunity Created" / "Deal Created" (Oct 27, 2026). Their tags
+      // are read live: this person's role now, the deal's stage now.
+      opportunityLogs: {
+        orderBy: { occurredAt: "desc" },
+        include: {
+          user: { select: { name: true } },
+          opportunity: {
+            select: {
+              title: true,
+              deal: { select: { stage: true } },
+              contacts: { where: { contactId: id }, select: { role: true } },
+            },
+          },
+        },
+      },
       quotes: {
         orderBy: { createdAt: "desc" },
         include: { deal: { select: { title: true } } },
@@ -208,14 +223,38 @@ export default async function ContactDetailPage({
             <LogActivityForm target={{ contactId: contact.id }} current={pickable} today={today} />
             <div className="divider" />
             <ActivityFeed
-              items={contact.activities.map((activity) => ({
-                id: activity.id,
-                type: activity.type,
-                body: activity.body,
-                userName: activity.user.name,
-                when: formatDateTime(activity.occurredAt, timeZone),
-                others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
-              }))}
+              items={[
+                ...contact.activities.map((activity) => ({
+                  at: activity.occurredAt,
+                  item: {
+                    id: activity.id,
+                    type: activity.type,
+                    body: activity.body,
+                    userName: activity.user.name,
+                    when: formatDateTime(activity.occurredAt, timeZone),
+                    others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
+                  },
+                })),
+                ...contact.opportunityLogs
+                  .filter((log) => log.opportunity.contacts[0] && log.opportunity.contacts[0].role !== "HIDDEN")
+                  .map((log) => ({
+                    at: log.occurredAt,
+                    item: {
+                      id: log.id,
+                      type: log.kind,
+                      body: log.opportunity.title,
+                      userName: log.user?.name ?? "",
+                      when: formatDateTime(log.occurredAt, timeZone),
+                      others: 0,
+                      special: {
+                        role: log.opportunity.contacts[0].role as "PRIMARY" | "ASSOCIATED",
+                        stage: log.kind === "DEAL_CREATED" ? (log.opportunity.deal?.stage ?? null) : null,
+                      },
+                    },
+                  })),
+              ]
+                .sort((a, b) => b.at.getTime() - a.at.getTime())
+                .map((row) => row.item)}
             />
           </Card>
 

@@ -17,6 +17,7 @@ import { todayIso } from "@/lib/payments";
 import { cleanTime, isRealDay } from "@/lib/calendar";
 import { recordActivityEvent, scheduleActivityEvent, scheduleFollowUpEvents, zonedMoment } from "@/lib/calendar-auto";
 import { markContacted, markMeetingSet } from "@/lib/status";
+import { ensureOpportunityForDeal } from "@/lib/opportunities";
 import { formatDay } from "@/lib/format";
 import {
   targetSchema,
@@ -355,7 +356,7 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   const primaryName = named?.name ?? company?.name ?? "";
 
   if (on > today) {
-    await scheduleActivityEvent({
+    const scheduledId = await scheduleActivityEvent({
       organizationId,
       userId,
       type: parsed.data.type,
@@ -367,7 +368,9 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
       primaryName,
     });
     // Booking a meeting is what sets it, whenever it is for.
-    if (parsed.data.type === "MEETING") await markMeetingSet({ organizationId, userId }, contactIds, new Date());
+    if (parsed.data.type === "MEETING") {
+      await markMeetingSet({ organizationId, userId }, contactIds, new Date(), { on: zonedNoon(on, timeZone), eventId: scheduledId });
+    }
     revalidateTarget(targets.primary);
     revalidatePath("/dashboard/calendar");
     return { success: `Scheduled for ${formatDay(`${on}T12:00:00Z`)} — it's on the calendar` };
@@ -412,7 +415,7 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   // The ladder: a touch that happened makes Not Actioned into Contacted;
   // a meeting that happened was, at the latest, set that day.
   await markContacted({ organizationId, userId }, { contactIds, companyId }, occurredAt);
-  if (parsed.data.type === "MEETING") await markMeetingSet({ organizationId, userId }, contactIds, occurredAt);
+  if (parsed.data.type === "MEETING") await markMeetingSet({ organizationId, userId }, contactIds, occurredAt, { activityId: rows[0].id });
 
   revalidateTarget(targets.primary);
   revalidatePath("/dashboard/calendar");
@@ -491,7 +494,7 @@ export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Pro
   const first = contactIds.length ? byId.get(contactIds[0]) : undefined;
   const primaryName = first?.name ?? company?.name ?? "";
 
-  await scheduleFollowUpEvents({
+  const followUpIds = await scheduleFollowUpEvents({
     organizationId,
     userId,
     items: picks.map((item) => ({ type: item.type, startOn: item.on, startTime: cleanTime(item.time) })),
@@ -502,7 +505,13 @@ export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Pro
   });
   // Booking a meeting is what sets it, whenever it is for — the same rule
   // as a meeting scheduled from the form above.
-  if (picks.some((item) => item.type === "MEETING")) await markMeetingSet({ organizationId, userId }, contactIds, new Date());
+  const meetingAt = picks.findIndex((item) => item.type === "MEETING");
+  if (meetingAt >= 0) {
+    await markMeetingSet({ organizationId, userId }, contactIds, new Date(), {
+      on: zonedNoon(picks[meetingAt].on, await getTimeZone()),
+      eventId: followUpIds[meetingAt],
+    });
+  }
 
   for (const id of contactIds) revalidatePath(`/dashboard/contacts/${id}`);
   const companyPath = company?.id ?? first?.companyId;
@@ -538,7 +547,7 @@ export async function createDealForContact(
     return { error: "Contact not found" };
   }
 
-  await prisma.deal.create({
+  const deal = await prisma.deal.create({
     data: {
       organizationId,
       contactId: parsed.data.contactId,
@@ -546,7 +555,9 @@ export async function createDealForContact(
       valueCents: dollarsToCents(formData.get("value")),
       ownerId: userId,
     },
+    select: { id: true },
   });
+  await ensureOpportunityForDeal({ organizationId, userId }, deal.id);
 
   revalidatePath(`/dashboard/contacts/${parsed.data.contactId}`);
   revalidatePath("/dashboard/deals");

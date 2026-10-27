@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { StatusBadge } from "@/components/ui";
 import { IconChevronDown } from "@/components/icons";
 import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, PIPELINE_STEPS, type ContactStatusValue } from "@/lib/constants";
 import { setRecordStatus } from "@/app/dashboard/status-actions";
+import { FloatingMenu } from "@/components/floating-menu";
 
 // Which pipeline steps a move passes through without a date on record:
 // the same rule the server applies, so the form asks for exactly those.
@@ -41,23 +42,7 @@ export function StatusPicker({
   const [dates, setDates] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(event: MouseEvent) {
-      if (box.current && !box.current.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const button = useRef<HTMLButtonElement>(null);
 
   function save(next: ContactStatusValue, withDates: Record<string, string>) {
     setError(undefined);
@@ -87,8 +72,9 @@ export function StatusPicker({
   const steps = target ? stepsFor(status, target) : [];
 
   return (
-    <div ref={box} className="relative">
+    <div className="relative">
       <button
+        ref={button}
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
@@ -100,68 +86,77 @@ export function StatusPicker({
         <IconChevronDown size={11} className="opacity-60" />
       </button>
 
-      {open && (
-        <div className="card popover absolute right-0 top-full z-40 mt-1 w-72" data-testid="status-menu">
-          {target ? (
-            <div className="space-y-2.5 p-3" data-testid="status-dates">
-              <p className="text-xs">
-                Skipping ahead to <strong>{CONTACT_STATUS_LABELS[target]}</strong>. When did each step happen?
-              </p>
-              {steps.map((step) => (
-                <label key={step} className="flex items-center justify-between gap-2 text-xs">
-                  <span>{CONTACT_STATUS_LABELS[step as ContactStatusValue]}</span>
-                  <input
-                    type="date"
-                    value={dates[step] ?? ""}
-                    max={today}
-                    required
-                    onChange={(event) => setDates({ ...dates, [step]: event.target.value })}
-                    className="input input-sm w-40"
-                    data-testid={`status-date-${step}`}
-                  />
-                </label>
-              ))}
-              {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
-              <div className="flex justify-end gap-1.5">
-                <button type="button" onClick={() => setTarget(null)} className="btn btn-ghost btn-sm">
-                  Back
-                </button>
+      {/* Floats over the page (Oct 27, 2026): drawn inside the page it was
+          cut off by a narrow column or the sidebar. */}
+      <FloatingMenu
+        anchor={button}
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setTarget(null);
+        }}
+        testId="status-menu"
+        label="Status"
+      >
+        {target ? (
+          <div className="space-y-2.5 p-3" data-testid="status-dates">
+            <p className="text-xs">
+              Skipping ahead to <strong>{CONTACT_STATUS_LABELS[target]}</strong>. When did each step happen?
+            </p>
+            {steps.map((step) => (
+              <label key={step} className="flex items-center justify-between gap-2 text-xs">
+                <span>{CONTACT_STATUS_LABELS[step as ContactStatusValue]}</span>
+                <input
+                  type="date"
+                  value={dates[step] ?? ""}
+                  max={today}
+                  required
+                  onChange={(event) => setDates({ ...dates, [step]: event.target.value })}
+                  className="input input-sm w-40"
+                  data-testid={`status-date-${step}`}
+                />
+              </label>
+            ))}
+            {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
+            <div className="flex justify-end gap-1.5">
+              <button type="button" onClick={() => setTarget(null)} className="btn btn-ghost btn-sm">
+                Back
+              </button>
+              <button
+                type="button"
+                disabled={pending || steps.some((step) => !dates[step])}
+                onClick={() => save(target, dates)}
+                className="btn btn-primary btn-sm"
+                data-testid="status-save"
+              >
+                {pending ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <ul role="listbox" aria-label="Status" className="py-1">
+            {CONTACT_STATUSES.map((option) => (
+              <li key={option}>
                 <button
                   type="button"
-                  disabled={pending || steps.some((step) => !dates[step])}
-                  onClick={() => save(target, dates)}
-                  className="btn btn-primary btn-sm"
-                  data-testid="status-save"
+                  role="option"
+                  aria-selected={option === status}
+                  disabled={pending}
+                  onClick={() => (option === status ? setOpen(false) : choose(option))}
+                  className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-[rgb(255_255_255/0.04)] ${
+                    option === status ? "font-semibold" : ""
+                  }`}
+                  data-testid={`status-option-${option}`}
                 >
-                  {pending ? "Saving…" : "Save"}
+                  {CONTACT_STATUS_LABELS[option]}
+                  {(PIPELINE_STEPS as readonly string[]).includes(option) && <span className="faint text-[0.62rem]">pipeline</span>}
                 </button>
-              </div>
-            </div>
-          ) : (
-            <ul role="listbox" aria-label="Status" className="py-1">
-              {CONTACT_STATUSES.map((option) => (
-                <li key={option}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={option === status}
-                    disabled={pending}
-                    onClick={() => (option === status ? setOpen(false) : choose(option))}
-                    className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-[rgb(255_255_255/0.04)] ${
-                      option === status ? "font-semibold" : ""
-                    }`}
-                    data-testid={`status-option-${option}`}
-                  >
-                    {CONTACT_STATUS_LABELS[option]}
-                    {(PIPELINE_STEPS as readonly string[]).includes(option) && <span className="faint text-[0.62rem]">pipeline</span>}
-                  </button>
-                </li>
-              ))}
-              {error && <li className="px-3 py-1.5 text-xs text-[var(--danger)]">{error}</li>}
-            </ul>
-          )}
-        </div>
-      )}
+              </li>
+            ))}
+            {error && <li className="px-3 py-1.5 text-xs text-[var(--danger)]">{error}</li>}
+          </ul>
+        )}
+      </FloatingMenu>
     </div>
   );
 }

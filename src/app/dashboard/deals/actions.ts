@@ -11,6 +11,7 @@ import { todayIso } from "@/lib/payments";
 import { zonedNoon } from "@/lib/money";
 import { isRealDay } from "@/lib/calendar";
 import { advanceContact, statusForDealStage } from "@/lib/status";
+import { syncOpportunityForDeal } from "@/lib/opportunities";
 
 // A deal moved by hand on its tile, with the day it happened. Written to
 // StatusChange like the automatic moves, and the contact follows it:
@@ -55,6 +56,7 @@ export async function updateDealStage(dealId: string, stage: string, on?: string
   ]);
   const status = statusForDealStage(parsed.data.stage);
   if (status) await advanceContact({ organizationId, userId }, deal.contactId, status, { on: at, dealId: parsed.data.dealId, auto: false });
+  await syncOpportunityForDeal({ organizationId, userId }, parsed.data.dealId);
 
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard");
@@ -88,10 +90,17 @@ export async function updateDealOwner(dealId: string, ownerId: string): Promise<
     if (!rep) return { error: "That person isn't on this account" };
   }
 
-  await prisma.deal.updateMany({
-    where: { id: parsed.data.dealId, organizationId },
-    data: { ownerId: parsed.data.ownerId || null },
-  });
+  await prisma.$transaction([
+    prisma.deal.updateMany({
+      where: { id: parsed.data.dealId, organizationId },
+      data: { ownerId: parsed.data.ownerId || null },
+    }),
+    // The deal's opportunity has the same rep.
+    prisma.opportunity.updateMany({
+      where: { dealId: parsed.data.dealId, organizationId },
+      data: { ownerId: parsed.data.ownerId || null },
+    }),
+  ]);
 
   revalidatePath("/dashboard/deals");
   return { success: "Rep updated" };

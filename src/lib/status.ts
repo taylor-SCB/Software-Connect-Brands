@@ -117,9 +117,19 @@ export async function markContacted(who: Who, target: { contactIds: string[]; co
 
 // A meeting booked with someone for the first time: Meeting Set. Only a
 // contact, never a company on its own (Taylor, Sept 30, 2026); their
-// company follows them.
-export async function markMeetingSet(who: Who, contactIds: string[], on: Date) {
+// company follows them. Since Oct 27, 2026 every meeting also lands on an
+// opportunity (attachMeeting): `meeting` is the meeting's own day and the
+// activity or calendar entry it is, where `on` is when it was set.
+export async function markMeetingSet(
+  who: Who,
+  contactIds: string[],
+  on: Date,
+  meeting: { on?: Date; activityId?: string | null; eventId?: string | null } = {},
+) {
   for (const contactId of contactIds) await advanceContact(who, contactId, "MEETING_SET", { on });
+  // Imported when called: opportunities.ts builds on this file.
+  const { attachMeeting } = await import("@/lib/opportunities");
+  await attachMeeting(who, contactIds, { on: meeting.on ?? on, activityId: meeting.activityId, eventId: meeting.eventId });
 }
 
 export type SkippedDates = Partial<Record<(typeof PIPELINE_STEPS)[number], string>>;
@@ -182,6 +192,10 @@ export async function sweepStaleContracts(organizationId: string) {
       }),
     ]);
     await advanceContact({ organizationId }, deal.contactId, "LOST", { on, dealId: deal.id });
+  }
+  if (toLose.length) {
+    const { syncOpportunityForDeal } = await import("@/lib/opportunities");
+    for (const deal of toLose) await syncOpportunityForDeal({ organizationId }, deal.id);
   }
 }
 
