@@ -309,9 +309,10 @@ function Tile({
         {shown.map((person) => (
           <li key={person.id} className="flex min-w-0 items-center gap-1 text-xs">
             <IconUsers size={11} className="faint shrink-0" />
-            <Link href={`/dashboard/contacts/${person.id}`} className="truncate hover:underline">
+            <Link href={`/dashboard/contacts/${person.id}`} className="shrink-0 hover:underline">
               {person.name}
             </Link>
+            {person.company && person.company !== tile.title && <span className="faint truncate">· {person.company}</span>}
             {person.primary && tile.people.length > 1 && <span className="faint shrink-0 text-[0.6rem]">Primary</span>}
           </li>
         ))}

@@ -243,12 +243,18 @@ function backLink(page) {
   assert.ok(await quoteSentCol.getByText("Fiber install").first().isVisible(), "deal moved to Quote Sent");
   assert.ok(await quoteSentCol.getByText("$1,250.00").first().isVisible(), "value read from the sent quote");
   assert.ok(await quoteSentCol.getByText("QUO-1000").isVisible(), "quotes listed on the deal card");
-  assert.equal(await page.locator("select[aria-label='Deal stage'] >> nth=0 >> option").count(), 4);
+  // Oct 27, 2026: the tile's stage menu; a deal can't go back to a meeting column.
+  await quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" }).locator("[data-testid=tile-move]").click();
+  assert.equal(await page.locator("[data-testid=tile-move-menu] button:not([disabled])").count(), 4);
+  await page.keyboard.press("Escape");
   assert.ok(await page.getByText("$1,250.00 in quotes and contracts out").isVisible());
   await shot(page, "06-pipeline");
 
   log("Back from a contact reached via the pipeline says Pipeline");
-  await quoteSentCol.getByRole("link", { name: /Spirit Communications/ }).click();
+  // Oct 27, 2026: the tile lists its people by name, their company beside them.
+  const fiberTile = quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" });
+  assert.ok(await fiberTile.getByText("Spirit Communications").isVisible());
+  await fiberTile.getByRole("link", { name: "Danny Ortiz" }).click();
   await page.waitForURL(dannyUrl);
   await backLink(page).getByText("Pipeline").waitFor();
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "open pipeline on the contact reads the quote");

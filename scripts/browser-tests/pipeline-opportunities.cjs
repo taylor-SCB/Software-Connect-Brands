@@ -258,6 +258,7 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-move]").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-CONTRACT_SENT]").click();
   await page.locator("[data-testid=pipeline-column-CONTRACT_SENT] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
+  await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "CONTRACT_SENT", "deal saved at Contract Sent");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
   assert.equal(await page.locator("[data-testid=activity-special][data-kind=DEAL_CREATED] [data-testid=activity-stage]").textContent(), "Contract Sent");
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityLog" WHERE "contactId"='op_pat' AND kind='DEAL_CREATED'`)).n, 1);
@@ -329,7 +330,10 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   await page.goto(`${BASE}/dashboard/contacts/op_lone`);
   await page.fill("#deal-title", "Fence repair");
   await page.locator("form", { has: page.locator("#deal-title") }).getByRole("button", { name: "Add" }).click();
-  await until(async () => (await one(`SELECT count(*)::int n FROM "Deal" WHERE "contactId"='op_lone'`)).n === 1, "lone deal");
+  await until(
+    async () => (await one(`SELECT count(*)::int n FROM "Opportunity" o JOIN "Deal" d ON d.id=o."dealId" WHERE d."contactId"='op_lone'`)).n === 1,
+    "lone deal on its opportunity",
+  );
   const lone = await one(
     `SELECT o.stage, oc.role FROM "Opportunity" o JOIN "Deal" d ON d.id=o."dealId" JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE d."contactId"='op_lone'`,
   );
@@ -340,6 +344,7 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   await page.goto(`${BASE}/dashboard/deals`);
   await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).dragTo(page.locator("[data-testid=pipeline-column-WON]"));
   await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
+  await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "WON", "deal saved as Won");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Phase two chat");
