@@ -195,6 +195,24 @@ async function runImport(page, rows) {
   await page.locator("[data-testid=contact-row]", { hasText: "Ann Real" }).waitFor();
   assert.equal(await page.locator("[data-testid=contact-row]").count(), 1);
 
+  log("the Contacts list shows Mobile in its own column, just left of Phone");
+  const listHeaders = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
+  assert.equal(listHeaders.indexOf("Mobile") + 1, listHeaders.indexOf("Phone"), listHeaders.join(" | "));
+  const annRow = page.locator("[data-testid=contact-row]", { hasText: "Ann Real" });
+  assert.equal(await annRow.locator("[data-testid=contact-row-mobile]").textContent(), "512-555-0111");
+  await shot(page, "05-list");
+
+  log("…and on the Favorite, Interested and with-Deals sub-lists");
+  await sql(`UPDATE "Contact" SET favorite=true, status='INTERESTED' WHERE id='mob-ann'`);
+  await sql(`INSERT INTO "Deal" (id,"organizationId","contactId",title,"updatedAt") VALUES ('mob-deal',$1,'mob-ann','Ann job',now())`, [org]);
+  for (const sub of ["favorites", "interested", "with-deals"]) {
+    await page.goto(`${BASE}/dashboard/contacts/${sub}`);
+    const heads = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
+    assert.equal(heads.indexOf("Mobile") + 1, heads.indexOf("Phone"), `${sub}: ${heads.join(" | ")}`);
+    const row = page.locator("[data-testid=contact-row]", { hasText: "Ann Real" });
+    assert.equal(await row.locator("[data-testid=contact-row-mobile]").textContent(), "512-555-0111", sub);
+  }
+
   log("merging keeps a mobile the kept contact lacked");
   const bob = (await contact(org, "bob@mobile.test"))[0];
   await page.goto(`${BASE}/dashboard/contacts`);
