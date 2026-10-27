@@ -326,6 +326,16 @@ export default async function ContactDetailPage({
                 />
               )}
               <Detail
+                label="Mobile"
+                value={
+                  contact.mobile ? (
+                    <a href={`tel:${contact.mobile}`} className="link num" data-testid="contact-mobile">
+                      {contact.mobile}
+                    </a>
+                  ) : null
+                }
+              />
+              <Detail
                 label="Website"
                 value={
                   contact.website ? (

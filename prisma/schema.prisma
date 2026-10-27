@@ -395,6 +395,10 @@ model Contact {
   phoneLabel     ChannelLabel  @default(WORK)
   phone2         String?
   phone2Label    ChannelLabel  @default(PERSONAL)
+  // Their cell (Oct 27, 2026). Its own field because an import file
+  // carries Mobile beside Phone, and one never stands in for the other:
+  // a mobile is never copied to the company's phone.
+  mobile         String?
   website        String?
   city           String?
   state          String?

@@ -50,6 +50,7 @@ export default async function EditContactPage({
             phoneLabel: contact.phoneLabel,
             phone2: contact.phone2,
             phone2Label: contact.phone2Label,
+            mobile: contact.mobile,
             website: contact.website,
             city: contact.city,
             state: contact.state,

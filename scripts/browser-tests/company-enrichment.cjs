@@ -147,20 +147,20 @@ async function company(org, name) {
   log("import a CSV: untagged electrician, tower, unplaceable name; a file-tagged company; a typed phone; a roofer with an owner; a supplier");
   // "Typed Co" already exists with a phone a person typed (no auto mark).
   await sql(
-    `INSERT INTO "Company" (id, "organizationId", name, phone, "createdAt", "updatedAt") VALUES ('enrich-typed-co', $1, 'Typed Co', '555-0199', now(), now())`,
+    `INSERT INTO "Company" (id, "organizationId", name, phone, "createdAt", "updatedAt") VALUES ('enrich-typed-co', $1, 'Typed Co', '512-555-0199', now(), now())`,
     [org],
   );
   const rows = [
     "Name,Title,Email,Phone,Company Name,Company Phone,Company Website,Industry,Company Type",
-    "Dana Ruiz,Office Manager,dana@acmeelectric.com,555-0100,Acme Electric LLC,,,,",
+    "Dana Ruiz,Office Manager,dana@acmeelectric.com,512-555-0100,Acme Electric LLC,,,,",
     "Lee Park,,lee@lakesidetowers.com,,Lakeside Towers Apartments,,,,",
     "Mia Chen,,mia@lakesidetowers.com,,Lakeside Towers Apartments,,,,",
     ",,,,Zqx Zorblat,,,,",
-    ",,,,Bluebird Supply,555-0400,bluebirdsupply.com,Construction,General",
-    "Sam Typed,,,555-0177,Typed Co,,,,",
-    "Ray Roof,Owner,ray@deltaroofing.com,555-0300,Delta Roofing,,,,",
+    ",,,,Bluebird Supply,512-555-0400,bluebirdsupply.com,Construction,General",
+    "Sam Typed,,,512-555-0177,Typed Co,,,,",
+    "Ray Roof,Owner,ray@deltaroofing.com,512-555-0300,Delta Roofing,,,,",
     // "Sales Rep" is not a main-line title; Kim's is the only number, so it is the company's.
-    "Kim Sales,Sales Rep,kim@zephyrsupply.com,555-0500,Zephyr Supply Co,,,,",
+    "Kim Sales,Sales Rep,kim@zephyrsupply.com,512-555-0500,Zephyr Supply Co,,,,",
   ];
   const csvPath = path.join(OUT, "enrich.csv");
   fs.writeFileSync(csvPath, rows.join("\r\n") + "\r\n");
@@ -177,7 +177,7 @@ async function company(org, name) {
   const acme = await company(org, "Acme Electric LLC");
   assert.deepEqual(acme.industries, ["Service Provider"]);
   assert.deepEqual(acme.companyTypes, ["Electrician"]);
-  assert.equal(acme.phone, "555-0100", "office manager's phone copied up");
+  assert.equal(acme.phone, "512-555-0100", "office manager's phone copied up");
   assert.equal(acme.website, "https://acmeelectric.com", "work-email domain became the website");
   assert.deepEqual([...acme.autoFilled].sort(), ["companyTypes", "industries", "phone", "website"]);
   assert.ok(acme.enrichedAt, "enrichedAt set");
@@ -195,11 +195,11 @@ async function company(org, name) {
   assert.deepEqual(bluebird.companyTypes, ["General"]);
   assert.deepEqual(bluebird.autoFilled, [], "the file's own tags carry no auto mark");
   const typed = await company(org, "Typed Co");
-  assert.equal(typed.phone, "555-0199", "a typed phone is never overwritten");
+  assert.equal(typed.phone, "512-555-0199", "a typed phone is never overwritten");
   assert.deepEqual([...typed.autoFilled].sort(), ["companyTypes", "industries"]);
   const delta = await company(org, "Delta Roofing");
   assert.deepEqual(delta.industries, ["Construction"]);
-  assert.equal(delta.phone, "555-0300", "the owner's phone copied up");
+  assert.equal(delta.phone, "512-555-0300", "the owner's phone copied up");
   assert.equal(delta.website, "https://deltaroofing.com");
   const uncategorized = (
     await sql(
@@ -213,7 +213,7 @@ async function company(org, name) {
   const zephyr = await company(org, "Zephyr Supply Co");
   assert.deepEqual(zephyr.industries, ["Service Provider"]);
   assert.deepEqual(zephyr.companyTypes, ["Distributor"]);
-  assert.equal(zephyr.phone, "555-0500", "the one person's phone copied up");
+  assert.equal(zephyr.phone, "512-555-0500", "the one person's phone copied up");
   assert.equal(zephyr.website, "https://zephyrsupply.com");
   const distributor = (
     await sql(
@@ -384,11 +384,11 @@ async function company(org, name) {
   // import's own zero line says the app added nothing, whether or not it looked.
   assert.match(again.filled, /Nothing filled in by the app/, again.filled);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Company" WHERE name='Acme Electric LLC' AND "organizationId"=$1`, [org])).rows[0].n, 1, "Acme still one company");
-  assert.equal((await company(org, "Typed Co")).phone, "555-0199");
+  assert.equal((await company(org, "Typed Co")).phone, "512-555-0199");
   const later = [
     "Name,Company Name,Company Phone,Industry,Company Type",
-    "Ray Roof,Delta Roofing,555-0301,,",
-    "Sam Typed,Typed Co,555-0178,,",
+    "Ray Roof,Delta Roofing,512-555-0301,,",
+    "Sam Typed,Typed Co,512-555-0178,,",
     ",Zqx Zorblat,,Commercial,",
   ];
   const laterPath = path.join(OUT, "later.csv");
@@ -396,9 +396,9 @@ async function company(org, name) {
   const third = await importCsv(page, laterPath, 3);
   assert.match(third.totals, /Companies updated2/, third.totals); // Delta and Zqx; Typed Co untouched
   const deltaLater = await company(org, "Delta Roofing");
-  assert.equal(deltaLater.phone, "555-0301", "the file's phone replaced the auto-filled one");
+  assert.equal(deltaLater.phone, "512-555-0301", "the file's phone replaced the auto-filled one");
   assert.deepEqual([...deltaLater.autoFilled].sort(), ["companyTypes", "industries", "website"], "phone mark dropped, the rest kept");
-  assert.equal((await company(org, "Typed Co")).phone, "555-0199", "a typed phone still beats the file");
+  assert.equal((await company(org, "Typed Co")).phone, "512-555-0199", "a typed phone still beats the file");
   const zqxLater = await company(org, "Zqx Zorblat");
   assert.deepEqual(zqxLater.industries, ["Commercial"], "the file's industry replaced the guess rather than joining it");
   assert.deepEqual(zqxLater.companyTypes, []);
@@ -430,9 +430,9 @@ async function company(org, name) {
   );
   await sql(
     `INSERT INTO "Contact" (id,"organizationId","companyId",name,email,phone,"updatedAt")
-     VALUES ('ctc_isp','${org}','cmp_isp','Bob Smith','bob@cox.net','555-0100',now()),
-            ('ctc_isp2','${org}','cmp_isp2','Mai Nguyen','mai@mail.yahoo.com','555-0101',now()),
-            ('ctc_real','${org}','cmp_real','Ana Ruiz','ana@gulflockworks.com','555-0102',now())`,
+     VALUES ('ctc_isp','${org}','cmp_isp','Bob Smith','bob@cox.net','512-555-0100',now()),
+            ('ctc_isp2','${org}','cmp_isp2','Mai Nguyen','mai@mail.yahoo.com','512-555-0101',now()),
+            ('ctc_real','${org}','cmp_real','Ana Ruiz','ana@gulflockworks.com','512-555-0102',now())`,
   );
   await page.goto(`${BASE}/dashboard/companies`);
   await page.getByTestId("fill-missing-button").click();

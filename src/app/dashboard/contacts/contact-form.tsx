@@ -24,6 +24,7 @@ type ContactDefaults = {
   phoneLabel?: string;
   phone2?: string | null;
   phone2Label?: string;
+  mobile?: string | null;
   website?: string | null;
   city?: string | null;
   state?: string | null;
@@ -133,6 +134,7 @@ export function ContactForm({
           defaultValue={defaults.phone2 ?? ""}
           defaultLabel={defaults.phone2Label ?? "PERSONAL"}
         />
+        <Field label="Mobile" name="mobile" type="tel" placeholder="(555) 018-4400" defaultValue={defaults.mobile ?? ""} />
         <Field
           label="Website"
           name="website"

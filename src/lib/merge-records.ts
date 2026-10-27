@@ -17,7 +17,7 @@ export const MAX_MERGE = 5;
 
 type Result = { error: string } | { keptId: string; merged: number };
 
-const CONTACT_FIELDS = ["title", "email", "phone", "email2", "phone2", "website", "city", "state", "birthday", "imageUrl"] as const;
+const CONTACT_FIELDS = ["title", "email", "phone", "email2", "phone2", "mobile", "website", "city", "state", "birthday", "imageUrl"] as const;
 
 export async function mergeContacts(organizationId: string, keepId: string, otherIds: string[]): Promise<Result> {
   const others = Array.from(new Set(otherIds.filter((id) => id !== keepId))).slice(0, MAX_MERGE - 1);

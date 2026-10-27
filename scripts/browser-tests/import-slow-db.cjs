@@ -74,7 +74,7 @@ async function sql(text, params) {
   const titles = ["Property Manager", "Owner", "General Contractor", "Leasing Agent", "Facilities Director"];
   const lines = ["Name,Title,Email,Phone,Mailing City,Mailing State,Company Name"];
   for (let i = 1; i <= ROWS; i += 1) {
-    lines.push(`Slow Person ${i},${titles[i % titles.length]},slow${i}@slowco${i}.test,555-${String(i).padStart(4, "0")},Austin,TX,Slow Company ${i}`);
+    lines.push(`Slow Person ${i},${titles[i % titles.length]},slow${i}@slowco${i}.test,512-555-${String(i).padStart(4, "0")},Austin,TX,Slow Company ${i}`);
   }
   const csvPath = path.join(OUT, "slow.csv");
   fs.writeFileSync(csvPath, lines.join("\r\n") + "\r\n");

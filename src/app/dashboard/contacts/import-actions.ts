@@ -32,6 +32,8 @@ const rowSchema = z.object({
   title: text(120),
   email: text(200),
   phone: text(40),
+  // Optional so a tab opened before Mobile existed can still send its batches.
+  mobile: text(40).optional(),
   website: text(200),
   city: text(120),
   state: text(60),
@@ -246,6 +248,7 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
       const data: Prisma.ContactUncheckedUpdateManyInput = { name: row.name! };
       if (row.title) data.title = row.title;
       if (row.phone) data.phone = row.phone;
+      if (row.mobile) data.mobile = row.mobile;
       if (row.website) data.website = row.website;
       if (row.city) data.city = row.city;
       if (row.state) data.state = row.state;
@@ -271,6 +274,7 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
       title: row.title,
       email: row.email,
       phone: row.phone,
+      mobile: row.mobile ?? null,
       website: row.website,
       city: row.city,
       state: row.state,

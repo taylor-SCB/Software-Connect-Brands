@@ -17,6 +17,8 @@ export const CONTACT_CSV_COLUMNS = [
   "title",
   "email",
   "phone",
+  "mobile",
+  "otherPhone",
   "website",
   "city",
   "state",
@@ -42,6 +44,8 @@ export const CONTACT_CSV_LABELS: Record<ContactCsvColumn, string> = {
   title: "Title",
   email: "Email",
   phone: "Phone",
+  mobile: "Mobile",
+  otherPhone: "Other Number",
   website: "Website",
   city: "City",
   state: "State",
@@ -61,7 +65,7 @@ export const CONTACT_CSV_LABELS: Record<ContactCsvColumn, string> = {
 
 // The template's header row: contact fields first, then the company's.
 export const TEMPLATE_HEADERS = [
-  "Name", "Title", "Email", "Phone", "Website", "City", "State", "Birthday", "Status",
+  "Name", "Title", "Email", "Phone", "Mobile", "Other Number", "Website", "City", "State", "Birthday", "Status",
   "Company Name", "Company Phone", "Company Email", "Company Website", "Company City", "Company State",
   "Company Status", "Industry", "Company Type",
 ];
@@ -89,7 +93,12 @@ const ALIASES: Record<ContactCsvColumn, string[]> = {
   lastName: ["last name", "last", "surname", "family name", "lastname", "lname"],
   title: ["job title", "title", "position", "organization title", "organisation title", "contact title", "person title", "contact job title", "job", "occupation"],
   email: ["email", "e mail", "email address", "contact email", "primary email", "e mail address", "mail", "email 1", "e mail 1", "e mail 1 value", "email 1 value"],
-  phone: ["phone", "phone number", "mobile", "cell", "cell phone", "mobile phone", "telephone", "contact phone", "direct", "direct phone", "primary phone", "tel", "phone 1", "phone 1 value", "mobile phone number"],
+  phone: ["phone", "phone number", "telephone", "contact phone", "direct", "direct phone", "primary phone", "tel", "phone 1", "phone 1 value"],
+  // A cell is its own field (Oct 27, 2026): a file with Phone and Mobile
+  // side by side used to keep Phone and drop Mobile.
+  mobile: ["mobile", "mobile phone", "mobile number", "mobile phone number", "cell", "cell phone", "cell number", "cell phone number", "cellphone", "mobile 1", "contact mobile"],
+  // Where Phone looks when the file's Phone is blank or a placeholder.
+  otherPhone: ["other number", "other phone", "other phone number", "alternate phone", "alternate number", "alt phone", "alt number"],
   website: ["website", "web", "url", "web site", "site", "linkedin", "contact website", "website 1", "website 1 value"],
   city: ["city", "mailing city", "contact city", "person city", "home city", "address city", "address 1 city", "primary city", "physical city", "street city", "town"],
   state: ["state", "mailing state", "mailing state province", "mailing province", "contact state", "person state", "home state", "address state", "address 1 state", "address 1 region", "state province", "state region", "state province region", "primary state", "physical state", "province", "st", "region"],
@@ -116,7 +125,9 @@ const CONTAINS: Partial<Record<ContactCsvColumn, string[]>> = {
   state: ["state", "province"],
   location: ["location"],
   email: ["email", "e mail"],
-  phone: ["phone", "mobile", "cell", "telephone"],
+  mobile: ["mobile", "cell"],
+  otherPhone: ["other number", "other phone", "alternate phone", "alternate number"],
+  phone: ["phone", "telephone"],
   website: ["website", "web site"],
   birthday: ["birthday", "birth date", "date of birth"],
 };
@@ -131,7 +142,7 @@ const DISQUALIFIERS = ["label", "phonetic", "middle", "owner", "source", "id", "
 
 const CLAIM_ORDER: ContactCsvColumn[] = [
   "companyName", "companyPhone", "companyEmail", "companyWebsite", "companyCity", "companyState", "companyStatus",
-  "industry", "companyType", "firstName", "lastName", "name", "title", "email", "phone", "website", "city", "state",
+  "industry", "companyType", "firstName", "lastName", "name", "title", "email", "mobile", "otherPhone", "phone", "website", "city", "state",
   "location", "birthday", "status",
 ];
 
@@ -191,6 +202,7 @@ export type ImportContactRow = {
   title: string | null;
   email: string | null;
   phone: string | null;
+  mobile: string | null;
   website: string | null;
   city: string | null;
   state: string | null;
@@ -305,6 +317,22 @@ function cleanEmail(raw: string) {
   return { email: value.slice(0, 200) };
 }
 
+// A phone cell as it reads, or null when it is plainly not a number:
+// blank, words ("N/A", "missing"), fewer than 10 digits, every digit the
+// same (111-111-1111, 888-888-8888) or a straight count (123-456-7890).
+// An extension and a leading US 1 are set aside before counting. The
+// migration 20261027120000_contact_mobile ran the same rule once over
+// the phones already saved.
+const COUNTING = ["1234567890", "0123456789", "9876543210", "0987654321"];
+export function realPhone(raw: string): string | null {
+  const value = raw.trim().replace(/\s+/g, " ");
+  if (!value) return null;
+  let digits = value.replace(/\s*(x|ext\.?|extension)\s*\d+\s*$/i, "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
+  if (digits.length < 10 || /^(\d)\1*$/.test(digits) || COUNTING.includes(digits)) return null;
+  return value.slice(0, 40);
+}
+
 function cleanWebsite(raw: string) {
   const value = raw.trim();
   if (!value) return null;
@@ -370,6 +398,16 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
     const companyEmail = cleanEmail(cell("companyEmail"));
     if (companyEmail.note) notes.push(companyEmail.note);
 
+    // Phone is the file's Phone, or its Other Number when Phone is blank or
+    // a placeholder. Mobile is only ever Mobile: never Phone, never the
+    // company's.
+    const phone = realPhone(cell("phone")) ?? realPhone(cell("otherPhone"));
+    const mobile = realPhone(cell("mobile"));
+    if (cell("phone") && !realPhone(cell("phone"))) {
+      notes.push(phone ? `Phone "${cell("phone")}" isn't a real number — used Other Number` : `Phone "${cell("phone")}" isn't a real number — left blank`);
+    }
+    if (cell("mobile") && !mobile) notes.push(`Mobile "${cell("mobile")}" isn't a real number — left blank`);
+
     // A row with no person is a company on its own. Its bare Phone, Email,
     // Website, City, State and Status then describe the company, so a plain
     // companies sheet imports with everything filled in.
@@ -388,7 +426,7 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
       const bareEmail = companyOnly ? email : { email: null };
       company = {
         name: companyName,
-        phone: cell("companyPhone").slice(0, 40) || (companyOnly ? cell("phone").slice(0, 40) : "") || null,
+        phone: realPhone(cell("companyPhone")) ?? (companyOnly ? phone : null),
         email: companyEmail.email ?? bareEmail.email,
         website: cleanWebsite(cell("companyWebsite")) ?? (companyOnly ? cleanWebsite(cell("website")) : null),
         city: cell("companyCity").slice(0, 120) || (companyOnly ? city : null) || null,
@@ -407,7 +445,8 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
       name,
       title: cell("title").slice(0, 120) || null,
       email: email.email,
-      phone: cell("phone").slice(0, 40) || null,
+      phone,
+      mobile,
       website: cleanWebsite(cell("website")),
       city: city || null,
       state,

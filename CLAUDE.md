@@ -491,6 +491,22 @@ account may release (Oct 25). Taylor plans a subscription for vendors;
 Claude recommended keeping a no-account link free and charging for the
 full workspace — his call.
 
+**Mobile on contacts (Oct 27, 2026).** `Contact.mobile` is its own
+field, shown on the contact page and edit form, found by the list
+search, kept by Merge Contacts, and never copied to a company's phone.
+The import reads Mobile / Cell into Mobile only; Phone is the file's
+Phone, or its **Other Number** when Phone is a placeholder; a placeholder
+(blank, words, under 10 digits, one digit repeated, 123-456-7890) is left
+blank and named in the preview's notes (`realPhone` in
+`src/lib/contacts-csv.ts`, also used for Company Phone). Before this a
+file with both Phone and Mobile kept Phone and dropped Mobile; Taylor
+re-imports his two earlier files rather than deleting them, and the
+re-import fills Mobile on the same contacts. The migration
+`20261027120000_contact_mobile` blanked placeholder phones already saved
+on contacts, and on companies only where the app had copied them up.
+`scripts/browser-tests/contacts-mobile.cjs` (13 steps) covers it; the
+import suites' sample numbers carry an area code since.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
