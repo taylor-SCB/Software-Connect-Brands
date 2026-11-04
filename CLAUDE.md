@@ -732,7 +732,14 @@ are all blocking before the first paying customer.
   above a real workspace (0.20s at 200,000 contacts), but past it the
   filter narrows silently.
 - **The import runs in the browser tab.** Any size works, but the tab
-  has to stay open (about 5 to 10 minutes for 200,000 rows). A
+  has to stay open. Measured Nov 4, 2026 through `slow-db-proxy.cjs`
+  (`ROWS=200000 node scripts/browser-tests/import-slow-db.cjs`), every row
+  at its own company: 200,000 new rows in 8½ minutes, the same file
+  re-imported in 3¼; 3,200 rows in 8 s new and 3 s re-imported. Existing
+  contacts and the company fill-ins are written a batch at a time
+  (`updateContacts` in `contacts/import-actions.ts`, the three statements
+  in `enrichCompanies`); before that a 3,200-row re-import took 61 s. The
+  earlier "5 to 10 minutes" was measured without the proxy. A
   background job is the answer when a customer needs to walk away or
   schedule syncs; it needs file storage (Vercel Blob) and a queue.
 - **A supplier and its Company can end up unbridged, with no screen to
