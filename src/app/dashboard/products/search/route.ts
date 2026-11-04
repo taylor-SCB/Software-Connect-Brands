@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { cleanSearch } from "@/lib/list-params";
 import { productSearchWhere } from "@/lib/product-list";
+import { STARRED_MINIMUM_SELECT, starredMinimumCents } from "@/lib/supplier-math";
 
 // The most products one ratesheet holds (ratesheets/actions.ts).
 const RATESHEET_MAX = 2000;
@@ -42,6 +43,8 @@ export async function GET(request: Request) {
     softwareTerm: true,
     active: true,
     manufacturer: { select: { name: true } },
+    // The starred supplier's minimum, for the quote line's red flag.
+    suppliers: STARRED_MINIMUM_SELECT,
   } as const;
   const base = { organizationId, ...(activeOnly ? { active: true } : {}) };
 
@@ -76,7 +79,12 @@ export async function GET(request: Request) {
   return NextResponse.json(rows.map(flatten), { headers: { "Cache-Control": "private, no-store" } });
 }
 
-function flatten<T extends { manufacturer: { name: string } | null }>(row: T) {
-  const { manufacturer, ...rest } = row;
-  return { ...rest, manufacturerName: manufacturer?.name ?? null };
+function flatten<
+  T extends {
+    manufacturer: { name: string } | null;
+    suppliers: { costCents: number; discountBp: number; minMarginBp: number | null; preferredFor: string | null }[];
+  },
+>(row: T) {
+  const { manufacturer, suppliers, ...rest } = row;
+  return { ...rest, manufacturerName: manufacturer?.name ?? null, minPriceCents: starredMinimumCents(suppliers) };
 }

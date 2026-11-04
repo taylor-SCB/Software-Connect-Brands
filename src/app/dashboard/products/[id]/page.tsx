@@ -6,6 +6,7 @@ import { IconTrash } from "@/components/icons";
 import { ProductForm } from "../product-form";
 import { updateProduct, deleteProduct } from "../actions";
 import { loadProductLookups } from "../lookups";
+import { repairSupplierRows } from "@/lib/product-suppliers";
 
 export default async function EditProductPage({
   params,
@@ -15,10 +16,26 @@ export default async function EditProductPage({
   const { id } = await params;
   const { organizationId } = await requireSession();
 
+  // A product made before suppliers had rows gets its row first, so the
+  // Suppliers card shows the supplier it already has.
+  await repairSupplierRows(organizationId, [id]);
   const [product, lookups] = await Promise.all([
     prisma.product.findFirst({
       where: { id, organizationId },
-      include: { distributorContacts: { select: { id: true } } },
+      include: {
+        distributorContacts: { select: { id: true } },
+        suppliers: {
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: {
+            distributorId: true,
+            costCents: true,
+            discountBp: true,
+            listPriceCents: true,
+            minMarginBp: true,
+            distributor: { select: { name: true } },
+          },
+        },
+      },
     }),
     loadProductLookups(organizationId),
   ]);
@@ -65,6 +82,7 @@ export default async function EditProductPage({
           distributorId: product.distributorId,
           contactIds: product.distributorContacts.map((contact) => contact.id),
           active: product.active,
+          suppliers: product.suppliers.map(({ distributor, ...row }) => ({ ...row, name: distributor.name })),
         }}
       />
 

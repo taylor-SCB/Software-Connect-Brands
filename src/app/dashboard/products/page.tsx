@@ -24,6 +24,8 @@ import { getProductFilterOptions, productWhere } from "@/lib/product-list";
 import { parseProductListParams, productListHref } from "@/lib/product-list-params";
 import { Pagination } from "@/components/pagination";
 import { ProductFilters } from "./product-filters";
+import { ProductRowGroup, SuppliersToggle } from "./product-supplier-rows";
+import { supplierMoney } from "@/lib/supplier-math";
 
 const BASE_PATH = "/dashboard/products";
 
@@ -52,7 +54,21 @@ export default async function ProductsPage({
     orderBy: [{ active: "desc" }, { name: "asc" }, { id: "asc" }],
     skip: window.skip,
     take: params.per,
-    include: { manufacturer: { select: { name: true } } },
+    include: {
+      manufacturer: { select: { name: true } },
+      suppliers: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          distributorId: true,
+          costCents: true,
+          discountBp: true,
+          listPriceCents: true,
+          minMarginBp: true,
+          preferredFor: true,
+          distributor: { select: { name: true } },
+        },
+      },
+    },
   });
 
   return (
@@ -135,8 +151,30 @@ export default async function ProductsPage({
                   const rate = product.softwareRate
                     ? SOFTWARE_RATE_LABELS[product.softwareRate as SoftwareRateValue]
                     : null;
+                  // The starred supplier first, then the rest as they were added.
+                  const suppliersOf = product.suppliers
+                    .map((row) => ({
+                      id: row.distributorId,
+                      name: row.distributor.name,
+                      starred: row.preferredFor !== null,
+                      costCents: row.costCents,
+                      discountBp: row.discountBp,
+                      listPriceCents: row.listPriceCents,
+                      minMarginBp: row.minMarginBp,
+                    }))
+                    .sort((a, b) => Number(b.starred) - Number(a.starred));
+                  const star = suppliersOf.find((row) => row.starred) ?? null;
+                  // Under the starred supplier's minimum margin: allowed,
+                  // but flagged (Taylor, Nov 4, 2026).
+                  const minimum = star ? supplierMoney(star).minPriceCents : null;
+                  const belowMinimum = minimum !== null && product.unitPriceCents < minimum;
                   return (
-                    <tr key={product.id}>
+                    <ProductRowGroup
+                      key={product.id}
+                      productName={product.name}
+                      suppliers={suppliersOf}
+                      colSpan={8}
+                    >
                       <td>
                         <Link
                           href={`/dashboard/products/${product.id}`}
@@ -153,6 +191,9 @@ export default async function ProductsPage({
                             {product.description}
                           </p>
                         )}
+                        <div>
+                          <SuppliersToggle starredName={star?.name ?? null} count={suppliersOf.length} />
+                        </div>
                       </td>
                       <td className="faint num hidden text-xs md:table-cell">{product.sku || "—"}</td>
                       <td>
@@ -165,6 +206,15 @@ export default async function ProductsPage({
                       </td>
                       <td className="num text-right font-medium">
                         {formatCents(product.unitPriceCents)}
+                        {belowMinimum && minimum !== null && (
+                          <p
+                            className="text-[0.7rem] font-normal text-[var(--danger)]"
+                            data-testid="product-below-minimum"
+                            title={`${star?.name}'s minimum margin needs ${formatCents(minimum)}`}
+                          >
+                            Below minimum ({formatCents(minimum)})
+                          </p>
+                        )}
                         {unit && (
                           <p className="faint text-[0.7rem] font-normal">
                             {unit}
@@ -207,7 +257,7 @@ export default async function ProductsPage({
                           returnTo={productListHref(BASE_PATH, params, { page: window.current })}
                         />
                       </td>
-                    </tr>
+                    </ProductRowGroup>
                   );
                 })}
               </tbody>

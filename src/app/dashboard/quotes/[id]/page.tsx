@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { STARRED_MINIMUM_SELECT, starredMinimumCents } from "@/lib/supplier-math";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { getServiceTypes } from "@/lib/service-types";
@@ -48,7 +49,10 @@ export default async function QuoteBuilderPage({
       include: {
         contact: { select: { id: true, name: true, company: { select: { name: true } } } },
         deal: { select: { id: true, title: true, stage: true } },
-        lineItems: { orderBy: { position: "asc" } },
+        lineItems: {
+          orderBy: { position: "asc" },
+          include: { product: { select: { suppliers: STARRED_MINIMUM_SELECT } } },
+        },
         payments: { orderBy: { position: "asc" } },
       },
     }),
@@ -182,6 +186,7 @@ export default async function QuoteBuilderPage({
               unitOfMeasure: item.unitOfMeasure,
               softwareRate: item.softwareRate,
               softwareTermMonths: item.softwareTermMonths,
+              minPriceCents: item.product ? starredMinimumCents(item.product.suppliers) : null,
             }))}
             initialDiscount={{ discountCents: quote.discountCents, discountPercent: quote.discountPercent }}
             serviceTypes={serviceTypes}

@@ -22,7 +22,14 @@ export function productSearchWhere(q: string): Prisma.ProductWhereInput[] {
 
 export function productWhere(organizationId: string, params: ProductListParams): Prisma.ProductWhereInput {
   const and: Prisma.ProductWhereInput[] = productSearchWhere(params.q);
-  if (params.suppliers.length) and.push({ distributorId: { in: params.suppliers } });
+  // Any supplier the product is bought from, starred or not (Release 3a).
+  if (params.suppliers.length)
+    and.push({
+      OR: [
+        { distributorId: { in: params.suppliers } },
+        { suppliers: { some: { distributorId: { in: params.suppliers } } } },
+      ],
+    });
   if (params.makers.length) and.push({ manufacturerId: { in: params.makers } });
   if (params.tags.length) and.push({ defaultTag: { in: params.tags } });
   if (params.services.length) and.push({ serviceType: { in: params.services } });
@@ -39,7 +46,10 @@ export function productWhere(organizationId: string, params: ProductListParams):
 export async function getProductFilterOptions(organizationId: string, params: ProductListParams): Promise<ProductFilterOptions> {
   const [suppliers, makers, services] = await Promise.all([
     prisma.distributor.findMany({
-      where: { organizationId, OR: [{ products: { some: {} } }, { id: { in: params.suppliers } }] },
+      where: {
+        organizationId,
+        OR: [{ products: { some: {} } }, { productSuppliers: { some: {} } }, { id: { in: params.suppliers } }],
+      },
       orderBy: { name: "asc" },
       take: 500,
       select: { id: true, name: true },

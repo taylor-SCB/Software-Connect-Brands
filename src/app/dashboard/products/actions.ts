@@ -8,6 +8,9 @@ import { requireSession } from "@/lib/session";
 import { parseForm, optionalText, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
 import { linkDistributorCompany } from "@/lib/distributors";
+import { repairSupplierRows, starSupplier, syncProductFromStar } from "@/lib/product-suppliers";
+import { MAX_DISCOUNT_BP, MAX_MIN_MARGIN_BP } from "@/lib/supplier-math";
+import { percentToBasisPoints } from "@/lib/price-list";
 import { linkPlatformSupplier } from "@/lib/platform-suppliers";
 import { PLATFORM_SUPPLIER_PREFIX } from "@/lib/account-types";
 import {
@@ -65,6 +68,19 @@ const productSchema = z.object({
   active: z.union([z.literal("on"), z.literal("")]).optional(),
 });
 
+// A product's supplier rows (Release 3a): their price, your COGS discount,
+// their MSRP and your minimum margin, as typed. The starred one is the
+// distributor picked in the Distributor box.
+const supplierRowSchema = z.object({
+  distributorId: z.string().trim().min(1).max(60),
+  cost: z.string().max(20),
+  discount: z.string().max(10),
+  list: z.string().max(20),
+  minMargin: z.string().max(10),
+});
+const supplierRowsSchema = z.array(supplierRowSchema).max(50);
+const removedSuppliersSchema = z.array(z.string().trim().min(1).max(60)).max(50);
+
 function readNewContacts(raw: FormDataEntryValue | null): unknown {
   if (typeof raw !== "string" || raw.trim() === "") return [];
   try {
@@ -115,6 +131,16 @@ type Resolved = {
   contactIds: string[];
   newContacts: { name: string; email: string | null; phone: string | null }[];
   contactEdits: { id: string; name: string; email: string | null; phone: string | null }[];
+  suppliers: SupplierRowInput[];
+  removedSuppliers: string[];
+};
+
+type SupplierRowInput = {
+  distributorId: string;
+  costCents: number;
+  discountBp: number;
+  listPriceCents: number | null;
+  minMarginBp: number | null;
 };
 
 // Turns the posted form into something Prisma can write, creating the
@@ -244,9 +270,47 @@ async function resolveProductInput(
       }));
   }
 
+  // The supplier rows, each checked against this workspace.
+  const rowsParsed = supplierRowsSchema.safeParse(readNewContacts(formData.get("suppliers")));
+  const removedParsed = removedSuppliersSchema.safeParse(readNewContacts(formData.get("removedSuppliers")));
+  if (!rowsParsed.success || !removedParsed.success) {
+    return { ok: false, error: "The suppliers on this form couldn't be read. Reload the page and try again." };
+  }
+  const supplierIds = [...new Set(rowsParsed.data.map((row) => row.distributorId))];
+  const owned = supplierIds.length
+    ? await prisma.distributor.findMany({ where: { id: { in: supplierIds }, organizationId }, select: { id: true, name: true } })
+    : [];
+  const ownedNames = new Map(owned.map((row) => [row.id, row.name]));
+  const suppliers: SupplierRowInput[] = [];
+  for (const row of rowsParsed.data) {
+    const name = ownedNames.get(row.distributorId);
+    if (!name) return { ok: false, error: "One of the suppliers on this form no longer exists. Reload the page." };
+    const rowCost = row.cost.trim() === "" ? 0 : dollarsToCents(row.cost);
+    if (rowCost < 0) return { ok: false, error: `${name}'s price can't be negative` };
+    const rowDiscount = row.discount.trim() === "" ? 0 : percentToBasisPoints(row.discount);
+    if (rowDiscount === null || rowDiscount > MAX_DISCOUNT_BP) {
+      return { ok: false, error: `${name}'s COGS discount has to be a percentage under 95` };
+    }
+    const rowList = row.list.trim() === "" ? null : dollarsToCents(row.list);
+    if (rowList !== null && rowList < 0) return { ok: false, error: `${name}'s MSRP can't be negative` };
+    const rowMinMargin = row.minMargin.trim() === "" ? null : percentToBasisPoints(row.minMargin);
+    if (row.minMargin.trim() !== "" && (rowMinMargin === null || rowMinMargin > MAX_MIN_MARGIN_BP)) {
+      return { ok: false, error: `${name}'s minimum margin has to be a percentage under 95` };
+    }
+    suppliers.push({
+      distributorId: row.distributorId,
+      costCents: rowCost,
+      discountBp: rowDiscount,
+      listPriceCents: rowList,
+      minMarginBp: rowMinMargin,
+    });
+  }
+
   return {
     ok: true,
     data: {
+      suppliers,
+      removedSuppliers: removedParsed.data,
       scalars: {
         name: input.name,
         description: optionalText(formData.get("description")) ?? "",
@@ -299,6 +363,82 @@ function contactWrites(organizationId: string, distributorId: string | null, dat
   };
 }
 
+// A product's supplier rows after a save of the form: rows taken off go
+// (only those the person removed — never one added elsewhere since the
+// page was opened), the posted rows take what was typed, the starred
+// supplier gets a row at the form's COGS and MSRP if it has none (a
+// distributor just added or picked), the star moves to it, and the
+// product carries its numbers. "— None —" in the Distributor box takes
+// every supplier off.
+async function saveSupplierRows(
+  organizationId: string,
+  productId: string,
+  starId: string | null,
+  data: Resolved,
+) {
+  await repairSupplierRows(organizationId, [productId]);
+  if (!starId) {
+    await prisma.productSupplier.deleteMany({ where: { organizationId, productId } });
+    return;
+  }
+  const removed = data.removedSuppliers.filter((id) => id !== starId);
+  if (removed.length > 0) {
+    await prisma.productSupplier.deleteMany({ where: { organizationId, productId, distributorId: { in: removed } } });
+  }
+  const posted = new Map(data.suppliers.map((row) => [row.distributorId, row]));
+  if (!posted.has(starId)) {
+    const existing = await prisma.productSupplier.findUnique({
+      where: { productId_distributorId: { productId, distributorId: starId } },
+      select: { id: true },
+    });
+    if (!existing) {
+      posted.set(starId, {
+        distributorId: starId,
+        costCents: data.scalars.costCents,
+        discountBp: 0,
+        listPriceCents: data.scalars.listPriceCents,
+        minMarginBp: null,
+      });
+    }
+  }
+  for (const row of posted.values()) {
+    if (removed.includes(row.distributorId)) continue;
+    const values = {
+      costCents: row.costCents,
+      discountBp: row.discountBp,
+      listPriceCents: row.listPriceCents,
+      minMarginBp: row.minMarginBp,
+    };
+    await prisma.productSupplier.upsert({
+      where: { productId_distributorId: { productId, distributorId: row.distributorId } },
+      create: { organizationId, productId, distributorId: row.distributorId, ...values },
+      update: values,
+    });
+  }
+  await starSupplier(prisma, organizationId, productId, starId);
+  await syncProductFromStar(prisma, organizationId, productId);
+}
+
+// The people linked to a product after a save: the starred supplier's as
+// ticked on the form, and every other supplier's people left where they
+// were — the form only shows the starred one's, so it can't have meant to
+// unlink anyone else's. A supplier taken off takes its people with it.
+async function contactsAfterSave(organizationId: string, productId: string, starId: string | null, data: Resolved) {
+  const current = await prisma.distributorContact.findMany({
+    where: { organizationId, products: { some: { id: productId } } },
+    select: { id: true, distributorId: true },
+  });
+  const rows = await prisma.productSupplier.findMany({ where: { organizationId, productId }, select: { distributorId: true } });
+  const staying = new Set(rows.map((row) => row.distributorId));
+  for (const row of data.suppliers) staying.add(row.distributorId);
+  for (const id of data.removedSuppliers) staying.delete(id);
+  if (!starId) staying.clear();
+  const kept = current
+    .filter((contact) => contact.distributorId !== starId && staying.has(contact.distributorId))
+    .map((contact) => ({ id: contact.id }));
+  return [...data.contactIds.map((id) => ({ id })), ...kept];
+}
+
 export async function createProduct(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
 
@@ -308,13 +448,15 @@ export async function createProduct(_prev: ActionState, formData: FormData): Pro
   const contacts = contactWrites(organizationId, scalars.distributorId, resolved.data);
   await applyContactEdits(organizationId, scalars.distributorId, resolved.data);
 
-  await prisma.product.create({
+  const made = await prisma.product.create({
     data: {
       organizationId,
       ...scalars,
       distributorContacts: { connect: contacts.connect, create: contacts.create },
     },
+    select: { id: true },
   });
+  await saveSupplierRows(organizationId, made.id, scalars.distributorId, resolved.data);
 
   revalidatePath("/dashboard/products");
   redirect("/dashboard/products");
@@ -340,15 +482,18 @@ export async function updateProduct(_prev: ActionState, formData: FormData): Pro
   const contacts = contactWrites(organizationId, scalars.distributorId, resolved.data);
   await applyContactEdits(organizationId, scalars.distributorId, resolved.data);
 
+  const linked = await contactsAfterSave(organizationId, existing.id, scalars.distributorId, resolved.data);
   await prisma.product.update({
     where: { id: existing.id },
     data: {
       ...scalars,
       // `set` replaces the whole selection, which is what a checkbox list
-      // means: unticked contacts come off, ticked ones stay, new ones join.
-      distributorContacts: { set: contacts.connect, create: contacts.create },
+      // means: unticked contacts come off, ticked ones stay, new ones join
+      // — for the starred supplier, whose people the form shows.
+      distributorContacts: { set: linked, create: contacts.create },
     },
   });
+  await saveSupplierRows(organizationId, existing.id, scalars.distributorId, resolved.data);
 
   revalidatePath("/dashboard/products");
   revalidatePath(`/dashboard/products/${existing.id}`);
@@ -382,9 +527,16 @@ export async function cloneProduct(formData: FormData) {
   const id = idSchema.safeParse(formData.get("productId"));
   if (!id.success) return;
 
+  await repairSupplierRows(organizationId, [id.data]);
   const source = await prisma.product.findFirst({
     where: { id: id.data, organizationId },
-    include: { distributorContacts: { select: { id: true } } },
+    include: {
+      distributorContacts: { select: { id: true } },
+      suppliers: {
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { distributorId: true, costCents: true, discountBp: true, listPriceCents: true, minMarginBp: true, preferredFor: true },
+      },
+    },
   });
   if (!source) return;
 
@@ -406,9 +558,22 @@ export async function cloneProduct(formData: FormData) {
       distributorId: source.distributorId,
       active: source.active,
       distributorContacts: { connect: source.distributorContacts },
+      // Every supplier comes along; the clone's star is its own.
+      suppliers: {
+        create: source.suppliers.map((row) => ({
+          organizationId,
+          distributorId: row.distributorId,
+          costCents: row.costCents,
+          discountBp: row.discountBp,
+          listPriceCents: row.listPriceCents,
+          minMarginBp: row.minMarginBp,
+        })),
+      },
     },
     select: { id: true },
   });
+  const starred = source.suppliers.find((row) => row.preferredFor);
+  if (starred) await starSupplier(prisma, organizationId, clone.id, starred.distributorId);
 
   revalidatePath("/dashboard/products");
   redirect(`/dashboard/products/${clone.id}`);

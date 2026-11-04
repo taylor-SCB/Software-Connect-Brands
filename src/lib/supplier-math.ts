@@ -52,3 +52,20 @@ export function supplierMoney(row: SupplierRowMoney) {
     minMarginCents: minPriceCents === null ? null : minPriceCents - cogsCents,
   };
 }
+
+/**
+ * The lowest price the starred supplier's minimum margin allows, or null.
+ * The flag on the Products list and the quote's lines (Taylor, Nov 4,
+ * 2026: under the minimum is allowed, and shown in red).
+ */
+export function starredMinimumCents(rows: (SupplierRowMoney & { preferredFor?: string | null })[]): number | null {
+  const star = rows.find((row) => row.preferredFor !== null && row.preferredFor !== undefined) ?? null;
+  return star ? supplierMoney(star).minPriceCents : null;
+}
+
+// The select that reads it: the starred row only.
+export const STARRED_MINIMUM_SELECT = {
+  where: { preferredFor: { not: null } },
+  take: 1,
+  select: { costCents: true, discountBp: true, minMarginBp: true, preferredFor: true },
+} as const;
