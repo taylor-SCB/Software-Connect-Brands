@@ -635,7 +635,8 @@ are all blocking before the first paying customer.
   over a newer one.** A line whose product a newer sheet of the same
   supplier priced is linked to it and left alone ("already priced from a
   newer sheet of theirs"); otherwise a tick re-prices the product from the
-  sheet, as Import prices would. A cost that more than doubles or halves is
+  sheet at the sheet's COGS discount (the "Your COGS" the list shows), as
+  Import prices would. A cost that more than doubles or halves is
   held there with no tick to force it: Import prices is where it goes in
   on purpose, with the warning beside the row.
 - **Products changed by the code before 3a are trusted over their rows
@@ -646,10 +647,11 @@ are all blocking before the first paying customer.
   next time it is opened, imported, saved or its sheet's discount changes;
   one the old code set to "None" loses its supplier rows, as None does on
   the form. Rows written after the product (3a mid-save) are left alone.
-- **Import Ratesheet refuses a typed new supplier name that turns out to
-  be a supplier you already buy from** (spelled differently, or through a
-  renamed company): the preview showed its products as someone else's.
-  Pick it from the list instead.
+- **Import Ratesheet refuses a typed new supplier name, or an account
+  picked from On Software Connect Brands, that lands on a supplier already
+  on file other than the one previewed** (through a renamed company): the
+  preview showed its products as someone else's. Pick it from the list
+  instead. The account pick still links that supplier to the account.
 - **Any signed-in user can import a ratesheet**, like every other
   Products action.
 - **A rep picked on an import is a DistributorContact, not a CRM
@@ -932,7 +934,7 @@ bridge not moved, a merge keeping the link, a paused account losing the
 mark, the email throttle, a removed operator, the product form without
 JavaScript, the phone; **it needs the fake email settings
 `password-reset.cjs` uses**), and from Nov 4, 2026 `catalog-suppliers.cjs`
-(37: a second supplier's sheet, the sheet row and its search, See
+(38: a second supplier's sheet, the sheet row and its search, See
 product list's counts, Cancel, the discount and a bad one, a second tab
 saving, Save and accept's adds / take-offs / discount / minimum markup,
 a turned-off product ticked back, an older sheet read from its file, the
@@ -950,7 +952,10 @@ beside count, the new index; and eight for the fixes' own review — a
 standing discount kept on new and repaired rows, a page opened mid-save,
 None outside 3a, a typed name refused, a lost save re-read, Excel-damaged
 part numbers, the newest sheet's tick, a quantity under one, a typed
-markup after a save, a sheet's discount after an outside write).
+markup after a save, a sheet's discount after an outside write; and one
+for the last review — an outside switch onto a supplier already on the
+product, None with a new COGS, a discounted quote line exactly at the
+minimum).
 `products-load-test.cjs` also opens, searches, clears and re-ticks the
 25,000-line sheet through the slow proxy (open 1.2 s, all off 25 s, all
 back 81 s; the 25,000-row import is 26 s, up from 9 s, for the supplier
