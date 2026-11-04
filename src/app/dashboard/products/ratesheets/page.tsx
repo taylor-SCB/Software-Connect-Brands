@@ -85,6 +85,16 @@ export default async function RatesheetsPage({
     sent: perSheet.get(sheet.id)?.sent ?? 0,
   }));
 
+  // How many of each sheet's kept lines are in Products.
+  const inProductsBySheet = new Map(
+    (
+      await prisma.ratesheetLine.groupBy({
+        by: ["linkedRatesheetId"],
+        where: { organizationId, productId: { not: null } },
+        _count: { _all: true },
+      })
+    ).map((group) => [group.linkedRatesheetId, group._count._all]),
+  );
   const boardFiles: BoardFile[] = files.map((file) => ({
     id: file.id,
     name: file.name,
@@ -102,6 +112,11 @@ export default async function RatesheetsPage({
           : "")
       : null,
     importable: priceListFileKind(file.fileName) !== null,
+    imported: file.importedAt !== null,
+    discountBp: file.importedAt ? file.discountBp : null,
+    minMarkupBp: file.minMarkupBp,
+    lineCount: file.linesStoredAt ? file.lineCount : null,
+    inProducts: inProductsBySheet.get(file.id) ?? 0,
   }));
 
   return (

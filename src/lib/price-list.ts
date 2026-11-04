@@ -11,6 +11,7 @@
 // column the person explicitly marks "Your sell price" does that.
 
 import { parseTag, parseUnit } from "@/lib/csv";
+import { effectiveCostCents } from "@/lib/supplier-math";
 import type { LineItemTagValue, UnitOfMeasureValue } from "@/lib/constants";
 import type { SheetTable } from "@/lib/price-list-file";
 
@@ -19,7 +20,7 @@ import type { SheetTable } from "@/lib/price-list-file";
 // picker loaded every product (Oct 21, 2026: 8,600 made the Products page
 // 44 MB and 24 seconds); since they page and search (Oct 25, 2026), a
 // distributor's whole catalog can come in.
-const MAX_ROWS_READ = 25_000;
+export const MAX_ROWS_READ = 25_000;
 export const MAX_NEW_PRODUCTS = MAX_ROWS_READ;
 export const MAX_RATESHEET_BYTES = 4 * 1024 * 1024;
 // Money is cents in a Postgres integer; anything past this is a typo.
@@ -97,7 +98,26 @@ export type CatalogItem = {
   distributorId: string | null;
   distributorName: string | null;
   active: boolean;
+  // Every supplier with a row on the product (Release 3a); distributorId
+  // above is the starred one, whose cost the product carries. Left out by
+  // callers that predate suppliers, which then read distributorId alone.
+  supplierIds?: string[];
+  // Those rows' own numbers: a sheet is compared with its own supplier's
+  // row, priced with that row's discount.
+  suppliers?: CatalogSupplierRow[];
 };
+
+export type CatalogSupplierRow = {
+  distributorId: string;
+  costCents: number;
+  discountBp: number;
+  listPriceCents: number | null;
+};
+
+// The suppliers a catalog item is bought from.
+function suppliersOf(item: CatalogItem): string[] {
+  return item.supplierIds ?? (item.distributorId ? [item.distributorId] : []);
+}
 
 // ------------------------------------------------------------------
 // Reading the sheet's layout
@@ -561,7 +581,7 @@ function findMatch(
 ): { item: CatalogItem | null; by: "sku" | "name" | null; ambiguous: boolean } {
   if (sku) {
     const bySku = index.bySku.get(skuKey(sku)) ?? [];
-    const exact = bySku.find((item) => supplierId && item.distributorId === supplierId) ?? bySku[0];
+    const exact = bySku.find((item) => supplierId && suppliersOf(item).includes(supplierId)) ?? bySku[0];
     if (exact) return { item: exact, by: "sku", ambiguous: false };
   }
   // A row with a part number got here because no product carries it, so
@@ -572,6 +592,20 @@ function findMatch(
   if (named.length > 1) return { item: null, by: null, ambiguous: true };
   if (named.length === 1) return { item: named[0], by: "name", ambiguous: false };
   return { item: null, by: null, ambiguous: false };
+}
+
+/**
+ * Match rows against a catalog exactly as the planner does: part number
+ * first (this supplier's own product winning a tie), then a name only when
+ * it can't be a different part. For See product list, which adds products
+ * one ticked line at a time after the import.
+ */
+export function catalogMatcher(catalog: CatalogItem[]) {
+  const index = buildCatalogIndex(catalog);
+  return (sku: string | null, name: string, supplierId: string | null): CatalogItem | null => {
+    const usable = sku && !placeholderSku(sku) && !damagedSku(sku) ? sku : null;
+    return findMatch(index, usable, name, supplierId).item;
+  };
 }
 
 // ------------------------------------------------------------------
@@ -600,7 +634,13 @@ export type PlanRow = {
   match: { id: string; name: string; by: "sku" | "name" } | null;
   // The supplier an existing product is bought from today, when that is
   // not the one this sheet came from.
+  // The starred supplier of the matched product when it isn't this
+  // sheet's: the row then adds this supplier beside them (secondSupplier)
+  // and leaves the product's cost and price alone.
   otherSupplier: string | null;
+  secondSupplier: boolean;
+  // Your COGS from this sheet's price, after your discount with them.
+  theirCostCents: number | null;
   oldCostCents: number | null;
   oldPriceCents: number | null;
   newCostCents: number;
@@ -638,6 +678,7 @@ export type RatesheetPlan = {
     belowCost: number;
     aboveList: number;
     tooManyNew: number;
+    secondSupplier: number;
   };
 };
 
@@ -657,6 +698,9 @@ export type PlanInput = {
   // On the server: exactly the rows the person had ticked. Nothing else
   // imports, whatever the defaults would say against today's catalog.
   selected?: string[];
+  // Your COGS discount off everything on this sheet (See product list),
+  // in basis points. A fresh file has none.
+  costDiscountBp?: number;
 };
 
 export function rowKey(sheetIndex: number, line: number) {
@@ -670,6 +714,7 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
   const forced = new Set(input.forced ?? []);
   const selected = input.selected ? new Set(input.selected) : null;
   const index = buildCatalogIndex(input.catalog);
+  const discountBp = input.costDiscountBp ?? 0;
 
   const seen = new Set<string>();
   // Product id → the line that already claimed it.
@@ -759,15 +804,21 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
       const sameAs = match ? (matched.get(match.id) ?? null) : null;
       if (match && !sameAs) matched.set(match.id, `${tab.name} line ${line}`);
 
-      const otherSupplier =
-        match && match.distributorId && match.distributorId !== input.supplierId
-          ? (match.distributorName ?? "another supplier")
-          : null;
+      // A product starred to another supplier keeps that supplier's cost
+      // and its own price (Taylor, Nov 4, 2026: the star decides, and only
+      // a person moves it); this sheet adds its supplier beside it.
+      const secondSupplier = !!match && !!match.distributorId && match.distributorId !== input.supplierId;
+      const otherSupplier = secondSupplier ? (match!.distributorName ?? "another supplier") : null;
 
       // A cost only counts when it is a real amount above zero. "Call",
       // "N/A", a dash or $0.00 leaves an existing product's cost where it
       // is.
       const usableCost = cost.cents !== null && cost.cents > 0 ? cost.cents : null;
+      // Your COGS from this sheet: their price less your discount with
+      // them — the one on their row for this product when it has one (a
+      // deal on one item), otherwise the sheet's.
+      const ownRow = match?.suppliers?.find((supplier) => supplier.distributorId === input.supplierId) ?? null;
+      const sheetCost = usableCost === null ? null : effectiveCostCents(usableCost, ownRow ? ownRow.discountBp : discountBp);
       const usableList = list.cents !== null && list.cents > 0 ? list.cents : null;
       if (cost.cents === 0) notes.push("Cost is $0 on the sheet — left as it was");
       const costDecimals = cell(col.cost).match(/\.(\d+)/)?.[1] ?? "";
@@ -777,29 +828,34 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
 
       const oldCost = match ? match.costCents : null;
       const oldPrice = match ? match.unitPriceCents : null;
-      const newCost = usableCost ?? oldCost ?? 0;
+      const newCost = secondSupplier ? (oldCost ?? 0) : (sheetCost ?? oldCost ?? 0);
       const listForRule = usableList ?? match?.listPriceCents ?? null;
 
       let costChange: CostChange;
       if (!match) costChange = "new";
-      else if (usableCost === null) costChange = "none";
-      else if (usableCost > (oldCost ?? 0)) costChange = "up";
-      else if (usableCost < (oldCost ?? 0)) costChange = "down";
+      else if (secondSupplier || sheetCost === null) costChange = "none";
+      else if (sheetCost > (oldCost ?? 0)) costChange = "up";
+      else if (sheetCost < (oldCost ?? 0)) costChange = "down";
       else costChange = "same";
 
       const bigChange =
         !!match &&
-        usableCost !== null &&
+        !secondSupplier &&
+        sheetCost !== null &&
         oldCost !== null &&
         oldCost > 0 &&
-        (usableCost / oldCost > BIG_CHANGE_RATIO || oldCost / usableCost > BIG_CHANGE_RATIO);
+        (sheetCost / oldCost > BIG_CHANGE_RATIO || oldCost / sheetCost > BIG_CHANGE_RATIO);
 
-      const fromRule = priceFromRule(pricing.rule, pricing.basisPoints, usableCost ?? oldCost, listForRule);
+      const fromRule = priceFromRule(pricing.rule, pricing.basisPoints, sheetCost ?? oldCost, listForRule);
       const typed = overrides[rowKey(tab.sheetIndex, line)];
       let newPrice: number | null;
       let priceSource: PriceSource;
 
-      if (typed !== undefined && Number.isInteger(typed) && typed >= 0 && typed <= MAX_CENTS) {
+      if (secondSupplier) {
+        // The starred supplier's cost is the product's, so its price stays.
+        newPrice = oldPrice;
+        priceSource = "kept";
+      } else if (typed !== undefined && Number.isInteger(typed) && typed >= 0 && typed <= MAX_CENTS) {
         newPrice = typed;
         priceSource = "typed";
       } else if (sell.cents !== null && sell.cents > 0) {
@@ -868,7 +924,14 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
           holdReason = `Past the ${MAX_NEW_PRODUCTS.toLocaleString("en-US")} new-product limit for one sheet`;
         }
       }
-      if (otherSupplier) notes.push(`Bought from ${otherSupplier} today; this moves it to this supplier`);
+      if (secondSupplier) {
+        const theirs = sheetCost !== null ? ` at ${dollars(sheetCost)}` : "";
+        const cheaper =
+          sheetCost !== null && oldCost !== null && sheetCost < oldCost
+            ? ` — ${dollars(oldCost - sheetCost)} cheaper; move the star on the product to buy from them`
+            : "";
+        notes.push(`Bought from ${otherSupplier} (starred). Adds this supplier${theirs} beside them; your COGS stays ${dollars(oldCost ?? 0)}${cheaper}`);
+      }
       if (match && found.by === "name") notes.push(`Matched by name to "${match.name}"`);
       if (match && !match.active) notes.push("This product is inactive in your catalog");
 
@@ -900,6 +963,8 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
         fileSellCents: sell.cents,
         match: match && found.by ? { id: match.id, name: match.name, by: found.by } : null,
         otherSupplier,
+        secondSupplier,
+        theirCostCents: sheetCost,
         oldCostCents: oldCost,
         oldPriceCents: oldPrice,
         newCostCents: newCost,
@@ -936,8 +1001,13 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
         if (found.item) onSheet.add(found.item.id);
       }
     }
+    // Only what this supplier alone sells you: a product someone else
+    // also supplies stays on.
     missing = input.catalog
-      .filter((item) => item.distributorId === input.supplierId && item.active && !onSheet.has(item.id))
+      .filter((item) => {
+        const suppliers = suppliersOf(item);
+        return suppliers.length === 1 && suppliers[0] === input.supplierId && item.active && !onSheet.has(item.id);
+      })
       .map((item) => ({ id: item.id, name: item.name, sku: item.sku }));
   }
 
@@ -952,6 +1022,7 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
       included: ticked.length,
       newProducts: ticked.filter((row) => !row.match).length,
       updates: ticked.filter((row) => row.match).length,
+      secondSupplier: ticked.filter((row) => row.secondSupplier).length,
       costUp: ticked.filter((row) => row.costChange === "up").length,
       costDown: ticked.filter((row) => row.costChange === "down").length,
       held: rows.filter((row) => !row.included && row.holdReason).length,

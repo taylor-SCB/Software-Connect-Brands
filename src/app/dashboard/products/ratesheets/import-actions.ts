@@ -10,6 +10,9 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/session";
+import { sheetDiscountFor, storeRatesheetLines } from "@/lib/ratesheet-lines";
+import { applyRatesheetRows } from "@/lib/ratesheet-apply";
+import { catalogByKeys, catalogBySupplier, catalogKeys, loadCatalogFor, type CatalogRow } from "@/lib/ratesheet-catalog";
 import { linkDistributorCompany } from "@/lib/distributors";
 import { findPlatformSupplier, linkPlatformSupplier, NOT_LISTED, squeeze } from "@/lib/platform-suppliers";
 import { readPriceListFile, priceListFileKind, unsupportedFileMessage } from "@/lib/price-list-file";
@@ -26,19 +29,15 @@ import {
   headerSignature,
   planRatesheet,
   pricingError,
-  skuKey,
-  type CatalogItem,
+  type CatalogSupplierRow,
   type ColumnRole,
+  type PlanRow,
   type PricingOptions,
   type TabLayout,
 } from "@/lib/price-list";
 
 const PRODUCTS_PATH = "/dashboard/products";
 const RATESHEETS_PATH = "/dashboard/products/ratesheets";
-// Rows per write. One statement per chunk keeps a 5,000-row sheet to a
-// few dozen round trips on the live database, and nothing runs inside
-// one long transaction (the Sept 27, 2026 lesson).
-const CHUNK = 250;
 // The most rows a sheet can bring (the planner reads up to 25,000), with
 // room to spare: what the screen may post as ticked or typed.
 const MAX_POSTED_ROWS = 30_000;
@@ -87,106 +86,6 @@ function text(formData: FormData, name: string, max = 200) {
 // The catalog, as much of it as one sheet can touch
 // ------------------------------------------------------------------
 
-type CatalogRow = {
-  id: string;
-  name: string;
-  sku: string | null;
-  costCents: number;
-  unitPriceCents: number;
-  listPriceCents: number | null;
-  distributorId: string | null;
-  distributorName: string | null;
-  active: boolean;
-  createdAt: Date;
-};
-
-// The keys are built the same way skuKey() and the planner's name key
-// build theirs: case, spaces, dashes and underscores ignored, leading
-// zeros dropped from an all-digit part number.
-function catalogKeys(skus: string[], names: string[]) {
-  return {
-    skuKeys: [...new Set(skus.map(skuKey).filter(Boolean))],
-    nameKeys: [...new Set(names.map((name) => name.trim().toLowerCase().replace(/\s+/g, " ")).filter(Boolean))],
-  };
-}
-
-// Products a sheet's part numbers or names could match.
-async function catalogByKeys(organizationId: string, skuKeys: string[], nameKeys: string[]) {
-  if (skuKeys.length === 0 && nameKeys.length === 0) return [];
-  return prisma.$queryRaw<CatalogRow[]>`
-    SELECT p."id", p."name", p."sku", p."costCents", p."unitPriceCents", p."listPriceCents",
-           p."distributorId", d."name" AS "distributorName", p."active", p."createdAt"
-      FROM "Product" p
-      LEFT JOIN "Distributor" d ON d."id" = p."distributorId"
-      CROSS JOIN LATERAL (
-        SELECT regexp_replace(lower(btrim(coalesce(p."sku", ''))), '[[:space:]_-]+', '', 'g') AS k
-      ) raw
-     WHERE p."organizationId" = ${organizationId}
-       AND (
-         (p."sku" IS NOT NULL AND
-           (CASE WHEN raw.k ~ '^[0-9]+$' THEN regexp_replace(raw.k, '^0+([0-9])', '\\1') ELSE raw.k END)
-             = ANY(${skuKeys}::text[]))
-         OR lower(regexp_replace(btrim(p."name"), '\\s+', ' ', 'g')) = ANY(${nameKeys}::text[])
-       )`;
-}
-
-// Everything already bought from this supplier, a page at a time (for
-// "not on this sheet anymore" and for its own products winning a tie).
-async function catalogBySupplier(organizationId: string, supplierId: string, after: string | null, take: number) {
-  return prisma.$queryRaw<CatalogRow[]>`
-    SELECT p."id", p."name", p."sku", p."costCents", p."unitPriceCents", p."listPriceCents",
-           p."distributorId", d."name" AS "distributorName", p."active", p."createdAt"
-      FROM "Product" p
-      JOIN "Distributor" d ON d."id" = p."distributorId"
-     WHERE p."organizationId" = ${organizationId}
-       AND p."distributorId" = ${supplierId}
-       AND (${after}::text IS NULL OR p."id" > ${after}::text)
-     ORDER BY p."id" ASC
-     LIMIT ${take}`;
-}
-
-// Oldest first, so when two products share a key the planner meets the
-// same one in the preview and on the server.
-function mergeCatalog(rows: CatalogRow[]): CatalogItem[] {
-  const byId = new Map<string, CatalogRow>();
-  for (const row of rows) byId.set(row.id, row);
-  return [...byId.values()]
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      sku: row.sku,
-      costCents: row.costCents,
-      unitPriceCents: row.unitPriceCents,
-      listPriceCents: row.listPriceCents,
-      distributorId: row.distributorId,
-      distributorName: row.distributorName,
-      active: row.active,
-    }));
-}
-
-// The server's own read: every key on the sheet, every product of the
-// supplier, no caps — it never leaves the server.
-async function loadCatalogFor(
-  organizationId: string,
-  supplierId: string | null,
-  skus: string[],
-  names: string[],
-): Promise<CatalogItem[]> {
-  const { skuKeys, nameKeys } = catalogKeys(skus, names);
-  const rows = await catalogByKeys(organizationId, skuKeys, nameKeys);
-  if (supplierId) {
-    let after: string | null = null;
-    for (;;) {
-      const page = await catalogBySupplier(organizationId, supplierId, after, 10_000);
-      rows.push(...page);
-      if (page.length < 10_000) break;
-      after = page[page.length - 1].id;
-    }
-  }
-  return mergeCatalog(rows);
-}
-
 // The preview's read, in pieces small enough to come back under the
 // hosting's response limit on a 25,000-row sheet: either the products
 // matching a batch of the sheet's keys, or one page of the supplier's own.
@@ -201,6 +100,7 @@ export type CatalogTuple = [
   distributorId: string | null,
   active: boolean,
   createdAtMs: number,
+  suppliers: CatalogSupplierRow[],
 ];
 const CATALOG_BATCH = 5000;
 
@@ -245,6 +145,7 @@ export async function loadRatesheetCatalog(
       row.distributorId,
       row.active,
       row.createdAt.getTime(),
+      row.suppliers,
     ]),
     supplierNames,
     next,
@@ -261,6 +162,10 @@ type LoadedFile = {
   bytes: Uint8Array<ArrayBuffer>;
   savedFileId: string | null;
   savedDistributorId: string | null;
+  // The sheet's COGS discount (See product list), once it has one: a
+  // sheet imported or accepted before. Null for a fresh file or one only
+  // uploaded, which takes the supplier's discount from their last sheet.
+  discountBp: number | null;
 };
 
 // For a Decline the file is evidence, not something to read, so any type
@@ -274,7 +179,7 @@ async function loadFile(
   if (savedFileId) {
     const saved = await prisma.linkedRatesheet.findFirst({
       where: { id: savedFileId, organizationId },
-      select: { id: true, data: true, fileName: true, mimeType: true, distributorId: true },
+      select: { id: true, data: true, fileName: true, mimeType: true, distributorId: true, discountBp: true, importedAt: true },
     });
     if (!saved) return { ok: false, error: "That saved file is gone. Choose the file again." };
     // A copy at its exact length: a small bytea comes back as a view
@@ -288,6 +193,7 @@ async function loadFile(
         bytes: new Uint8Array(saved.data),
         savedFileId: saved.id,
         savedDistributorId: saved.distributorId,
+        discountBp: saved.importedAt ? saved.discountBp : null,
       },
     };
   }
@@ -298,7 +204,7 @@ async function loadFile(
     if (!name) return { ok: false, error: "Choose the ratesheet file." };
     return {
       ok: true,
-      file: { fileName: name, mimeType: "application/octet-stream", bytes: new Uint8Array(0), savedFileId: null, savedDistributorId: null },
+      file: { fileName: name, mimeType: "application/octet-stream", bytes: new Uint8Array(0), savedFileId: null, savedDistributorId: null, discountBp: null },
     };
   }
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose the ratesheet file." };
@@ -313,6 +219,7 @@ async function loadFile(
       bytes: new Uint8Array(await file.arrayBuffer()),
       savedFileId: null,
       savedDistributorId: null,
+      discountBp: null,
     },
   };
 }
@@ -444,7 +351,9 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
 
   // Plan against the catalog as it is now, importing exactly the rows
   // that were ticked. A supplier still to be made has no products yet.
+  let discountBp = 0;
   const planFor = async (forSupplierId: string | null) => {
+    discountBp = await sheetDiscountFor(organizationId, file.discountBp, forSupplierId);
     const outline = planRatesheet({ sheets: read.sheets, tabs, catalog: [], supplierId: forSupplierId, pricing });
     const catalog = await loadCatalogFor(
       organizationId,
@@ -460,11 +369,12 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
       pricing,
       overrides: overridesParsed.data,
       selected: selectedParsed.data,
+      costDiscountBp: discountBp,
     });
     return { catalog, plan };
   };
   const plannedFor = existingSupplier?.id ?? platformTwin?.id ?? null;
-  let { catalog, plan } = await planFor(plannedFor);
+  let { plan } = await planFor(plannedFor);
   if (!plan.rows.some((row) => row.included)) return { ok: false, error: "Tick at least one product to import." };
 
   // Who sent it: an existing supplier, or a new one (which also makes the
@@ -477,12 +387,12 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     const linked = await linkPlatformSupplier(organizationId, platformSupplier.id);
     if (!linked.ok) return { ok: false, error: linked.error };
     supplier = { id: linked.distributorId, name: linked.name };
-    if (supplier.id !== plannedFor) ({ catalog, plan } = await planFor(supplier.id));
+    if (supplier.id !== plannedFor) ({ plan } = await planFor(supplier.id));
   } else {
     const linked = await linkDistributorCompany(organizationId, newSupplierName);
     if (!linked) return { ok: false, error: "Type the distributor's name." };
     supplier = { id: linked.distributorId, name: linked.name };
-    ({ catalog, plan } = await planFor(supplier.id));
+    ({ plan } = await planFor(supplier.id));
   }
 
   // The point of contact. A typed one already on file (same email, or the
@@ -514,7 +424,6 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
 
   const rows = plan.rows.filter((row) => row.included);
   if (rows.length === 0) return { ok: false, error: "Tick at least one product to import." };
-  const catalogById = new Map(catalog.map((item) => [item.id, item]));
 
   // The file is saved first and its counts filled in last, so a write that
   // fails halfway leaves a record of which sheet it was, with no counts.
@@ -522,7 +431,7 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     ? (
         await prisma.linkedRatesheet.update({
           where: { id: file.savedFileId },
-          data: { distributorId: supplier.id, effectiveOn },
+          data: { distributorId: supplier.id, effectiveOn, discountBp },
           select: { id: true },
         })
       ).id
@@ -537,81 +446,25 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
             data: file.bytes,
             distributorId: supplier.id,
             effectiveOn,
+            discountBp,
           },
           select: { id: true },
         })
       ).id;
 
-  // Manufacturers named on the sheet that this workspace doesn't have yet.
-  const manufacturerNames = [...new Set(rows.map((row) => row.manufacturer).filter((name): name is string => !!name))];
-  const manufacturerIds = new Map<string, string>();
-  if (manufacturerNames.length > 0) {
-    await prisma.manufacturer.createMany({
-      data: manufacturerNames.map((name) => ({ organizationId, name })),
-      skipDuplicates: true,
-    });
-    const found = await prisma.manufacturer.findMany({
-      where: { organizationId, name: { in: manufacturerNames } },
-      select: { id: true, name: true },
-    });
-    for (const manufacturer of found) manufacturerIds.set(manufacturer.name, manufacturer.id);
-  }
+  const { createdByKey, starUpdates, secondUpdates } = await applyRatesheetRows({
+    organizationId,
+    supplierId: supplier.id,
+    linkedRatesheetId: linkedId,
+    discountBp,
+    rows,
+  });
+  const updates = [...starUpdates, ...secondUpdates];
+  const createdIds = [...createdByKey.values()];
 
-  const creates = rows.filter((row) => !row.match && row.newPriceCents !== null);
-  const updates = rows.filter((row) => row.match);
-  const createdIds: string[] = [];
-  for (let start = 0; start < creates.length; start += CHUNK) {
-    const made = await prisma.product.createManyAndReturn({
-      data: creates.slice(start, start + CHUNK).map((row) => ({
-        organizationId,
-        name: row.name,
-        description: row.description,
-        sku: row.sku,
-        costCents: row.newCostCents,
-        unitPriceCents: row.newPriceCents!,
-        listPriceCents: row.listCents,
-        defaultTag: row.defaultTag,
-        unitOfMeasure: row.unitOfMeasure,
-        manufacturerId: row.manufacturer ? (manufacturerIds.get(row.manufacturer) ?? null) : null,
-        distributorId: supplier.id,
-        active: true,
-      })),
-      select: { id: true },
-    });
-    createdIds.push(...made.map((product) => product.id));
-  }
-
-  // A product already in the catalog keeps its own name, description,
-  // tag and unit — those are what the customer reads on a quote. The
-  // sheet moves its cost, MSRP and (by the rule chosen) its sell price,
-  // fills a missing part number or manufacturer, and makes this supplier
-  // the one it is bought from.
-  for (let start = 0; start < updates.length; start += CHUNK) {
-    const values = updates.slice(start, start + CHUNK).map(
-      (row) => Prisma.sql`(${row.match!.id}::text, ${row.newCostCents}::int, ${row.newPriceCents ?? row.oldPriceCents ?? 0}::int, ${row.listCents}::int, ${row.sku}::text, ${row.manufacturer ? (manufacturerIds.get(row.manufacturer) ?? null) : null}::text)`,
-    );
-    await prisma.$executeRaw`
-      UPDATE "Product" AS p
-         SET "costCents" = v.cost,
-             "unitPriceCents" = v.price,
-             "listPriceCents" = COALESCE(v.list, p."listPriceCents"),
-             "sku" = COALESCE(p."sku", v.sku),
-             "manufacturerId" = COALESCE(p."manufacturerId", v.mfr),
-             "distributorId" = ${supplier.id},
-             "updatedAt" = now()
-        FROM (VALUES ${Prisma.join(values)}) AS v(id, cost, price, list, sku, mfr)
-       WHERE p."id" = v.id AND p."organizationId" = ${organizationId}`;
-  }
-
-  // The rep: a product that changed supplier drops the old supplier's
-  // people (they don't sell it anymore), and every product this sheet
-  // touched gets the point of contact picked for it.
-  const switched = updates
-    .filter((row) => catalogById.get(row.match!.id)?.distributorId !== supplier.id)
-    .map((row) => row.match!.id);
-  if (switched.length > 0) {
-    await prisma.$executeRaw`DELETE FROM "_DistributorContactToProduct" WHERE "B" = ANY(${switched}::text[])`;
-  }
+  // The rep picked for this sheet goes on every product it touched. Nobody
+  // else's comes off: a product bought from two suppliers keeps both
+  // suppliers' people.
   if (contactId) {
     const touched = [...createdIds, ...updates.map((row) => row.match!.id)];
     for (let start = 0; start < touched.length; start += 2000) {
@@ -631,6 +484,12 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     deactivated = result.count;
   }
 
+  // Every product row on the sheet is kept, imported or not, so See
+  // product list can show the whole sheet and add more later. Each line
+  // remembers the product it is; whether it is in Products is whether
+  // that product carries this supplier.
+  const supplied = (row: PlanRow) => createdByKey.get(row.key) ?? row.match?.id ?? null;
+  await storeRatesheetLines(organizationId, linkedId, plan.rows, supplied);
   // Remember how this supplier's sheet was read and priced, so the next
   // one opens the same way.
   const supplierRecord = await prisma.distributor.findUnique({
@@ -670,7 +529,7 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   revalidatePath(RATESHEETS_PATH);
 
   const n = (value: number) => value.toLocaleString("en-US");
-  const parts = [`${n(counts.addedCount)} new`, `${n(counts.updatedCount)} updated`];
+  const parts = [`${n(counts.addedCount)} new`, `${n(starUpdates.length)} updated`];
   const moved = [
     counts.costUpCount ? `${n(counts.costUpCount)} cost more` : "",
     counts.costDownCount ? `${n(counts.costDownCount)} cost less` : "",
@@ -678,6 +537,7 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   const total = counts.addedCount + counts.updatedCount;
   let message = `Imported ${n(total)} ${total === 1 ? "product" : "products"} from ${supplier.name}: ${parts.join(", ")}`;
   if (moved.length) message += ` (${moved.join(", ")})`;
+  if (secondUpdates.length) message += `, ${n(secondUpdates.length)} added beside another supplier`;
   message += ".";
   if (deactivated) message += ` ${n(deactivated)} no longer on their list marked inactive.`;
   return { ok: true, message, linkedRatesheetId: linkedId, supplierId: supplier.id };

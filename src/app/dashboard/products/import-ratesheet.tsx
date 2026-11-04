@@ -66,6 +66,8 @@ export type RatesheetSupplier = {
   contacts: { id: string; name: string; email: string | null; phone: string | null }[];
   priceRule: PriceRuleKind | null;
   priceRuleBasisPoints: number | null;
+  // The COGS discount on their last imported sheet (0 when none).
+  lastDiscountBp: number;
   ratesheetColumns: Record<string, ColumnRole[]> | null;
 };
 
@@ -73,6 +75,9 @@ export type SavedRatesheetFile = {
   id: string;
   fileName: string;
   distributorId: string | null;
+  // Its COGS discount once it has been imported; null takes the
+  // supplier's from their last sheet, as the server does.
+  discountBp: number | null;
 };
 
 const NEW = "__new__";
@@ -376,7 +381,7 @@ export function ImportRatesheet({
       const byId = new Map(tuples.map((tuple) => [tuple[0], tuple]));
       const items: CatalogItem[] = [...byId.values()]
         .sort((a, b) => a[8] - b[8] || a[0].localeCompare(b[0]))
-        .map(([id, name, sku, costCents, unitPriceCents, listPriceCents, distributorId, active]) => ({
+        .map(([id, name, sku, costCents, unitPriceCents, listPriceCents, distributorId, active, , suppliers]) => ({
           id,
           name,
           sku,
@@ -386,6 +391,8 @@ export function ImportRatesheet({
           distributorId,
           distributorName: distributorId ? (names[distributorId] ?? null) : null,
           active,
+          supplierIds: suppliers.map((supplier) => supplier.distributorId),
+          suppliers,
         }));
       if (!cancelled) setFetched({ key: catalogKey, items });
     });
@@ -394,6 +401,9 @@ export function ImportRatesheet({
     };
   }, [outline, supplierId, catalogKey]);
 
+  // Costs come in after the COGS discount: the sheet's own, or this
+  // supplier's from their last sheet (sheetDiscountFor on the server).
+  const costDiscountBp = savedFile?.discountBp ?? supplier?.lastDiscountBp ?? 0;
   const plan = useMemo(
     () =>
       sheets && tabs.length
@@ -406,9 +416,10 @@ export function ImportRatesheet({
             overrides,
             excluded: [...excluded],
             forced: [...forced],
+            costDiscountBp,
           })
         : null,
-    [sheets, tabs, catalog, supplierId, pricing, overrides, excluded, forced],
+    [sheets, tabs, catalog, supplierId, pricing, overrides, excluded, forced, costDiscountBp],
   );
 
   const rows = plan?.rows ?? [];
@@ -1019,7 +1030,10 @@ export function ImportRatesheet({
                     <div className="min-w-0 sm:flex-1">
                       <p className="truncate text-sm font-medium">{row.name}</p>
                       <p className="faint text-xs">
-                        {row.sku ?? "No part #"} · {row.match ? `updates ${row.match.name === row.name ? "your product" : `"${row.match.name}"`}` : "new"}
+                        {row.sku ?? "No part #"} ·{" "}
+                        {row.match
+                          ? `${row.secondSupplier ? "adds this supplier to" : "updates"} ${row.match.name === row.name ? "your product" : `"${row.match.name}"`}`
+                          : "new"}
                         {tabs.filter((tab) => tab.included).length > 1 && ` · ${row.tab}`} · line {row.line}
                       </p>
                       {row.holdReason && <p className="text-xs text-[var(--warn)]">{row.holdReason}</p>}
@@ -1029,6 +1043,23 @@ export function ImportRatesheet({
                         </p>
                       ))}
                     </div>
+                    {row.secondSupplier ? (
+                      // Another supplier is starred: the product keeps
+                      // their cost and its own price; this sheet's price is
+                      // kept on this supplier's row beside them.
+                      <div className="mt-2 flex justify-end gap-3 sm:mt-0" data-testid="ratesheet-second-supplier">
+                        <div className="w-24 shrink-0 text-right text-xs">
+                          <p className="faint">Their cost</p>
+                          <p className="num">{row.theirCostCents !== null ? formatCents(row.theirCostCents) : "—"}</p>
+                          {row.listCents !== null && <p className="faint">MSRP {formatCents(row.listCents)}</p>}
+                        </div>
+                        <div className="w-28 shrink-0 text-right text-xs">
+                          <p className="faint">Your COGS stays</p>
+                          <p className="num">{formatCents(row.newCostCents)}</p>
+                          <p className="faint">Price stays {row.newPriceCents !== null ? formatCents(row.newPriceCents) : "—"}</p>
+                        </div>
+                      </div>
+                    ) : (
                     <div className="mt-2 flex justify-end gap-3 sm:mt-0">
                       <div className="w-24 shrink-0 text-right text-xs">
                         <p className="faint">Your cost</p>
@@ -1069,6 +1100,7 @@ export function ImportRatesheet({
                         </p>
                       </div>
                     </div>
+                    )}
                   </div>
                 </li>
               ))}
