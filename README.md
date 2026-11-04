@@ -205,6 +205,20 @@ gets **Import prices**. The product form links COGS, Markup %, Margin %
 and Unit price and has an MSRP box; the Products list shows margin with
 markup under it.
 
+**More than one supplier** (Release 3a, Nov 4, 2026). A product's page
+has a **Suppliers** card: everyone who sells it, each with their price,
+your **COGS discount** off it, the COGS that leaves, their MSRP and a
+**minimum margin %** shown as the lowest price in dollars and what you
+make at it. The **starred** supplier sets the product's COGS; move the
+star to buy from someone else (a cheaper one is pointed out, never
+switched to on its own). A price under the starred supplier's minimum is
+allowed and shown in red on the product, on the Products list ("Below
+minimum") and on a quote's line. The Products list shows the starred
+supplier under each name with "N suppliers", which opens a sub-row per
+supplier, and the Supplier filter finds a product by any of them.
+Importing a second supplier's sheet adds them beside the starred one at
+their own price and leaves your COGS and price alone.
+
 **Ratesheets** — a sub-module under Products. A ratesheet is a named
 selection of your products published for partners: **Public**,
 **Invite/Approve**, or **Partner Specific** (sent to one email address),
@@ -216,8 +230,16 @@ on the left and the ratesheet tiles (approved/sent, expires on) on the
 right; clicking a tile filters the summary. **+ Link Ratesheet** uploads a
 distributor's own price list (any file up to 4 MB, stored in the
 database) so it can be downloaded from the same page, or imports it (see
-Products); linking another workspace's published sheet is marked *Coming
-Soon*.
+Products). An imported sheet is a row of its own with **its own search**
+and **See product list**: every product on the sheet, imported or not
+(up to 25,000), ticked when it is in Products, with their cost, your
+COGS, the MSRP and your sell price; All / In Products / Not in Products,
+Select all, a **COGS discount** for the whole sheet, a **required
+minimum markup** that raises any price this sheet sets that sits under
+it, and **Cancel** / **Save and accept** at the top and the bottom.
+Unticking takes that supplier off the product; a product left with no
+supplier is turned off, not deleted. Linking another workspace's
+published sheet is marked *Coming Soon*.
 
 **Quotes** — created against a customer *and* a deal (type to search the
 customer's deals, or **+ Add new deal**), with two templates, **Simple**
