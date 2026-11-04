@@ -51,6 +51,32 @@ export async function storeRatesheetLines(
     DELETE FROM "RatesheetLine"
      WHERE "linkedRatesheetId" = ${linkedRatesheetId} AND "organizationId" = ${organizationId}
        AND NOT ("rowKey" = ANY(${keys}::text[]))`;
+  // The same supplier's older sheets: a line left out when its sheet came
+  // in, whose part number this sheet has now made into a product, is that
+  // product — so it reads "In Products" there too, and ticking it later
+  // links it rather than re-pricing it. Part numbers compared the way the
+  // import matches them: case, spaces, dashes, underscores and leading
+  // zeros on an all-digit number ignored (skuKey in price-list.ts).
+  await prisma.$executeRaw`
+    WITH fresh AS (
+      SELECT DISTINCT ON (k) k, "productId"
+        FROM (SELECT CASE WHEN x ~ '^[0-9]+$' THEN regexp_replace(x, '^0+(?=[0-9])', '') ELSE x END AS k, "productId"
+                FROM (SELECT regexp_replace(lower(btrim("sku")), '[\\s_-]+', '', 'g') AS x, "productId"
+                        FROM "RatesheetLine"
+                       WHERE "linkedRatesheetId" = ${linkedRatesheetId} AND "organizationId" = ${organizationId}
+                         AND "productId" IS NOT NULL AND "sku" IS NOT NULL) a) b
+       WHERE k <> ''
+       ORDER BY k, "productId"
+    )
+    UPDATE "RatesheetLine" AS o SET "productId" = fresh."productId"
+      FROM fresh, "LinkedRatesheet" os, "LinkedRatesheet" ns
+     WHERE ns."id" = ${linkedRatesheetId} AND ns."distributorId" IS NOT NULL
+       AND os."id" = o."linkedRatesheetId" AND os."distributorId" = ns."distributorId" AND os."id" <> ns."id"
+       AND os."organizationId" = ${organizationId}
+       AND o."organizationId" = ${organizationId} AND o."productId" IS NULL AND o."sku" IS NOT NULL
+       AND fresh.k = (CASE WHEN regexp_replace(lower(btrim(o."sku")), '[\\s_-]+', '', 'g') ~ '^[0-9]+$'
+                           THEN regexp_replace(regexp_replace(lower(btrim(o."sku")), '[\\s_-]+', '', 'g'), '^0+(?=[0-9])', '')
+                           ELSE regexp_replace(lower(btrim(o."sku")), '[\\s_-]+', '', 'g') END)`;
   await prisma.linkedRatesheet.updateMany({
     where: { id: linkedRatesheetId, organizationId },
     data: { lineCount: rows.length, linesStoredAt: new Date() },

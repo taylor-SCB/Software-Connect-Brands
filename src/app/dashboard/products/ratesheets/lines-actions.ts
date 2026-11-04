@@ -144,9 +144,14 @@ export type BatchResult =
       ok: true;
       added: number;
       attached: number;
+      // Ticked lines whose product already carries this supplier (from
+      // another of their sheets): linked to it, nothing re-priced.
+      alreadyIn: number;
       removed: number;
       turnedOff: number;
+      // The first 50 lines not added, with why, and how many there were.
       held: { name: string; reason: string }[];
+      heldCount: number;
     }
   | { ok: false; error: string };
 
@@ -232,6 +237,7 @@ export async function saveRatesheetLines(input: unknown): Promise<BatchResult> {
     });
     let added = 0;
     let attached = 0;
+    let alreadyIn = 0;
     const held: { name: string; reason: string }[] = [];
     if (on.length > 0) {
       // The lines as a sheet of their own, so the planner reads them
@@ -281,10 +287,32 @@ export async function saveRatesheetLines(input: unknown): Promise<BatchResult> {
         costDiscountBp: parsed.data.discountBp,
         selected: [...lineByKey.keys()],
       });
-      const rows = plan.rows.filter((row) => row.included);
+      // A line matched to a product that already carries this supplier is
+      // in Products already, put there by another of their sheets (this
+      // line was stored before that product existed). Ticking it links
+      // the line and changes nothing: an older sheet must never put its
+      // prices back over a newer one's. Import prices re-prices on purpose.
+      const carried = new Set(
+        catalog
+          .filter((item) => item.distributorId === supplierId || item.suppliers?.some((row) => row.distributorId === supplierId))
+          .map((item) => item.id),
+      );
+      const already = plan.rows.filter((row) => row.included && row.match && carried.has(row.match.id));
+      // A ticked line is still held when the cost more than doubles or
+      // halves: the list shows no warning beside it, as Import Ratesheet
+      // does, so a tick here is not someone saying "I checked the unit".
+      const rows = plan.rows.filter(
+        (row) => row.included && row.holdReason === null && !(row.match && carried.has(row.match.id)),
+      );
+      // The planner names a row by its place in this batch ("Lines line
+      // 3"); the person knows it by name.
+      const readable = (reason: string) =>
+        reason.replace(/^Same product as Lines line (\d+)$/, (_, line) => `Same product as ${on[Number(line) - 2]?.name ?? "another ticked line"}`);
       for (const row of plan.rows) {
-        if (!row.included) held.push({ name: row.name, reason: row.holdReason ?? "Can't be added" });
+        if (rows.includes(row) || already.includes(row)) continue;
+        held.push({ name: row.name, reason: readable(row.holdReason ?? "Can't be added") });
       }
+      alreadyIn = already.length;
       const applied = await applyRatesheetRows({
         organizationId,
         supplierId,
@@ -296,7 +324,7 @@ export async function saveRatesheetLines(input: unknown): Promise<BatchResult> {
       added = applied.createdByKey.size;
       attached = applied.starUpdates.length + applied.secondUpdates.length;
       // Each line remembers the product it now is.
-      const mapped = rows.flatMap((row) => {
+      const mapped = [...rows, ...already].flatMap((row) => {
         const line = lineByKey.get(row.key);
         const productId = applied.createdByKey.get(row.key) ?? row.match?.id ?? null;
         return line && productId ? [Prisma.sql`(${line.id}::text, ${productId}::text)`] : [];
@@ -308,7 +336,7 @@ export async function saveRatesheetLines(input: unknown): Promise<BatchResult> {
            WHERE l."id" = v.id AND l."organizationId" = ${organizationId}`;
       }
     }
-    return { ok: true, added, attached, removed, turnedOff, held: held.slice(0, 50) };
+    return { ok: true, added, attached, alreadyIn, removed, turnedOff, held: held.slice(0, 50), heldCount: held.length };
   } finally {
     await prisma.linkedRatesheet.updateMany({ where: { id: sheet.id, organizationId }, data: { savingAt: null } });
   }
@@ -357,7 +385,9 @@ export async function finishRatesheetLines(
     repriced = await prisma.$queryRaw<{ name: string; fromCents: number; toCents: number }[]>`
       WITH target AS (
         SELECT p."id", p."unitPriceCents" AS "fromCents",
-               CEIL(p."costCents" * (10000 + ${minMarkupBp}) / 10000.0)::int AS "toCents"
+               -- In numeric, capped at the largest price a product holds:
+               -- int times int overflows from about $1,700 at 25%.
+               LEAST(CEIL(p."costCents"::numeric * (10000 + ${minMarkupBp}) / 10000), 2147483647)::int AS "toCents"
           FROM "Product" p
           JOIN "ProductSupplier" ps ON ps."preferredFor" = p."id"
          WHERE p."organizationId" = ${organizationId}

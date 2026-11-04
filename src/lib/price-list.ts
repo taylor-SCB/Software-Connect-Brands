@@ -914,7 +914,9 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
       } else if (!match && newPrice === null) {
         holdReason = pricing.rule === "LIST" ? "No MSRP — type a sell price" : "Needs a sell price";
       } else if (bigChange) {
-        holdReason = `Cost was ${dollars(oldCost!)}, now ${dollars(usableCost!)} — check the unit`;
+        // The COGS it would become (after any discount), the number the
+        // 2x test was run on.
+        holdReason = `Cost was ${dollars(oldCost!)}, now ${dollars(sheetCost!)} — check the unit`;
       }
       let overLimit = false;
       if (!match && holdReason === null && !sameAs) {

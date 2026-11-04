@@ -22,6 +22,7 @@ import { computeSchedule, isoToDate } from "@/lib/payments";
 import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
 import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
 import { computeQuoteTotals, lineGrossCents, resolveDiscount } from "@/lib/quote-math";
+import { STARRED_MINIMUM_SELECT, starredMinimumCents } from "@/lib/supplier-math";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -239,7 +240,9 @@ function softwareTermPeriods(rate: string, months: number | null | undefined): n
 // a row created by this save carries its stored id from now on; without
 // that the next save sees no id, deletes the row and creates a new one —
 // which silently severs any contract line pointing at it.
-export type SavedLine = { uid: string | null; id: string; productId: string | null };
+// minPriceCents: the linked product's starred-supplier minimum, so a typed
+// line that a save links to a catalog product is flagged as on a reload.
+export type SavedLine = { uid: string | null; id: string; productId: string | null; minPriceCents: number | null };
 
 export async function saveLineItems(
   quoteId: string,
@@ -432,7 +435,7 @@ export async function saveLineItems(
         item.id && keptIds.has(item.id)
           ? await tx.quoteLineItem.update({ where: { id: item.id }, data, select })
           : await tx.quoteLineItem.create({ data: { quoteId: quote.id, ...data }, select });
-      saved.push({ uid: item.uid ?? null, id: row.id, productId: row.productId });
+      saved.push({ uid: item.uid ?? null, id: row.id, productId: row.productId, minPriceCents: null });
     }
 
     // The discount on the whole quote is worked out against the lines as
@@ -448,7 +451,21 @@ export async function saveLineItems(
   revalidatePath(`/dashboard/quotes/${quote.id}`);
   revalidatePath("/dashboard/quotes");
   if (createdProducts > 0) revalidatePath("/dashboard/products");
-  return { success: "Line items saved", lines };
+  const linkedIds = [...new Set(lines.flatMap((line) => (line.productId ? [line.productId] : [])))];
+  const minimums = new Map(
+    linkedIds.length === 0
+      ? []
+      : (
+          await prisma.product.findMany({
+            where: { id: { in: linkedIds }, organizationId },
+            select: { id: true, suppliers: STARRED_MINIMUM_SELECT },
+          })
+        ).map((product) => [product.id, starredMinimumCents(product.suppliers)]),
+  );
+  return {
+    success: "Line items saved",
+    lines: lines.map((line) => ({ ...line, minPriceCents: line.productId ? (minimums.get(line.productId) ?? null) : null })),
+  };
 }
 
 /* ------------------------- The quote's payment table ------------------------- */

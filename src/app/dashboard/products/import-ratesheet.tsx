@@ -205,13 +205,16 @@ export function ImportRatesheet({
   const platformChoice = supplierChoice.startsWith(PLATFORM_SUPPLIER_PREFIX)
     ? (platformSuppliers.find((item) => `${PLATFORM_SUPPLIER_PREFIX}${item.id}` === supplierChoice) ?? null)
     : null;
-  const supplier =
-    suppliers.find((item) => item.id === supplierChoice) ?? platformTwin(platformChoice, suppliers);
-  const supplierId = supplier?.id ?? null;
+  // "+ Add new" with a name already in the list is that supplier: the
+  // import sends its id, so the preview plans it as that supplier too —
+  // its products, its discount, which of them it is starred on.
   const typedMatch =
     supplierChoice === NEW && newSupplierName.trim()
       ? (suppliers.find((item) => item.name.trim().toLowerCase() === newSupplierName.trim().toLowerCase()) ?? null)
       : null;
+  const supplier =
+    suppliers.find((item) => item.id === supplierChoice) ?? platformTwin(platformChoice, suppliers) ?? typedMatch;
+  const supplierId = supplier?.id ?? null;
   const typedPlatform =
     supplierChoice === NEW && !typedMatch ? platformSupplierNamed(newSupplierName, platformSuppliers) : null;
   // A supplier still to be made has nobody on file, so its point of

@@ -259,7 +259,10 @@ export function ProductForm({
   // Saved supplier rows taken off on this form (only these are deleted on
   // Save: never a row added elsewhere since the page was opened).
   const [removedSuppliers, setRemovedSuppliers] = useState<string[]>([]);
-  const starRow = suppliers.find((row) => row.distributorId === distributorId) ?? null;
+  // The starred row: the supplier the Distributor box means, which for an
+  // account picked from Software Connect Brands may be one already on file.
+  const starKey = supplierFor(distributorId);
+  const starRow = suppliers.find((row) => row.distributorId === starKey) ?? null;
   const starMoney = starRow ? draftMoney(starRow) : null;
   // A discounted starred row sets the COGS; there is nothing to type then.
   const costFromStar = !!starMoney && starMoney.discountBp > 0;
@@ -270,7 +273,7 @@ export function ProductForm({
   function patchSupplier(id: string, patch: Partial<SupplierDraft>) {
     const next = suppliers.map((row) => (row.distributorId === id ? { ...row, ...patch } : row));
     setSuppliers(next);
-    if (id === distributorId) {
+    if (id === starKey) {
       const row = next.find((candidate) => candidate.distributorId === id)!;
       if (patch.cost !== undefined || patch.discount !== undefined) changeCost(centsToDollarInput(draftMoney(row).cogsCents));
       if (patch.list !== undefined) setListPrice(patch.list);
@@ -281,11 +284,11 @@ export function ProductForm({
   // is the starred supplier's price.
   function typeCost(value: string) {
     changeCost(value);
-    if (starRow && !costFromStar) setSuppliers(suppliers.map((row) => (row.distributorId === distributorId ? { ...row, cost: value } : row)));
+    if (starRow && !costFromStar) setSuppliers(suppliers.map((row) => (row.distributorId === starKey ? { ...row, cost: value } : row)));
   }
   function typeListPrice(value: string) {
     setListPrice(value);
-    if (starRow) setSuppliers(suppliers.map((row) => (row.distributorId === distributorId ? { ...row, list: value } : row)));
+    if (starRow) setSuppliers(suppliers.map((row) => (row.distributorId === starKey ? { ...row, list: value } : row)));
   }
 
   // The Distributor box (or a row's star) picks the starred supplier: one
@@ -364,6 +367,20 @@ export function ProductForm({
       if (choosingNew) setDistributorId(savedDistributorId);
     }
   }
+  // After a save the COGS and MSRP are what was stored: the starred
+  // supplier's row decides them, which can differ from what was typed (a
+  // discount, or a star picked by a name already on file).
+  const savedCostKey = `${defaults?.costCents ?? ""}|${defaults?.listPriceCents ?? ""}`;
+  const [seenCost, setSeenCost] = useState(savedCostKey);
+  if (savedCostKey !== seenCost) {
+    setSeenCost(savedCostKey);
+    if (defaults?.costCents !== undefined) {
+      setCost(centsToDollarInput(defaults.costCents));
+      followFrom(defaults.costCents, dollarsToCents(unitPrice));
+      setAnchor("price");
+    }
+    setListPrice(defaults?.listPriceCents !== undefined && defaults.listPriceCents !== null ? centsToDollarInput(defaults.listPriceCents) : "");
+  }
   // After a save the rows are what was stored.
   const savedSuppliersKey = JSON.stringify(defaults?.suppliers ?? []);
   const [seenSuppliers, setSeenSuppliers] = useState(savedSuppliersKey);
@@ -395,11 +412,13 @@ export function ProductForm({
   function changeDistributor(next: string) {
     const same = supplierFor(next) === supplierFor(distributorId);
     setDistributorId(next);
-    starSupplierOnForm(next);
+    starSupplierOnForm(supplierFor(next));
     // The same supplier picked from the other list keeps its people.
     if (same) return;
-    // A different distributor means different people; nothing carries over.
-    setSelectedContacts(new Set());
+    // A different distributor shows its own people: the ones already
+    // linked to this product ticked (the star can move back to a supplier
+    // whose rep is on it), and nothing half-typed carries over.
+    setSelectedContacts(new Set(defaults?.contactIds ?? []));
     setContactEdits({});
     setNewContacts([]);
   }
@@ -1077,7 +1096,7 @@ export function ProductForm({
                 <tbody>
                   {suppliers.map((row) => {
                     const money = draftMoney(row);
-                    const starred = row.distributorId === distributorId;
+                    const starred = row.distributorId === starKey;
                     const cheaper = !starred && starMoney && money.cogsCents > 0 && money.cogsCents < starMoney.cogsCents;
                     const underMinimum = starred && money.minPriceCents !== null && priceCents < money.minPriceCents;
                     return (

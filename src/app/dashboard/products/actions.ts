@@ -375,8 +375,9 @@ async function saveSupplierRows(
   productId: string,
   starId: string | null,
   data: Resolved,
+  // The product's COGS and MSRP before this save, for an existing product.
+  before: { costCents: number; listPriceCents: number | null } | null,
 ) {
-  await repairSupplierRows(organizationId, [productId]);
   if (!starId) {
     await prisma.productSupplier.deleteMany({ where: { organizationId, productId } });
     return;
@@ -386,6 +387,29 @@ async function saveSupplierRows(
     await prisma.productSupplier.deleteMany({ where: { organizationId, productId, distributorId: { in: removed } } });
   }
   const posted = new Map(data.suppliers.map((row) => [row.distributorId, row]));
+  // The COGS or MSRP box typed while the starred row was left alone: a
+  // save posted before the page's JavaScript ran (the rows are then the
+  // page as it loaded), or a star picked by a name that turned out to be
+  // a supplier already on the product. What was typed is that supplier's
+  // price — never over a discount, which makes the COGS box read-only.
+  const starPosted = posted.get(starId);
+  if (starPosted && before) {
+    const stored = await prisma.productSupplier.findUnique({
+      where: { productId_distributorId: { productId, distributorId: starId } },
+      select: { costCents: true, discountBp: true, listPriceCents: true },
+    });
+    if (stored) {
+      const next = { ...starPosted };
+      const costLeft = starPosted.costCents === stored.costCents && starPosted.discountBp === stored.discountBp;
+      if (costLeft && starPosted.discountBp <= 0 && data.scalars.costCents !== before.costCents) {
+        next.costCents = data.scalars.costCents;
+      }
+      if (starPosted.listPriceCents === stored.listPriceCents && data.scalars.listPriceCents !== before.listPriceCents) {
+        next.listPriceCents = data.scalars.listPriceCents;
+      }
+      posted.set(starId, next);
+    }
+  }
   if (!posted.has(starId)) {
     const existing = await prisma.productSupplier.findUnique({
       where: { productId_distributorId: { productId, distributorId: starId } },
@@ -456,7 +480,7 @@ export async function createProduct(_prev: ActionState, formData: FormData): Pro
     },
     select: { id: true },
   });
-  await saveSupplierRows(organizationId, made.id, scalars.distributorId, resolved.data);
+  await saveSupplierRows(organizationId, made.id, scalars.distributorId, resolved.data, null);
 
   revalidatePath("/dashboard/products");
   redirect("/dashboard/products");
@@ -472,7 +496,7 @@ export async function updateProduct(_prev: ActionState, formData: FormData): Pro
   // manufacturers and distributors) runs for a product that isn't ours.
   const existing = await prisma.product.findFirst({
     where: { id: id.data, organizationId },
-    select: { id: true },
+    select: { id: true, costCents: true, listPriceCents: true },
   });
   if (!existing) return { error: "Product not found" };
 
@@ -482,6 +506,10 @@ export async function updateProduct(_prev: ActionState, formData: FormData): Pro
   const contacts = contactWrites(organizationId, scalars.distributorId, resolved.data);
   await applyContactEdits(organizationId, scalars.distributorId, resolved.data);
 
+  // The rows brought up to date with the product as it is stored, before
+  // this save writes the product: afterwards it would be the typed values
+  // the rows were being compared with.
+  await repairSupplierRows(organizationId, [existing.id]);
   const linked = await contactsAfterSave(organizationId, existing.id, scalars.distributorId, resolved.data);
   await prisma.product.update({
     where: { id: existing.id },
@@ -493,7 +521,7 @@ export async function updateProduct(_prev: ActionState, formData: FormData): Pro
       distributorContacts: { set: linked, create: contacts.create },
     },
   });
-  await saveSupplierRows(organizationId, existing.id, scalars.distributorId, resolved.data);
+  await saveSupplierRows(organizationId, existing.id, scalars.distributorId, resolved.data, existing);
 
   revalidatePath("/dashboard/products");
   revalidatePath(`/dashboard/products/${existing.id}`);

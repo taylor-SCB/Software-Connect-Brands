@@ -106,7 +106,10 @@ export function RatesheetProductList({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose, saving]);
 
-  const base = `/dashboard/products/ratesheets/files/${sheet.id}/lines?q=${encodeURIComponent(query.trim())}&filter=${filter}`;
+  // Bumped after a save that stopped part-way, so every row is read again
+  // as it now is: the batches that went through changed what's in Products.
+  const [version, setVersion] = useState(0);
+  const base = `/dashboard/products/ratesheets/files/${sheet.id}/lines?q=${encodeURIComponent(query.trim())}&filter=${filter}&v=${version}`;
   const pageUrls = Array.from({ length: pages }, (_, index) => `${base}&skip=${index * PAGE}&take=${PAGE}`);
   // Each page is its own search, so "Show 50 more" adds one without
   // reloading the ones on screen.
@@ -166,27 +169,45 @@ export function RatesheetProductList({
       batches.push({ tick: toAdd.slice(start, start + LINES_PER_BATCH), untick: toRemove.slice(start, start + LINES_PER_BATCH) });
     }
     setSaving({ done: 0, total: toAdd.length + toRemove.length });
-    const totals = { added: 0, attached: 0, removed: 0, turnedOff: 0 };
+    const totals = { added: 0, attached: 0, alreadyIn: 0, removed: 0, turnedOff: 0, heldCount: 0 };
     const held: { name: string; reason: string }[] = [];
+    const sent: string[] = [];
+    // A batch refused or lost after others went through: those are saved,
+    // so they come off the changes and the list is read again as it is now
+    // — a box then shows what's stored, and unticking it sends the untick.
+    const stopped = (message: string) => {
+      if (sent.length > 0) {
+        setChanges((current) => {
+          const next = new Map(current);
+          for (const id of sent) next.delete(id);
+          return next;
+        });
+        setVersion((current) => current + 1);
+        message += ` ${sent.length.toLocaleString("en-US")} of your changes were saved before it stopped; the list now shows what's in Products.`;
+      }
+      setError(message);
+      setSaving(null);
+    };
     try {
       for (const batch of batches) {
         const answer = await saveRatesheetLines({ linkedRatesheetId: sheet.id, discountBp, ...batch });
         if (!answer.ok) {
-          setError(answer.error);
-          setSaving(null);
+          stopped(answer.error);
           return;
         }
+        sent.push(...batch.tick, ...batch.untick);
         totals.added += answer.added;
         totals.attached += answer.attached;
+        totals.alreadyIn += answer.alreadyIn;
         totals.removed += answer.removed;
         totals.turnedOff += answer.turnedOff;
+        totals.heldCount += answer.heldCount;
         held.push(...answer.held);
         setSaving((current) => current && { ...current, done: current.done + batch.tick.length + batch.untick.length });
       }
       const finished = await finishRatesheetLines({ linkedRatesheetId: sheet.id, discountBp, minMarkupBp: markupBp });
       if (!finished.ok) {
-        setError(finished.error);
-        setSaving(null);
+        stopped(finished.error);
         return;
       }
       const n = (value: number) => value.toLocaleString("en-US");
@@ -194,6 +215,7 @@ export function RatesheetProductList({
       const done = [
         totals.added ? `${n(totals.added)} added to Products` : "",
         totals.attached ? `${n(totals.attached)} linked to products you already had` : "",
+        totals.alreadyIn ? `${n(totals.alreadyIn)} already in Products from another of their sheets (prices left as they are)` : "",
         totals.removed ? `${n(totals.removed)} taken off${totals.turnedOff ? ` (${n(totals.turnedOff)} turned off: no other supplier)` : ""}` : "",
       ].filter(Boolean);
       lines.push(done.length ? `Saved: ${done.join(", ")}.` : "Saved.");
@@ -209,11 +231,11 @@ export function RatesheetProductList({
             (finished.repricedCount > finished.repriced.length ? `, and ${n(finished.repricedCount - finished.repriced.length)} more.` : "."),
         );
       }
-      if (held.length) {
+      if (totals.heldCount) {
         lines.push(
-          `${n(held.length)} not added: ` +
+          `${n(totals.heldCount)} not added: ` +
             held.slice(0, 10).map((item) => `${item.name} (${item.reason})`).join("; ") +
-            (held.length > 10 ? "; and more" : "") +
+            (totals.heldCount > 10 ? "; and more" : "") +
             ". Use Import prices to check them.",
         );
       }
@@ -222,8 +244,7 @@ export function RatesheetProductList({
       setSaving(null);
       router.refresh();
     } catch {
-      setError("That didn't reach the server. Check your connection and Save and accept again — what was saved stays saved.");
-      setSaving(null);
+      stopped("That didn't reach the server. Check your connection and Save and accept again — what was saved stays saved.");
     }
   }
 

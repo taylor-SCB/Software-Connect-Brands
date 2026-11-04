@@ -5,7 +5,8 @@
 
 
 -- AlterTable
-ALTER TABLE "LinkedRatesheet" ADD COLUMN     "discountBp" INTEGER NOT NULL DEFAULT 0,
+ALTER TABLE "LinkedRatesheet" ADD COLUMN     "besideCount" INTEGER,
+ADD COLUMN     "discountBp" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN     "lineCount" INTEGER,
 ADD COLUMN     "linesStoredAt" TIMESTAMP(3),
 ADD COLUMN     "minMarkupBp" INTEGER,
@@ -58,6 +59,9 @@ CREATE INDEX "ProductSupplier_organizationId_idx" ON "ProductSupplier"("organiza
 
 -- CreateIndex
 CREATE INDEX "ProductSupplier_distributorId_idx" ON "ProductSupplier"("distributorId");
+
+-- CreateIndex
+CREATE INDEX "ProductSupplier_linkedRatesheetId_idx" ON "ProductSupplier"("linkedRatesheetId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ProductSupplier_productId_distributorId_key" ON "ProductSupplier"("productId", "distributorId");

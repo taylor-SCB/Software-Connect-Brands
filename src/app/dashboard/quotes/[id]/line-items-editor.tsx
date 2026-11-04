@@ -407,8 +407,10 @@ export function LineItemsEditor({
           const saved = savedByUid.get(row.uid);
           // saveAsProduct goes off once the row is stored: it is an
           // offer made about a brand-new line, not a standing setting.
+          // The flag follows the product the line is linked to now (a
+          // typed line can be linked to one by name).
           return saved
-            ? { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false }
+            ? { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false, minPriceCents: saved.minPriceCents }
             : row;
         }),
       );
@@ -630,7 +632,9 @@ export function LineItemsEditor({
                         line under the minimum as surely as a low price. */}
                     {row.minPriceCents !== null &&
                       rowQuantity(row) > 0 &&
-                      total < row.minPriceCents * rowQuantity(row) && (
+                      // Rounded as the line's own total is, so a line
+                      // priced exactly at the minimum isn't flagged.
+                      total < Math.round(row.minPriceCents * rowQuantity(row)) && (
                         <p
                           className="num mt-1 text-right text-[0.68rem] text-[var(--danger)]"
                           data-testid="line-below-minimum"

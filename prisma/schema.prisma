@@ -720,6 +720,9 @@ model ProductSupplier {
   @@unique([productId, distributorId])
   @@index([organizationId])
   @@index([distributorId])
+  // A sheet deleted sets these to null; without it that is a scan of every
+  // workspace's rows.
+  @@index([linkedRatesheetId])
 }
 
 enum QuoteTemplate {
@@ -1413,6 +1416,9 @@ model LinkedRatesheet {
   updatedCount   Int?
   costUpCount    Int?
   costDownCount  Int?
+  // Matched products starred to another supplier, which this sheet only
+  // added its supplier beside (Release 3a); not in updatedCount.
+  besideCount    Int?
   // See product list (Release 3a): your COGS discount off everything on
   // this sheet, the markup no product from it is sold under, and how many
   // product rows the sheet holds (RatesheetLine). linesStoredAt is null for

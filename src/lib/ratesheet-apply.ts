@@ -127,8 +127,8 @@ export async function applyRatesheetRows(input: {
   for (let start = 0; start < entries.length; start += CHUNK) {
     const chunk = entries.slice(start, start + CHUNK);
     const values = chunk.map(
-      ({ row, productId }) =>
-        Prisma.sql`(${`ps_${randomUUID()}`}::text, ${productId}::text, ${row.costCents}::int, ${row.listCents}::int)`,
+      ({ row, productId, star }) =>
+        Prisma.sql`(${`ps_${randomUUID()}`}::text, ${productId}::text, ${row.costCents}::int, ${row.listCents}::int, ${star}::boolean)`,
     );
     await prisma.$executeRaw`
       UPDATE "ProductSupplier" AS ps
@@ -136,14 +136,24 @@ export async function applyRatesheetRows(input: {
              "listPriceCents" = COALESCE(v.list, ps."listPriceCents"),
              "linkedRatesheetId" = ${linkedRatesheetId},
              "updatedAt" = now()
-        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list)
+        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list, star)
        WHERE ps."productId" = v.product AND ps."distributorId" = ${supplierId} AND ps."organizationId" = ${organizationId}`;
+    // A new row on a product this supplier becomes the star of (one that
+    // had no supplier) carries the product's own numbers where the sheet
+    // gave none — "Call" or no MSRP column — as the product UPDATE above
+    // kept them: the row is copied onto the product below, and a $0 or
+    // blank there would wipe its COGS and MSRP. With no price of their own
+    // the product's COGS is their price, so it takes no discount.
     await prisma.$executeRaw`
       INSERT INTO "ProductSupplier" ("id", "organizationId", "productId", "distributorId", "costCents", "discountBp",
                                      "listPriceCents", "linkedRatesheetId", "createdAt", "updatedAt")
-      SELECT v.id, ${organizationId}, v.product, ${supplierId}, COALESCE(v.cost, 0), ${discountBp},
-             v.list, ${linkedRatesheetId}, now(), now()
-        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list)
+      SELECT v.id, ${organizationId}, v.product, ${supplierId},
+             CASE WHEN v.cost IS NULL AND v.star THEN p."costCents" ELSE COALESCE(v.cost, 0) END,
+             CASE WHEN v.cost IS NULL AND v.star THEN 0 ELSE ${discountBp} END,
+             CASE WHEN v.star THEN COALESCE(v.list, p."listPriceCents") ELSE v.list END,
+             ${linkedRatesheetId}, now(), now()
+        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list, star)
+        JOIN "Product" p ON p."id" = v.product AND p."organizationId" = ${organizationId}
       ON CONFLICT ("productId", "distributorId") DO NOTHING`;
     const starred = chunk.filter((entry) => entry.star).map((entry) => entry.productId);
     if (starred.length > 0) {

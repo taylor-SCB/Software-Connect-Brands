@@ -114,7 +114,8 @@ export default async function RatesheetsPage({
       ? `imported ${formatDate(file.importedAt, timeZone)}: ${file.addedCount ?? 0} new, ${file.updatedCount ?? 0} updated` +
         ((file.costUpCount ?? 0) || (file.costDownCount ?? 0)
           ? ` (${[file.costUpCount ? `${file.costUpCount} cost more` : "", file.costDownCount ? `${file.costDownCount} cost less` : ""].filter(Boolean).join(", ")})`
-          : "")
+          : "") +
+        (file.besideCount ? `, ${file.besideCount} added beside another supplier` : "")
       : null,
     importable: priceListFileKind(file.fileName) !== null,
     imported: file.importedAt !== null,

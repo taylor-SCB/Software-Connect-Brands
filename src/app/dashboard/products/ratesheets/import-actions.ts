@@ -516,7 +516,10 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
 
   const counts = {
     addedCount: createdIds.length,
-    updatedCount: updates.length,
+    // Updated means the product's own cost or price could move; a supplier
+    // only added beside the starred one is counted on its own.
+    updatedCount: starUpdates.length,
+    besideCount: secondUpdates.length,
     costUpCount: rows.filter((row) => row.costChange === "up").length,
     costDownCount: rows.filter((row) => row.costChange === "down").length,
   };
@@ -534,10 +537,10 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     counts.costUpCount ? `${n(counts.costUpCount)} cost more` : "",
     counts.costDownCount ? `${n(counts.costDownCount)} cost less` : "",
   ].filter(Boolean);
-  const total = counts.addedCount + counts.updatedCount;
+  const total = counts.addedCount + counts.updatedCount + counts.besideCount;
   let message = `Imported ${n(total)} ${total === 1 ? "product" : "products"} from ${supplier.name}: ${parts.join(", ")}`;
   if (moved.length) message += ` (${moved.join(", ")})`;
-  if (secondUpdates.length) message += `, ${n(secondUpdates.length)} added beside another supplier`;
+  if (counts.besideCount) message += `, ${n(counts.besideCount)} added beside another supplier`;
   message += ".";
   if (deactivated) message += ` ${n(deactivated)} no longer on their list marked inactive.`;
   return { ok: true, message, linkedRatesheetId: linkedId, supplierId: supplier.id };

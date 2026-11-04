@@ -94,7 +94,9 @@ export async function syncStarsFor(organizationId: string, productIds: string[])
     await prisma.$executeRaw`
       UPDATE "Product" AS p
          SET "distributorId" = ps."distributorId",
-             "costCents" = ROUND(ps."costCents" * (10000 - LEAST(GREATEST(ps."discountBp", 0), ${MAX_DISCOUNT_BP})) / 10000.0),
+             -- In bigint: a $2,147.48 price times 10,000 is past what an
+             -- int holds, and Postgres refuses the whole statement.
+             "costCents" = ROUND(ps."costCents"::bigint * (10000 - LEAST(GREATEST(ps."discountBp", 0), ${MAX_DISCOUNT_BP})) / 10000.0)::int,
              "listPriceCents" = ps."listPriceCents",
              "updatedAt" = now()
         FROM "ProductSupplier" ps
@@ -111,13 +113,20 @@ export async function syncStarsFor(organizationId: string, productIds: string[])
 }
 
 /**
- * A product that names a supplier but has no row for them gets one: their
- * price is the product's COGS, no discount, its MSRP, starred when the
- * product has no star. Products made before suppliers had rows — during
- * the deploy, or seeded by hand — would otherwise lose that supplier the
- * first time a sync ran over them. Run before anything that adds or
- * removes rows, never after a removal (the product still names the
- * supplier just taken off until it is synced).
+ * Bring a product's rows up to date with the product itself, for products
+ * changed by something that doesn't know about rows — the code before
+ * Release 3a in the minutes its deploy overlaps, an Instant Rollback to
+ * it, or SQL by hand. Since 3a the product is always a mirror of its
+ * starred row, so where the two disagree the product was written last
+ * and is the truth:
+ *  - a product naming a supplier with no row for them gets one (their
+ *    price is the product's COGS, no discount, its MSRP);
+ *  - the star follows the supplier the product names;
+ *  - the starred row takes the product's COGS and MSRP.
+ * Otherwise the next sync would copy the stale row back over the product.
+ * Run before anything that adds or removes rows, never after a removal
+ * (the product still names the supplier just taken off until it is
+ * synced) and never after writing the product's own cost.
  */
 export async function repairSupplierRows(organizationId: string, productIds: string[]): Promise<void> {
   const ids = [...new Set(productIds)];
@@ -127,14 +136,45 @@ export async function repairSupplierRows(organizationId: string, productIds: str
       INSERT INTO "ProductSupplier" ("id", "organizationId", "productId", "distributorId", "costCents", "discountBp",
                                      "listPriceCents", "preferredFor", "createdAt", "updatedAt")
       SELECT 'ps_' || md5(p."id" || ':' || p."distributorId"), p."organizationId", p."id", p."distributorId",
-             p."costCents", 0, p."listPriceCents",
-             CASE WHEN EXISTS (SELECT 1 FROM "ProductSupplier" s WHERE s."preferredFor" = p."id") THEN NULL ELSE p."id" END,
-             p."createdAt", now()
+             p."costCents", 0, p."listPriceCents", NULL, p."createdAt", now()
         FROM "Product" p
         JOIN "Distributor" d ON d."id" = p."distributorId" AND d."organizationId" = p."organizationId"
        WHERE p."id" = ANY(${chunk}::text[])
          AND p."organizationId" = ${organizationId}
          AND NOT EXISTS (SELECT 1 FROM "ProductSupplier" x WHERE x."productId" = p."id" AND x."distributorId" = p."distributorId")
       ON CONFLICT DO NOTHING`;
+    // The star on the supplier the product names: off any other row first
+    // (the star is unique), then onto theirs.
+    await prisma.$executeRaw`
+      UPDATE "ProductSupplier" AS s SET "preferredFor" = NULL, "updatedAt" = now()
+        FROM "Product" p
+       WHERE s."preferredFor" = p."id"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND p."distributorId" IS NOT NULL
+         AND s."distributorId" <> p."distributorId"
+         AND EXISTS (SELECT 1 FROM "ProductSupplier" x WHERE x."productId" = p."id" AND x."distributorId" = p."distributorId")`;
+    await prisma.$executeRaw`
+      UPDATE "ProductSupplier" AS s SET "preferredFor" = s."productId", "updatedAt" = now()
+        FROM "Product" p
+       WHERE s."productId" = p."id"
+         AND s."distributorId" = p."distributorId"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND NOT EXISTS (SELECT 1 FROM "ProductSupplier" y WHERE y."preferredFor" = p."id")`;
+    // The starred row carries the product's COGS (worked back through its
+    // discount) and MSRP where the two have drifted apart.
+    await prisma.$executeRaw`
+      UPDATE "ProductSupplier" AS s
+         SET "costCents" = CASE WHEN s."discountBp" <= 0 THEN p."costCents"
+                                ELSE LEAST(ROUND(p."costCents"::numeric * 10000 / (10000 - LEAST(s."discountBp", ${MAX_DISCOUNT_BP}))), 2147483647)::int END,
+             "listPriceCents" = p."listPriceCents",
+             "updatedAt" = now()
+        FROM "Product" p
+       WHERE s."preferredFor" = p."id"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND (ROUND(s."costCents"::numeric * (10000 - LEAST(GREATEST(s."discountBp", 0), ${MAX_DISCOUNT_BP})) / 10000) <> p."costCents"
+              OR s."listPriceCents" IS DISTINCT FROM p."listPriceCents")`;
   }
 }
