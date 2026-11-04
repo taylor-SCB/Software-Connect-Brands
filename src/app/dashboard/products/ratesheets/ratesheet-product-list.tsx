@@ -172,9 +172,11 @@ export function RatesheetProductList({
     const totals = { added: 0, attached: 0, alreadyIn: 0, removed: 0, turnedOff: 0, heldCount: 0 };
     const held: { name: string; reason: string }[] = [];
     const sent: string[] = [];
-    // A batch refused or lost after others went through: those are saved,
-    // so they come off the changes and the list is read again as it is now
-    // — a box then shows what's stored, and unticking it sends the untick.
+    // A batch refused or lost: the ones confirmed before it are saved, so
+    // they come off the changes, and the list is read again as it is now
+    // — always, since a batch whose answer was lost may have been saved
+    // too. A box then shows what's stored, and unticking it sends the
+    // untick.
     const stopped = (message: string) => {
       if (sent.length > 0) {
         setChanges((current) => {
@@ -182,9 +184,9 @@ export function RatesheetProductList({
           for (const id of sent) next.delete(id);
           return next;
         });
-        setVersion((current) => current + 1);
         message += ` ${sent.length.toLocaleString("en-US")} of your changes were saved before it stopped; the list now shows what's in Products.`;
       }
+      setVersion((current) => current + 1);
       setError(message);
       setSaving(null);
     };
@@ -215,7 +217,7 @@ export function RatesheetProductList({
       const done = [
         totals.added ? `${n(totals.added)} added to Products` : "",
         totals.attached ? `${n(totals.attached)} linked to products you already had` : "",
-        totals.alreadyIn ? `${n(totals.alreadyIn)} already in Products from another of their sheets (prices left as they are)` : "",
+        totals.alreadyIn ? `${n(totals.alreadyIn)} already priced from a newer sheet of theirs (left as they are)` : "",
         totals.removed ? `${n(totals.removed)} taken off${totals.turnedOff ? ` (${n(totals.turnedOff)} turned off: no other supplier)` : ""}` : "",
       ].filter(Boolean);
       lines.push(done.length ? `Saved: ${done.join(", ")}.` : "Saved.");

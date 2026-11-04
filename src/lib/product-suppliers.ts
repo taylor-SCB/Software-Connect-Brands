@@ -83,7 +83,7 @@ export async function syncStarsFor(organizationId: string, productIds: string[])
   for (let start = 0; start < ids.length; start += SYNC_CHUNK) {
     const chunk = ids.slice(start, start + SYNC_CHUNK);
     await prisma.$executeRaw`
-      UPDATE "ProductSupplier" SET "preferredFor" = "productId"
+      UPDATE "ProductSupplier" SET "preferredFor" = "productId", "updatedAt" = now()
        WHERE "id" IN (
          SELECT DISTINCT ON (r."productId") r."id"
            FROM "ProductSupplier" r
@@ -116,14 +116,19 @@ export async function syncStarsFor(organizationId: string, productIds: string[])
  * Bring a product's rows up to date with the product itself, for products
  * changed by something that doesn't know about rows — the code before
  * Release 3a in the minutes its deploy overlaps, an Instant Rollback to
- * it, or SQL by hand. Since 3a the product is always a mirror of its
- * starred row, so where the two disagree the product was written last
- * and is the truth:
+ * it, or SQL by hand. Since 3a the product is a mirror of its starred row,
+ * written after it; so where the two disagree AND the product was written
+ * after the row, the product is the truth:
  *  - a product naming a supplier with no row for them gets one (their
  *    price is the product's COGS, no discount, its MSRP);
  *  - the star follows the supplier the product names;
- *  - the starred row takes the product's COGS and MSRP.
+ *  - the starred row takes the product's COGS and MSRP;
+ *  - a product set to no supplier loses its rows, as "— None —" on the
+ *    product form does.
  * Otherwise the next sync would copy the stale row back over the product.
+ * Where the row was written last, 3a itself is part-way through a save
+ * (rows first, the product synced after) and the row is right: it is left
+ * alone, or a page opened mid-save would undo the save.
  * Run before anything that adds or removes rows, never after a removal
  * (the product still names the supplier just taken off until it is
  * synced) and never after writing the product's own cost.
@@ -153,6 +158,7 @@ export async function repairSupplierRows(organizationId: string, productIds: str
          AND p."organizationId" = ${organizationId}
          AND p."distributorId" IS NOT NULL
          AND s."distributorId" <> p."distributorId"
+         AND p."updatedAt" > s."updatedAt"
          AND EXISTS (SELECT 1 FROM "ProductSupplier" x WHERE x."productId" = p."id" AND x."distributorId" = p."distributorId")`;
     await prisma.$executeRaw`
       UPDATE "ProductSupplier" AS s SET "preferredFor" = s."productId", "updatedAt" = now()
@@ -174,7 +180,17 @@ export async function repairSupplierRows(organizationId: string, productIds: str
        WHERE s."preferredFor" = p."id"
          AND p."id" = ANY(${chunk}::text[])
          AND p."organizationId" = ${organizationId}
+         AND p."updatedAt" > s."updatedAt"
          AND (ROUND(s."costCents"::numeric * (10000 - LEAST(GREATEST(s."discountBp", 0), ${MAX_DISCOUNT_BP})) / 10000) <> p."costCents"
               OR s."listPriceCents" IS DISTINCT FROM p."listPriceCents")`;
+    // Set to no supplier after its star was written.
+    await prisma.$executeRaw`
+      DELETE FROM "ProductSupplier" AS r
+       USING "Product" p
+       WHERE r."productId" = p."id"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND p."distributorId" IS NULL
+         AND EXISTS (SELECT 1 FROM "ProductSupplier" s WHERE s."preferredFor" = p."id" AND p."updatedAt" > s."updatedAt")`;
   }
 }

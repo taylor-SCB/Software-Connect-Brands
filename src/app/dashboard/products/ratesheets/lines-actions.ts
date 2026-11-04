@@ -37,6 +37,8 @@ const SAVING_STALE_MS = 2 * 60 * 1000;
 
 type Sheet = {
   id: string;
+  // When it was imported: which of a supplier's sheets is newer.
+  importedAt: Date;
   distributorId: string;
   discountBp: number;
   minMarkupBp: number | null;
@@ -49,15 +51,17 @@ async function loadSheet(organizationId: string, linkedRatesheetId: unknown): Pr
     where: { id: linkedRatesheetId, organizationId, importedAt: { not: null }, distributorId: { not: null } },
     select: {
       id: true,
+      importedAt: true,
       distributorId: true,
       discountBp: true,
       minMarkupBp: true,
       distributor: { select: { priceRule: true, priceRuleBasisPoints: true } },
     },
   });
-  if (!sheet || !sheet.distributorId) return null;
+  if (!sheet || !sheet.distributorId || !sheet.importedAt) return null;
   return {
     id: sheet.id,
+    importedAt: sheet.importedAt,
     distributorId: sheet.distributorId,
     discountBp: sheet.discountBp,
     minMarkupBp: sheet.minMarkupBp,
@@ -144,8 +148,8 @@ export type BatchResult =
       ok: true;
       added: number;
       attached: number;
-      // Ticked lines whose product already carries this supplier (from
-      // another of their sheets): linked to it, nothing re-priced.
+      // Ticked lines whose product this supplier's newer sheet already
+      // prices: linked to it, nothing re-priced.
       alreadyIn: number;
       removed: number;
       turnedOff: number;
@@ -287,15 +291,29 @@ export async function saveRatesheetLines(input: unknown): Promise<BatchResult> {
         costDiscountBp: parsed.data.discountBp,
         selected: [...lineByKey.keys()],
       });
-      // A line matched to a product that already carries this supplier is
-      // in Products already, put there by another of their sheets (this
-      // line was stored before that product existed). Ticking it links
-      // the line and changes nothing: an older sheet must never put its
-      // prices back over a newer one's. Import prices re-prices on purpose.
+      // A line matched to a product whose row for this supplier was set by
+      // a newer sheet of theirs (or by this one, through another line) is
+      // in Products already, at newer prices: ticking it links the line
+      // and changes nothing, so an older sheet never puts its prices back
+      // over a newer one's. A row set by hand or by an older sheet is
+      // priced from this one, as Import prices would. Import prices on the
+      // older sheet re-prices on purpose.
+      const matchedIds = [...new Set(plan.rows.flatMap((row) => (row.included && row.match ? [row.match.id] : [])))];
+      const theirRows =
+        matchedIds.length === 0
+          ? []
+          : await prisma.productSupplier.findMany({
+              where: { organizationId, distributorId: supplierId, productId: { in: matchedIds }, linkedRatesheetId: { not: null } },
+              select: { productId: true, linkedRatesheetId: true, linkedRatesheet: { select: { importedAt: true } } },
+            });
       const carried = new Set(
-        catalog
-          .filter((item) => item.distributorId === supplierId || item.suppliers?.some((row) => row.distributorId === supplierId))
-          .map((item) => item.id),
+        theirRows
+          .filter(
+            (row) =>
+              row.linkedRatesheetId === sheet.id ||
+              (row.linkedRatesheet?.importedAt != null && row.linkedRatesheet.importedAt > sheet.importedAt),
+          )
+          .map((row) => row.productId),
       );
       const already = plan.rows.filter((row) => row.included && row.match && carried.has(row.match.id));
       // A ticked line is still held when the cost more than doubles or
@@ -372,6 +390,13 @@ export async function finishRatesheetLines(
 
   let discounted = 0;
   if (discountBp !== sheet.discountBp) {
+    // Products changed outside 3a since this sheet set them are brought in
+    // line first, or the sync below would copy the stale rows back.
+    const setByThisSheet = await prisma.productSupplier.findMany({
+      where: { organizationId, linkedRatesheetId: sheet.id, distributorId: sheet.distributorId },
+      select: { productId: true },
+    });
+    await repairSupplierRows(organizationId, setByThisSheet.map((row) => row.productId));
     const touched = await prisma.$queryRaw<{ productId: string }[]>`
       UPDATE "ProductSupplier" SET "discountBp" = ${discountBp}, "updatedAt" = now()
        WHERE "linkedRatesheetId" = ${sheet.id} AND "distributorId" = ${sheet.distributorId} AND "organizationId" = ${organizationId}

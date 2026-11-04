@@ -56,7 +56,9 @@ export async function storeRatesheetLines(
   // product — so it reads "In Products" there too, and ticking it later
   // links it rather than re-pricing it. Part numbers compared the way the
   // import matches them: case, spaces, dashes, underscores and leading
-  // zeros on an all-digit number ignored (skuKey in price-list.ts).
+  // zeros on an all-digit number ignored (skuKey in price-list.ts). A part
+  // number Excel has turned into 8.50012E+11 is many parts at once, and
+  // the import never matches on it (damagedSku), so neither does this.
   await prisma.$executeRaw`
     WITH fresh AS (
       SELECT DISTINCT ON (k) k, "productId"
@@ -64,7 +66,8 @@ export async function storeRatesheetLines(
                 FROM (SELECT regexp_replace(lower(btrim("sku")), '[\\s_-]+', '', 'g') AS x, "productId"
                         FROM "RatesheetLine"
                        WHERE "linkedRatesheetId" = ${linkedRatesheetId} AND "organizationId" = ${organizationId}
-                         AND "productId" IS NOT NULL AND "sku" IS NOT NULL) a) b
+                         AND "productId" IS NOT NULL AND "sku" IS NOT NULL
+                         AND btrim("sku") !~* '^[0-9](\\.[0-9]+)?e\\+?[0-9]+$') a) b
        WHERE k <> ''
        ORDER BY k, "productId"
     )
@@ -74,6 +77,7 @@ export async function storeRatesheetLines(
        AND os."id" = o."linkedRatesheetId" AND os."distributorId" = ns."distributorId" AND os."id" <> ns."id"
        AND os."organizationId" = ${organizationId}
        AND o."organizationId" = ${organizationId} AND o."productId" IS NULL AND o."sku" IS NOT NULL
+       AND btrim(o."sku") !~* '^[0-9](\\.[0-9]+)?e\\+?[0-9]+$'
        AND fresh.k = (CASE WHEN regexp_replace(lower(btrim(o."sku")), '[\\s_-]+', '', 'g') ~ '^[0-9]+$'
                            THEN regexp_replace(regexp_replace(lower(btrim(o."sku")), '[\\s_-]+', '', 'g'), '^0+(?=[0-9])', '')
                            ELSE regexp_replace(lower(btrim(o."sku")), '[\\s_-]+', '', 'g') END)`;

@@ -3,6 +3,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { PlanRow } from "@/lib/price-list";
 import { repairSupplierRows, syncStarsFor } from "@/lib/product-suppliers";
+import { MAX_DISCOUNT_BP } from "@/lib/supplier-math";
 
 // Writing a planned ratesheet into the catalog: Import Ratesheet's ticked
 // rows, and the lines ticked later in See product list (Release 3a). One
@@ -128,37 +129,46 @@ export async function applyRatesheetRows(input: {
     const chunk = entries.slice(start, start + CHUNK);
     const values = chunk.map(
       ({ row, productId, star }) =>
-        Prisma.sql`(${`ps_${randomUUID()}`}::text, ${productId}::text, ${row.costCents}::int, ${row.listCents}::int, ${star}::boolean)`,
+        Prisma.sql`(${`ps_${randomUUID()}`}::text, ${productId}::text, ${row.costCents}::int, ${row.listCents}::int, ${star}::boolean, ${row.costDiscountBp ?? discountBp}::int)`,
     );
+    // The row takes the discount the plan priced it with — its own when it
+    // had one; the sheet's when the row is new, or was only just written
+    // by the repair above (after the plan read the catalog) — so the COGS
+    // saved is the COGS the preview showed. Not when the sheet gave no
+    // price: the row keeps what it had.
     await prisma.$executeRaw`
       UPDATE "ProductSupplier" AS ps
          SET "costCents" = COALESCE(v.cost, ps."costCents"),
+             "discountBp" = CASE WHEN v.cost IS NULL THEN ps."discountBp" ELSE v.disc END,
              "listPriceCents" = COALESCE(v.list, ps."listPriceCents"),
              "linkedRatesheetId" = ${linkedRatesheetId},
              "updatedAt" = now()
-        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list, star)
+        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list, star, disc)
        WHERE ps."productId" = v.product AND ps."distributorId" = ${supplierId} AND ps."organizationId" = ${organizationId}`;
     // A new row on a product this supplier becomes the star of (one that
     // had no supplier) carries the product's own numbers where the sheet
     // gave none — "Call" or no MSRP column — as the product UPDATE above
     // kept them: the row is copied onto the product below, and a $0 or
-    // blank there would wipe its COGS and MSRP. With no price of their own
-    // the product's COGS is their price, so it takes no discount.
+    // blank there would wipe its COGS and MSRP. Their price is then the
+    // product's COGS worked back through the discount, so the discount
+    // stays the supplier's for the next sheet and the COGS stays put.
     await prisma.$executeRaw`
       INSERT INTO "ProductSupplier" ("id", "organizationId", "productId", "distributorId", "costCents", "discountBp",
                                      "listPriceCents", "linkedRatesheetId", "createdAt", "updatedAt")
       SELECT v.id, ${organizationId}, v.product, ${supplierId},
-             CASE WHEN v.cost IS NULL AND v.star THEN p."costCents" ELSE COALESCE(v.cost, 0) END,
-             CASE WHEN v.cost IS NULL AND v.star THEN 0 ELSE ${discountBp} END,
+             CASE WHEN v.cost IS NOT NULL THEN v.cost
+                  WHEN v.star THEN LEAST(ROUND(p."costCents"::numeric * 10000 / (10000 - LEAST(GREATEST(v.disc, 0), ${MAX_DISCOUNT_BP}))), 2147483647)::int
+                  ELSE 0 END,
+             v.disc,
              CASE WHEN v.star THEN COALESCE(v.list, p."listPriceCents") ELSE v.list END,
              ${linkedRatesheetId}, now(), now()
-        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list, star)
+        FROM (VALUES ${Prisma.join(values)}) AS v(id, product, cost, list, star, disc)
         JOIN "Product" p ON p."id" = v.product AND p."organizationId" = ${organizationId}
       ON CONFLICT ("productId", "distributorId") DO NOTHING`;
     const starred = chunk.filter((entry) => entry.star).map((entry) => entry.productId);
     if (starred.length > 0) {
       await prisma.$executeRaw`
-        UPDATE "ProductSupplier" AS ps SET "preferredFor" = ps."productId"
+        UPDATE "ProductSupplier" AS ps SET "preferredFor" = ps."productId", "updatedAt" = now()
          WHERE ps."productId" = ANY(${starred}::text[])
            AND ps."distributorId" = ${supplierId}
            AND ps."organizationId" = ${organizationId}

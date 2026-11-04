@@ -208,9 +208,13 @@ export function ImportRatesheet({
   // "+ Add new" with a name already in the list is that supplier: the
   // import sends its id, so the preview plans it as that supplier too —
   // its products, its discount, which of them it is starred on.
+  // Names compared as the server compares them: case and runs of spaces
+  // ignored.
+  const sameName = (a: string, b: string) =>
+    a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
   const typedMatch =
     supplierChoice === NEW && newSupplierName.trim()
-      ? (suppliers.find((item) => item.name.trim().toLowerCase() === newSupplierName.trim().toLowerCase()) ?? null)
+      ? (suppliers.find((item) => sameName(item.name, newSupplierName)) ?? null)
       : null;
   const supplier =
     suppliers.find((item) => item.id === supplierChoice) ?? platformTwin(platformChoice, suppliers) ?? typedMatch;

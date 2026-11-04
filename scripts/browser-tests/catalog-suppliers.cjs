@@ -526,7 +526,7 @@ async function login(page) {
   await openSheet("anixter-q2.csv");
   await list.getByRole("button", { name: "Select all 65" }).click();
   const q2Said = await saveList();
-  assert.match(q2Said, /Saved: 1 linked to products you already had, 1 already in Products from another of their sheets \(prices left as they are\)\./);
+  assert.match(q2Said, /Saved: 1 linked to products you already had, 1 already priced from a newer sheet of theirs \(left as they are\)\./);
   assert.match(q2Said, /62 not added: Prox card \(Cost was \$1\.00, now \$95\.00 — check the unit\); Widget \(Same product as Widget alt\); Jump item 1 \(Cost was \$1\.00, now \$95\.00 — check the unit\);/);
   assert.match(q2Said, /; and more\. Use Import prices to check them\./);
   const door1 = await product("AX-1");
@@ -677,11 +677,12 @@ async function login(page) {
   );
 
   log("audit fixes: a product changed outside 3a is trusted over its stale row; the sheet row counts beside-supplier apart; the new index");
-  await sql(`UPDATE "Product" SET "costCents"=1100 WHERE id='prd_cs_lock'`);
+  // As the code before 3a writes a product: its updatedAt moves with it.
+  await sql(`UPDATE "Product" SET "costCents"=1100, "updatedAt"=now() WHERE id='prd_cs_lock'`);
   await page.goto(`${BASE}/dashboard/products/prd_cs_lock`);
   assert.equal((await product("ML-1")).costCents, 1100);
   assert.deepEqual((await rowsOf("prd_cs_lock")).map((row) => [row.name, row.costCents, row.discountBp, row.starred]), [["Graybar", 2200, 5000, true]]);
-  await sql(`UPDATE "Product" SET "distributorId"='dst_cs_wes' WHERE id='prd_cs_lock'`);
+  await sql(`UPDATE "Product" SET "distributorId"='dst_cs_wes', "updatedAt"=now() WHERE id='prd_cs_lock'`);
   await page.goto(`${BASE}/dashboard/products/prd_cs_lock`);
   const lock = await product("ML-1");
   assert.deepEqual([lock.costCents, lock.distributorId], [1100, "dst_cs_wes"]);
@@ -697,6 +698,155 @@ async function login(page) {
     /1 new, 1 updated \(1 cost less\), 1 added beside another supplier/,
   );
   assert.equal((await sql(`SELECT count(*)::int n FROM pg_indexes WHERE indexname='ProductSupplier_linkedRatesheetId_idx'`)).rows[0].n, 1);
+
+  // ---- second pass: the fixes' own review (Nov 4, 2026) ---------------
+  log("fix review: a supplier's standing discount stays on a row made with no price, and on a row the repair had to make");
+  // Spirit's sheets carry 10% (spirit-q4.csv, inherited by the next).
+  await importCsv("spirit-n4.csv", "Mfr Part #,Description,Your Cost,MSRP\nSW-1,Software seat,Call,500\n", "dst_cs_spirit", { rule: "LIST", percent: "0" });
+  const seat = await product("SW-1");
+  assert.deepEqual((await rowsOf(seat.id)).map((row) => [row.name, row.discountBp]), [["Spirit Supply", 1000]]);
+  await importCsv("spirit-n4b.csv", "Mfr Part #,Description,Your Cost,MSRP\nSW-1,Software seat,300,500\n", "dst_cs_spirit", { rule: "LIST", percent: "0" });
+  assert.equal((await product("SW-1")).costCents, 27000, "$300 less Spirit's 10%");
+  // A product the code before 3a switched to Spirit: the import's repair
+  // makes Spirit's row, and it carries the 10% the preview priced with.
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag","distributorId",active,"updatedAt") VALUES
+       ('prd_cs_gate',$1,'Gate opener','','GO-1',15000,10000,'MATERIALS','dst_cs_adi',true,now() - interval '1 day')`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductSupplier" (id,"organizationId","productId","distributorId","costCents","preferredFor","updatedAt")
+       VALUES ('ps_cs_gate_adi',$1,'prd_cs_gate','dst_cs_adi',10000,'prd_cs_gate',now() - interval '1 day')`,
+    [org],
+  );
+  await sql(`UPDATE "Product" SET "distributorId"='dst_cs_spirit', "updatedAt"=now() WHERE id='prd_cs_gate'`);
+  await importCsv("spirit-gate.csv", "Mfr Part #,Description,Your Cost\nGO-1,Gate opener,180\n", "dst_cs_spirit");
+  const gate = await product("GO-1");
+  assert.deepEqual([gate.costCents, gate.distributorId], [16200, "dst_cs_spirit"], "$180 less 10%, as previewed");
+  assert.deepEqual((await rowsOf("prd_cs_gate")).map((row) => [row.name, row.costCents, row.discountBp, row.starred]), [
+    ["ADI", 10000, 0, false],
+    ["Spirit Supply", 18000, 1000, true],
+  ]);
+
+  log("fix review: a page opened mid-save leaves the row alone; a product set to no supplier outside 3a loses its rows");
+  // As finishRatesheetLines leaves it between the discount and the sync.
+  await sql(`UPDATE "ProductSupplier" SET "discountBp"=1000, "updatedAt"=now() WHERE "productId"='prd_cs_cam'`);
+  await page.goto(`${BASE}/dashboard/products/prd_cs_cam`);
+  assert.deepEqual((await rowsOf("prd_cs_cam")).map((row) => [row.costCents, row.discountBp]), [[1000, 1000]], "not rewritten to $11.11");
+  await sql(`UPDATE "ProductSupplier" SET "discountBp"=0 WHERE "productId"='prd_cs_cam'`);
+  await sql(`UPDATE "Product" SET "updatedAt"=now() - interval '1 hour' WHERE id='prd_cs_gate'`);
+  await sql(`UPDATE "ProductSupplier" SET "updatedAt"=now() - interval '1 hour' WHERE "productId"='prd_cs_gate'`);
+  await sql(`UPDATE "Product" SET "distributorId"=NULL, "updatedAt"=now() WHERE id='prd_cs_gate'`);
+  await page.goto(`${BASE}/dashboard/products/prd_cs_gate`);
+  assert.deepEqual(await rowsOf("prd_cs_gate"), [], "None means no suppliers, as on the form");
+  assert.equal((await product("GO-1")).distributorId, null);
+
+  log("fix review: a typed name the server resolves to a supplier the preview didn't plan for is refused");
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('cmp_cs_adiglobal',$1,'ADI Global',now())`, [org]);
+  await sql(`UPDATE "Distributor" SET "companyId"='cmp_cs_adiglobal' WHERE id='dst_cs_adi'`);
+  await page.goto(`${BASE}/dashboard/products`);
+  await page.getByRole("button", { name: "Link Ratesheet" }).click();
+  await page.getByRole("button", { name: /Import Ratesheet/ }).click();
+  const bridged = path.join(OUT, "adi-global.csv");
+  fs.writeFileSync(bridged, "Mfr Part #,Description,Your Cost\nAP-1,Alarm panel,900\n");
+  await page.setInputFiles("#ratesheet-import-file", bridged);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("__new__");
+  await page.getByLabel("New distributor name").fill("ADI Global");
+  await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"));
+  await page.getByTestId("ratesheet-import").click();
+  await page.getByText(/is already one of your suppliers\. Pick it under "Who sent it\?"/).waitFor();
+  assert.equal((await product("AP-1")).costCents, 15000, "nothing written");
+  await page.getByLabel("Close").first().click();
+
+  log("fix review: a save whose answer is lost re-reads the list, so an untick after it is sent");
+  await importCsv("wesco-n3.csv", "Mfr Part #,Description,Your Cost\nN3-1,Lost one,5\nN3-2,Lost two,6\n", "dst_cs_wes", { only: "Lost one" });
+  await openSheet("wesco-n3.csv");
+  const lose = async (route) => {
+    const request = route.request();
+    if (request.method() === "POST" && request.headers()["next-action"]) {
+      await route.fetch(); // the server saves it…
+      return route.abort(); // …and the answer never arrives
+    }
+    return route.continue();
+  };
+  await page.route("**/dashboard/products/ratesheets**", lose);
+  await list.getByLabel("In Products: Lost two", { exact: true }).check();
+  await list.getByTestId("product-list-actions-top").getByRole("button", { name: "Save and accept" }).click();
+  await list.getByText(/That didn't reach the server/).waitFor();
+  await page.unroute("**/dashboard/products/ratesheets**", lose);
+  await page.waitForFunction(() => /In Products \(2\)/.test(document.querySelector("[data-testid=product-list-filter-in]")?.textContent ?? ""));
+  await list.getByLabel("In Products: Lost two", { exact: true }).uncheck();
+  assert.match(await saveList(), /1 taken off \(1 turned off: no other supplier\)/);
+  assert.equal((await product("N3-2")).active, false);
+  await list.getByRole("button", { name: "Done" }).click();
+
+  log("fix review: the relink skips part numbers Excel turned into 8.50012E+11");
+  await importCsv(
+    "anixter-e1.csv",
+    "Mfr Part #,Description,Your Cost\nAX-E0,Spare E,1\n8.50012E+11,Reader A,10\n8.50012E+11,Reader B,11\n",
+    "dst_cs_anix",
+    { only: "Spare E" },
+  );
+  await importCsv("anixter-e2.csv", "Mfr Part #,Description,Your Cost\n8.50012E+11,Reader A,10\n", "dst_cs_anix");
+  const e1 = await sheetNamed("anixter-e1.csv");
+  assert.deepEqual(
+    (await sql(`SELECT name, "productId" FROM "RatesheetLine" WHERE "linkedRatesheetId"=$1 AND name LIKE 'Reader %' ORDER BY name`, [e1.id])).rows,
+    [{ name: "Reader A", productId: null }, { name: "Reader B", productId: null }],
+  );
+
+  log("fix review: the newest sheet's tick prices a product set by hand or by an older sheet");
+  await importCsv("anixter-q4.csv", "Mfr Part #,Description,Your Cost\nAX-Q0,Spare Q,1\nAX-7,Door strike 7,48\n", "dst_cs_anix", { only: "Spare Q" });
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag","distributorId",active,"updatedAt") VALUES
+       ('prd_cs_ds7',$1,'Door strike 7','','AX-7',4500,3000,'MATERIALS','dst_cs_anix',true,now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductSupplier" (id,"organizationId","productId","distributorId","costCents","preferredFor","updatedAt")
+       VALUES ('ps_cs_ds7',$1,'prd_cs_ds7','dst_cs_anix',3000,'prd_cs_ds7',now())`,
+    [org],
+  );
+  await openSheet("anixter-q4.csv");
+  await list.getByLabel("In Products: Door strike 7", { exact: true }).check();
+  assert.match(await saveList(), /Saved: 1 linked to products you already had\./);
+  assert.equal((await product("AX-7")).costCents, 4800, "the newest sheet's price");
+  const q4 = await sheetNamed("anixter-q4.csv");
+  assert.equal((await sql(`SELECT "linkedRatesheetId" FROM "ProductSupplier" WHERE id='ps_cs_ds7'`)).rows[0].linkedRatesheetId, q4.id);
+  await list.getByRole("button", { name: "Done" }).click();
+
+  log("fix review: a cent under the minimum on a quantity under one is flagged; a typed markup keeps following after a save");
+  await page.goto(`${BASE}/dashboard/quotes/quo_cs`);
+  const mtLine = await page.locator("input[aria-label$=' unit value']").count() - 1; // Min test, before the typed line
+  const flagsNow = await flags.count();
+  await page.getByLabel(`Line ${mtLine} quantity`).fill("0.25");
+  await page.getByLabel(`Line ${mtLine} unit value`).fill("14.28");
+  assert.equal(await flags.count(), flagsNow + 1, "0.25 × $14.28 is under 0.25 × $14.29");
+  await page.getByLabel(`Line ${mtLine} unit value`).fill("14.29");
+  assert.equal(await flags.count(), flagsNow);
+  await page.goto(`${BASE}/dashboard/products/prd_cs_min`);
+  // 60, not the 50 it already reads (an unchanged box fires no change).
+  await page.locator("#markupPercent").fill("60");
+  await page.locator("#cost").fill("12");
+  assert.equal(await page.locator("#unitPrice").inputValue(), "19.20");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Product saved").waitFor();
+  await page.locator("#cost").fill("13");
+  assert.equal(await page.locator("#unitPrice").inputValue(), "20.80", "the 60% markup still holds");
+
+  log("fix review: changing a sheet's discount keeps a cost the code before 3a wrote since");
+  const keypad = await product("KP-1");
+  await sql(`UPDATE "Product" SET "costCents"=4700, "updatedAt"=now() WHERE id=$1`, [keypad.id]);
+  await openSheet("spirit-q4.csv");
+  await list.locator("#product-list-discount").fill("20");
+  await saveList();
+  assert.equal(
+    (await sql(`SELECT "costCents" FROM "ProductSupplier" WHERE "productId"=$1 AND "distributorId"='dst_cs_spirit'`, [keypad.id])).rows[0].costCents,
+    5222,
+    "the $47.00 worked back through 10%",
+  );
+  assert.equal((await product("KP-1")).costCents, 4178, "and then 20% off it");
+  await list.getByRole("button", { name: "Done" }).click();
 
   log("phone: the pop-out, the Suppliers card and the list's sub-rows fit without sideways scrolling");
   const phone = await browser.newContext({ ...devices["iPhone 13"] });

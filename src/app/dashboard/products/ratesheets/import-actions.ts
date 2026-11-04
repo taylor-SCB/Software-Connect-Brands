@@ -389,8 +389,33 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     supplier = { id: linked.distributorId, name: linked.name };
     if (supplier.id !== plannedFor) ({ plan } = await planFor(supplier.id));
   } else {
+    const startedAt = new Date();
     const linked = await linkDistributorCompany(organizationId, newSupplierName);
     if (!linked) return { ok: false, error: "Type the distributor's name." };
+    // A typed name the screen didn't recognise (spelled with extra spaces,
+    // or a company renamed since) that is a supplier already selling you
+    // products: the preview showed those products as someone else's, so
+    // what it would save isn't what was shown. Nothing is imported until
+    // it is picked from the list and previewed as itself.
+    const existing = await prisma.distributor.findFirst({
+      where: { id: linked.distributorId, organizationId, createdAt: { lt: startedAt } },
+      select: { id: true },
+    });
+    if (existing) {
+      const sells = await prisma.product.findFirst({
+        where: {
+          organizationId,
+          OR: [{ distributorId: linked.distributorId }, { suppliers: { some: { distributorId: linked.distributorId } } }],
+        },
+        select: { id: true },
+      });
+      if (sells) {
+        return {
+          ok: false,
+          error: `${linked.name} is already one of your suppliers. Pick it under "Who sent it?" so the preview shows what changes on its products, then import.`,
+        };
+      }
+    }
     supplier = { id: linked.distributorId, name: linked.name };
     ({ plan } = await planFor(supplier.id));
   }

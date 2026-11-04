@@ -370,16 +370,22 @@ export function ProductForm({
   // After a save the COGS and MSRP are what was stored: the starred
   // supplier's row decides them, which can differ from what was typed (a
   // discount, or a star picked by a name already on file).
+  // Only a box that disagrees with what was stored is changed: one that
+  // says the same keeps whatever was typed (and a typed markup or margin
+  // keeps following it).
   const savedCostKey = `${defaults?.costCents ?? ""}|${defaults?.listPriceCents ?? ""}`;
   const [seenCost, setSeenCost] = useState(savedCostKey);
   if (savedCostKey !== seenCost) {
     setSeenCost(savedCostKey);
-    if (defaults?.costCents !== undefined) {
+    if (defaults?.costCents !== undefined && dollarsToCents(cost) !== defaults.costCents) {
       setCost(centsToDollarInput(defaults.costCents));
       followFrom(defaults.costCents, dollarsToCents(unitPrice));
       setAnchor("price");
     }
-    setListPrice(defaults?.listPriceCents !== undefined && defaults.listPriceCents !== null ? centsToDollarInput(defaults.listPriceCents) : "");
+    const storedList = defaults?.listPriceCents ?? null;
+    if (defaults && (listPrice.trim() === "" ? null : dollarsToCents(listPrice)) !== storedList) {
+      setListPrice(storedList !== null ? centsToDollarInput(storedList) : "");
+    }
   }
   // After a save the rows are what was stored.
   const savedSuppliersKey = JSON.stringify(defaults?.suppliers ?? []);

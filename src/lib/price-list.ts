@@ -641,6 +641,10 @@ export type PlanRow = {
   secondSupplier: boolean;
   // Your COGS from this sheet's price, after your discount with them.
   theirCostCents: number | null;
+  // The discount that COGS was worked out with: the supplier's row's own
+  // on this product when it has one, otherwise the sheet's. Written onto
+  // the row, so what is saved is what was shown.
+  costDiscountBp: number;
   oldCostCents: number | null;
   oldPriceCents: number | null;
   newCostCents: number;
@@ -967,6 +971,7 @@ export function planRatesheet(input: PlanInput): RatesheetPlan {
         otherSupplier,
         secondSupplier,
         theirCostCents: sheetCost,
+        costDiscountBp: ownRow ? ownRow.discountBp : discountBp,
         oldCostCents: oldCost,
         oldPriceCents: oldPrice,
         newCostCents: newCost,
