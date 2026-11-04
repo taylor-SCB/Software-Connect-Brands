@@ -632,12 +632,12 @@ export function LineItemsEditor({
                         line under the minimum as surely as a low price. */}
                     {row.minPriceCents !== null &&
                       rowQuantity(row) > 0 &&
-                      // Compared before the line is rounded to cents: a
-                      // price at the minimum is never flagged (the two
-                      // sides are the same sum), and a cent under always
-                      // is, whatever the quantity.
+                      // Compared before the line is rounded to cents, with
+                      // a millionth of a cent for floating-point noise: a
+                      // line at the minimum is never flagged, and a cent
+                      // under always is, whatever the quantity.
                       rowQuantity(row) * rowUnitCents(row) - discount.discountCents <
-                        rowQuantity(row) * row.minPriceCents && (
+                        rowQuantity(row) * row.minPriceCents - 1e-6 && (
                         <p
                           className="num mt-1 text-right text-[0.68rem] text-[var(--danger)]"
                           data-testid="line-below-minimum"

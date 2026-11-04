@@ -276,11 +276,25 @@ export async function saveRatesheetLines(input: unknown): Promise<BatchResult> {
         { sheetIndex: 0, name: "Lines", headerIndex: 0, headers, roles, dataRows: on.length, included: true },
       ];
       const lineByKey = new Map(on.map((line, index) => [`0:${index + 2}`, line]));
-      const catalog = await loadCatalogFor(
-        organizationId,
-        supplierId,
-        on.map((line) => line.sku ?? "").filter(Boolean),
-        on.map((line) => line.name),
+      // The list prices every line at the sheet's COGS discount ("Your
+      // COGS"), so a tick does too — over a discount the supplier's row on
+      // that product carries from elsewhere — and the row takes it.
+      const catalog = (
+        await loadCatalogFor(
+          organizationId,
+          supplierId,
+          on.map((line) => line.sku ?? "").filter(Boolean),
+          on.map((line) => line.name),
+        )
+      ).map((item) =>
+        item.suppliers
+          ? {
+              ...item,
+              suppliers: item.suppliers.map((row) =>
+                row.distributorId === supplierId ? { ...row, discountBp: parsed.data.discountBp } : row,
+              ),
+            }
+          : item,
       );
       const plan = planRatesheet({
         sheets,
