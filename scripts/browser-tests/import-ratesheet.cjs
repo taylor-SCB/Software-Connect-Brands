@@ -228,15 +228,16 @@ async function product(org, sku) {
   assert.ok(Object.values(supplier.ratesheetColumns).some((roles) => roles.join(",") === "sku,description,cost,list,skip"), "the hand-fixed columns are remembered");
   const file = (await sql(`SELECT * FROM "LinkedRatesheet" WHERE "organizationId"=$1`, [org])).rows[0];
   assert.deepEqual(
-    [file.distributorId, file.addedCount, file.updatedCount, file.costUpCount, file.costDownCount, file.effectiveOn.toISOString().slice(0, 10), file.sizeBytes],
-    ["dst_ir_spirit", 1, 3, 2, 0, "2026-11-01", fs.statSync(FIXTURE).size],
+    [file.distributorId, file.addedCount, file.updatedCount, file.besideCount, file.costUpCount, file.costDownCount, file.effectiveOn.toISOString().slice(0, 10), file.sizeBytes],
+    ["dst_ir_spirit", 1, 2, 1, 2, 0, "2026-11-01", fs.statSync(FIXTURE).size],
   );
 
   log("Ratesheets page: the saved file says what the import did");
   await page.getByRole("button", { name: "Done" }).click();
   await page.goto(`${BASE}/dashboard/products/ratesheets`);
   const summary = await page.getByTestId("linked-file-import").first().innerText();
-  assert.match(summary, /Spirit Supply · effective Nov 1, 2026 · imported .*: 1 new, 3 updated \(2 cost more\)/);
+  // The same split as the import's own message (Nov 4, 2026 audit).
+  assert.match(summary, /Spirit Supply · effective Nov 1, 2026 · imported .*: 1 new, 2 updated \(2 cost more\), 1 added beside another supplier/);
 
   log("Import prices on the saved file: the columns come back the way they were fixed");
   await page.getByRole("button", { name: "Import prices" }).click();

@@ -404,6 +404,300 @@ async function login(page) {
   await page.waitForTimeout(800);
   assert.equal((await rowsOf("prd_cs_reader")).length, 2, "nothing written for a supplier that isn't this workspace's");
 
+  // ---- Nov 4, 2026 audit fixes -------------------------------------------
+  await sql(
+    `INSERT INTO "Distributor" (id,"organizationId",name,"updatedAt") VALUES
+       ('dst_cs_wes',$1,'Wesco',now()), ('dst_cs_gray',$1,'Graybar',now())`,
+    [org],
+  );
+  const importCsv = async (fileName, content, supplierId, { only = null, rule = "MARKUP", percent = "20", before = null } = {}) => {
+    const file = path.join(OUT, fileName);
+    fs.writeFileSync(file, content);
+    await page.goto(`${BASE}/dashboard/products`);
+    await page.getByRole("button", { name: "Link Ratesheet" }).click();
+    await page.getByRole("button", { name: /Import Ratesheet/ }).click();
+    await page.setInputFiles("#ratesheet-import-file", file);
+    await page.getByTestId("ratesheet-summary").waitFor();
+    await page.locator("#ratesheet-supplier").selectOption(supplierId);
+    await page.waitForFunction(() => !document.body.innerText.includes("matching your catalog"));
+    await page.locator("#ratesheet-rule").selectOption(rule);
+    await page.locator("#ratesheet-percent").fill(percent);
+    if (only) {
+      await page.getByRole("button", { name: "Remove all" }).click();
+      await page.getByLabel(`Import ${only}`, { exact: true }).check();
+    }
+    if (before) await before();
+    await page.getByTestId("ratesheet-import").click();
+    await page.getByTestId("ratesheet-done").waitFor({ timeout: 120_000 });
+    const text = await page.getByTestId("ratesheet-done").innerText();
+    await page.getByRole("button", { name: "Done" }).click();
+    return text;
+  };
+  const sheetNamed = async (fileName) =>
+    (await sql(`SELECT * FROM "LinkedRatesheet" WHERE "organizationId"=$1 AND "fileName"=$2`, [org, fileName])).rows[0];
+  const openSheet = async (fileName) => {
+    await page.goto(`${BASE}/dashboard/products/ratesheets`);
+    await page
+      .locator("li")
+      .filter({ has: page.getByTestId("linked-file-lines") })
+      .filter({ hasText: fileName })
+      .getByRole("button", { name: "See product list" })
+      .click();
+    await list.waitFor();
+    await list.getByTestId("product-list-row").first().waitFor();
+  };
+  const saveList = async () => {
+    await list.getByTestId("product-list-actions-top").getByRole("button", { name: "Save and accept" }).click();
+    await result.waitFor({ timeout: 120_000 });
+    return result.innerText();
+  };
+
+  log("audit fixes: a $3,000 item imports (the COGS sync no longer overflows) and a minimum markup over it saves");
+  const nvr = await importCsv("wesco-nvr.csv", "Mfr Part #,Description,Your Cost,MSRP\nNVR-1,NVR 64 channel,3000,4500\n", "dst_cs_wes");
+  assert.match(nvr, /Imported 1 product from Wesco: 1 new/);
+  const nvr0 = await product("NVR-1");
+  assert.deepEqual([nvr0.costCents, nvr0.unitPriceCents], [300000, 360000]);
+  assert.ok((await sheetNamed("wesco-nvr.csv")).importedAt, "the import finished, not left half-done");
+  await openSheet("wesco-nvr.csv");
+  await list.locator("#product-list-markup").fill("25");
+  assert.match(await saveList(), /1 re-priced up to your 25% minimum markup: NVR 64 channel \$3,600\.00 → \$3,750\.00\./);
+  assert.equal((await product("NVR-1")).unitPriceCents, 375000);
+  await list.getByRole("button", { name: "Done" }).click();
+
+  log("audit fixes: a product with no supplier keeps its COGS and MSRP when a 'Call' sheet brings one; a hold names the COGS after the discount");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","listPriceCents","defaultTag","distributorId",active,"updatedAt") VALUES
+       ('prd_cs_cam',$1,'Camera 2','','CAM-2',1800,1000,2000,'MATERIALS',NULL,true,now()),
+       ('prd_cs_lock',$1,'Mag lock','','ML-1',2000,1000,NULL,'MATERIALS','dst_cs_gray',true,now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductSupplier" (id,"organizationId","productId","distributorId","costCents","discountBp","preferredFor","updatedAt")
+       VALUES ('ps_cs_lock_gray',$1,'prd_cs_lock','dst_cs_gray',2000,5000,'prd_cs_lock',now())`,
+    [org],
+  );
+  await importCsv("graybar-call.csv", "Mfr Part #,Description,Your Cost\nCAM-2,Camera 2,Call\nML-1,Mag lock,45\n", "dst_cs_gray", {
+    before: async () => {
+      assert.match(await importRow("Mag lock").innerText(), /Cost was \$10\.00, now \$22\.50 — check the unit/, "the COGS after Graybar's 50% off");
+      assert.ok(!(await importRow("Mag lock").getByRole("checkbox").isChecked()));
+      assert.ok(await importRow("Camera 2").getByRole("checkbox").isChecked());
+    },
+  });
+  const cam = await product("CAM-2");
+  assert.deepEqual([cam.costCents, cam.listPriceCents, cam.distributorId], [1000, 2000, "dst_cs_gray"], "COGS and MSRP kept, Graybar starred");
+  assert.deepEqual(await rowsOf("prd_cs_cam"), [
+    { name: "Graybar", costCents: 1000, discountBp: 0, listPriceCents: 2000, minMarginBp: null, starred: true },
+  ]);
+
+  log("audit fixes: See product list never re-prices what a newer sheet set, links older lines, keeps the 2x hold, and counts and names every line left out");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag",active,"updatedAt") VALUES
+       ('prd_cs_card',$1,'Prox card','','PX-1',200,100,'MATERIALS',true,now()),
+       ('prd_cs_widget',$1,'Widget','','W1',800,500,'MATERIALS',true,now())`,
+    [org],
+  );
+  // Sixty products already carried at $1.00 that the sheet lists at $95:
+  // each one held, more than the 50 reasons the server sends back.
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag",active,"updatedAt")
+     SELECT 'prd_cs_jump_' || g, $1, 'Jump item ' || g, '', 'JP-' || g, 200, 100, 'MATERIALS', true, now() FROM generate_series(1, 60) g`,
+    [org],
+  );
+  const callRows = Array.from({ length: 60 }, (_, i) => `JP-${i + 1},Jump item ${i + 1},95`).join("\n");
+  await importCsv(
+    "anixter-q2.csv",
+    `Mfr Part #,Description,Your Cost\nAX-9,Spare,1\nAX-1,Door contact,5\nPX-1,Prox card,95\nW-1,Widget alt,4\n,Widget,4\n${callRows}\n`,
+    "dst_cs_anix",
+    { only: "Spare" },
+  );
+  await importCsv("anixter-q3.csv", "Mfr Part #,Description,Your Cost\nAX-1,Door contact,6\n", "dst_cs_anix");
+  const door = await product("AX-1");
+  assert.equal(door.costCents, 600);
+  const q2 = await sheetNamed("anixter-q2.csv");
+  const q3 = await sheetNamed("anixter-q3.csv");
+  const doorLine = async () =>
+    (await sql(`SELECT "productId" FROM "RatesheetLine" WHERE "linkedRatesheetId"=$1 AND sku='AX-1'`, [q2.id])).rows[0].productId;
+  assert.equal(await doorLine(), door.id, "the newer sheet's product is linked onto the older sheet's line");
+  await page.goto(`${BASE}/dashboard/products/ratesheets`);
+  assert.match(await page.locator("li").filter({ hasText: "anixter-q2.csv" }).getByTestId("linked-file-lines").innerText(), /2 of 65 products in Products/);
+  // A line stored before that link existed reads Not in Products; ticking
+  // it must link it, not put Q2's $5.00 back over Q3's $6.00.
+  await sql(`UPDATE "RatesheetLine" SET "productId"=NULL WHERE "linkedRatesheetId"=$1 AND sku='AX-1'`, [q2.id]);
+  await openSheet("anixter-q2.csv");
+  await list.getByRole("button", { name: "Select all 65" }).click();
+  const q2Said = await saveList();
+  assert.match(q2Said, /Saved: 1 linked to products you already had, 1 already in Products from another of their sheets \(prices left as they are\)\./);
+  assert.match(q2Said, /62 not added: Prox card \(Cost was \$1\.00, now \$95\.00 — check the unit\); Widget \(Same product as Widget alt\); Jump item 1 \(Cost was \$1\.00, now \$95\.00 — check the unit\);/);
+  assert.match(q2Said, /; and more\. Use Import prices to check them\./);
+  const door1 = await product("AX-1");
+  assert.equal(door1.costCents, 600, "Q3's price stays");
+  assert.equal(
+    (await sql(`SELECT "linkedRatesheetId" FROM "ProductSupplier" WHERE "productId"=$1 AND "distributorId"='dst_cs_anix'`, [door.id])).rows[0].linkedRatesheetId,
+    q3.id,
+    "Q3 still prices it",
+  );
+  assert.equal(await doorLine(), door.id);
+  assert.equal((await product("PX-1")).costCents, 100, "a 95x jump is still held when ticked here");
+  assert.equal((await product("W1")).costCents, 400);
+  await list.getByRole("button", { name: "Done" }).click();
+
+  log("audit fixes: a save that stops part-way re-reads the list, and an untick after it is sent");
+  const bulkRows = Array.from({ length: 505 }, (_, i) => `BK-${i + 1},Bulk item ${i + 1},1,2`).join("\n");
+  await importCsv("wesco-bulk.csv", `Mfr Part #,Description,Your Cost,MSRP\n${bulkRows}\n`, "dst_cs_wes", { only: "Bulk item 1" });
+  await openSheet("wesco-bulk.csv");
+  let actionPosts = 0;
+  const cutSecond = async (route) => {
+    const request = route.request();
+    if (request.method() === "POST" && request.headers()["next-action"]) {
+      actionPosts += 1;
+      if (actionPosts === 2) return route.abort();
+    }
+    return route.continue();
+  };
+  await page.route("**/dashboard/products/ratesheets**", cutSecond);
+  await list.getByRole("button", { name: "Select all 505" }).click();
+  await list.getByTestId("product-list-actions-top").getByRole("button", { name: "Save and accept" }).click();
+  await list.getByText(/500 of your changes were saved before it stopped; the list now shows what's in Products\./).waitFor({ timeout: 120_000 });
+  await page.unroute("**/dashboard/products/ratesheets**", cutSecond);
+  await page.waitForFunction(() => /In Products \(500\)/.test(document.querySelector("[data-testid=product-list-filter-in]")?.textContent ?? ""));
+  const bulk2 = list.getByLabel("In Products: Bulk item 2", { exact: true });
+  assert.ok(await bulk2.isChecked(), "a saved line reads as saved");
+  await bulk2.uncheck();
+  assert.match(await list.getByTestId("product-list-actions-bottom").innerText(), /5 ticked · 1 unticked/);
+  assert.match(await saveList(), /Saved: 5 added to Products, 1 taken off \(1 turned off: no other supplier\)\./);
+  assert.equal((await product("BK-2")).active, false, "the untick reached the server");
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'BK-%' AND active`, [org])).rows[0].n, 504);
+  await list.getByRole("button", { name: "Done" }).click();
+
+  log("audit fixes: the product form keeps a returning star's reps, saves a COGS typed before JavaScript, and stars a supplier picked by its account");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","listPriceCents","defaultTag","distributorId",active,"updatedAt") VALUES
+       ('prd_cs_panel',$1,'Alarm panel','','AP-1',30000,20000,25000,'MATERIALS','dst_cs_adi',true,now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductSupplier" (id,"organizationId","productId","distributorId","costCents","listPriceCents","preferredFor","updatedAt") VALUES
+       ('ps_cs_panel_adi',$1,'prd_cs_panel','dst_cs_adi',20000,25000,'prd_cs_panel',now()),
+       ('ps_cs_panel_spirit',$1,'prd_cs_panel','dst_cs_spirit',18000,NULL,NULL,now()),
+       ('ps_cs_panel_gray',$1,'prd_cs_panel','dst_cs_gray',15000,NULL,NULL,now())`,
+    [org],
+  );
+  await sql(`INSERT INTO "_DistributorContactToProduct" ("A","B") VALUES ('dc_cs_ada','prd_cs_panel'), ('dc_cs_mike','prd_cs_panel')`);
+  const panelLinks = async () =>
+    (await sql(`SELECT "A" FROM "_DistributorContactToProduct" WHERE "B"='prd_cs_panel' ORDER BY "A"`)).rows.map((row) => row.A);
+  await page.goto(`${BASE}/dashboard/products/prd_cs_panel`);
+  await card.getByLabel("Star Spirit Supply").check();
+  assert.ok(await page.getByLabel("Select Mike Chen").isChecked(), "Spirit's linked rep shows ticked");
+  await card.getByLabel("Star ADI").check();
+  assert.ok(await page.getByLabel("Select Ada Rep").isChecked(), "back on ADI, Ada is still ticked");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Product saved").waitFor();
+  assert.deepEqual(await panelLinks(), ["dc_cs_ada", "dc_cs_mike"], "neither rep was dropped");
+
+  const noJs = await browser.newContext({ javaScriptEnabled: false, storageState: await context.storageState(), viewport: { width: 1360, height: 900 } });
+  const plain = await noJs.newPage();
+  await plain.goto(`${BASE}/dashboard/products/prd_cs_panel`);
+  await plain.locator("#cost").fill("210");
+  await plain.locator("#listPrice").fill("300");
+  await Promise.all([plain.waitForLoadState("load"), plain.locator("#listPrice").press("Enter")]);
+  for (let i = 0; i < 50 && (await product("AP-1")).costCents !== 21000; i++) await page.waitForTimeout(100);
+  const panel1 = await product("AP-1");
+  assert.deepEqual([panel1.costCents, panel1.listPriceCents], [21000, 30000], "typed COGS and MSRP saved without JavaScript");
+  assert.deepEqual(
+    (await rowsOf("prd_cs_panel")).find((row) => row.name === "ADI"),
+    { name: "ADI", costCents: 21000, discountBp: 0, listPriceCents: 30000, minMarginBp: null, starred: true },
+  );
+  await noJs.close();
+
+  await sql(
+    `INSERT INTO "Organization" (id,name,slug,status,"reviewedAt","accountType",city,state,"updatedAt")
+     VALUES ('org_cs_graybar','Graybar','test-catalog-suppliers-co-graybar','ACTIVE',now(),'DISTRIBUTOR','St. Louis','MO',now())`,
+  );
+  await page.goto(`${BASE}/dashboard/products/prd_cs_panel`);
+  await page.locator("#distributorId").selectOption("platform:org_cs_graybar");
+  assert.ok(await card.getByLabel("Star Graybar").isChecked(), "the account picked is the Graybar already on this product");
+  assert.equal(await page.locator("#cost").inputValue(), "150.00", "its price comes up as the COGS");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByText("Product saved").waitFor();
+  const panel2 = await product("AP-1");
+  assert.deepEqual([panel2.costCents, panel2.distributorId], [15000, "dst_cs_gray"]);
+  assert.equal((await sql(`SELECT "platformOrganizationId" FROM "Distributor" WHERE id='dst_cs_gray'`)).rows[0].platformOrganizationId, "org_cs_graybar");
+  assert.equal(await page.locator("#cost").inputValue(), "150.00");
+
+  log("audit fixes: '+ Add new' with a supplier's own name previews as that supplier, its 6x jump held");
+  await page.goto(`${BASE}/dashboard/products`);
+  await page.getByRole("button", { name: "Link Ratesheet" }).click();
+  await page.getByRole("button", { name: /Import Ratesheet/ }).click();
+  const typed = path.join(OUT, "graybar-typed.csv");
+  fs.writeFileSync(typed, "Mfr Part #,Description,Your Cost\nAP-1,Alarm panel,900\n");
+  await page.setInputFiles("#ratesheet-import-file", typed);
+  await page.getByTestId("ratesheet-summary").waitFor();
+  await page.locator("#ratesheet-supplier").selectOption("__new__");
+  await page.getByLabel("New distributor name").fill("Graybar");
+  await page.waitForFunction(() => /Cost was \$150\.00, now \$900\.00/.test(document.body.innerText), null, { timeout: 30_000 });
+  assert.equal(await importRow("Alarm panel").getByTestId("ratesheet-second-supplier").count(), 0, "not 'adds this supplier': it is the starred one");
+  assert.ok(!(await importRow("Alarm panel").getByRole("checkbox").isChecked()));
+  await page.getByLabel("Close").first().click();
+
+  log("audit fixes: a quote line at its minimum with a fractional quantity isn't flagged; a typed line linked on save is");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag","distributorId",active,"updatedAt") VALUES
+       ('prd_cs_min',$1,'Min test','','MT-1',1500,1000,'MATERIALS','dst_cs_spirit',true,now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductSupplier" (id,"organizationId","productId","distributorId","costCents","minMarginBp","preferredFor","updatedAt")
+       VALUES ('ps_cs_min',$1,'prd_cs_min','dst_cs_spirit',1000,3000,'prd_cs_min',now())`,
+    [org],
+  );
+  await page.goto(`${BASE}/dashboard/quotes/quo_cs`);
+  const flags = page.getByTestId("line-below-minimum");
+  const baseline = await flags.count();
+  await catalog.fill("MT-1");
+  await page.getByTestId("catalog-results").getByRole("option").first().waitFor();
+  await catalog.press("Enter");
+  await page.keyboard.press("Escape");
+  const lineNo = await page.locator("input[aria-label$=' unit value']").count();
+  await page.getByLabel(`Line ${lineNo} quantity`).fill("1.25");
+  await page.getByLabel(`Line ${lineNo} unit value`).fill("14.29");
+  assert.equal(await flags.count(), baseline, "1.25 × $14.29 is exactly the minimum");
+  await page.getByLabel(`Line ${lineNo} unit value`).fill("14.28");
+  assert.equal(await flags.count(), baseline + 1);
+  await page.getByLabel(`Line ${lineNo} unit value`).fill("14.29");
+  await page.getByRole("button", { name: "Blank line" }).click();
+  await page.getByLabel(`Line ${lineNo + 1} product`, { exact: true }).fill("min test");
+  await page.getByLabel(`Line ${lineNo + 1} unit value`).fill("10");
+  assert.equal(await flags.count(), baseline);
+  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByText("Line items saved").waitFor();
+  assert.equal(await flags.count(), baseline + 1, "linked to Min test by name on save, flagged without a reload");
+  assert.equal(
+    (await sql(`SELECT "productId" FROM "QuoteLineItem" WHERE "quoteId"='quo_cs' AND name='min test'`)).rows[0].productId,
+    "prd_cs_min",
+  );
+
+  log("audit fixes: a product changed outside 3a is trusted over its stale row; the sheet row counts beside-supplier apart; the new index");
+  await sql(`UPDATE "Product" SET "costCents"=1100 WHERE id='prd_cs_lock'`);
+  await page.goto(`${BASE}/dashboard/products/prd_cs_lock`);
+  assert.equal((await product("ML-1")).costCents, 1100);
+  assert.deepEqual((await rowsOf("prd_cs_lock")).map((row) => [row.name, row.costCents, row.discountBp, row.starred]), [["Graybar", 2200, 5000, true]]);
+  await sql(`UPDATE "Product" SET "distributorId"='dst_cs_wes' WHERE id='prd_cs_lock'`);
+  await page.goto(`${BASE}/dashboard/products/prd_cs_lock`);
+  const lock = await product("ML-1");
+  assert.deepEqual([lock.costCents, lock.distributorId], [1100, "dst_cs_wes"]);
+  assert.deepEqual((await rowsOf("prd_cs_lock")).map((row) => [row.name, row.costCents, row.starred]), [
+    ["Graybar", 2200, false],
+    ["Wesco", 1100, true],
+  ]);
+  const first = await sheetNamed("spirit-q4.csv");
+  assert.deepEqual([first.addedCount, first.updatedCount, first.besideCount], [1, 1, 1]);
+  await page.goto(`${BASE}/dashboard/products/ratesheets`);
+  assert.match(
+    await page.locator("li").filter({ hasText: "spirit-q4.csv" }).getByTestId("linked-file-import").innerText(),
+    /1 new, 1 updated \(1 cost less\), 1 added beside another supplier/,
+  );
+  assert.equal((await sql(`SELECT count(*)::int n FROM pg_indexes WHERE indexname='ProductSupplier_linkedRatesheetId_idx'`)).rows[0].n, 1);
+
   log("phone: the pop-out, the Suppliers card and the list's sub-rows fit without sideways scrolling");
   const phone = await browser.newContext({ ...devices["iPhone 13"] });
   const mobile = await phone.newPage();
