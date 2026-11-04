@@ -56,6 +56,7 @@ export default async function ProductsPage({
     take: params.per,
     include: {
       manufacturer: { select: { name: true } },
+      distributor: { select: { name: true } },
       suppliers: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -192,7 +193,10 @@ export default async function ProductsPage({
                           </p>
                         )}
                         <div>
-                          <SuppliersToggle starredName={star?.name ?? null} count={suppliersOf.length} />
+                          <SuppliersToggle
+                            starredName={star?.name ?? product.distributor?.name ?? null}
+                            count={suppliersOf.length}
+                          />
                         </div>
                       </td>
                       <td className="faint num hidden text-xs md:table-cell">{product.sku || "—"}</td>

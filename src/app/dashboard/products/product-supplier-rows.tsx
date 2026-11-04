@@ -52,13 +52,23 @@ export function ProductRowGroup({
 /** "★ ADI · 3 suppliers ▾" under the product's name. */
 export function SuppliersToggle({ starredName, count }: { starredName: string | null; count: number }) {
   const state = useContext(Open);
-  if (count === 0 || !state) return null;
+  if (!state) return null;
+  // A product whose supplier rows haven't been written yet (they are on
+  // its next save or import): its distributor, with nothing to open.
+  if (count === 0) {
+    return starredName ? (
+      <span className="faint mt-0.5 inline-flex items-center gap-1 text-xs">
+        <IconStar size={11} filled />
+        <span className="muted">{starredName}</span>
+      </span>
+    ) : null;
+  }
   return (
     <button
       type="button"
       onClick={state.toggle}
       aria-expanded={state.open}
-      className="faint mt-0.5 inline-flex items-center gap-1 text-xs hover:text-[var(--text)]"
+      className="faint mt-0.5 inline-flex items-center gap-1 whitespace-nowrap text-xs hover:text-[var(--text)]"
       data-testid="product-suppliers-toggle"
     >
       {starredName && (

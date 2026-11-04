@@ -85,15 +85,20 @@ export default async function RatesheetsPage({
     sent: perSheet.get(sheet.id)?.sent ?? 0,
   }));
 
-  // How many of each sheet's kept lines are in Products.
+  // How many of each sheet's kept lines are in Products: the product the
+  // line is still carries the sheet's supplier. Read the same way as the
+  // product list (files/[id]/lines), never from the line's own productId,
+  // which outlives an untick so a re-tick finds the same product.
   const inProductsBySheet = new Map(
     (
-      await prisma.ratesheetLine.groupBy({
-        by: ["linkedRatesheetId"],
-        where: { organizationId, productId: { not: null } },
-        _count: { _all: true },
-      })
-    ).map((group) => [group.linkedRatesheetId, group._count._all]),
+      await prisma.$queryRaw<{ id: string; n: number }[]>`
+        SELECT l."linkedRatesheetId" AS id, count(*)::int AS n
+          FROM "RatesheetLine" l
+          JOIN "LinkedRatesheet" s ON s."id" = l."linkedRatesheetId"
+          JOIN "ProductSupplier" ps ON ps."productId" = l."productId" AND ps."distributorId" = s."distributorId"
+         WHERE l."organizationId" = ${organizationId}
+         GROUP BY l."linkedRatesheetId"`
+    ).map((group) => [group.id, group.n]),
   );
   const boardFiles: BoardFile[] = files.map((file) => ({
     id: file.id,

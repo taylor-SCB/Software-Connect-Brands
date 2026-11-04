@@ -1144,7 +1144,7 @@ export function ProductForm({
                             className="input input-sm num w-20 text-right"
                           />
                         </td>
-                        <td className="num text-right" data-testid="supplier-min-price">
+                        <td className="num whitespace-nowrap text-right" data-testid="supplier-min-price">
                           {money.minPriceCents === null ? (
                             "—"
                           ) : (
