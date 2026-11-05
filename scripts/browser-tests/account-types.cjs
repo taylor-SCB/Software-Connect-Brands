@@ -449,7 +449,8 @@ let browser;
   await ownerPage.fill("#name", "AT Card Reader");
   await ownerPage.selectOption("#distributorId", `platform:${supply.id}`);
   await ownerPage.getByRole("button", { name: "Save product" }).click();
-  await ownerPage.waitForURL(/\/dashboard\/products$/);
+  // Release 3b: Add product lands on the new product's page.
+  await ownerPage.waitForURL(/\/dashboard\/products\/[^/]+\?added=1$/);
   const linkedSupply = (await sql(`SELECT * FROM "Distributor" WHERE "organizationId"=$1 AND "platformOrganizationId"=$2`, [spirit.id, supply.id])).rows;
   assert.equal(linkedSupply.length, 1);
   assert.equal(linkedSupply[0].name, SUPPLY.company);
@@ -498,7 +499,8 @@ let browser;
   const boltOrg = await orgNamed("Test AT Bolt");
   assert.equal(await ownerPage.locator("#distributorId").inputValue(), `platform:${boltOrg.id}`);
   await ownerPage.getByRole("button", { name: "Save product" }).click();
-  await ownerPage.waitForURL(/\/dashboard\/products$/);
+  // Release 3b: Add product lands on the new product's page.
+  await ownerPage.waitForURL(/\/dashboard\/products\/[^/]+\?added=1$/);
   assert.equal(
     (await sql(`SELECT count(*) FROM "Distributor" WHERE "organizationId"=$1 AND "platformOrganizationId"=$2`, [spirit.id, boltOrg.id])).rows[0].count,
     "1",

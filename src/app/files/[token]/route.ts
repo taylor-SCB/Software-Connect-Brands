@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { PUBLIC_IMAGE_KINDS } from "@/lib/uploads";
 import { streamObject, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
+import { readPicture } from "@/lib/product-images";
 
 // Streams an uploaded file. Images (logos, avatars) are served to anyone
 // with the link, because they are drawn on the quote or contract a
@@ -40,7 +41,7 @@ export async function GET(
       photoFolderId: true,
     },
   });
-  if (!file) return new Response("Not found", { status: 404 });
+  if (!file) return productPicture(token, new URL(request.url).searchParams.get("v"));
 
   const isImage = PUBLIC_IMAGE_KINDS.includes(file.kind);
   if (!isImage && !(await viaViewLink(request, file))) {
@@ -106,4 +107,22 @@ async function viaViewLink(
       link.organizationId === file.organizationId &&
       (link.folder?.id ?? null) === file.photoFolderId,
   );
+}
+
+// A product's picture (Release 3b): public, like logos, because it is drawn
+// on the customer's quote, its PDF and a partner's ratesheet. ?v=thumb and
+// ?v=doc are its smaller copies. The bytes behind a token never change (a
+// new picture is a new row and a new token), so the CDN keeps them.
+async function productPicture(token: string, variant: string | null) {
+  const picture = await readPicture(token, variant === "thumb" || variant === "doc" ? variant : null);
+  if (!picture) return new Response("Not found", { status: 404 });
+  return new Response(picture.body, {
+    headers: {
+      "Content-Type": picture.type,
+      ...(picture.size !== null ? { "Content-Length": String(picture.size) } : {}),
+      "Content-Disposition": "inline",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "public, max-age=86400, s-maxage=31536000, immutable",
+    },
+  });
 }

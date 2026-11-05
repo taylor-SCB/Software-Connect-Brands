@@ -37,6 +37,7 @@ export type AwardQuote = {
     discountCents: number;
     tag: string;
     cancelled: boolean;
+    variationText?: string | null;
   }[];
 };
 
@@ -293,7 +294,10 @@ export function AwardWithoutPaperwork({
                           onChange={() => toggle(row.id)}
                           aria-label={`Include ${row.name}`}
                         />
-                        <span className="truncate">{row.name}</span>
+                        <span className="truncate">
+                          {row.name}
+                          {row.variationText && <span className="faint"> · {row.variationText}</span>}
+                        </span>
                       </label>
                       <span className="num shrink-0">{formatCents(lineNetCents(row))}</span>
                     </li>

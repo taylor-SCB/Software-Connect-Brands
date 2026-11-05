@@ -26,6 +26,8 @@ import { Pagination } from "@/components/pagination";
 import { ProductFilters } from "./product-filters";
 import { ProductRowGroup, SuppliersToggle } from "./product-supplier-rows";
 import { supplierMoney } from "@/lib/supplier-math";
+import { mainPicturesFor } from "@/lib/product-images";
+import { labelCountText, labelCountsFor } from "@/lib/variations";
 
 const BASE_PATH = "/dashboard/products";
 
@@ -57,6 +59,7 @@ export default async function ProductsPage({
     include: {
       manufacturer: { select: { name: true } },
       distributor: { select: { name: true } },
+      customUnit: { select: { name: true } },
       suppliers: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -71,6 +74,13 @@ export default async function ProductsPage({
       },
     },
   });
+  // Release 3b: each row's main picture and "4 colors · 4 sizes", two
+  // queries over this page's products whatever the catalog's size.
+  const pageIds = products.map((product) => product.id);
+  const [mainPictures, labelCounts] = await Promise.all([
+    mainPicturesFor(organizationId, pageIds),
+    labelCountsFor(organizationId, pageIds),
+  ]);
 
   return (
     <div>
@@ -146,9 +156,13 @@ export default async function ProductsPage({
               </thead>
               <tbody>
                 {products.map((product) => {
+                  // A workspace's own unit counts only while no built-in
+                  // one is set.
                   const unit = product.unitOfMeasure
                     ? UNIT_LABELS[product.unitOfMeasure as UnitOfMeasureValue]
-                    : null;
+                    : (product.customUnit?.name ?? null);
+                  const picture = mainPictures.get(product.id) ?? null;
+                  const counts = labelCountText(labelCounts.get(product.id) ?? []);
                   const rate = product.softwareRate
                     ? SOFTWARE_RATE_LABELS[product.softwareRate as SoftwareRateValue]
                     : null;
@@ -177,12 +191,31 @@ export default async function ProductsPage({
                       colSpan={8}
                     >
                       <td>
+                        <div className="flex items-start gap-2.5">
+                        {picture && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={`/files/${picture}?v=thumb`}
+                            alt=""
+                            loading="lazy"
+                            width={40}
+                            height={40}
+                            data-testid="product-thumb"
+                            className="mt-0.5 h-10 w-10 shrink-0 rounded-md border border-[var(--border)] bg-white object-contain"
+                          />
+                        )}
+                        <div className="min-w-0">
                         <Link
                           href={`/dashboard/products/${product.id}`}
                           className="font-medium hover:underline"
                         >
                           {product.name}
                         </Link>
+                        {counts && (
+                          <p className="faint text-[0.7rem]" data-testid="product-label-counts">
+                            {counts}
+                          </p>
+                        )}
                         {(product.manufacturer || product.description) && (
                           <p className="faint mt-0.5 line-clamp-1 max-w-md text-xs">
                             {product.manufacturer && (
@@ -197,6 +230,8 @@ export default async function ProductsPage({
                             starredName={star?.name ?? product.distributor?.name ?? null}
                             count={suppliersOf.length}
                           />
+                        </div>
+                        </div>
                         </div>
                       </td>
                       <td className="faint num hidden text-xs md:table-cell">{product.sku || "—"}</td>

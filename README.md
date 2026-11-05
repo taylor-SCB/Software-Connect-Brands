@@ -219,6 +219,22 @@ supplier, and the Supplier filter finds a product by any of them.
 Importing a second supplier's sheet adds them beside the starred one at
 their own price and leaves your COGS and price alone.
 
+**Labels, units and pictures** (Release 3b, Nov 6, 2026). A product's
+page has a **Variations** card: the Colors, Sizes and the workspace's own
+groups (Sleeve, Print location) it comes in, ticked as chips, plus the
+units it comes in; "+ Add" types a new label in place. The Unit box takes
+the workspace's own units ("Box of 12" contains 12 Each) on Labor and
+Materials products. Up to six **Pictures** per product, made small in the
+browser before they are sent; the first is the main one (the Products
+list, quotes and partner ratesheets show it) and each can belong to a
+Color. On a quote, each line picks one label per group under the product
+name; the customer's copy and its PDF print them with the line's picture,
+and a sent quote keeps the labels, unit name and picture it went out
+with. Contracts and the supplier's purchase order print the labels too.
+**Labels & Units**, the third tab beside Products and Ratesheets, lists
+them all: anyone adds; an Owner or Admin renames, retires, restores or
+reorders.
+
 **Ratesheets** — a sub-module under Products. A ratesheet is a named
 selection of your products published for partners: **Public**,
 **Invite/Approve**, or **Partner Specific** (sent to one email address),

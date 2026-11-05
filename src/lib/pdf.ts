@@ -39,32 +39,64 @@ export type PdfOptions = {
   cookieHeader?: string | null;
 };
 
+// Vercel refuses a function response much over 4.5 MB, and would answer
+// the customer with a bare error page. Past this the PDF is refused in words.
+export const MAX_PDF_BYTES = 4 * 1024 * 1024;
+
+export class PdfTooLargeError extends Error {
+  constructor() {
+    super("This document is too large to download as a PDF. Open it and use Print instead.");
+  }
+}
+
 export async function renderPdf({ url, cookieHeader }: PdfOptions): Promise<Uint8Array> {
   const browser = await launch();
   try {
     const page = await browser.newPage();
+    const origin = new URL(url).origin;
 
     // Forward the caller's session so an owner can export a draft that
     // isn't public yet. Without this the page would redirect to /login
-    // and we'd silently produce a PDF of the login screen.
-    const headers: Record<string, string> = {};
-    if (cookieHeader) {
-      headers.cookie = cookieHeader;
-    }
+    // and we'd silently produce a PDF of the login screen. Set as cookies
+    // for this site only, so nothing the page loads from anywhere else
+    // (a font, a picture) ever carries the session (Release 3b review).
+    const cookies = (cookieHeader ?? "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const at = part.indexOf("=");
+        // Secure on https, which a __Secure- session cookie needs.
+        return at > 0
+          ? { name: part.slice(0, at), value: part.slice(at + 1), url: origin, secure: origin.startsWith("https:") }
+          : null;
+      })
+      .filter((cookie): cookie is { name: string; value: string; url: string; secure: boolean } => cookie !== null);
+    if (cookies.length > 0) await page.setCookie(...cookies);
 
     // Vercel's Deployment Protection guards *.vercel.app with an SSO wall.
     // The app's own session cookie doesn't satisfy it, so a self-fetch would
     // capture the login page instead of the document. This secret is exposed
     // automatically when Protection Bypass for Automation is enabled; where
-    // it isn't set (custom domains, local dev) no header is sent.
+    // it isn't set (custom domains, local dev) no header is sent. It goes on
+    // this site's own requests only.
     const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
     if (bypass) {
-      headers["x-vercel-protection-bypass"] = bypass;
-      headers["x-vercel-set-bypass-cookie"] = "true";
-    }
-
-    if (Object.keys(headers).length > 0) {
-      await page.setExtraHTTPHeaders(headers);
+      await page.setRequestInterception(true);
+      page.on("request", (request) => {
+        let sameOrigin = false;
+        try {
+          sameOrigin = new URL(request.url()).origin === origin;
+        } catch {}
+        if (!sameOrigin) return void request.continue();
+        void request.continue({
+          headers: {
+            ...request.headers(),
+            "x-vercel-protection-bypass": bypass,
+            "x-vercel-set-bypass-cookie": "true",
+          },
+        });
+      });
     }
 
     const response = await page.goto(url, {
@@ -87,6 +119,7 @@ export async function renderPdf({ url, cookieHeader }: PdfOptions): Promise<Uint
       margin: { top: "0.5in", bottom: "0.5in", left: "0.4in", right: "0.4in" },
     });
 
+    if (pdf.byteLength > MAX_PDF_BYTES) throw new PdfTooLargeError();
     return pdf;
   } finally {
     await browser.close();

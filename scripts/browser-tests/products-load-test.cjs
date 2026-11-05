@@ -280,6 +280,78 @@ async function timedSearch(page, label, query) {
   )).rows[0].n;
   assert.equal(teeCount, 8000, "each new style number is its own product, none merged by name");
 
+  log("Release 3b: every product with 8 labels and a picture; the list still inside budget");
+  await sql(
+    `INSERT INTO "VariationGroup" (id,"organizationId",kind,name,position,"updatedAt") VALUES
+       ('vg_pl_color',$1,'COLOR','Color',1,now()), ('vg_pl_size',$1,'SIZE','Size',2,now()), ('vg_pl_unit',$1,'UNIT','Unit',0,now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "VariationOption" (id,"organizationId","groupId",name,position,"updatedAt")
+     SELECT 'vo_pl_' || g || '_' || i, $1, 'vg_pl_' || g, initcap(g) || ' ' || i, i, now()
+       FROM unnest(ARRAY['color','size']) g, generate_series(1, 4) i`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "VariationOption" (id,"organizationId","groupId",name,position,contains,"baseUnit",tag,"updatedAt")
+     VALUES ('vo_pl_box',$1,'vg_pl_unit','Box of 12',100,12,'EACH','MATERIALS',now())`,
+    [org],
+  );
+  const labelStart = Date.now();
+  await sql(
+    `INSERT INTO "ProductVariation" ("productId","optionId","organizationId")
+     SELECT p.id, o.id, $1 FROM "Product" p CROSS JOIN "VariationOption" o
+      WHERE p."organizationId"=$1 AND o."organizationId"=$1 AND o."groupId" IN ('vg_pl_color','vg_pl_size')`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductImage" (id,"organizationId","productId",position,"storageKey","thumbKey","docKey","contentType","sizeBytes","publicToken")
+     SELECT 'pi_pl_' || p.id, $1, p.id, 0, 'org/x/products/' || p.id || '/a.webp', 'org/x/products/' || p.id || '/a-thumb.webp',
+            'org/x/products/' || p.id || '/a-doc.jpg', 'image/webp', 1000, 'tok_pi_' || p.id
+       FROM "Product" p WHERE p."organizationId"=$1`,
+    [org],
+  );
+  await sql(`ANALYZE "ProductVariation"`);
+  await sql(`ANALYZE "ProductImage"`);
+  console.log(`     ${((Date.now() - labelStart) / 1000).toFixed(1)}s  seeded the labels and pictures`);
+  await timed(page, "Products with pictures and labels, first page", `${BASE}/dashboard/products`, "[data-testid=product-label-counts]");
+  await timed(page, "Products with pictures and labels, 100 per page", `${BASE}/dashboard/products?per=100`, "[data-testid=product-label-counts]");
+  assert.equal(await page.locator("[data-testid=product-thumb]").count(), 100);
+  assert.match(await page.locator("[data-testid=product-label-counts]").first().innerText(), /^4 colors · 4 sizes$/);
+
+  log("a 200-line sent quote with labels, a workspace unit and pictures saves well inside the 5-second transaction");
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
+     VALUES ('quo_pl_200',$1,'ctc_pl','deal_pl',1002,'Big tee order','SENT','tok_quo_pl_200_0123456',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId","productId",name,quantity,"unitPriceCents",tag,position,variations,"variationText","customUnitId","unitLabel","imageId")
+     SELECT 'qli_pl_' || n, 'quo_pl_200', p.id, p.name, 1, 1500, 'MATERIALS', n - 1,
+            jsonb_build_array(jsonb_build_object('groupId','vg_pl_color','group','Color','optionId','vo_pl_color_1','label','Color 1')),
+            'Color 1', 'vo_pl_box', 'Box of 12', 'pi_pl_' || p.id
+       FROM (SELECT id, name, row_number() OVER (ORDER BY id) AS n FROM "Product"
+              WHERE "organizationId"=$1 AND "defaultTag"='MATERIALS' ORDER BY id LIMIT 200) p`,
+    [org],
+  );
+  await timed(page, "a 200-line quote with labels and pictures", `${BASE}/dashboard/quotes/quo_pl_200`, "select[aria-label='Line 200 Color']", 4);
+  await page.locator("select[aria-label='Line 1 Color']").selectOption("vo_pl_color_2");
+  await page.locator("select[aria-label='Line 200 Size']").selectOption("vo_pl_size_3");
+  await page.getByLabel("Line 100 quantity").fill("7");
+  const saveStart = Date.now();
+  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByText(/Line items saved|went wrong|error/i).first().waitFor({ timeout: 30000 });
+  const saveSeconds = (Date.now() - saveStart) / 1000;
+  timings.push({ label: "saving the 200-line quote", seconds: saveSeconds });
+  console.log(`     ${saveSeconds.toFixed(2)}s  saving the 200-line quote`);
+  await page.getByText("Line items saved").waitFor({ timeout: 1000 });
+  assert.ok(saveSeconds < 4.5, `the save took ${saveSeconds.toFixed(2)}s`);
+  const saved = (await sql(
+    `SELECT id, "variationText", "imageId", quantity FROM "QuoteLineItem" WHERE id IN ('qli_pl_1','qli_pl_100','qli_pl_200') ORDER BY position`,
+  )).rows;
+  assert.deepEqual(saved.map((row) => row.variationText), ["Color 2", "Color 1", "Color 1 · Size 3"]);
+  assert.equal(saved[1].quantity, 7);
+
   await browser.close();
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
   const slowest = timings.reduce((a, b) => (b.seconds > a.seconds ? b : a));

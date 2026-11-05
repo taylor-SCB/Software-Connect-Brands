@@ -16,6 +16,8 @@ type Line = {
   unitPriceCents: number;
   discountCents: number;
   tag: string;
+  // "Black · L" (Release 3b), so two sizes of one product are told apart.
+  variationText?: string | null;
   contract: { id: string; number: number; type: string; payable: boolean; status: string };
 };
 
@@ -254,7 +256,10 @@ export function ScopeCard({
                   {scope.lineItems.map((line) => (
                     <li key={line.id} className="flex flex-wrap items-center justify-between gap-2" data-testid="scope-line">
                       <div className="min-w-0">
-                        <p className="text-sm">{line.name}</p>
+                        <p className="text-sm">
+                          {line.name}
+                          {line.variationText && <span className="faint"> · {line.variationText}</span>}
+                        </p>
                         <p className="faint num text-xs">
                           <Link href={`/dashboard/contracts/${line.contract.id}`} className="link">
                             CON-{line.contract.number}

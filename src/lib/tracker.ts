@@ -115,6 +115,7 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
               discountPercent: true,
               tag: true,
               cancelledAt: true,
+              variationText: true,
               contractLines: {
                 select: {
                   contract: { select: { id: true, number: true, status: true, title: true, type: true } },
@@ -202,6 +203,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
         discountCents: item.discountCents,
         discountPercent: item.discountPercent,
         tag: item.tag,
+        // "Black · L", so two sizes of one product can be told apart.
+        variationText: item.variationText,
         cancelled: Boolean(item.cancelledAt),
         // Only contracts still standing count; a cancelled or declined
         // one has let the row go.

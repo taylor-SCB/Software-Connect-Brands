@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { QuoteDocument } from "@/components/quote-document";
 import { IconDownload } from "@/components/icons";
+import { linePicture, picturesFor } from "@/lib/product-images";
+import { customUnitLabel, readSnapshot } from "@/lib/variation-shared";
 
 export const metadata: Metadata = {
   title: "Quote",
@@ -61,6 +63,15 @@ export default async function PublicQuotePage({
           unitPriceCents: true,
           discountCents: true,
           tag: true,
+          // Release 3b. Read here to work out what is printed (the labels,
+          // a workspace unit's name, the picture's token) — the line is
+          // handed to the document field by field below, never as it is.
+          productId: true,
+          unitOfMeasure: true,
+          unitLabel: true,
+          variations: true,
+          variationText: true,
+          image: { select: { id: true, publicToken: true, removedAt: true } },
         },
       },
       paymentTerms: true,
@@ -85,6 +96,40 @@ export default async function PublicQuotePage({
     if (!isOwnerPreview) notFound();
   }
 
+  // A draft shows each product's picture live; a sent quote, the picture
+  // each line went out with.
+  const draft = quote.status === "DRAFT";
+  const pictures = draft
+    ? await picturesFor(
+        quote.organization.id,
+        quote.lineItems.flatMap((item) => (item.productId ? [item.productId] : [])),
+      )
+    : new Map();
+  const lineItems = quote.lineItems.map((item) => {
+    const picture = linePicture(
+      {
+        productId: item.productId,
+        optionIds: readSnapshot(item.variations).map((entry) => entry.optionId),
+        image: item.image ? { id: item.image.id, token: item.image.publicToken, removed: Boolean(item.image.removedAt) } : null,
+      },
+      pictures,
+      draft,
+    );
+    return {
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      projectNotes: item.projectNotes,
+      quantity: item.quantity,
+      unitPriceCents: item.unitPriceCents,
+      discountCents: item.discountCents,
+      tag: item.tag,
+      variationText: item.variationText,
+      unitLabel: customUnitLabel(item),
+      pictureToken: picture?.token ?? null,
+    };
+  });
+
   return (
     <div className="doc-page relative z-10 px-4 py-10 sm:px-6">
       {isOwnerPreview && (
@@ -101,6 +146,7 @@ export default async function PublicQuotePage({
       <QuoteDocument
         quote={{
           ...quote,
+          lineItems,
           payments: quote.hidePaymentTable ? [] : quote.payments,
           paymentTerms: quote.hidePaymentTable ? null : quote.paymentTerms,
           salesRep: quote.leadSalesRep,

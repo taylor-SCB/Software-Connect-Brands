@@ -13,6 +13,9 @@ import { MAX_DISCOUNT_BP, MAX_MIN_MARGIN_BP } from "@/lib/supplier-math";
 import { percentToBasisPoints } from "@/lib/price-list";
 import { linkPlatformSupplier } from "@/lib/platform-suppliers";
 import { PLATFORM_SUPPLIER_PREFIX } from "@/lib/account-types";
+import { createCustomUnit, ensureGroup, ensureOption, isCustomUnitTag } from "@/lib/variations";
+import { customUnitIdOf } from "@/lib/variation-shared";
+import { copyPicturesTo, sweepUnusedPictures } from "@/lib/product-images";
 import {
   LINE_ITEM_TAGS,
   TAG_LABELS,
@@ -31,6 +34,8 @@ const idSchema = z.string().trim().min(1, "Missing record reference");
 // yet; it is created on save so a brand new workspace never hits an empty
 // dropdown it can't fill.
 const NEW_OPTION = "__new__";
+// "+ Add custom unit…" in the Unit box.
+const NEW_UNIT = "__newunit__";
 
 const optionalEnum = <T extends readonly [string, ...string[]]>(values: T) =>
   z.union([z.literal(""), z.enum(values)]).optional();
@@ -55,7 +60,12 @@ const productSchema = z.object({
   defaultTag: z.enum(LINE_ITEM_TAGS),
   // The kind of work this is sold under, by name from the workspace list.
   serviceType: z.string().trim().max(60).optional(),
-  unitOfMeasure: optionalEnum(UNITS_OF_MEASURE),
+  // A built-in unit, "cu:<id>" for one of the workspace's own, or
+  // NEW_UNIT with the three boxes below (Release 3b).
+  unitOfMeasure: z.string().trim().max(80).optional(),
+  newUnitName: z.string().max(200).optional(),
+  newUnitContains: z.string().trim().max(20).optional(),
+  newUnitBase: z.string().trim().max(40).optional(),
   softwareRate: optionalEnum(SOFTWARE_RATES),
   softwareTerm: z.string().trim().max(6).optional(),
   manufacturerId: z.string().trim().max(60).optional(),
@@ -98,6 +108,9 @@ function readInput(formData: FormData) {
     defaultTag: formData.get("defaultTag"),
     serviceType: formData.get("serviceType") ?? undefined,
     unitOfMeasure: formData.get("unitOfMeasure") ?? "",
+    newUnitName: formData.get("newUnitName") ?? "",
+    newUnitContains: formData.get("newUnitContains") ?? "",
+    newUnitBase: formData.get("newUnitBase") ?? "",
     softwareRate: formData.get("softwareRate") ?? "",
     softwareTerm: formData.get("softwareTerm") ?? "",
     manufacturerId: formData.get("manufacturerId") ?? "",
@@ -122,6 +135,7 @@ type Resolved = {
     defaultTag: (typeof LINE_ITEM_TAGS)[number];
     serviceType: string | null;
     unitOfMeasure: (typeof UNITS_OF_MEASURE)[number] | null;
+    customUnitId: string | null;
     softwareRate: (typeof SOFTWARE_RATES)[number] | null;
     softwareTerm: number | null;
     manufacturerId: string | null;
@@ -133,6 +147,8 @@ type Resolved = {
   contactEdits: { id: string; name: string; email: string | null; phone: string | null }[];
   suppliers: SupplierRowInput[];
   removedSuppliers: string[];
+  // The Variations card's changes, or null when the card wasn't touched.
+  variations: { added: string[]; removed: string[] } | null;
 };
 
 type SupplierRowInput = {
@@ -150,6 +166,8 @@ type SupplierRowInput = {
 async function resolveProductInput(
   formData: FormData,
   organizationId: string,
+  // The product's own unit as stored, which may be offered back retired.
+  currentCustomUnitId: string | null = null,
 ): Promise<{ ok: true; data: Resolved } | { ok: false; error: string }> {
   const parsed = parseForm(productSchema, readInput(formData));
   if (!parsed.ok) return parsed;
@@ -167,15 +185,56 @@ async function resolveProductInput(
   // Gallon", and project services, shipping and taxes carry no unit at
   // all. The form only offers the right list; this is the check for a
   // stale form or a hand-built post.
-  let unitOfMeasure = input.unitOfMeasure || null;
+  // Release 3b: a workspace's own unit ("Box of 12") instead, on Labor and
+  // Materials only. It is written with unitOfMeasure null, and a built-in
+  // unit with customUnitId null: never both.
+  const unitRaw = input.unitOfMeasure ?? "";
+  let unitOfMeasure: Resolved["scalars"]["unitOfMeasure"] = null;
+  let customUnitId: string | null = null;
   if (!tagHasUnits(input.defaultTag)) {
-    unitOfMeasure = null;
-  } else if (!unitAllowedForTag(unitOfMeasure, input.defaultTag)) {
-    const group = unitGroupFor(unitOfMeasure);
-    return {
-      ok: false,
-      error: `That unit belongs to the ${group ? UNIT_GROUP_LABELS[group] : "other"} list, not ${TAG_LABELS[input.defaultTag]}`,
-    };
+    // No unit at all.
+  } else if (unitRaw === NEW_UNIT || customUnitIdOf(unitRaw)) {
+    if (!isCustomUnitTag(input.defaultTag)) {
+      return { ok: false, error: "Software products use one of the built-in Software units." };
+    }
+    if (unitRaw === NEW_UNIT) {
+      const made = await createCustomUnit(organizationId, {
+        name: input.newUnitName ?? "",
+        contains: Number(input.newUnitContains),
+        baseUnit: input.newUnitBase ?? "",
+        tag: input.defaultTag,
+      });
+      if ("error" in made) return { ok: false, error: made.error };
+      customUnitId = made.id;
+    } else {
+      const id = customUnitIdOf(unitRaw)!;
+      const found = await prisma.variationOption.findFirst({
+        where: { id, organizationId, builtInUnit: null, group: { kind: "UNIT" } },
+        select: { id: true, name: true, tag: true, archivedAt: true },
+      });
+      if (!found) return { ok: false, error: "That unit is gone. Pick another." };
+      // A retired unit stays on a product that already has it (the box
+      // offers it back), but isn't picked fresh.
+      if (found.archivedAt && found.id !== currentCustomUnitId) {
+        return { ok: false, error: `${found.name} was retired. Pick another unit.` };
+      }
+      if (found.tag !== input.defaultTag) {
+        return { ok: false, error: `${found.name} belongs to the ${found.tag === "LABOR" ? "Labor" : "Materials"} list, not ${TAG_LABELS[input.defaultTag]}` };
+      }
+      customUnitId = found.id;
+    }
+  } else if (unitRaw) {
+    if (!(UNITS_OF_MEASURE as readonly string[]).includes(unitRaw)) {
+      return { ok: false, error: "Pick a unit from the list." };
+    }
+    unitOfMeasure = unitRaw as (typeof UNITS_OF_MEASURE)[number];
+    if (!unitAllowedForTag(unitOfMeasure, input.defaultTag)) {
+      const group = unitGroupFor(unitOfMeasure);
+      return {
+        ok: false,
+        error: `That unit belongs to the ${group ? UNIT_GROUP_LABELS[group] : "other"} list, not ${TAG_LABELS[input.defaultTag]}`,
+      };
+    }
   }
 
   // Rate and term only mean something for software units.
@@ -306,11 +365,15 @@ async function resolveProductInput(
     });
   }
 
+  const variations = await resolveVariations(formData, organizationId, input.defaultTag);
+  if (variations && "error" in variations) return { ok: false, error: variations.error };
+
   return {
     ok: true,
     data: {
       suppliers,
       removedSuppliers: removedParsed.data,
+      variations,
       scalars: {
         name: input.name,
         description: optionalText(formData.get("description")) ?? "",
@@ -321,6 +384,7 @@ async function resolveProductInput(
         defaultTag: input.defaultTag,
         serviceType: input.serviceType ? input.serviceType : null,
         unitOfMeasure,
+        customUnitId,
         softwareRate,
         softwareTerm,
         manufacturerId,
@@ -332,6 +396,92 @@ async function resolveProductInput(
       contactEdits,
     },
   };
+}
+
+// The Variations card (Release 3b) posts what changed on it, never the
+// whole set, and only once it was touched: a save of the price can't take
+// off a label another tab added, or one retired since the page was opened.
+const variationsSchema = z.object({
+  added: z.array(z.string().trim().min(1).max(60)).max(2000),
+  removed: z.array(z.string().trim().min(1).max(60)).max(2000),
+  newLabels: z
+    .array(
+      z.object({
+        groupId: z.string().trim().max(60).optional(),
+        groupName: z.string().max(120).optional(),
+        name: z.string().max(120),
+      }),
+    )
+    .max(200),
+  newGroups: z.array(z.string().max(120)).max(30),
+});
+
+async function resolveVariations(
+  formData: FormData,
+  organizationId: string,
+  tag: string,
+): Promise<{ added: string[]; removed: string[] } | { error: string } | null> {
+  if (formData.get("variationsPresent") !== "1") return null;
+  const parsed = variationsSchema.safeParse(readNewContacts(formData.get("variations")));
+  if (!parsed.success) return { error: "The labels on this form couldn't be read. Reload the page and try again." };
+  const { added, removed, newLabels, newGroups } = parsed.data;
+
+  // New groups first, so a label typed under one lands in it.
+  const groupIds = new Map<string, string>();
+  for (const name of newGroups) {
+    const made = await ensureGroup(organizationId, name);
+    if ("error" in made) return made;
+    groupIds.set(name.trim().toLowerCase(), made.id);
+  }
+  const fresh: string[] = [];
+  for (const label of newLabels) {
+    let groupId = label.groupId || null;
+    if (!groupId && label.groupName) {
+      groupId = groupIds.get(label.groupName.trim().toLowerCase()) ?? null;
+      if (!groupId) {
+        const made = await ensureGroup(organizationId, label.groupName);
+        if ("error" in made) return made;
+        groupId = made.id;
+      }
+    }
+    if (!groupId) continue;
+    const made = await ensureOption(organizationId, groupId, label.name);
+    if ("error" in made) return made;
+    fresh.push(made.id);
+  }
+
+  // Ticked labels must be this workspace's and live; a unit must be of the
+  // product's own list. Anything else is left off rather than refused.
+  const wanted = [...new Set(added)];
+  const live = wanted.length
+    ? await prisma.variationOption.findMany({
+        where: { id: { in: wanted }, organizationId, archivedAt: null, group: { archivedAt: null } },
+        select: { id: true, tag: true, group: { select: { kind: true } } },
+      })
+    : [];
+  const ok = live.filter((option) => option.group.kind !== "UNIT" || option.tag === tag).map((option) => option.id);
+  const removing = new Set(removed);
+  return { added: [...new Set([...ok, ...fresh])].filter((id) => !removing.has(id)), removed: [...removing] };
+}
+
+// After the product is written. A unit from another tag's list never stays
+// ticked: the tag decides which units a product can come in.
+async function saveVariations(organizationId: string, productId: string, tag: string, data: Resolved) {
+  if (data.variations) {
+    const { added, removed } = data.variations;
+    if (removed.length) {
+      await prisma.productVariation.deleteMany({ where: { organizationId, productId, optionId: { in: removed } } });
+    }
+    if (added.length) {
+      await prisma.productVariation.createMany({
+        data: added.map((optionId) => ({ organizationId, productId, optionId })),
+        skipDuplicates: true,
+      });
+    }
+  }
+  await prisma.productVariation.deleteMany({
+    where: { organizationId, productId, option: { group: { kind: "UNIT" }, NOT: { tag: tag as (typeof LINE_ITEM_TAGS)[number] } } },
+  });
 }
 
 // Corrections to existing contacts. Each write is scoped to the tenant and
@@ -481,9 +631,11 @@ export async function createProduct(_prev: ActionState, formData: FormData): Pro
     select: { id: true },
   });
   await saveSupplierRows(organizationId, made.id, scalars.distributorId, resolved.data, null);
+  await saveVariations(organizationId, made.id, scalars.defaultTag, resolved.data);
 
   revalidatePath("/dashboard/products");
-  redirect("/dashboard/products");
+  // Onto the new product's page, where its pictures go (Taylor, Nov 5).
+  redirect(`/dashboard/products/${made.id}?added=1`);
 }
 
 export async function updateProduct(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -496,11 +648,11 @@ export async function updateProduct(_prev: ActionState, formData: FormData): Pro
   // manufacturers and distributors) runs for a product that isn't ours.
   const existing = await prisma.product.findFirst({
     where: { id: id.data, organizationId },
-    select: { id: true, costCents: true, listPriceCents: true },
+    select: { id: true, costCents: true, listPriceCents: true, customUnitId: true },
   });
   if (!existing) return { error: "Product not found" };
 
-  const resolved = await resolveProductInput(formData, organizationId);
+  const resolved = await resolveProductInput(formData, organizationId, existing.customUnitId);
   if (!resolved.ok) return { error: resolved.error };
   const { scalars } = resolved.data;
   const contacts = contactWrites(organizationId, scalars.distributorId, resolved.data);
@@ -522,6 +674,7 @@ export async function updateProduct(_prev: ActionState, formData: FormData): Pro
     },
   });
   await saveSupplierRows(organizationId, existing.id, scalars.distributorId, resolved.data, existing);
+  await saveVariations(organizationId, existing.id, scalars.defaultTag, resolved.data);
 
   revalidatePath("/dashboard/products");
   revalidatePath(`/dashboard/products/${existing.id}`);
@@ -536,6 +689,8 @@ export async function deleteProduct(formData: FormData) {
   // Line items keep their copied name/price (productId is SetNull), so
   // deleting a product never rewrites a quote that already went out.
   await prisma.product.deleteMany({ where: { id: id.data, organizationId } });
+  // Its pictures stay only where a sent quote line went out with them.
+  await sweepUnusedPictures(organizationId);
 
   revalidatePath("/dashboard/products");
   // Back to the view the delete was made from — the search, filters and
@@ -564,6 +719,7 @@ export async function cloneProduct(formData: FormData) {
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: { distributorId: true, costCents: true, discountBp: true, listPriceCents: true, minMarginBp: true, preferredFor: true },
       },
+      variations: { select: { optionId: true } },
     },
   });
   if (!source) return;
@@ -580,6 +736,7 @@ export async function cloneProduct(formData: FormData) {
       defaultTag: source.defaultTag,
       serviceType: source.serviceType,
       unitOfMeasure: source.unitOfMeasure,
+      customUnitId: source.customUnitId,
       softwareRate: source.softwareRate,
       softwareTerm: source.softwareTerm,
       manufacturerId: source.manufacturerId,
@@ -602,6 +759,15 @@ export async function cloneProduct(formData: FormData) {
   });
   const starred = source.suppliers.find((row) => row.preferredFor);
   if (starred) await starSupplier(prisma, organizationId, clone.id, starred.distributorId);
+  // Its labels (retired ones too) and its pictures, which share the
+  // source's files.
+  if (source.variations.length) {
+    await prisma.productVariation.createMany({
+      data: source.variations.map((row) => ({ organizationId, productId: clone.id, optionId: row.optionId })),
+      skipDuplicates: true,
+    });
+  }
+  await copyPicturesTo(organizationId, source.id, clone.id);
 
   revalidatePath("/dashboard/products");
   redirect(`/dashboard/products/${clone.id}`);

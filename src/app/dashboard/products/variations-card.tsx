@@ -1,0 +1,323 @@
+"use client";
+
+import { useState } from "react";
+import { Card, CardHeader } from "@/components/ui";
+import { IconPlus } from "@/components/icons";
+import { TAG_LABELS, UNIT_LABELS } from "@/lib/constants";
+import { cleanLabel, containsText, type VariationKindValue } from "@/lib/variation-shared";
+import type { ActionState } from "@/lib/forms";
+
+export type CardOption = {
+  id: string;
+  name: string;
+  retired: boolean;
+  tag: string | null;
+  builtInUnit: string | null;
+  contains: number | null;
+  baseUnit: string | null;
+};
+
+export type CardGroup = {
+  id: string;
+  kind: VariationKindValue;
+  name: string;
+  builtIn: boolean;
+  retired: boolean;
+  options: CardOption[];
+};
+
+type NewLabel = { key: string; groupId?: string; groupName?: string; name: string };
+
+let keyCounter = 0;
+const nextKey = () => `label-${(keyCounter += 1)}`;
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// The labels a product comes in (Release 3b): one row per group, a chip per
+// label, ticked when the product has it. Only what changed on this card is
+// posted, and only once it was touched, so saving the price can never take
+// off a label another tab added or one retired since the page opened.
+export function VariationsCard({
+  groups,
+  savedIds,
+  tag,
+  saveState,
+}: {
+  groups: CardGroup[];
+  savedIds: string[];
+  tag: string;
+  saveState: ActionState;
+}) {
+  const [ticked, setTicked] = useState(() => new Set(savedIds));
+  const [newLabels, setNewLabels] = useState<NewLabel[]>([]);
+  const [newGroups, setNewGroups] = useState<string[]>([]);
+  const [touched, setTouched] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [unitNote, setUnitNote] = useState<string | null>(null);
+
+  // After a save the card is what was stored.
+  const [seenState, setSeenState] = useState(saveState);
+  if (saveState !== seenState) {
+    setSeenState(saveState);
+    if (saveState?.success) {
+      setTicked(new Set(savedIds));
+      setNewLabels([]);
+      setNewGroups([]);
+      setTouched(false);
+      setAdding(null);
+      setDraft("");
+      setProblem(null);
+    }
+  }
+
+  // A unit belongs to its tag's list: a new tag takes the old list's units
+  // off, and says so (the server does the same).
+  const unitGroup = groups.find((group) => group.kind === "UNIT");
+  const [seenTag, setSeenTag] = useState(tag);
+  if (tag !== seenTag) {
+    setSeenTag(tag);
+    const dropped = (unitGroup?.options ?? []).filter((option) => ticked.has(option.id) && option.tag !== tag);
+    if (dropped.length) {
+      const next = new Set(ticked);
+      for (const option of dropped) next.delete(option.id);
+      setTicked(next);
+      setTouched(true);
+      setUnitNote(`${dropped.map((option) => option.name).join(", ")} taken off: units follow the Default tag.`);
+    } else {
+      setUnitNote(null);
+    }
+  }
+
+  const saved = new Set(savedIds);
+  const added = [...ticked].filter((id) => !saved.has(id));
+  const removed = savedIds.filter((id) => !ticked.has(id));
+
+  function toggle(id: string) {
+    const next = new Set(ticked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setTicked(next);
+    setTouched(true);
+    setProblem(null);
+  }
+
+  function startAdding(key: string) {
+    setAdding(key);
+    setDraft("");
+    setProblem(null);
+  }
+
+  // A label typed under a group: one already in the group is ticked
+  // instead; a retired one is for an Owner or Admin to bring back.
+  function addLabel(group: { id?: string; name: string; options: CardOption[] }) {
+    const name = cleanLabel(draft);
+    if (!name) return setProblem("Type a name for the label.");
+    const existing = group.options.find((option) => same(option.name, name));
+    if (existing) {
+      if (existing.retired && !ticked.has(existing.id)) {
+        return setProblem(`${existing.name} was retired. An Owner or Admin can bring it back on Labels & Units.`);
+      }
+      if (!ticked.has(existing.id)) toggle(existing.id);
+    } else if (!newLabels.some((label) => same(label.name, name) && (label.groupId ?? label.groupName) === (group.id ?? group.name))) {
+      setNewLabels([...newLabels, { key: nextKey(), ...(group.id ? { groupId: group.id } : { groupName: group.name }), name }]);
+      setTouched(true);
+    }
+    setDraft("");
+    setProblem(null);
+  }
+
+  function addGroup() {
+    const name = cleanLabel(draft);
+    if (!name) return setProblem("Type a name for the group, like Sleeve or Print location.");
+    const existing = groups.find((group) => same(group.name, name));
+    if (existing) {
+      if (existing.kind === "UNIT") return setProblem("Units have their own row.");
+      if (existing.retired) return setProblem(`${existing.name} was retired. An Owner or Admin can bring it back on Labels & Units.`);
+      setAdding(existing.id);
+      setDraft("");
+      return;
+    }
+    if (!newGroups.some((group) => same(group, name))) setNewGroups([...newGroups, name]);
+    setTouched(true);
+    setAdding(`new:${name}`);
+    setDraft("");
+    setProblem(null);
+  }
+
+  const payload = JSON.stringify({
+    added,
+    removed,
+    newLabels: newLabels.map(({ groupId, groupName, name }) => ({ groupId, groupName, name })),
+    newGroups,
+  });
+
+  const unitList = unitGroup
+    ? unitGroup.options.filter((option) => option.tag === tag && (!option.retired || ticked.has(option.id)))
+    : [];
+  // A retired group shows only while the product has one of its labels.
+  const otherGroups = groups.filter(
+    (group) => group.kind !== "UNIT" && (!group.retired || group.options.some((option) => ticked.has(option.id))),
+  );
+
+  const chip = (option: CardOption, groupName: string) => {
+    const on = ticked.has(option.id);
+    const contains = option.builtInUnit ? null : containsText(option.contains, option.baseUnit ? UNIT_LABELS[option.baseUnit as keyof typeof UNIT_LABELS] : null);
+    return (
+      <button
+        key={option.id}
+        type="button"
+        onClick={() => toggle(option.id)}
+        disabled={option.retired && !on}
+        aria-pressed={on}
+        data-testid="label-chip"
+        data-group={groupName}
+        title={contains ?? undefined}
+        className={`rounded-full border px-2.5 py-1 text-xs transition ${
+          on
+            ? "border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_18%,transparent)] font-medium"
+            : "border-[var(--border)] opacity-80 hover:opacity-100"
+        }`}
+      >
+        {on ? "✓ " : ""}
+        {option.name}
+        {option.retired && <span className="faint"> (retired)</span>}
+      </button>
+    );
+  };
+
+  const addBox = (key: string, onAdd: () => void, placeholder: string, label: string) => (
+    <span className="flex items-center gap-1">
+      <input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onAdd();
+          }
+          if (event.key === "Escape") setAdding(null);
+        }}
+        placeholder={placeholder}
+        aria-label={label}
+        maxLength={40}
+        autoFocus
+        data-testid="label-add-input"
+        className="input input-sm w-36"
+      />
+      <button type="button" onClick={onAdd} className="btn btn-ghost btn-sm" data-testid="label-add-button">
+        Add
+      </button>
+      <button type="button" onClick={() => setAdding(null)} className="btn btn-ghost btn-sm">
+        Cancel
+      </button>
+    </span>
+  );
+
+  return (
+    <Card lit>
+      <CardHeader
+        title="Variations"
+        subtitle="The labels it comes in. A quote line picks one of each, and they print under the name."
+      />
+      {touched && <input type="hidden" name="variationsPresent" value="1" />}
+      {touched && <input type="hidden" name="variations" value={payload} />}
+      <div className="space-y-3 p-5" data-testid="product-variations">
+        {unitGroup && unitList.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5" data-testid="variation-group" data-group={unitGroup.name}>
+            <span className="label !mb-0 w-24 shrink-0">{unitGroup.name}s</span>
+            {unitList.map((option) => chip(option, unitGroup.name))}
+            {unitNote && <p className="w-full text-xs text-[var(--warn)]">{unitNote}</p>}
+          </div>
+        )}
+        {unitGroup && unitList.length === 0 && (
+          <p className="faint text-xs">No units for {TAG_LABELS[tag as keyof typeof TAG_LABELS] ?? "this tag"}.</p>
+        )}
+        {otherGroups.map((group) => {
+          const pending = newLabels.filter((label) => label.groupId === group.id);
+          const visible = group.options.filter((option) => !option.retired || ticked.has(option.id));
+          return (
+            <div key={group.id} className="flex flex-wrap items-center gap-1.5" data-testid="variation-group" data-group={group.name}>
+              <span className="label !mb-0 w-24 shrink-0">
+                {group.name}
+                {group.retired && <span className="faint font-normal"> (retired)</span>}
+              </span>
+              {visible.map((option) => chip(option, group.name))}
+              {pending.map((label) => (
+                <span key={label.key} className="rounded-full border border-[var(--brand)] px-2.5 py-1 text-xs font-medium" data-testid="label-chip-new">
+                  ✓ {label.name} <span className="faint">(new)</span>
+                  <button
+                    type="button"
+                    onClick={() => setNewLabels(newLabels.filter((item) => item.key !== label.key))}
+                    aria-label={`Don't add ${label.name}`}
+                    className="ml-1 opacity-70 hover:opacity-100"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {!group.retired &&
+                (adding === group.id ? (
+                  addBox(group.id, () => addLabel(group), `New ${group.name.toLowerCase()}`, `New ${group.name} label`)
+                ) : (
+                  <button type="button" onClick={() => startAdding(group.id)} className="btn btn-ghost btn-sm" data-testid="label-add">
+                    <IconPlus size={12} /> Add
+                  </button>
+                ))}
+            </div>
+          );
+        })}
+        {newGroups.map((name) => {
+          const pending = newLabels.filter((label) => label.groupName && same(label.groupName, name));
+          return (
+            <div key={name} className="flex flex-wrap items-center gap-1.5" data-testid="variation-group" data-group={name}>
+              <span className="label !mb-0 w-24 shrink-0">
+                {name} <span className="faint font-normal">(new)</span>
+              </span>
+              {pending.map((label) => (
+                <span key={label.key} className="rounded-full border border-[var(--brand)] px-2.5 py-1 text-xs font-medium" data-testid="label-chip-new">
+                  ✓ {label.name} <span className="faint">(new)</span>
+                </span>
+              ))}
+              {adding === `new:${name}` ? (
+                addBox(`new:${name}`, () => addLabel({ name, options: [] }), `New ${name.toLowerCase()}`, `New ${name} label`)
+              ) : (
+                <button type="button" onClick={() => startAdding(`new:${name}`)} className="btn btn-ghost btn-sm" data-testid="label-add">
+                  <IconPlus size={12} /> Add
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setNewGroups(newGroups.filter((group) => group !== name));
+                  setNewLabels(newLabels.filter((label) => !(label.groupName && same(label.groupName, name))));
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                Don&apos;t add
+              </button>
+            </div>
+          );
+        })}
+        <div>
+          {adding === "__group__" ? (
+            addBox("__group__", addGroup, "Sleeve, Print location…", "New group name")
+          ) : (
+            <button type="button" onClick={() => startAdding("__group__")} className="btn btn-ghost btn-sm" data-testid="group-add">
+              <IconPlus size={12} /> Add a group
+            </button>
+          )}
+        </div>
+        {problem && (
+          <p role="alert" className="text-xs text-[var(--warn)]" data-testid="label-problem">
+            {problem}
+          </p>
+        )}
+        <p className="faint text-[0.7rem]">
+          New labels join your list when you save. Rename or retire them on Labels &amp; Units.
+        </p>
+      </div>
+    </Card>
+  );
+}

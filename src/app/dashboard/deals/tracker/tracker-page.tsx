@@ -196,6 +196,7 @@ export async function DealTrackerPage({
                           discountCents: row.discountCents,
                           tag: row.tag,
                           cancelled: row.cancelled,
+                          variationText: row.variationText,
                         })),
                       }
                     : null

@@ -13,6 +13,7 @@ import {
 } from "@/lib/constants";
 import { StatusBadge } from "@/components/ui";
 import { RespondForm } from "./respond-form";
+import { mainPicturesFor } from "@/lib/product-images";
 
 export const metadata: Metadata = {
   title: "Ratesheet",
@@ -30,6 +31,9 @@ const productSelect = {
   unitOfMeasure: true,
   softwareRate: true,
   softwareTerm: true,
+  // A workspace's own unit's name, printed only while no built-in unit is
+  // set (Release 3b).
+  customUnit: { select: { name: true } },
 } as const;
 
 const ratesheetSelect = {
@@ -101,6 +105,11 @@ export default async function PartnerRatesheetPage({
 
   const organization = ratesheet.organization;
   const brand = organization.primaryColor;
+  // Each product's main picture, small (Release 3b): one query for the sheet.
+  const pictures = await mainPicturesFor(
+    organization.id,
+    ratesheet.items.map(({ product }) => product.id),
+  );
 
   return (
     <div
@@ -178,7 +187,8 @@ export default async function PartnerRatesheetPage({
                     {ratesheet.items.map(({ product }) => {
                       const unit = product.unitOfMeasure
                         ? UNIT_LABELS[product.unitOfMeasure as UnitOfMeasureValue]
-                        : null;
+                        : (product.customUnit?.name ?? null);
+                      const picture = pictures.get(product.id) ?? null;
                       const rate = product.softwareRate
                         ? SOFTWARE_RATE_LABELS[product.softwareRate as SoftwareRateValue]
                         : null;
@@ -189,10 +199,26 @@ export default async function PartnerRatesheetPage({
                       return (
                         <tr key={product.id}>
                           <td>
-                            <p className="font-medium">{product.name}</p>
-                            {product.description && (
-                              <p className="faint mt-0.5 text-xs leading-relaxed">{product.description}</p>
-                            )}
+                            <div className="flex items-start gap-3">
+                              {picture && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={`/files/${picture}?v=doc`}
+                                  alt=""
+                                  width={44}
+                                  height={44}
+                                  loading="lazy"
+                                  data-testid="ratesheet-picture"
+                                  className="h-11 w-11 shrink-0 rounded-md bg-white object-contain"
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <p className="font-medium">{product.name}</p>
+                                {product.description && (
+                                  <p className="faint mt-0.5 text-xs leading-relaxed">{product.description}</p>
+                                )}
+                              </div>
+                            </div>
                           </td>
                           <td className="num text-right font-medium">
                             {formatCents(product.unitPriceCents)}

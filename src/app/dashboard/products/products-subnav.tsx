@@ -1,16 +1,17 @@
 import Link from "next/link";
-import { IconBox, IconLayers } from "@/components/icons";
+import { IconBox, IconLayers, IconTag } from "@/components/icons";
 
-// Products | Ratesheets switch shown at the top of both pages, so the
-// sub-module is one tap away without leaving the Products section.
-export function ProductsSubnav({ current }: { current: "products" | "ratesheets" }) {
+// Products | Ratesheets | Labels & Units switch shown at the top of each,
+// so the sub-modules are one tap away without leaving the Products section.
+export function ProductsSubnav({ current }: { current: "products" | "ratesheets" | "labels" }) {
   const tabs = [
     { key: "products", href: "/dashboard/products", label: "Products", Icon: IconBox },
     { key: "ratesheets", href: "/dashboard/products/ratesheets", label: "Ratesheets", Icon: IconLayers },
+    { key: "labels", href: "/dashboard/products/labels", label: "Labels & Units", Icon: IconTag },
   ] as const;
 
   return (
-    <div className="mb-4 flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 w-fit">
+    <div className="mb-4 flex max-w-full gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 w-fit">
       {tabs.map(({ key, href, label, Icon }) => {
         const active = key === current;
         return (

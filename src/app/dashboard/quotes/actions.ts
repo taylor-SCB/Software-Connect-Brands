@@ -4,6 +4,7 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/session";
 import { parseForm, keepFields, type ActionState } from "@/lib/forms";
 import { publicToken } from "@/lib/tokens";
@@ -23,6 +24,16 @@ import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote
 import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
 import { computeQuoteTotals, lineGrossCents, resolveDiscount } from "@/lib/quote-math";
 import { STARRED_MINIMUM_SELECT, starredMinimumCents } from "@/lib/supplier-math";
+import { isCustomUnitTag, pickableOptions } from "@/lib/variations";
+import {
+  MAX_PICKS_PER_LINE,
+  mergeSnapshot,
+  readSnapshot,
+  sameIdSet,
+  variationTextOf,
+  type VariationEntry,
+} from "@/lib/variation-shared";
+import { freezeQuotePictures, livePicture, picturesFor } from "@/lib/product-images";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -223,6 +234,12 @@ const lineItemSchema = z.object({
   softwareTermMonths: z.number().int().min(1).max(1200).nullable().optional(),
   // Whether to put a hand-typed line into the catalog as well.
   saveAsProduct: z.boolean().optional(),
+  // Release 3b. The labels picked on the line, sent only when they were
+  // changed in the editor: left out, the line keeps what it has.
+  optionIds: z.array(z.string().trim().min(1).max(60)).max(MAX_PICKS_PER_LINE).optional(),
+  // One of the workspace's own units, or null for none; left out, the
+  // line keeps the one it has. A built-in unitOfMeasure beats it.
+  customUnitId: z.string().trim().max(60).nullable().optional(),
 });
 
 export type LineItemInput = z.infer<typeof lineItemSchema>;
@@ -242,7 +259,22 @@ function softwareTermPeriods(rate: string, months: number | null | undefined): n
 // which silently severs any contract line pointing at it.
 // minPriceCents: the linked product's starred-supplier minimum, so a typed
 // line that a save links to a catalog product is flagged as on a reload.
-export type SavedLine = { uid: string | null; id: string; productId: string | null; minPriceCents: number | null };
+// Release 3b: the labels, workspace unit and picture as stored, so a pick
+// the server didn't keep (unticked in another tab, a retired unit) shows
+// as it really is.
+export type SavedLine = {
+  uid: string | null;
+  id: string;
+  productId: string | null;
+  minPriceCents: number | null;
+  optionIds: string[];
+  variations: VariationEntry[];
+  variationText: string | null;
+  customUnitId: string | null;
+  unitLabel: string | null;
+  imageId: string | null;
+  imageToken: string | null;
+};
 
 export async function saveLineItems(
   quoteId: string,
@@ -267,7 +299,7 @@ export async function saveLineItems(
 
   const quote = await prisma.quote.findFirst({
     where: { id: id.data, organizationId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!quote) return { error: "Quote not found" };
 
@@ -304,9 +336,19 @@ export async function saveLineItems(
   // them), rows it dropped are deleted, new ones are created.
   const existing = await prisma.quoteLineItem.findMany({
     where: { quoteId: quote.id },
-    select: { id: true },
+    select: {
+      id: true,
+      productId: true,
+      variations: true,
+      variationText: true,
+      customUnitId: true,
+      unitLabel: true,
+      imageId: true,
+    },
   });
   const existingIds = new Set(existing.map((item) => item.id));
+  const existingById = new Map(existing.map((item) => [item.id, item]));
+  const labels = await lineLabelLookups(organizationId, quote.status, [...ownedIds], parsed.data, existing);
   const keptIds = new Set(
     parsed.data.map((item) => item.id).filter((id): id is string => Boolean(id) && existingIds.has(id as string)),
   );
@@ -350,6 +392,8 @@ export async function saveLineItems(
       const isSoftware = item.tag === "SOFTWARE";
 
       let productId = item.productId && ownedIds.has(item.productId) ? item.productId : null;
+      const before = item.id && keptIds.has(item.id) ? (existingById.get(item.id) ?? null) : null;
+      const workspaceUnit = lineWorkspaceUnit(item, unit, before, labels);
 
       // "Save as product?" — ticked by default on a line typed by hand.
       if (!productId && item.saveAsProduct && item.name) {
@@ -388,6 +432,7 @@ export async function saveLineItems(
                 defaultTag: item.tag,
                 serviceType: item.serviceType || null,
                 unitOfMeasure: unit,
+                customUnitId: workspaceUnit.customUnitId,
                 // The catalog only shows a rate and term beside a software
                 // UNIT, so writing a rate without one makes it invisible
                 // there and the product's own next save wipes it. Carry
@@ -429,13 +474,36 @@ export async function saveLineItems(
         softwareRate: isSoftware ? item.softwareRate ?? null : null,
         softwareTermMonths: isSoftware ? item.softwareTermMonths ?? null : null,
         position: index,
+        ...workspaceUnit,
+        ...lineLabels(item, productId, before, labels),
       };
-      const select = { id: true, productId: true } as const;
+      const select = {
+        id: true,
+        productId: true,
+        variations: true,
+        variationText: true,
+        customUnitId: true,
+        unitLabel: true,
+        imageId: true,
+      } as const;
       const row =
         item.id && keptIds.has(item.id)
           ? await tx.quoteLineItem.update({ where: { id: item.id }, data, select })
           : await tx.quoteLineItem.create({ data: { quoteId: quote.id, ...data }, select });
-      saved.push({ uid: item.uid ?? null, id: row.id, productId: row.productId, minPriceCents: null });
+      const entries = readSnapshot(row.variations);
+      saved.push({
+        uid: item.uid ?? null,
+        id: row.id,
+        productId: row.productId,
+        minPriceCents: null,
+        optionIds: entries.map((entry) => entry.optionId),
+        variations: entries,
+        variationText: row.variationText,
+        customUnitId: row.customUnitId,
+        unitLabel: row.unitLabel,
+        imageId: row.imageId,
+        imageToken: null,
+      });
     }
 
     // The discount on the whole quote is worked out against the lines as
@@ -462,9 +530,144 @@ export async function saveLineItems(
           })
         ).map((product) => [product.id, starredMinimumCents(product.suppliers)]),
   );
+  const imageIds = [...new Set(lines.flatMap((line) => (line.imageId ? [line.imageId] : [])))];
+  const tokens = new Map(
+    imageIds.length
+      ? (
+          await prisma.productImage.findMany({ where: { id: { in: imageIds }, organizationId }, select: { id: true, publicToken: true } })
+        ).map((image) => [image.id, image.publicToken])
+      : [],
+  );
   return {
     success: "Line items saved",
-    lines: lines.map((line) => ({ ...line, minPriceCents: line.productId ? (minimums.get(line.productId) ?? null) : null })),
+    lines: lines.map((line) => ({
+      ...line,
+      minPriceCents: line.productId ? (minimums.get(line.productId) ?? null) : null,
+      imageToken: line.imageId ? (tokens.get(line.imageId) ?? null) : null,
+    })),
+  };
+}
+
+/* ------------------- Labels, units and pictures on lines ------------------- */
+
+type ExistingLine = {
+  id: string;
+  productId: string | null;
+  variations: unknown;
+  variationText: string | null;
+  customUnitId: string | null;
+  unitLabel: string | null;
+  imageId: string | null;
+};
+
+type LabelLookups = Awaited<ReturnType<typeof lineLabelLookups>>;
+
+// Everything the labels, units and pictures need, read once before the
+// save's transaction — never a query per line inside it, where a 200-line
+// quote on the live database would run out the transaction's five seconds.
+async function lineLabelLookups(
+  organizationId: string,
+  status: string,
+  productIds: string[],
+  items: LineItemInput[],
+  existing: ExistingLine[],
+) {
+  const optionIds = [...new Set(items.flatMap((item) => item.optionIds ?? []))];
+  const unitIds = [
+    ...new Set(
+      [...items.map((item) => item.customUnitId), ...existing.map((line) => line.customUnitId)].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  ];
+  const draft = status === "DRAFT";
+  const [options, ticked, units, pictures] = await Promise.all([
+    pickableOptions(organizationId, optionIds),
+    optionIds.length && productIds.length
+      ? prisma.productVariation.findMany({
+          where: { organizationId, productId: { in: productIds }, optionId: { in: optionIds } },
+          select: { productId: true, optionId: true },
+        })
+      : Promise.resolve([]),
+    unitIds.length
+      ? prisma.variationOption.findMany({
+          where: { id: { in: unitIds }, organizationId, builtInUnit: null, group: { kind: "UNIT" } },
+          select: { id: true, name: true, tag: true, archivedAt: true },
+        })
+      : Promise.resolve([]),
+    // A draft's lines show the product's picture live; only a sent quote's
+    // changed lines take one.
+    draft ? Promise.resolve(new Map()) : picturesFor(organizationId, productIds),
+  ]);
+  return {
+    draft,
+    options,
+    ticked: new Set(ticked.map((row) => `${row.productId}:${row.optionId}`)),
+    units: new Map(units.map((unit) => [unit.id, unit])),
+    pictures,
+  };
+}
+
+// A workspace unit counts only with no built-in unit and on a Labor or
+// Materials line, and only while it is live — or the one the line already
+// had. Its name is kept as the line had it.
+function lineWorkspaceUnit(
+  item: LineItemInput,
+  unit: string | null,
+  before: ExistingLine | null,
+  labels: LabelLookups,
+): { customUnitId: string | null; unitLabel: string | null } {
+  const none = { customUnitId: null, unitLabel: null };
+  if (unit || !isCustomUnitTag(item.tag)) return none;
+  const wanted = item.customUnitId === undefined ? (before?.customUnitId ?? null) : item.customUnitId;
+  if (!wanted) return none;
+  const found = labels.units.get(wanted);
+  if (!found || found.tag !== item.tag) return none;
+  const kept = before?.customUnitId === found.id;
+  if (found.archivedAt && !kept) return none;
+  return { customUnitId: found.id, unitLabel: kept && before?.unitLabel ? before.unitLabel : found.name };
+}
+
+// The line's labels: what it had, unless the editor sent a change. A
+// pick must be this workspace's, not a unit, and either ticked on the
+// line's product (and live) or already on the line. Then its picture: a
+// line whose product or labels didn't change keeps the one it has; one
+// that did shows the product's picture live on a draft, and takes it on a
+// sent quote.
+function lineLabels(item: LineItemInput, productId: string | null, before: ExistingLine | null, labels: LabelLookups) {
+  const savedEntries = before ? readSnapshot(before.variations) : [];
+  let variations: VariationEntry[] = savedEntries;
+  let variationText = before?.variationText ?? null;
+  let changed = !before || before.productId !== productId;
+
+  if (item.optionIds !== undefined) {
+    const valid = item.optionIds.filter((id) => {
+      const option = labels.options.get(id);
+      if (!option || option.groupKind === "UNIT") return false;
+      if (savedEntries.some((entry) => entry.optionId === id)) return true;
+      return Boolean(productId) && !option.archived && labels.ticked.has(`${productId}:${id}`);
+    });
+    if (!sameIdSet(valid, savedEntries.map((entry) => entry.optionId))) {
+      variations = mergeSnapshot(savedEntries, valid, labels.options);
+      variationText = variationTextOf(variations);
+      changed = true;
+    }
+  } else if (before?.productId && productId && before.productId !== productId) {
+    // Moved onto another product with nothing picked for it.
+    variations = [];
+    variationText = null;
+  }
+
+  let imageId = before?.imageId ?? null;
+  if (changed) {
+    imageId = labels.draft
+      ? null
+      : (livePicture(productId, variations.map((entry) => entry.optionId), labels.pictures)?.id ?? null);
+  }
+  return {
+    variations: variations.length ? variations : Prisma.DbNull,
+    variationText: variations.length ? variationText : null,
+    imageId,
   };
 }
 
@@ -603,6 +806,10 @@ export async function setQuoteStatus(formData: FormData) {
     select: { dealId: true, contactId: true },
   });
   if (!quote) return;
+
+  // Leaving Draft, its lines keep the pictures they show now (Taylor, Nov
+  // 5: a sent quote keeps the picture it went out with).
+  if (status !== "DRAFT") await freezeQuotePictures(quoteId);
 
   await prisma.quote.updateMany({
     where: { id: quoteId, organizationId },

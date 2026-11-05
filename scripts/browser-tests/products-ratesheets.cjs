@@ -103,7 +103,7 @@ async function login(page) {
   await page.fill("#description", "Licensed journeyman, business hours");
   await page.fill("#cost", "80.50");
   await page.fill("#unitPrice", "125");
-  assert.equal(await page.locator("#unitOfMeasure option").count(), 8, "Labor tag offers only the 7 Labor units plus None");
+  assert.equal(await page.locator("#unitOfMeasure option").count(), 9, "Labor tag offers only the 7 Labor units plus None and + Add custom unit");
   assert.equal(await page.locator("#unitOfMeasure option[value=PER_GALLON]").count(), 0, "Materials units hidden for a Labor product");
   await page.selectOption("#unitOfMeasure", "PER_HOUR");
   assert.equal(await page.locator("#softwareRate").count(), 0, "software pop-out hidden for labor unit");
@@ -115,7 +115,10 @@ async function login(page) {
   await page.getByLabel("New contact 1 phone").fill("555-0100");
   await shot(page, "01-product-form-new");
   await page.getByRole("button", { name: "Save product" }).click();
-  await page.waitForURL(/\/dashboard\/products$/);
+  // Release 3b: Add product lands on the new product's page.
+  await page.waitForURL(/\/dashboard\/products\/[^/]+\?added=1$/);
+  await page.getByTestId("product-added").waitFor();
+  await page.goto(`${BASE}/dashboard/products`);
   const rowA = page.locator("tr", { hasText: "Journeyman labor" });
   await rowA.waitFor();
   assert.ok(await rowA.getByText("Acme Tools").isVisible());
@@ -132,7 +135,7 @@ async function login(page) {
   await page.selectOption("#defaultTag", "MATERIALS");
   assert.equal(await page.locator("#unitOfMeasure").inputValue(), "", "unit cleared when the tag's list changes");
   await page.getByText("Unit cleared").waitFor();
-  assert.equal(await page.locator("#unitOfMeasure option").count(), 9, "Materials tag offers its 8 units plus None");
+  assert.equal(await page.locator("#unitOfMeasure option").count(), 10, "Materials tag offers its 8 units plus None and + Add custom unit");
   await page.selectOption("#unitOfMeasure", "PER_GALLON");
   assert.equal(await page.getByText("Unit cleared").count(), 0, "notice goes away once a unit is picked");
   for (const noUnitTag of ["PROJECT_SERVICES", "SHIPPING", "TAXES"]) {
@@ -221,7 +224,8 @@ async function login(page) {
   assert.ok(await page.getByText("× 12 months = $120.00").isVisible());
   await shot(page, "04-product-form-software");
   await page.getByRole("button", { name: "Save product" }).click();
-  await page.waitForURL(/\/dashboard\/products$/);
+  await page.waitForURL(/\/dashboard\/products\/[^/]+\?added=1$/);
+  await page.goto(`${BASE}/dashboard/products`);
   const rowB = page.locator("tr", { hasText: "Monitoring seat" });
   assert.ok(await rowB.getByText("Per Device · Per Month").isVisible());
   const softwareRow = await sql(`SELECT "softwareRate","softwareTerm","unitOfMeasure" FROM "Product" WHERE name='Monitoring seat'`);
