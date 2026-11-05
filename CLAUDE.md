@@ -428,7 +428,7 @@ and 24 s at 8,600), the picker's search in 0.12 s, a 25,000-row sheet
 imported in 9 s, and the 8,000 same-named tees previewed in 2.3 s and
 imported in 4 s. **Order materials** prices a row at the catalog cost
 when its contract captured $0 (Taylor, Oct 25, 2026); a real captured
-cost is kept. The agreed next releases, in order: 2 account types +
+cost is kept. The agreed next releases, in order (re-ordered Nov 5, 2026: 3b, then the apparel pack, then 4, 5, 6): 2 account types +
 Admin Create Account (done Oct 25, below); 3 the deeper catalog (3a done Nov 4, below; 3b is the variation labels, custom units and images) (each ratesheet a row with
 its own search and a See product list pop-out with COGS discount and a
 required minimum markup and Cancel / Save and accept; per-supplier
@@ -555,6 +555,29 @@ of its own discount (`starredMinimumCents`, also on
 COGS = round(price × (1 − discount)), minimum = ceil(COGS ÷ (1 −
 margin)), both capped at 95%. Proven by `catalog-suppliers.cjs` and the
 25,000-line steps of `products-load-test.cjs`.
+
+**Release 3b, approved Nov 5, 2026 (plan: the "Release 3b Plan" artifact).**
+Variation labels in groups (Unit, Color, Size built in; the workspace's own
+groups such as Sleeve or Print location), custom units with "contains N"
+(display only until Release 6), up to six pictures per product (the first
+is main; a picture can belong to a Color), and a Labels & Units tab beside
+Products and Ratesheets. Taylor's calls: labels are picked on the quote
+line and printed under the product name on the customer's quote, the
+contract and the supplier's purchase order; generic product pictures show
+small on the customer's quote, its PDF and partner ratesheets, and a sent
+quote keeps the picture it went out with; Add product lands on the new
+product's page; anyone adds a label or unit, only Owners and Admins rename
+or retire one. Supplier sheets' Color / Size / pack columns wait for
+Release 4; prices per label for Releases 6 and 7.
+**The apparel pack moves up to right after 3b** (Taylor, Nov 5, 2026: his
+main focus is acquiring Hauffs Sports, which prints schools' logos on team
+gear): Artwork per customer company, proofs (a logo placed on a product,
+color and print location, AI-rendered at about $2 an image, metered per
+account), approval from a link like contract signing, and the approved
+proof on the quote line and the printer's purchase order. **It is turned on
+by a switch in Settings ("We do apparel / custom print"), not an account
+type**, keeping the Oct 25 rule that the type turns no button on or off.
+Releases 4 (AI upload), 5 (publishing) and 6 (inventory) follow it.
 
 **Mobile on contacts (Oct 27, 2026).** `Contact.mobile` is its own
 field, shown on the contact page and edit form, found by the list
