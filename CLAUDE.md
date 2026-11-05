@@ -429,7 +429,7 @@ imported in 9 s, and the 8,000 same-named tees previewed in 2.3 s and
 imported in 4 s. **Order materials** prices a row at the catalog cost
 when its contract captured $0 (Taylor, Oct 25, 2026); a real captured
 cost is kept. The agreed next releases, in order: 2 account types +
-Admin Create Account (done Oct 25, below); 3 the deeper catalog (each ratesheet a row with
+Admin Create Account (done Oct 25, below); 3 the deeper catalog (3a done Nov 4, below; 3b is the variation labels, custom units and images) (each ratesheet a row with
 its own search and a See product list pop-out with COGS discount and a
 required minimum markup and Cancel / Save and accept; per-supplier
 sub-rows in a product, each with its own COGS, discount, MSRP and
@@ -490,6 +490,71 @@ already on it, pick from its members), with an active date range; any
 account may release (Oct 25). Taylor plans a subscription for vendors;
 Claude recommended keeping a no-account link free and charging for the
 full workspace — his call.
+
+**The deeper catalog, part one (Release 3a, Nov 4, 2026).** Taylor's
+four calls: a **starred** supplier sets a product's cost (only a person
+moves the star; a cheaper one is a green hint), a price under a
+supplier's minimum margin is **flagged in red and allowed**, variations
+are labels now with their own prices later (3b, R6/R7), and 3a goes live
+before 3b. A product is bought from any number of suppliers, one
+`ProductSupplier` row each (price, `discountBp` COGS discount, MSRP,
+`minMarginBp`, `linkedRatesheetId` = the sheet that last set it;
+`@@unique([productId, distributorId])`); the star is `preferredFor`,
+which holds the productId on the starred row only and is `@unique`, so
+two stars can't exist. `Product.costCents` and `distributorId` mirror the
+star (`syncProductFromStar` / `syncStarsFor` in
+`src/lib/product-suppliers.ts`); everything that read them before
+(Order materials, quotes, ratesheets for partners) still does.
+`repairSupplierRows` writes the missing row for a product that has a
+distributor and no rows (the migration backfilled every existing one),
+and where a product was written *after* its starred row (code before 3a,
+SQL by hand) trusts the product: the star follows its distributor, the
+row takes its COGS (worked back through the row's discount) and MSRP,
+and a product with no distributor loses its rows. A row written after
+the product is 3a mid-save and is left alone (`updatedAt` decides). It
+runs on the product page, before a product save, on an import's matches,
+before an untick and before a sheet's discount changes, never after a
+removal. A supplier row takes the discount the plan priced it with
+(`PlanRow.costDiscountBp`). **Import Ratesheet**: a match whose star
+is another supplier is a *second supplier* — that row is added or
+updated beside it and the product's COGS and price stay (the preview
+says "Bought from X (starred). Adds this supplier at $N…"); "Not on
+this sheet anymore" only lists products that supplier alone sells.
+Every row of an imported sheet is kept as a `RatesheetLine` (upserted
+on its row key, so ids survive a re-import), and a sheet carries
+`discountBp` (inherited from the supplier's last sheet,
+`sheetDiscountFor`) and `minMarkupBp`. **Ratesheets page**: an imported
+sheet is a row with "N of M products in Products", its own search box
+(Enter opens the list on it) and **See product list**
+(`ratesheets/ratesheet-product-list.tsx`): the sheet a page at a time
+from `ratesheets/files/[id]/lines` (search, All / In Products / Not in
+Products, `ids=1` for Select all), COGS discount % and Required minimum
+markup %, Cancel / Save and accept top and bottom. "In Products" is never
+stored: a line is in when its product carries the sheet's supplier.
+Save and accept sends ticks in batches of 500
+(`saveRatesheetLines` in `ratesheets/lines-actions.ts`, one save per
+sheet at a time via `LinkedRatesheet.savingAt`, stale after 2 minutes):
+a tick goes through the import's own planner (so the 2× hold and the
+re-pricing rules apply) and turns the product on; an untick takes that
+supplier's row off and turns a product with no supplier left off, never
+deletes it. Then `finishRatesheetLines` saves the sheet's discount
+(onto every row this sheet set, when it changed) and raises any product
+whose starred row this sheet set to the minimum markup. A sheet imported
+before 3a reads its lines from the stored file the first time it is
+opened (`prepareRatesheetLines`). **Product page**: a **Suppliers** card
+(star, their price, COGS discount %, your COGS, MSRP, min margin % with
+the minimum price and "you make $X" beside it, remove, "+ Add a
+supplier…"); the star and the Distributor box are the same choice; a
+discounted star makes the COGS box read-only. **Products list**: the
+starred supplier and "N suppliers" under each name opening a sub-row per
+supplier (client state, so the table is one row per product until
+asked), "Below minimum ($X)" in red under the price, and the Supplier
+filter matching any supplier. A **quote line** shows the same flag, net
+of its own discount (`starredMinimumCents`, also on
+`/dashboard/products/search`). Math in `src/lib/supplier-math.ts`:
+COGS = round(price × (1 − discount)), minimum = ceil(COGS ÷ (1 −
+margin)), both capped at 95%. Proven by `catalog-suppliers.cjs` and the
+25,000-line steps of `products-load-test.cjs`.
 
 **Mobile on contacts (Oct 27, 2026).** `Contact.mobile` is its own
 field, shown on the contact page and edit form, found by the list
@@ -607,8 +672,45 @@ are all blocking before the first paying customer.
   row that captured $0 still reads $0 on the contract itself and in the
   job's Expected cost on file; the purchase order made from it is priced
   right (Oct 25, 2026).
-- **Open quotes aren't re-priced or flagged when a ratesheet moves a
-  cost.** A quote's lines keep the price they were written at.
+- **Open quotes aren't re-priced when a ratesheet moves a cost.** A
+  quote's lines keep the price they were written at; a line under its
+  product's starred-supplier minimum is flagged in red (Nov 4, 2026).
+- **Order materials follows today's star.** A purchase order goes to
+  whoever is starred when it is made, at that supplier's COGS, and a
+  product with no supplier left isn't ordered from anyone. Who a job
+  bought from is on its purchase orders, not the product.
+- **The minimum margin is a warning.** Nothing stops a quote going out
+  under it, by Taylor's call; the red flag on the product, the list and
+  the quote line is all there is.
+- **A required minimum markup belongs to one sheet.** It is applied when
+  Save and accept runs on that sheet; the next sheet from the same
+  supplier inherits the COGS discount but not the markup.
+- **A discount typed on a product's supplier row is overwritten when
+  that sheet's discount is changed** in its product list (it goes onto
+  every row the sheet set). A row a newer sheet set is left alone.
+- **Variation labels, custom units and product images are Release 3b,**
+  not built.
+- **Ticking a line in See product list prices from that sheet, except
+  over a newer one.** A line whose product a newer sheet of the same
+  supplier priced is linked to it and left alone ("already priced from a
+  newer sheet of theirs"); otherwise a tick re-prices the product from the
+  sheet at the sheet's COGS discount (the "Your COGS" the list shows), as
+  Import prices would. A cost that more than doubles or halves is
+  held there with no tick to force it: Import prices is where it goes in
+  on purpose, with the warning beside the row.
+- **Products changed by the code before 3a are trusted over their rows
+  only when they were written after them.** During the deploy's overlap,
+  or after an Instant Rollback to before 3a and back, a product whose
+  COGS, MSRP or distributor the old code changed has its starred row
+  brought into line (a COGS worked back through the row's discount) the
+  next time it is opened, imported, saved or its sheet's discount changes;
+  one the old code set to "None" loses its supplier rows, as None does on
+  the form. Rows written after the product (3a mid-save) are left alone.
+- **Import Ratesheet refuses a typed new supplier name, or an account
+  picked from On Software Connect Brands, that lands on a supplier already
+  on file other than the one previewed** (through a renamed company): the
+  preview showed its products as someone else's. Pick it from the list
+  instead. The account pick still links that supplier to the account.
 - **Any signed-in user can import a ratesheet**, like every other
   Products action.
 - **A rep picked on an import is a DistributorContact, not a CRM
@@ -809,7 +911,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-two** are checked in at
+suite, and the delete-confirmation suite. **Thirty-five** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -901,7 +1003,36 @@ its rule and contact, a quote line that asks first, forged ids, a
 bridge not moved, a merge keeping the link, a paused account losing the
 mark, the email throttle, a removed operator, the product form without
 JavaScript, the phone; **it needs the fake email settings
-`password-reset.cjs` uses**).
+`password-reset.cjs` uses**), and from Nov 4, 2026 `catalog-suppliers.cjs`
+(38: a second supplier's sheet, the sheet row and its search, See
+product list's counts, Cancel, the discount and a bad one, a second tab
+saving, Save and accept's adds / take-offs / discount / minimum markup,
+a turned-off product ticked back, an older sheet read from its file, the
+Suppliers card's star, minimum margin, remove and add, reps kept and
+dropped, the list's sub-rows and Below minimum, the any-supplier filter,
+the quote line flag, clone, forged ids, the phone; eight steps for the
+Nov 4 audit — a $3,000 item and a minimum markup over it (int overflow),
+a supplierless product's COGS and MSRP kept, the hold naming the
+discounted COGS, an older sheet never re-pricing a newer one's product,
+the 2x hold and 62 held lines counted and named, a save cut off part-way,
+a returning star's reps, COGS typed without JavaScript, an account picked
+by a supplier's own name, "+ Add new" with an existing name, quote-line
+rounding, a typed line linked on save, a product changed outside 3a, the
+beside count, the new index; and eight for the fixes' own review — a
+standing discount kept on new and repaired rows, a page opened mid-save,
+None outside 3a, a typed name refused, a lost save re-read, Excel-damaged
+part numbers, the newest sheet's tick, a quantity under one, a typed
+markup after a save, a sheet's discount after an outside write; and one
+for the last review — an outside switch onto a supplier already on the
+product, None with a new COGS, a discounted quote line exactly at the
+minimum).
+`products-load-test.cjs` also opens, searches, clears and re-ticks the
+25,000-line sheet through the slow proxy (open 1.2 s, all off 25 s, all
+back 81 s; the 25,000-row import is 26 s, up from 9 s, for the supplier
+rows and the kept lines). **`calendar.cjs` no longer assumes November
+2026 is in the future** (Nov 4, 2026): it clears the Contract sent /
+closed entries its seed contract writes on the real today, and paging
+into its month may land on today.
 `overlay-readability.cjs` step 6 (the deal picker on a new quote) used
 to pass one run in three: it photographed the panel while the page was
 still fading in. It waits for the fade now (Oct 25, 2026); **a pixel

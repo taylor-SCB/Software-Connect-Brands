@@ -4,13 +4,15 @@ import Link from "next/link";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Card, CardHeader, EmptyState, StatusBadge, Badge } from "@/components/ui";
-import { IconLayers, IconPower, IconDownload, IconFilter, IconUpload, IconPlus, IconX, IconFileText } from "@/components/icons";
+import { IconLayers, IconPower, IconDownload, IconFilter, IconUpload, IconPlus, IconX, IconFileText, IconSearch } from "@/components/icons";
 import { DeleteButton } from "@/components/delete-button";
 import { CopyLink } from "@/components/copy-link";
 import { RATESHEET_VISIBILITY_LABELS, type RatesheetVisibilityValue } from "@/lib/constants";
 import type { InviteState, RatesheetState } from "@/lib/ratesheets";
 import { toggleRatesheetActive, deleteRatesheet, deleteLinkedRatesheet } from "./actions";
 import { ImportRatesheet, type RatesheetSupplier } from "../import-ratesheet";
+import { RatesheetProductList } from "./ratesheet-product-list";
+import { basisPointsToPercent } from "@/lib/price-list";
 import type { PlatformSupplier } from "@/lib/account-types";
 
 export type BoardSheet = {
@@ -52,6 +54,14 @@ export type BoardFile = {
   importSummary: string | null;
   // A CSV or Excel file the importer can read.
   importable: boolean;
+  // See product list (Release 3a): set once the sheet has been imported.
+  imported: boolean;
+  discountBp: number | null;
+  minMarkupBp: number | null;
+  // Product rows kept from the sheet (null before they were kept), and
+  // how many of them are in Products.
+  lineCount: number | null;
+  inProducts: number;
 };
 
 const VISIBILITY_COLORS: Record<string, string> = {
@@ -82,6 +92,8 @@ export function RatesheetsBoard({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // A saved file opened in Import Ratesheet.
   const [importing, setImporting] = useState<BoardFile | null>(null);
+  // See product list, opened from a sheet's row (Release 3a).
+  const [listing, setListing] = useState<{ file: BoardFile; query: string } | null>(null);
   const selected = sheets.find((sheet) => sheet.id === selectedId) ?? null;
   const visibleInvites = selected
     ? invites.filter((invite) => invite.ratesheetId === selected.id)
@@ -206,8 +218,56 @@ export function RatesheetsBoard({
                           .join(" · ")}
                       </p>
                     )}
+                    {file.imported && (
+                      <p className="faint truncate text-xs" data-testid="linked-file-lines">
+                        {[
+                          file.lineCount !== null
+                            ? `${file.inProducts.toLocaleString("en-US")} of ${file.lineCount.toLocaleString("en-US")} products in Products`
+                            : null,
+                          file.discountBp ? `${basisPointsToPercent(file.discountBp)}% COGS discount` : null,
+                          file.minMarkupBp ? `${basisPointsToPercent(file.minMarkupBp)}% minimum markup` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
                   </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
+                  {file.imported && (
+                    // Each imported sheet's own search: Enter opens its
+                    // product list filtered to what was typed.
+                    <form
+                      role="search"
+                      className="relative w-full basis-full sm:w-auto sm:basis-48"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const input = event.currentTarget.elements.namedItem("q") as HTMLInputElement;
+                        setListing({ file, query: input.value });
+                      }}
+                    >
+                      <IconSearch
+                        size={13}
+                        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
+                      />
+                      <input
+                        name="q"
+                        type="search"
+                        placeholder="Search this sheet"
+                        aria-label={`Search ${file.name}`}
+                        className="input input-sm pl-8"
+                      />
+                    </form>
+                  )}
+                  <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+                    {file.imported && (
+                      <button
+                        type="button"
+                        onClick={() => setListing({ file, query: "" })}
+                        className="btn btn-primary btn-sm"
+                      >
+                        <IconLayers size={12} />
+                        See product list
+                      </button>
+                    )}
                     {file.importable && (
                       <button
                         type="button"
@@ -385,6 +445,20 @@ export function RatesheetsBoard({
 
       {/* On document.body, so the scrim and the dialog are placed against the
           screen, not against whatever page section the button sits in. */}
+      {listing && (
+        <RatesheetProductList
+          sheet={{
+            id: listing.file.id,
+            name: listing.file.name,
+            supplierName: listing.file.supplierName,
+            discountBp: listing.file.discountBp ?? 0,
+            minMarkupBp: listing.file.minMarkupBp,
+            lineCount: listing.file.lineCount,
+          }}
+          initialQuery={listing.query}
+          onClose={() => setListing(null)}
+        />
+      )}
       {importing &&
         createPortal(
           <div
@@ -418,7 +492,12 @@ export function RatesheetsBoard({
               <ImportRatesheet
                 suppliers={suppliers}
                 platformSuppliers={platformSuppliers}
-                savedFile={{ id: importing.id, fileName: importing.fileName, distributorId: importing.supplierId }}
+                savedFile={{
+                  id: importing.id,
+                  fileName: importing.fileName,
+                  distributorId: importing.supplierId,
+                  discountBp: importing.discountBp,
+                }}
                 onDone={() => setImporting(null)}
               />
             </div>

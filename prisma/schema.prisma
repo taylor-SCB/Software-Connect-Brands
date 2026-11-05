@@ -156,6 +156,8 @@ model Organization {
   photoFolders          PhotoFolder[]
   photoGrants           PhotoGrant[]
   accountTypeRequests   AccountTypeRequest[]
+  productSuppliers      ProductSupplier[]
+  ratesheetLines        RatesheetLine[]
   // Other workspaces' supplier records that point at this account.
   platformSupplierLinks Distributor[]          @relation("PlatformSupplier")
 
@@ -689,10 +691,51 @@ model Product {
 
   lineItems      QuoteLineItem[]
   ratesheetItems RatesheetItem[]
+  // Everyone who sells it to you (Release 3a, Nov 4, 2026). The starred
+  // one is mirrored onto distributorId, costCents and listPriceCents above
+  // (src/lib/product-suppliers.ts), so everything that reads a product's
+  // cost reads the supplier Taylor chose, not whoever sent a sheet last.
+  suppliers      ProductSupplier[]
+  ratesheetLines RatesheetLine[]
 
   @@index([organizationId])
   @@index([manufacturerId])
   @@index([distributorId])
+}
+
+// One supplier of a product: a sub-row under it on the Products list.
+// Their price, the discount you get off it, their MSRP, and the margin you
+// won't go under. At most one row per product is starred — preferredFor
+// holds the productId on that row and nothing on the others, and it is
+// unique, so the database itself refuses a second star.
+model ProductSupplier {
+  id                String           @id @default(cuid())
+  organizationId    String
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  distributorId     String
+  distributor       Distributor      @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  // Their price, before your discount.
+  costCents         Int              @default(0)
+  // Your COGS discount off their price, in basis points (1000 = 10%).
+  discountBp        Int              @default(0)
+  listPriceCents    Int?
+  // The margin you won't go under, in basis points; null when there is none.
+  minMarginBp       Int?
+  preferredFor      String?          @unique
+  // The sheet that last set this row's price.
+  linkedRatesheetId String?
+  linkedRatesheet   LinkedRatesheet? @relation(fields: [linkedRatesheetId], references: [id], onDelete: SetNull)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([productId, distributorId])
+  @@index([organizationId])
+  @@index([distributorId])
+  // A sheet deleted sets these to null; without it that is a scan of every
+  // workspace's rows.
+  @@index([linkedRatesheetId])
 }
 
 enum QuoteTemplate {
@@ -1256,6 +1299,7 @@ model Distributor {
   products         Product[]
   linkedRatesheets LinkedRatesheet[]
   importIssues     RatesheetImportIssue[]
+  productSuppliers ProductSupplier[]
 
   @@unique([organizationId, name])
   @@unique([organizationId, platformOrganizationId])
@@ -1385,6 +1429,22 @@ model LinkedRatesheet {
   updatedCount   Int?
   costUpCount    Int?
   costDownCount  Int?
+  // Matched products starred to another supplier, which this sheet only
+  // added its supplier beside (Release 3a); not in updatedCount.
+  besideCount    Int?
+  // See product list (Release 3a): your COGS discount off everything on
+  // this sheet, the markup no product from it is sold under, and how many
+  // product rows the sheet holds (RatesheetLine). linesStoredAt is null for
+  // a sheet imported before its rows were kept; they are read from the
+  // stored file the first time its list is opened.
+  discountBp     Int          @default(0)
+  minMarkupBp    Int?
+  lineCount      Int?
+  linesStoredAt  DateTime?
+  // Set while See product list is saving this sheet, so two tabs can't
+  // add the same products at once; a mark older than two minutes is
+  // treated as left behind by a closed tab.
+  savingAt       DateTime?
   // Excluded from every query by default (see src/lib/prisma.ts) so a
   // list page never drags megabytes through the server; only the download
   // route asks for it.
@@ -1392,8 +1452,44 @@ model LinkedRatesheet {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
+  lines            RatesheetLine[]
+  productSuppliers ProductSupplier[]
+
   @@index([organizationId])
   @@index([distributorId])
+}
+
+// One product row of an imported sheet, kept whether or not it was
+// imported, so "See product list" can show the whole sheet and add more
+// later. productId is set while the line is in Products — imported from
+// this sheet or accepted from its list — and cleared when it is unticked.
+model RatesheetLine {
+  id                String          @id @default(cuid())
+  organizationId    String
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  linkedRatesheetId String
+  linkedRatesheet   LinkedRatesheet @relation(fields: [linkedRatesheetId], references: [id], onDelete: Cascade)
+  // The planner's key for the row: "<tab index>:<line>".
+  rowKey            String
+  position          Int
+  name              String
+  sku               String?
+  description       String          @default("")
+  manufacturer      String?
+  defaultTag        LineItemTag     @default(MATERIALS)
+  unitOfMeasure     UnitOfMeasure?
+  // As on the sheet: their price, their MSRP, and a sell price column if
+  // the sheet had one.
+  costCents         Int?
+  listPriceCents    Int?
+  sellCents         Int?
+  productId         String?
+  product           Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([linkedRatesheetId, rowKey])
+  @@index([linkedRatesheetId, position])
+  @@index([productId])
+  @@index([organizationId])
 }
 
 enum PriceRule {

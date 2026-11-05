@@ -85,6 +85,21 @@ export default async function RatesheetsPage({
     sent: perSheet.get(sheet.id)?.sent ?? 0,
   }));
 
+  // How many of each sheet's kept lines are in Products: the product the
+  // line is still carries the sheet's supplier. Read the same way as the
+  // product list (files/[id]/lines), never from the line's own productId,
+  // which outlives an untick so a re-tick finds the same product.
+  const inProductsBySheet = new Map(
+    (
+      await prisma.$queryRaw<{ id: string; n: number }[]>`
+        SELECT l."linkedRatesheetId" AS id, count(*)::int AS n
+          FROM "RatesheetLine" l
+          JOIN "LinkedRatesheet" s ON s."id" = l."linkedRatesheetId"
+          JOIN "ProductSupplier" ps ON ps."productId" = l."productId" AND ps."distributorId" = s."distributorId"
+         WHERE l."organizationId" = ${organizationId}
+         GROUP BY l."linkedRatesheetId"`
+    ).map((group) => [group.id, group.n]),
+  );
   const boardFiles: BoardFile[] = files.map((file) => ({
     id: file.id,
     name: file.name,
@@ -99,9 +114,15 @@ export default async function RatesheetsPage({
       ? `imported ${formatDate(file.importedAt, timeZone)}: ${file.addedCount ?? 0} new, ${file.updatedCount ?? 0} updated` +
         ((file.costUpCount ?? 0) || (file.costDownCount ?? 0)
           ? ` (${[file.costUpCount ? `${file.costUpCount} cost more` : "", file.costDownCount ? `${file.costDownCount} cost less` : ""].filter(Boolean).join(", ")})`
-          : "")
+          : "") +
+        (file.besideCount ? `, ${file.besideCount} added beside another supplier` : "")
       : null,
     importable: priceListFileKind(file.fileName) !== null,
+    imported: file.importedAt !== null,
+    discountBp: file.importedAt ? file.discountBp : null,
+    minMarkupBp: file.minMarkupBp,
+    lineCount: file.linesStoredAt ? file.lineCount : null,
+    inProducts: inProductsBySheet.get(file.id) ?? 0,
   }));
 
   return (

@@ -42,6 +42,8 @@ export type EditorProduct = {
   unitOfMeasure: string | null;
   softwareRate: string | null;
   softwareTerm: number | null;
+  // The lowest price the starred supplier's minimum margin allows.
+  minPriceCents?: number | null;
 };
 
 export type EditorLine = {
@@ -64,6 +66,8 @@ export type EditorLine = {
   unitOfMeasure: string | null;
   softwareRate: string | null;
   softwareTermMonths: number | null;
+  // The product's starred supplier's minimum price, when it has one.
+  minPriceCents?: number | null;
 };
 
 // Quantity and price live as strings while the user types so a partially
@@ -93,6 +97,9 @@ type Row = {
   // Whether saving the quote should also put this line in the catalog.
   // Only ever offered for a line typed by hand that has never been saved.
   saveAsProduct: boolean;
+  // Below this a unit is under the starred supplier's minimum margin:
+  // allowed, and flagged in red. Never saved.
+  minPriceCents: number | null;
 };
 
 let uidCounter = 0;
@@ -143,6 +150,7 @@ function toRow(line: EditorLine): Row {
     // is not a reliable "typed by hand" signal — it would re-offer the tick
     // on every visit to an old quote.
     saveAsProduct: false,
+    minPriceCents: line.minPriceCents ?? null,
   };
 }
 
@@ -268,6 +276,7 @@ export function LineItemsEditor({
         termMonthsInput: "",
         // Typed once, kept forever — the default Taylor asked for.
         saveAsProduct: true,
+        minPriceCents: null,
       },
     ]);
   }
@@ -305,6 +314,7 @@ export function LineItemsEditor({
         termMonthsInput: term.months,
         // It is already in the catalog; that is where it came from.
         saveAsProduct: false,
+        minPriceCents: product.minPriceCents ?? null,
       },
     ]);
   }
@@ -397,8 +407,10 @@ export function LineItemsEditor({
           const saved = savedByUid.get(row.uid);
           // saveAsProduct goes off once the row is stored: it is an
           // offer made about a brand-new line, not a standing setting.
+          // The flag follows the product the line is linked to now (a
+          // typed line can be linked to one by name).
           return saved
-            ? { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false }
+            ? { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false, minPriceCents: saved.minPriceCents }
             : row;
         }),
       );
@@ -616,6 +628,24 @@ export function LineItemsEditor({
                       disabled={readOnly}
                       className="input input-sm num text-right"
                     />
+                    {/* Net of the line's discount: a discount can take a
+                        line under the minimum as surely as a low price. */}
+                    {row.minPriceCents !== null &&
+                      rowQuantity(row) > 0 &&
+                      // Compared before the line is rounded to cents, with
+                      // a millionth of a cent for floating-point noise: a
+                      // line at the minimum is never flagged, and a cent
+                      // under always is, whatever the quantity.
+                      rowQuantity(row) * rowUnitCents(row) - discount.discountCents <
+                        rowQuantity(row) * row.minPriceCents - 1e-6 && (
+                        <p
+                          className="num mt-1 text-right text-[0.68rem] text-[var(--danger)]"
+                          data-testid="line-below-minimum"
+                          title="Under the starred supplier's minimum margin"
+                        >
+                          Below minimum ({formatCents(row.minPriceCents)})
+                        </p>
+                      )}
                   </td>
                   <td>
                     <div className="flex items-center justify-end gap-1">

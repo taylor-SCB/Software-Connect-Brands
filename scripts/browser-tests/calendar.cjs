@@ -146,6 +146,12 @@ function daysAgo(n) {
   await page.getByText(/Sent/).first().waitFor();
   await signAs(browser, sales.publicToken, "Dana Ruiz");
   const projectId = (await sql(`SELECT id FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0].id;
+  // Sending and signing write "Contract sent" / "Contract closed" on the
+  // real today (Calendar v2). This suite's fixed month is November 2026,
+  // which stopped being the future on Nov 1, 2026: on Nov 2-9 those entries
+  // landed in the very cells it counts installs in. They are the Calendar
+  // v2 suite's to test, so they go.
+  await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId"=$1 AND type LIKE 'Contract %'`, [org]);
 
   log("build two crews and put one on each scope");
   await sql(
@@ -371,7 +377,9 @@ function daysAgo(n) {
   await page.waitForURL((url) => url.searchParams.has("users"));
   await page.getByText("November 2026").first().waitFor();
   await page.waitForTimeout(800);
-  assert.equal(new URL(page.url()).searchParams.get("on"), "2026-11-01");
+  // The 1st, or today when November 2026 is the month it is run in (paging
+  // into the current month lands on today).
+  assert.match(new URL(page.url()).searchParams.get("on"), /^2026-11-\d\d$/, "still November");
   assert.ok(new URL(page.url()).searchParams.get("users"), "Just me survived the pending month change");
 
   log("the week view lists the days in full");

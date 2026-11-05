@@ -66,6 +66,8 @@ export type RatesheetSupplier = {
   contacts: { id: string; name: string; email: string | null; phone: string | null }[];
   priceRule: PriceRuleKind | null;
   priceRuleBasisPoints: number | null;
+  // The COGS discount on their last imported sheet (0 when none).
+  lastDiscountBp: number;
   ratesheetColumns: Record<string, ColumnRole[]> | null;
 };
 
@@ -73,6 +75,9 @@ export type SavedRatesheetFile = {
   id: string;
   fileName: string;
   distributorId: string | null;
+  // Its COGS discount once it has been imported; null takes the
+  // supplier's from their last sheet, as the server does.
+  discountBp: number | null;
 };
 
 const NEW = "__new__";
@@ -200,13 +205,20 @@ export function ImportRatesheet({
   const platformChoice = supplierChoice.startsWith(PLATFORM_SUPPLIER_PREFIX)
     ? (platformSuppliers.find((item) => `${PLATFORM_SUPPLIER_PREFIX}${item.id}` === supplierChoice) ?? null)
     : null;
-  const supplier =
-    suppliers.find((item) => item.id === supplierChoice) ?? platformTwin(platformChoice, suppliers);
-  const supplierId = supplier?.id ?? null;
+  // "+ Add new" with a name already in the list is that supplier: the
+  // import sends its id, so the preview plans it as that supplier too —
+  // its products, its discount, which of them it is starred on.
+  // Names compared as the server compares them: case and runs of spaces
+  // ignored.
+  const sameName = (a: string, b: string) =>
+    a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
   const typedMatch =
     supplierChoice === NEW && newSupplierName.trim()
-      ? (suppliers.find((item) => item.name.trim().toLowerCase() === newSupplierName.trim().toLowerCase()) ?? null)
+      ? (suppliers.find((item) => sameName(item.name, newSupplierName)) ?? null)
       : null;
+  const supplier =
+    suppliers.find((item) => item.id === supplierChoice) ?? platformTwin(platformChoice, suppliers) ?? typedMatch;
+  const supplierId = supplier?.id ?? null;
   const typedPlatform =
     supplierChoice === NEW && !typedMatch ? platformSupplierNamed(newSupplierName, platformSuppliers) : null;
   // A supplier still to be made has nobody on file, so its point of
@@ -376,7 +388,7 @@ export function ImportRatesheet({
       const byId = new Map(tuples.map((tuple) => [tuple[0], tuple]));
       const items: CatalogItem[] = [...byId.values()]
         .sort((a, b) => a[8] - b[8] || a[0].localeCompare(b[0]))
-        .map(([id, name, sku, costCents, unitPriceCents, listPriceCents, distributorId, active]) => ({
+        .map(([id, name, sku, costCents, unitPriceCents, listPriceCents, distributorId, active, , suppliers]) => ({
           id,
           name,
           sku,
@@ -386,6 +398,8 @@ export function ImportRatesheet({
           distributorId,
           distributorName: distributorId ? (names[distributorId] ?? null) : null,
           active,
+          supplierIds: suppliers.map((supplier) => supplier.distributorId),
+          suppliers,
         }));
       if (!cancelled) setFetched({ key: catalogKey, items });
     });
@@ -394,6 +408,9 @@ export function ImportRatesheet({
     };
   }, [outline, supplierId, catalogKey]);
 
+  // Costs come in after the COGS discount: the sheet's own, or this
+  // supplier's from their last sheet (sheetDiscountFor on the server).
+  const costDiscountBp = savedFile?.discountBp ?? supplier?.lastDiscountBp ?? 0;
   const plan = useMemo(
     () =>
       sheets && tabs.length
@@ -406,9 +423,10 @@ export function ImportRatesheet({
             overrides,
             excluded: [...excluded],
             forced: [...forced],
+            costDiscountBp,
           })
         : null,
-    [sheets, tabs, catalog, supplierId, pricing, overrides, excluded, forced],
+    [sheets, tabs, catalog, supplierId, pricing, overrides, excluded, forced, costDiscountBp],
   );
 
   const rows = plan?.rows ?? [];
@@ -512,6 +530,9 @@ export function ImportRatesheet({
     else if (supplierChoice.startsWith(PLATFORM_SUPPLIER_PREFIX))
       form.set("platformSupplierId", supplierChoice.slice(PLATFORM_SUPPLIER_PREFIX.length));
     else if (supplierChoice) form.set("supplierId", supplierChoice);
+    // Whose products the preview was worked out for (blank: a new
+    // supplier), so the server can refuse to save a plan for anyone else.
+    form.set("previewSupplierId", supplierId ?? "");
     form.set(
       "tabs",
       JSON.stringify(tabs.map((tab) => ({ sheetIndex: tab.sheetIndex, included: tab.included, roles: tab.roles }))),
@@ -1019,7 +1040,10 @@ export function ImportRatesheet({
                     <div className="min-w-0 sm:flex-1">
                       <p className="truncate text-sm font-medium">{row.name}</p>
                       <p className="faint text-xs">
-                        {row.sku ?? "No part #"} · {row.match ? `updates ${row.match.name === row.name ? "your product" : `"${row.match.name}"`}` : "new"}
+                        {row.sku ?? "No part #"} ·{" "}
+                        {row.match
+                          ? `${row.secondSupplier ? "adds this supplier to" : "updates"} ${row.match.name === row.name ? "your product" : `"${row.match.name}"`}`
+                          : "new"}
                         {tabs.filter((tab) => tab.included).length > 1 && ` · ${row.tab}`} · line {row.line}
                       </p>
                       {row.holdReason && <p className="text-xs text-[var(--warn)]">{row.holdReason}</p>}
@@ -1029,6 +1053,23 @@ export function ImportRatesheet({
                         </p>
                       ))}
                     </div>
+                    {row.secondSupplier ? (
+                      // Another supplier is starred: the product keeps
+                      // their cost and its own price; this sheet's price is
+                      // kept on this supplier's row beside them.
+                      <div className="mt-2 flex justify-end gap-3 sm:mt-0" data-testid="ratesheet-second-supplier">
+                        <div className="w-24 shrink-0 text-right text-xs">
+                          <p className="faint">Their cost</p>
+                          <p className="num">{row.theirCostCents !== null ? formatCents(row.theirCostCents) : "—"}</p>
+                          {row.listCents !== null && <p className="faint">MSRP {formatCents(row.listCents)}</p>}
+                        </div>
+                        <div className="w-28 shrink-0 text-right text-xs">
+                          <p className="faint">Your COGS stays</p>
+                          <p className="num">{formatCents(row.newCostCents)}</p>
+                          <p className="faint">Price stays {row.newPriceCents !== null ? formatCents(row.newPriceCents) : "—"}</p>
+                        </div>
+                      </div>
+                    ) : (
                     <div className="mt-2 flex justify-end gap-3 sm:mt-0">
                       <div className="w-24 shrink-0 text-right text-xs">
                         <p className="faint">Your cost</p>
@@ -1069,6 +1110,7 @@ export function ImportRatesheet({
                         </p>
                       </div>
                     </div>
+                    )}
                   </div>
                 </li>
               ))}

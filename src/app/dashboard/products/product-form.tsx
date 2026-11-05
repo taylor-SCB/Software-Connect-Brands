@@ -26,7 +26,8 @@ import {
   type SoftwareRateValue,
 } from "@/lib/constants";
 import { centsToDollarInput, dollarsToCents, formatCents } from "@/lib/format";
-import { marginPercent, markupPercent, percentToBasisPoints, priceFromRule } from "@/lib/price-list";
+import { basisPointsToPercent, marginPercent, markupPercent, percentToBasisPoints, priceFromRule } from "@/lib/price-list";
+import { supplierMoney } from "@/lib/supplier-math";
 import { IconPlus, IconTrash, IconMail, IconPhone, IconEdit, IconCheck } from "@/components/icons";
 import type { ActionState } from "@/lib/forms";
 import {
@@ -73,7 +74,40 @@ export type ProductFormDefaults = {
   distributorId?: string | null;
   contactIds?: string[];
   active?: boolean;
+  // Everyone who sells it to you (Release 3a); the starred one is
+  // distributorId above.
+  suppliers?: FormSupplierRow[];
 };
+
+export type FormSupplierRow = {
+  distributorId: string;
+  name: string;
+  costCents: number;
+  discountBp: number;
+  listPriceCents: number | null;
+  minMarginBp: number | null;
+};
+
+// A supplier row as typed on the form.
+type SupplierDraft = { distributorId: string; name: string; cost: string; discount: string; list: string; minMargin: string };
+
+function toDraft(row: FormSupplierRow): SupplierDraft {
+  return {
+    distributorId: row.distributorId,
+    name: row.name,
+    cost: centsToDollarInput(row.costCents),
+    discount: row.discountBp ? basisPointsToPercent(row.discountBp) : "",
+    list: row.listPriceCents !== null ? centsToDollarInput(row.listPriceCents) : "",
+    minMargin: row.minMarginBp !== null ? basisPointsToPercent(row.minMarginBp) : "",
+  };
+}
+
+// What a draft row works out to, in cents, as the server will read it.
+function draftMoney(row: SupplierDraft) {
+  const discount = row.discount.trim() === "" ? 0 : (percentToBasisPoints(row.discount) ?? 0);
+  const minMargin = row.minMargin.trim() === "" ? null : percentToBasisPoints(row.minMargin);
+  return { discountBp: discount, ...supplierMoney({ costCents: dollarsToCents(row.cost), discountBp: discount, minMarginBp: minMargin }) };
+}
 
 // Sentinel option value meaning "let me type a new one".
 const NEW = "__new__";
@@ -221,6 +255,73 @@ export function ProductForm({
   }
 
   const [distributorId, setDistributorId] = useState(defaults?.distributorId ?? "");
+  const [suppliers, setSuppliers] = useState<SupplierDraft[]>(() => (defaults?.suppliers ?? []).map(toDraft));
+  // Saved supplier rows taken off on this form (only these are deleted on
+  // Save: never a row added elsewhere since the page was opened).
+  const [removedSuppliers, setRemovedSuppliers] = useState<string[]>([]);
+  // The starred row: the supplier the Distributor box means, which for an
+  // account picked from Software Connect Brands may be one already on file.
+  const starKey = supplierFor(distributorId);
+  const starRow = suppliers.find((row) => row.distributorId === starKey) ?? null;
+  const starMoney = starRow ? draftMoney(starRow) : null;
+  // A discounted starred row sets the COGS; there is nothing to type then.
+  const costFromStar = !!starMoney && starMoney.discountBp > 0;
+
+  // A row's price, discount or MSRP typed: when it is the starred one, the
+  // COGS and MSRP above follow (and the price with them, under a typed
+  // markup or margin).
+  function patchSupplier(id: string, patch: Partial<SupplierDraft>) {
+    const next = suppliers.map((row) => (row.distributorId === id ? { ...row, ...patch } : row));
+    setSuppliers(next);
+    if (id === starKey) {
+      const row = next.find((candidate) => candidate.distributorId === id)!;
+      if (patch.cost !== undefined || patch.discount !== undefined) changeCost(centsToDollarInput(draftMoney(row).cogsCents));
+      if (patch.list !== undefined) setListPrice(patch.list);
+    }
+  }
+
+  // The COGS or MSRP box typed: with no discount on the starred row, that
+  // is the starred supplier's price.
+  function typeCost(value: string) {
+    changeCost(value);
+    if (starRow && !costFromStar) setSuppliers(suppliers.map((row) => (row.distributorId === starKey ? { ...row, cost: value } : row)));
+  }
+  function typeListPrice(value: string) {
+    setListPrice(value);
+    if (starRow) setSuppliers(suppliers.map((row) => (row.distributorId === starKey ? { ...row, list: value } : row)));
+  }
+
+  // The Distributor box (or a row's star) picks the starred supplier: one
+  // already on the product brings its numbers up; one new to it starts at
+  // the COGS and MSRP on the form.
+  function starSupplierOnForm(next: string) {
+    const known = suppliers.find((row) => row.distributorId === next);
+    if (known) {
+      const money = draftMoney(known);
+      changeCost(centsToDollarInput(money.cogsCents));
+      setListPrice(known.list);
+      return;
+    }
+    const local = distributors.find((item) => item.id === next);
+    if (local) {
+      setSuppliers([
+        ...suppliers,
+        { distributorId: next, name: local.name, cost: cost, discount: "", list: listPrice, minMargin: "" },
+      ]);
+      setRemovedSuppliers(removedSuppliers.filter((id) => id !== next));
+    }
+  }
+  const addable = distributors.filter((item) => !suppliers.some((row) => row.distributorId === item.id));
+  function addSupplier(id: string) {
+    const local = distributors.find((item) => item.id === id);
+    if (!local) return;
+    setSuppliers([...suppliers, { distributorId: id, name: local.name, cost: "", discount: "", list: "", minMargin: "" }]);
+    setRemovedSuppliers(removedSuppliers.filter((removed) => removed !== id));
+  }
+  function removeSupplier(id: string) {
+    setSuppliers(suppliers.filter((row) => row.distributorId !== id));
+    if ((defaults?.suppliers ?? []).some((row) => row.distributorId === id)) setRemovedSuppliers([...removedSuppliers, id]);
+  }
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(
     () => new Set(defaults?.contactIds ?? []),
   );
@@ -266,6 +367,34 @@ export function ProductForm({
       if (choosingNew) setDistributorId(savedDistributorId);
     }
   }
+  // After a save the COGS and MSRP are what was stored: the starred
+  // supplier's row decides them, which can differ from what was typed (a
+  // discount, or a star picked by a name already on file).
+  // Only a box that disagrees with what was stored is changed: one that
+  // says the same keeps whatever was typed (and a typed markup or margin
+  // keeps following it).
+  const savedCostKey = `${defaults?.costCents ?? ""}|${defaults?.listPriceCents ?? ""}`;
+  const [seenCost, setSeenCost] = useState(savedCostKey);
+  if (savedCostKey !== seenCost) {
+    setSeenCost(savedCostKey);
+    if (defaults?.costCents !== undefined && dollarsToCents(cost) !== defaults.costCents) {
+      setCost(centsToDollarInput(defaults.costCents));
+      followFrom(defaults.costCents, dollarsToCents(unitPrice));
+      setAnchor("price");
+    }
+    const storedList = defaults?.listPriceCents ?? null;
+    if (defaults && (listPrice.trim() === "" ? null : dollarsToCents(listPrice)) !== storedList) {
+      setListPrice(storedList !== null ? centsToDollarInput(storedList) : "");
+    }
+  }
+  // After a save the rows are what was stored.
+  const savedSuppliersKey = JSON.stringify(defaults?.suppliers ?? []);
+  const [seenSuppliers, setSeenSuppliers] = useState(savedSuppliersKey);
+  if (savedSuppliersKey !== seenSuppliers) {
+    setSeenSuppliers(savedSuppliersKey);
+    setSuppliers((defaults?.suppliers ?? []).map(toDraft));
+    setRemovedSuppliers([]);
+  }
   const [seenSaved, setSeenSaved] = useState(savedDistributorId);
   if (savedDistributorId !== seenSaved) {
     setSeenSaved(savedDistributorId);
@@ -289,10 +418,13 @@ export function ProductForm({
   function changeDistributor(next: string) {
     const same = supplierFor(next) === supplierFor(distributorId);
     setDistributorId(next);
+    starSupplierOnForm(supplierFor(next));
     // The same supplier picked from the other list keeps its people.
     if (same) return;
-    // A different distributor means different people; nothing carries over.
-    setSelectedContacts(new Set());
+    // A different distributor shows its own people: the ones already
+    // linked to this product ticked (the star can move back to a supplier
+    // whose rep is on it), and nothing half-typed carries over.
+    setSelectedContacts(new Set(defaults?.contactIds ?? []));
     setContactEdits({});
     setNewContacts([]);
   }
@@ -371,6 +503,20 @@ export function ProductForm({
       {defaults?.id && <input type="hidden" name="productId" value={defaults.id} />}
       <input type="hidden" name="newContacts" value={newContactsPayload} />
       <input type="hidden" name="contactEdits" value={contactEditsPayload} />
+      <input
+        type="hidden"
+        name="suppliers"
+        value={JSON.stringify(
+          suppliers.map(({ distributorId: id, cost: rowCost, discount, list, minMargin }) => ({
+            distributorId: id,
+            cost: rowCost,
+            discount,
+            list,
+            minMargin,
+          })),
+        )}
+      />
+      <input type="hidden" name="removedSuppliers" value={JSON.stringify(removedSuppliers)} />
 
       <div className="grid gap-5 lg:grid-cols-3">
         {/* ---------- Main table ---------- */}
@@ -495,10 +641,15 @@ export function ProductForm({
                   step="0.01"
                   placeholder="80.00"
                   value={cost}
-                  onChange={(event) => changeCost(event.target.value)}
+                  onChange={(event) => typeCost(event.target.value)}
+                  readOnly={costFromStar}
                   className="input"
                 />
-                <p className="faint mt-1 text-xs">What it costs you. Never shown to customers.</p>
+                <p className="faint mt-1 text-xs">
+                  {costFromStar && starRow
+                    ? `${starRow.name}'s price less your ${starRow.discount}% discount — change it under Suppliers.`
+                    : "What it costs you. Never shown to customers."}
+                </p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -562,7 +713,7 @@ export function ProductForm({
                   step="0.01"
                   placeholder="189.99"
                   value={listPrice}
-                  onChange={(event) => setListPrice(event.target.value)}
+                  onChange={(event) => typeListPrice(event.target.value)}
                   className="input"
                 />
                 <p className="faint mt-1 text-xs">The supplier&apos;s suggested price, from their ratesheet. Internal only.</p>
@@ -916,6 +1067,155 @@ export function ProductForm({
           </div>
         </Card>
       </div>
+
+      {/* ---------- Suppliers (Release 3a) ---------- */}
+      <Card lit>
+        <CardHeader
+          title="Suppliers"
+          subtitle="Everyone who sells you this. The starred one sets your COGS; move the star to buy from someone else."
+        />
+        <div className="space-y-2 p-5" data-testid="product-suppliers">
+          {distributorId === "" && suppliers.length > 0 && (
+            <p className="text-xs text-[var(--warn)]">With no distributor picked above, saving takes these suppliers off this product.</p>
+          )}
+          {(distributorId === NEW || distributorId.startsWith(PLATFORM_SUPPLIER_PREFIX)) && !twin && (
+            <p className="faint text-xs">The distributor picked above is added here, starred, at the COGS and MSRP above when you save.</p>
+          )}
+          {suppliers.length === 0 ? (
+            <p className="faint text-xs">No suppliers yet. Pick a distributor above, or add one here.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="table text-xs">
+                <thead>
+                  <tr>
+                    <th className="w-10">Star</th>
+                    <th>Supplier</th>
+                    <th className="text-right">Their price</th>
+                    <th className="text-right">COGS discount %</th>
+                    <th className="text-right">Your COGS</th>
+                    <th className="text-right">MSRP</th>
+                    <th className="text-right">Min margin %</th>
+                    <th className="text-right">Min price</th>
+                    <th className="w-10" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {suppliers.map((row) => {
+                    const money = draftMoney(row);
+                    const starred = row.distributorId === starKey;
+                    const cheaper = !starred && starMoney && money.cogsCents > 0 && money.cogsCents < starMoney.cogsCents;
+                    const underMinimum = starred && money.minPriceCents !== null && priceCents < money.minPriceCents;
+                    return (
+                      <tr key={row.distributorId} data-testid="product-supplier-row">
+                        <td>
+                          <input
+                            type="radio"
+                            name="supplier-star"
+                            checked={starred}
+                            onChange={() => changeDistributor(row.distributorId)}
+                            aria-label={`Star ${row.name}`}
+                            className="h-4 w-4 accent-[var(--brand)]"
+                          />
+                        </td>
+                        <td className="min-w-[9rem]">
+                          <p className="font-medium">
+                            {starred && <span aria-hidden>★ </span>}
+                            {row.name}
+                          </p>
+                          {cheaper && (
+                            <p className="text-[var(--ok)]" data-testid="supplier-cheaper">
+                              {formatCents(starMoney!.cogsCents - money.cogsCents)} cheaper than your starred supplier
+                            </p>
+                          )}
+                        </td>
+                        <td className="text-right">
+                          <input
+                            inputMode="decimal"
+                            value={row.cost}
+                            onChange={(event) => patchSupplier(row.distributorId, { cost: event.target.value })}
+                            aria-label={`${row.name} price`}
+                            className="input input-sm num w-24 text-right"
+                          />
+                        </td>
+                        <td className="text-right">
+                          <input
+                            inputMode="decimal"
+                            value={row.discount}
+                            onChange={(event) => patchSupplier(row.distributorId, { discount: event.target.value })}
+                            placeholder="0"
+                            aria-label={`${row.name} COGS discount`}
+                            className="input input-sm num w-20 text-right"
+                          />
+                        </td>
+                        <td className="num text-right" data-testid="supplier-cogs">
+                          {formatCents(money.cogsCents)}
+                        </td>
+                        <td className="text-right">
+                          <input
+                            inputMode="decimal"
+                            value={row.list}
+                            onChange={(event) => patchSupplier(row.distributorId, { list: event.target.value })}
+                            aria-label={`${row.name} MSRP`}
+                            className="input input-sm num w-24 text-right"
+                          />
+                        </td>
+                        <td className="text-right">
+                          <input
+                            inputMode="decimal"
+                            value={row.minMargin}
+                            onChange={(event) => patchSupplier(row.distributorId, { minMargin: event.target.value })}
+                            placeholder="None"
+                            aria-label={`${row.name} minimum margin`}
+                            className="input input-sm num w-20 text-right"
+                          />
+                        </td>
+                        <td className="num whitespace-nowrap text-right" data-testid="supplier-min-price">
+                          {money.minPriceCents === null ? (
+                            "—"
+                          ) : (
+                            <>
+                              <span className={underMinimum ? "text-[var(--danger)]" : ""}>{formatCents(money.minPriceCents)}</span>
+                              <span className="faint block">you make {formatCents(money.minMarginCents!)}</span>
+                              {underMinimum && <span className="block text-[var(--danger)]">your price is under it</span>}
+                            </>
+                          )}
+                        </td>
+                        <td>
+                          {!starred && (
+                            <button
+                              type="button"
+                              onClick={() => removeSupplier(row.distributorId)}
+                              aria-label={`Remove ${row.name}`}
+                              className="btn btn-icon-danger btn-sm"
+                            >
+                              <IconTrash size={13} />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {addable.length > 0 && (
+            <select
+              value=""
+              onChange={(event) => addSupplier(event.target.value)}
+              aria-label="Add a supplier"
+              className="select input-sm w-auto"
+            >
+              <option value="">+ Add a supplier…</option>
+              {addable.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </Card>
 
       <FormError message={state?.error} />
       <FormSuccess message={state?.success} />

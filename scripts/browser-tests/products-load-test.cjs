@@ -202,6 +202,49 @@ async function timedSearch(page, label, query) {
   const bc = await timedSearch(page, "Picker, a new part number", "BC-24999");
   assert.equal(bc.first, "Big catalog item 24999");
 
+  log("See product list on the 25,000-row sheet (Release 3a): open, search, take all off and put all back");
+  await timed(page, "Ratesheets page with a 25,000-line sheet", `${BASE}/dashboard/products/ratesheets`, "[data-testid=linked-file-lines]");
+  assert.match(await page.getByTestId("linked-file-lines").first().innerText(), /25,000 of 25,000 products in Products/);
+  const list = page.getByTestId("product-list");
+  const openStart = Date.now();
+  await page.getByRole("button", { name: "See product list" }).first().click();
+  await list.getByTestId("product-list-row").nth(49).waitFor({ timeout: 30_000 });
+  const openSeconds = (Date.now() - openStart) / 1000;
+  console.log(`     ${openSeconds.toFixed(2)}s  the list's first 50 of 25,000`);
+  assert.ok(openSeconds < PAGE_BUDGET_S, `opening the list took ${openSeconds.toFixed(2)}s`);
+  const searchStart = Date.now();
+  await list.getByLabel("Search this sheet").fill("item 24999");
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=product-list-row]").length === 1, null, { timeout: 30_000 });
+  console.log(`     ${((Date.now() - searchStart) / 1000).toFixed(2)}s  searching the sheet for one item`);
+  await list.getByLabel("Search this sheet").fill("");
+  await list.getByTestId("product-list-row").nth(49).waitFor();
+  const saveAll = async (button, label) => {
+    await list.getByRole("button", { name: button }).click();
+    await list.getByTestId("product-list-actions-bottom").getByText(/25,000 (ticked|unticked)/).waitFor({ timeout: 30_000 });
+    const start = Date.now();
+    await list.getByTestId("product-list-actions-top").getByRole("button", { name: "Save and accept" }).click();
+    await list.getByTestId("product-list-result").waitFor({ timeout: 280_000 });
+    const seconds = (Date.now() - start) / 1000;
+    console.log(`     ${seconds.toFixed(1)}s  ${label}`);
+    assert.ok(seconds < 240, `${label} took ${seconds.toFixed(0)}s`);
+    return list.getByTestId("product-list-result").innerText();
+  };
+  assert.match(await saveAll("Clear all", "taking 25,000 off in batches of 500"), /25,000 taken off \(25,000 turned off: no other supplier\)/);
+  const off = (await sql(`SELECT count(*)::int n FROM "Product" WHERE "organizationId"=$1 AND sku LIKE 'BC-%' AND active`, [org])).rows[0].n;
+  assert.equal(off, 0);
+  await list.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "See product list" }).first().click();
+  await list.getByTestId("product-list-row").nth(49).waitFor({ timeout: 30_000 });
+  assert.match(await saveAll("Select all 25,000", "putting 25,000 back"), /25,000 linked to products you already had/);
+  const back = (await sql(
+    `SELECT count(*)::int n, count(ps.id)::int rows FROM "Product" p
+       LEFT JOIN "ProductSupplier" ps ON ps."productId" = p.id AND ps."preferredFor" = p.id
+      WHERE p."organizationId"=$1 AND p.sku LIKE 'BC-%' AND p.active AND p."distributorId"='dst_pl_new'`,
+    [org],
+  )).rows[0];
+  assert.deepEqual(back, { n: SHEET_ROWS, rows: SHEET_ROWS }, "every one back on, starred to the sheet's supplier, none doubled");
+  await list.getByRole("button", { name: "Done" }).click();
+
   log("an apparel sheet: 8,000 rows all named Classic Tee, against 8,000 Classic Tees already carried");
   await sql(
     `INSERT INTO "Product" (id,"organizationId",name,description,sku,"unitPriceCents","costCents","defaultTag","distributorId",active,"updatedAt")

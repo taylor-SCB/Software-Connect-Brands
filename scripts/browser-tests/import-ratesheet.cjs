@@ -156,7 +156,10 @@ async function product(org, sku) {
   assert.ok(!(await row("Cat6").getByRole("checkbox").isChecked()), "cost $189 → $0.21 waits for a tick");
   assert.ok(!(await row("Cat6").getByRole("checkbox").isDisabled()));
   assert.ok(await row("Cat6").getByText(/Cost was \$189\.00, now \$0\.21/).isVisible());
-  assert.ok(await row("Wiegand").getByText(/Bought from ADI today/).isVisible());
+  // Release 3a: a product starred to another supplier keeps their cost
+  // and its price; this sheet adds Spirit beside them.
+  assert.ok(await row("Wiegand").getByText(/Bought from ADI \(starred\)\. Adds this supplier at \$1234\.50 beside them; your COGS stays/).isVisible());
+  assert.ok(await row("Wiegand").getByTestId("ratesheet-second-supplier").isVisible(), "no sell price box: its price stays");
   assert.ok(await row("Panel").getByText(/at or below the new cost, so it was re-priced/).isVisible());
   assert.equal(await row("HID ProxPro").locator("input[inputmode=decimal]").inputValue(), "168.75", "keep my margin: 150 × 112.50 / 100");
   assert.equal(await row("New camera").locator("input[inputmode=decimal]").inputValue(), "260.00", "30% markup on $200");
@@ -186,7 +189,7 @@ async function product(org, sku) {
   await page.getByTestId("ratesheet-import").click();
   await page.getByTestId("ratesheet-done").waitFor();
   const done = await page.getByTestId("ratesheet-done").innerText();
-  assert.match(done, /Imported 4 products from Spirit Supply: 1 new, 3 updated \(3 cost more\)\. 1 no longer on their list marked inactive\./);
+  assert.match(done, /Imported 4 products from Spirit Supply: 1 new, 2 updated \(2 cost more\), 1 added beside another supplier\. 1 no longer on their list marked inactive\./);
   const hid = await product(org, "HID-5355");
   assert.equal(hid.costCents, 11250);
   assert.equal(hid.unitPriceCents, 16875);
@@ -194,9 +197,17 @@ async function product(org, sku) {
   assert.equal(hid.name, "HID reader (mine)", "an existing product keeps its own name");
   assert.equal(hid.description, "Customer-facing words", "and its own description");
   const cable = await product(org, "012345");
-  assert.equal(cable.costCents, 123450);
-  assert.equal(cable.unitPriceCents, 185175);
-  assert.equal(cable.supplier, "Spirit Supply", "moved to the supplier that sent the sheet");
+  const cableBefore = (await sql(`SELECT "costCents","unitPriceCents" FROM "Product" WHERE id='prd_ir_cable'`)).rows[0];
+  assert.equal(cable.supplier, "ADI", "still bought from the starred supplier");
+  assert.deepEqual([cable.costCents, cable.unitPriceCents], [cableBefore.costCents, cableBefore.unitPriceCents]);
+  const cableRows = (await sql(
+    `SELECT d.name, ps."costCents", ps."preferredFor" IS NOT NULL AS starred FROM "ProductSupplier" ps JOIN "Distributor" d ON d.id = ps."distributorId" WHERE ps."productId"='prd_ir_cable' ORDER BY d.name`,
+  )).rows;
+  assert.deepEqual(
+    cableRows.map((r) => [r.name, r.costCents, r.starred]),
+    [["ADI", cableBefore.costCents, true], ["Spirit Supply", 123450, false]],
+    "Spirit's price is kept on its own row beside ADI's",
+  );
   const panel = await product(org, "PNL-1");
   assert.deepEqual([panel.costCents, panel.unitPriceCents, panel.listPriceCents, panel.supplier], [10000, 13000, 14000, "Spirit Supply"]);
   const camera = await product(org, "NEW-1");
@@ -206,22 +217,27 @@ async function product(org, sku) {
   assert.deepEqual([cat6.costCents, cat6.unitPriceCents], [18900, 24500], "the unticked unit change was left alone");
   assert.equal((await product(org, "GONE-1")).active, false, "not on the sheet anymore → inactive");
   assert.equal((await sql(`SELECT count(*)::int n FROM "Product" WHERE "organizationId"=$1 AND sku='OLD-1'`, [org])).rows[0].n, 0, "Discontinued tab not imported");
-  const links = (await sql(`SELECT "A","B" FROM "_DistributorContactToProduct" WHERE "B" IN ('prd_ir_cable','prd_ir_hid') ORDER BY "B"`)).rows;
-  assert.deepEqual(links, [{ A: "dc_ir_mike", B: "prd_ir_cable" }, { A: "dc_ir_mike", B: "prd_ir_hid" }], "the ADI rep came off the moved product; Mike is on both");
+  const links = (await sql(`SELECT "A","B" FROM "_DistributorContactToProduct" WHERE "B" IN ('prd_ir_cable','prd_ir_hid') ORDER BY "B","A"`)).rows;
+  assert.deepEqual(
+    links,
+    [{ A: "dc_ir_adi", B: "prd_ir_cable" }, { A: "dc_ir_mike", B: "prd_ir_cable" }, { A: "dc_ir_mike", B: "prd_ir_hid" }],
+    "ADI's rep stays on the product bought from both; Mike is on both",
+  );
   const supplier = (await sql(`SELECT "priceRule","priceRuleBasisPoints","ratesheetColumns" FROM "Distributor" WHERE id='dst_ir_spirit'`)).rows[0];
   assert.deepEqual([supplier.priceRule, supplier.priceRuleBasisPoints], ["MARKUP", 3000]);
   assert.ok(Object.values(supplier.ratesheetColumns).some((roles) => roles.join(",") === "sku,description,cost,list,skip"), "the hand-fixed columns are remembered");
   const file = (await sql(`SELECT * FROM "LinkedRatesheet" WHERE "organizationId"=$1`, [org])).rows[0];
   assert.deepEqual(
-    [file.distributorId, file.addedCount, file.updatedCount, file.costUpCount, file.costDownCount, file.effectiveOn.toISOString().slice(0, 10), file.sizeBytes],
-    ["dst_ir_spirit", 1, 3, 3, 0, "2026-11-01", fs.statSync(FIXTURE).size],
+    [file.distributorId, file.addedCount, file.updatedCount, file.besideCount, file.costUpCount, file.costDownCount, file.effectiveOn.toISOString().slice(0, 10), file.sizeBytes],
+    ["dst_ir_spirit", 1, 2, 1, 2, 0, "2026-11-01", fs.statSync(FIXTURE).size],
   );
 
   log("Ratesheets page: the saved file says what the import did");
   await page.getByRole("button", { name: "Done" }).click();
   await page.goto(`${BASE}/dashboard/products/ratesheets`);
   const summary = await page.getByTestId("linked-file-import").first().innerText();
-  assert.match(summary, /Spirit Supply · effective Nov 1, 2026 · imported .*: 1 new, 3 updated \(3 cost more\)/);
+  // The same split as the import's own message (Nov 4, 2026 audit).
+  assert.match(summary, /Spirit Supply · effective Nov 1, 2026 · imported .*: 1 new, 2 updated \(2 cost more\), 1 added beside another supplier/);
 
   log("Import prices on the saved file: the columns come back the way they were fixed");
   await page.getByRole("button", { name: "Import prices" }).click();

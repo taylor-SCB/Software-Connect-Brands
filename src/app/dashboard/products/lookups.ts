@@ -58,10 +58,18 @@ export async function loadRatesheetSuppliers(organizationId: string): Promise<Ra
         orderBy: { name: "asc" },
         select: { id: true, name: true, email: true, phone: true },
       },
+      // Their last imported sheet's COGS discount, which a new sheet from
+      // them starts with (sheetDiscountFor).
+      linkedRatesheets: {
+        where: { importedAt: { not: null } },
+        orderBy: { importedAt: "desc" },
+        take: 1,
+        select: { discountBp: true },
+      },
     },
   });
   const roles = new Set<string>(COLUMN_ROLES);
-  return suppliers.map(({ platformOrganization, platformOrganizationId, ...supplier }) => {
+  return suppliers.map(({ platformOrganization, platformOrganizationId, linkedRatesheets, ...supplier }) => {
     const raw = supplier.ratesheetColumns;
     let columns: Record<string, ColumnRole[]> | null = null;
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -77,6 +85,7 @@ export async function loadRatesheetSuppliers(organizationId: string): Promise<Ra
       linked: platformOrganizationId !== null,
       onPlatform: stillListed(platformOrganization),
       ratesheetColumns: columns,
+      lastDiscountBp: linkedRatesheets[0]?.discountBp ?? 0,
     };
   });
 }
