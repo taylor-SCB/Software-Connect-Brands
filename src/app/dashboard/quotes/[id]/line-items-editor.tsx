@@ -261,6 +261,23 @@ export function LineItemsEditor({
   // What each row's picks were when a save went out, so the answer only
   // replaces picks nobody has changed since.
   const sentPicks = useRef(new Map<string, string>());
+  // The pictures the lines hold, as stored: Mark as sent writes them and
+  // Back to draft lets them go, re-rendering the page, and the rows follow
+  // without losing anything typed.
+  const imageKey = initialLines
+    .map((line) => `${line.id ?? ""}:${line.imageToken ?? ""}:${line.imageRemoved ? 1 : 0}`)
+    .join("|");
+  const [seenImages, setSeenImages] = useState(imageKey);
+  if (imageKey !== seenImages) {
+    setSeenImages(imageKey);
+    const byId = new Map(initialLines.map((line) => [line.id ?? "", line]));
+    setRows((current) =>
+      current.map((row) => {
+        const line = row.id ? byId.get(row.id) : undefined;
+        return line ? { ...row, imageToken: line.imageToken ?? null, imageRemoved: Boolean(line.imageRemoved) } : row;
+      }),
+    );
+  }
   // Grows when someone adds a distributor from inside a row, so every row's
   // picker sees it without a page reload.
   const [supplierOptions, setSupplierOptions] = useState<SupplierOption[]>(suppliers);

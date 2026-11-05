@@ -10,20 +10,26 @@ import { LabelsManager } from "./labels-manager";
 // an Owner or Admin renames, retires, brings back and reorders.
 export default async function LabelsPage() {
   const { organizationId, role } = await requireSession();
-  const [groups, usage, ownUnitUsage] = await Promise.all([
+  // How many products have each label: ticked on the Variations card, or
+  // a unit as the product's own unit (a workspace one, or a built-in one),
+  // each product counted once.
+  const [groups, usage] = await Promise.all([
     getVariationGroups(organizationId, { includeArchived: true }),
-    prisma.productVariation.groupBy({ by: ["optionId"], where: { organizationId }, _count: { _all: true } }),
-    prisma.product.groupBy({
-      by: ["customUnitId"],
-      where: { organizationId, customUnitId: { not: null }, unitOfMeasure: null },
-      _count: { _all: true },
-    }),
+    prisma.$queryRaw<{ optionId: string; n: bigint }[]>`
+      SELECT used.oid AS "optionId", count(DISTINCT used.pid) AS n FROM (
+        SELECT "optionId" AS oid, "productId" AS pid FROM "ProductVariation" WHERE "organizationId" = ${organizationId}
+        UNION
+        SELECT "customUnitId", id FROM "Product"
+         WHERE "organizationId" = ${organizationId} AND "customUnitId" IS NOT NULL AND "unitOfMeasure" IS NULL
+        UNION
+        SELECT o.id, p.id FROM "Product" p
+          JOIN "VariationOption" o ON o."organizationId" = p."organizationId" AND o."builtInUnit" = p."unitOfMeasure"
+         WHERE p."organizationId" = ${organizationId} AND p."unitOfMeasure" IS NOT NULL
+      ) used
+      GROUP BY used.oid`,
   ]);
   const counts: Record<string, number> = {};
-  for (const row of usage) counts[row.optionId] = row._count._all;
-  for (const row of ownUnitUsage) {
-    if (row.customUnitId) counts[row.customUnitId] = Math.max(counts[row.customUnitId] ?? 0, row._count._all);
-  }
+  for (const row of usage) counts[row.optionId] = Number(row.n);
 
   return (
     <div>

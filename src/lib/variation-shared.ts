@@ -5,7 +5,8 @@
 export const MAX_LABEL_LENGTH = 40;
 export const MAX_OPTIONS_PER_GROUP = 300;
 export const MAX_CUSTOM_GROUPS = 20;
-export const MAX_PICKS_PER_LINE = 10;
+// One label a group: Color, Size and up to 20 of the workspace's own.
+export const MAX_PICKS_PER_LINE = 25;
 export const MAX_UNIT_CONTAINS = 1_000_000;
 
 export const BUILT_IN_GROUP_NAMES = { UNIT: "Unit", COLOR: "Color", SIZE: "Size" } as const;

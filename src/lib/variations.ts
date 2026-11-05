@@ -513,7 +513,10 @@ export function contractRowLabels(line: {
 }) {
   const entries = readSnapshot(line.variations);
   return {
-    variations: entries.length ? entries : Prisma.DbNull,
+    // An empty list, never null, on a row made from Release 3b on: null is
+    // how a row made before it reads, which a purchase order fills from
+    // the quote line. A row signed with no labels keeps none.
+    variations: entries,
     variationText: entries.length ? line.variationText : null,
     unitLabel: customUnitLabel(line),
   };

@@ -573,11 +573,14 @@ lower(), a retired one refused by name rather than quietly re-used);
 `src/lib/variations.ts` (server) and `src/lib/variation-shared.ts`
 (browser-safe). A product ticks the labels it comes in
 (`ProductVariation`) on the **Variations** card
-(`products/variations-card.tsx`), which posts only what changed
-(`added` / `removed` / new labels and groups) and only once touched
-(`variationsPresent=1`): a price save never takes off a label another tab
-added, and a retired label the product has is drawn "(retired)". A tag
-change takes another list's units off. **Units**: a workspace's own unit
+(`products/variations-card.tsx`), which posts only the chips clicked on
+it (`added` / `removed` / new labels and groups) and only once one was
+(`variationsPresent=1`): a price save, or a save after a refresh brought
+in another tab's labels, never takes off a label it didn't click, and a
+retired label the product has is drawn "(retired)". Units from another
+tag's list come off when the product is saved (the server does it; the
+card says so and unticks nothing, so changing the tag back loses
+nothing). **Units**: a workspace's own unit
 ("Box of 12" contains 12 Each, display only until Release 6) is a Unit
 option with `contains`, `baseUnit` and a tag, **Labor and Materials
 only** (a Software product's rate and term need a built-in Software
@@ -613,10 +616,16 @@ holds it; files go only when no row has the key (clones share them).
 `public, s-maxage=31536000, immutable` (a new picture is a new token). A
 draft quote shows the product's pictures live; **leaving Draft writes
 each line's picture onto it** (`freezeQuotePictures` in
-`setQuoteStatus`); changing a sent line's product or labels takes the
-new picture. Contract rows copy `variations`, `variationText` and the
+`setQuoteStatus`, only on Draft → Sent / Accepted / Declined: an answer
+never swaps a picture the customer has), **Back to Draft lets them go**
+(`releaseQuotePictures`), and changing a sent line's product or labels
+takes the new picture. A typed line that Save as product links to a
+catalog product by name takes its picture too. Contract rows copy `variations`, `variationText` and the
 workspace unit's name at the Coordinator, Award and Order materials
-(`contractRowLabels`); the contract document, the Coordinator grid, the
+(`contractRowLabels`; a row with none stores an empty list, so a purchase
+order fills labels from the quote line only for a row made before 3b,
+which stores null — a row signed with no labels never takes a later
+quote edit); the contract document, the Coordinator grid, the
 job's scopes and Award show them; `{{line_items}}` adds " (Black · L)"
 only when present. **Order materials now passes the purchase order's own
 rows (at cost) to the merge fields**, so its body's ORDER TOTAL is what
@@ -624,8 +633,9 @@ the supplier is asked for — before 3b it read the customer's quote. A
 PDF's session cookie is set for the site only, the bypass header goes on
 same-site requests only, and a PDF over 4 MB is refused in words. The
 **Labels & Units** tab (`/dashboard/products/labels`) lists every group
-with its labels, how many products have each, and a Retired section with
-Restore. The Products list shows each product's main picture and "4 colors
+with its labels, how many products have each (ticked, or as the
+product's own unit, each product once), and a Retired section with
+Restore. A quote line takes up to 25 labels, one a group. The Products list shows each product's main picture and "4 colors
 · 4 sizes". Supplier sheets' Color / Size / pack columns wait for Release
 4; prices per label for Releases 6 and 7.
 **The apparel pack moves up to right after 3b** (Taylor, Nov 5, 2026: his
@@ -1136,7 +1146,7 @@ part numbers, the newest sheet's tick, a quantity under one, a typed
 markup after a save, a sheet's discount after an outside write; and one
 for the last review — an outside switch onto a supplier already on the
 product, None with a new COGS, a discounted quote line exactly at the
-minimum), and from Nov 6, 2026 `variations-pictures.cjs` (27, Release
+minimum), and from Nov 6, 2026 `variations-pictures.cjs` (30, Release
 3b: Add product landing on its page with labels typed and a Box of 12
 unit, a price save leaving labels alone, an untick taking only that one,
 a retired label kept and refused by name, a tag change dropping units and
@@ -1150,14 +1160,24 @@ a removed picture kept for the sent quote and dropped from a draft, an
 enum unit written by older code winning, the draft PDF with its picture,
 the Coordinator and the contract printing labels, Order materials' purchase
 order carrying them with its body at cost, Labels & Units as a Member and
-as an Owner; **it needs `STORAGE_DRIVER=local`** like `job-photos.cjs`).
+as an Owner; three steps for the Nov 6 audit — Mark accepted keeping the
+picture a sent quote went out with, the editor showing pictures after
+Mark as sent, Back to draft letting go, another tab's label kept through a
+refresh, a tag changed back keeping units, twelve labels on one line, a
+typed line linked by name taking the picture, a row signed with no labels
+staying that way on the purchase order, per-product counts; **it needs
+`STORAGE_DRIVER=local`** like `job-photos.cjs`). **`calendar.cjs` step
+29 reads only the Coming up card** (Nov 6, 2026): a seeded November day
+now behind us sits under Already been.
 `products-load-test.cjs` also opens, searches, clears and re-ticks the
 25,000-line sheet through the slow proxy (open 1.2 s, all off 25 s, all
 back 81 s; the 25,000-row import is 26 s, up from 9 s, for the supplier
 rows and the kept lines), and from Nov 6, 2026 every product with eight
 labels and a picture (the list and its 100-row page inside budget) and a
-200-line sent quote with labels, a workspace unit and pictures saved
-through the proxy. **`calendar.cjs` no longer assumes November
+200-line sent quote with labels, a workspace unit and pictures opened and
+saved through the proxy. That page is about 1.4 MB before compression
+(1.0 MB before 3b: every row carries the supplier list), so it has a 2 MB
+budget where every other page has 1 MB. **`calendar.cjs` no longer assumes November
 2026 is in the future** (Nov 4, 2026): it clears the Contract sent /
 closed entries its seed contract writes on the real today, and paging
 into its month may land on today.

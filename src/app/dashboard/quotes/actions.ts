@@ -33,7 +33,7 @@ import {
   variationTextOf,
   type VariationEntry,
 } from "@/lib/variation-shared";
-import { freezeQuotePictures, livePicture, picturesFor } from "@/lib/product-images";
+import { freezeQuotePictures, livePicture, picturesFor, releaseQuotePictures } from "@/lib/product-images";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -348,7 +348,28 @@ export async function saveLineItems(
   });
   const existingIds = new Set(existing.map((item) => item.id));
   const existingById = new Map(existing.map((item) => [item.id, item]));
-  const labels = await lineLabelLookups(organizationId, quote.status, [...ownedIds], parsed.data, existing);
+  // A typed line that "Save as product" links to a product already in the
+  // catalog by name takes that product's picture too, so those are read
+  // here with the rest.
+  const typedNames = [
+    ...new Set(
+      parsed.data
+        .filter((item) => item.saveAsProduct && !(item.productId && ownedIds.has(item.productId)) && item.name)
+        .map((item) => item.name.slice(0, 160).toLowerCase()),
+    ),
+  ];
+  const namedProducts = typedNames.length
+    ? await prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Product"
+        WHERE "organizationId" = ${organizationId} AND lower(name) IN (${Prisma.join(typedNames)})`
+    : [];
+  const labels = await lineLabelLookups(
+    organizationId,
+    quote.status,
+    [...new Set([...ownedIds, ...namedProducts.map((row) => row.id)])],
+    parsed.data,
+    existing,
+  );
   const keptIds = new Set(
     parsed.data.map((item) => item.id).filter((id): id is string => Boolean(id) && existingIds.has(id as string)),
   );
@@ -803,13 +824,17 @@ export async function setQuoteStatus(formData: FormData) {
   const { quoteId, status } = parsed.data;
   const quote = await prisma.quote.findFirst({
     where: { id: quoteId, organizationId },
-    select: { dealId: true, contactId: true },
+    select: { dealId: true, contactId: true, status: true },
   });
   if (!quote) return;
 
   // Leaving Draft, its lines keep the pictures they show now (Taylor, Nov
-  // 5: a sent quote keeps the picture it went out with).
-  if (status !== "DRAFT") await freezeQuotePictures(quoteId);
+  // 5: a sent quote keeps the picture it went out with) — only then: an
+  // answer (accepted, declined) never swaps a picture the customer already
+  // has. Back to Draft, its lines let go and show the product's pictures
+  // live again, until it is sent again.
+  if (quote.status === "DRAFT" && status !== "DRAFT") await freezeQuotePictures(quoteId);
+  if (quote.status !== "DRAFT" && status === "DRAFT") await releaseQuotePictures(quoteId);
 
   await prisma.quote.updateMany({
     where: { id: quoteId, organizationId },

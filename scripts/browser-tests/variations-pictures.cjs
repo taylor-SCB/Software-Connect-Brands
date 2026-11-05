@@ -252,7 +252,7 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   await saveProduct();
   assert.deepEqual(await labelsOf(hoodieId), ["Unit:Each"]);
   await page.selectOption("#defaultTag", "LABOR");
-  assert.match(await group("Unit").innerText(), /Each taken off/);
+  assert.match(await page.locator("[data-testid=unit-note]").innerText(), /Each will be taken off when you save/);
   await page.selectOption("#defaultTag", "SOFTWARE");
   assert.equal(await page.locator("#unitOfMeasure option[value=__newunit__]").count(), 0);
   assert.equal(await page.locator(`#unitOfMeasure option[value="cu:${tee.customUnitId}"]`).count(), 0);
@@ -568,20 +568,31 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   /* ------------------------ Contracts and purchase orders ------------------------ */
 
   log("the Contract Coordinator copies the labels onto the contract, which prints them");
+  // A third line with no labels and a built-in unit.
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId","productId",name,quantity,"unitPriceCents",tag,position,"unitOfMeasure")
+     VALUES ('qli_vp_plain','quo_vp',$1,'Classic Tee',1,1500,'MATERIALS',2,'EACH')`,
+    [tee.id],
+  );
   await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_vp`);
   await page.locator("[data-testid=tracker-row]").first().waitFor();
   assert.deepEqual(await page.locator("[data-testid=tracker-row-labels]").allInnerTexts(), ["Black · L", "Black · XL"]);
   const boxes = page.getByRole("checkbox", { name: "Put Classic Tee on Contract A" });
   await boxes.nth(0).check();
   await boxes.nth(1).check();
+  await boxes.nth(2).check();
   await page.locator("[data-testid=create-contracts]").click();
   await page.waitForURL(/created=\d+/);
   const sale = (await sql(`SELECT id, "publicToken" FROM "Contract" WHERE "organizationId"=$1 AND payable=false`, [org])).rows[0];
-  const saleRows = (await sql(`SELECT "variationText", "unitLabel" FROM "ContractLineItem" WHERE "contractId"=$1 ORDER BY position`, [sale.id])).rows;
-  assert.deepEqual(saleRows, [
-    { variationText: "Black · L", unitLabel: "Box of 12" },
-    { variationText: "Black · XL", unitLabel: null },
+  const saleRows = (
+    await sql(`SELECT "variationText", "unitLabel", variations::text AS v FROM "ContractLineItem" WHERE "contractId"=$1 ORDER BY position`, [sale.id])
+  ).rows;
+  assert.deepEqual(saleRows.map((row) => [row.variationText, row.unitLabel]), [
+    ["Black · L", "Box of 12"],
+    ["Black · XL", null],
+    [null, null],
   ]);
+  assert.equal(saleRows[2].v, "[]", "a row made from 3b on with no labels says so, unlike a row from before it");
   await page.goto(`${BASE}/dashboard/contracts/${sale.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
   await page.getByText(/Sent/).first().waitFor();
@@ -596,7 +607,11 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   await signPage.getByText("Accepted electronically").waitFor();
   await signer.close();
 
-  log("Order materials: the supplier's purchase order carries the labels, and its body totals at cost");
+  log("Order materials: the supplier's purchase order carries the labels, and its body totals at cost (audit fix: a row signed with no labels gets none from a later quote edit)");
+  await page.goto(`${BASE}/dashboard/quotes/quo_vp`);
+  await labelSelect(3, "Color").selectOption(navyOpt);
+  await saveLines();
+  assert.equal((await linesOf("quo_vp"))[2].variationText, "Navy", "the quote line changed after signing");
   const project = (await sql(`SELECT id FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0];
   await page.goto(`${BASE}/dashboard/projects/${project.id}/money`);
   await page.locator("[data-testid=order-materials]").click();
@@ -607,6 +622,7 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   assert.deepEqual(poRows.map((row) => [row.variationText, row.unitLabel, row.unitPriceCents]), [
     ["Black · L", "Box of 12", 400],
     ["Black · XL", null, 400],
+    [null, null, 400],
   ]);
   const costTotal = poRows.reduce((sum, row) => sum + Math.round(row.quantity * row.unitPriceCents), 0);
   assert.match(po.body, new RegExp(`ORDER TOTAL: \\$${(costTotal / 100).toFixed(2).replace(".", "\\.")}`), "the PO body is at cost, not the customer's total");
@@ -667,6 +683,116 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   await shot(page, "05-labels");
   await page.goto(`${BASE}/dashboard/products/${tee.id}`);
   await group("Print location").waitFor();
+
+  /* ------------------------------- Audit fixes ------------------------------- */
+
+  log("audit fixes: Mark accepted keeps a sent quote's pictures; Mark as sent shows in the editor; Back to draft lets go");
+  pics = await picturesOf(tee.id);
+  const heldMain = pics[0];
+  assert.equal((await linesOf("quo_vp"))[0].imageId, heldMain.id, "the sent line holds the main picture");
+  await page.goto(`${BASE}/dashboard/products/${tee.id}`);
+  const tilesBefore = await page.locator("[data-testid=picture-tile]").count();
+  await page.locator("[data-testid=picture-remove]").first().click();
+  await page.waitForFunction((n) => document.querySelectorAll("[data-testid=picture-tile]").length === n - 1, tilesBefore);
+  const newMain = (await picturesOf(tee.id))[0];
+  await page.goto(`${BASE}/dashboard/quotes/quo_vp`);
+  await page.getByRole("button", { name: "Mark accepted" }).click();
+  for (let i = 0; i < 40 && (await sql(`SELECT status FROM "Quote" WHERE id='quo_vp'`)).rows[0].status !== "ACCEPTED"; i += 1) {
+    await page.waitForTimeout(150);
+  }
+  assert.equal((await linesOf("quo_vp"))[0].imageId, heldMain.id, "an answer never swaps the picture it went out with");
+  await page.goto(`${BASE}/q/tok_quo_vp_0123456789`);
+  assert.match(await page.locator("[data-testid=document-line-picture]").first().getAttribute("src"), new RegExp(heldMain.publicToken));
+  await page.goto(`${BASE}/dashboard/quotes/quo_vp2`);
+  await page.locator("[data-testid=line-picture]").first().waitFor();
+  await page.getByRole("button", { name: "Mark as sent" }).click();
+  for (let i = 0; i < 40 && (await linesOf("quo_vp2"))[0].imageId === null; i += 1) await page.waitForTimeout(150);
+  assert.equal((await linesOf("quo_vp2"))[0].imageId, newMain.id);
+  await page.waitForFunction(
+    (token) => document.querySelector("[data-testid=line-picture]")?.getAttribute("src")?.includes(token),
+    newMain.publicToken,
+  );
+  await page.getByRole("button", { name: "Back to draft" }).click();
+  for (let i = 0; i < 40 && (await linesOf("quo_vp2"))[0].imageId !== null; i += 1) await page.waitForTimeout(150);
+  assert.equal((await linesOf("quo_vp2"))[0].imageId, null, "a draft shows the product's picture live again");
+
+  log("audit fixes: the Variations card keeps another tab's labels, and a tag changed back keeps the units");
+  const heather = await optionId("Color", "Heather Grey");
+  await page.goto(`${BASE}/dashboard/products/${tee.id}`);
+  await chip("Size", "XL").click();
+  await sql(`INSERT INTO "ProductVariation" ("productId","optionId","organizationId") VALUES ($1,$2,$3)`, [tee.id, heather, org]);
+  // A picture change refreshes the page, bringing in what the other tab did.
+  await page.locator("[data-testid=picture-color]").first().selectOption(navyOpt);
+  for (let i = 0; i < 50 && (await chip("Color", "Heather Grey").getAttribute("aria-pressed")) !== "true"; i += 1) {
+    await page.waitForTimeout(100);
+  }
+  assert.equal(await chip("Color", "Heather Grey").getAttribute("aria-pressed"), "true", "the refresh brought it in");
+  assert.equal(await chip("Size", "XL").getAttribute("aria-pressed"), "false");
+  await saveProduct();
+  let teeLabels = await labelsOf(tee.id);
+  assert.ok(teeLabels.includes("Color:Heather Grey"), "the other tab's label stays");
+  assert.ok(!teeLabels.includes("Size:XL"), "the one unticked here comes off");
+  await page.goto(`${BASE}/dashboard/products/${hoodieId}`);
+  if ((await chip("Unit", "Each").getAttribute("aria-pressed")) !== "true") await chip("Unit", "Each").click();
+  await saveProduct();
+  assert.ok((await labelsOf(hoodieId)).includes("Unit:Each"));
+  await page.selectOption("#defaultTag", "LABOR");
+  assert.match(await page.locator("[data-testid=unit-note]").innerText(), /Each will be taken off when you save/);
+  await page.selectOption("#defaultTag", "MATERIALS");
+  assert.equal(await page.locator("[data-testid=unit-note]").count(), 0);
+  await saveProduct();
+  assert.ok((await labelsOf(hoodieId)).includes("Unit:Each"), "back on Materials, Each stays");
+
+  log("audit fixes: twelve labels on one line save; a typed line linked by name takes the picture; counts are per product");
+  await sql(
+    `INSERT INTO "VariationGroup" (id,"organizationId",kind,name,position,"updatedAt")
+     SELECT 'vg_vp_' || g, $1, 'CUSTOM', 'Extra ' || g, 20 + g, now() FROM generate_series(1, 10) g`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "VariationOption" (id,"organizationId","groupId",name,position,"updatedAt")
+     SELECT 'vo_vp_' || g, $1, 'vg_vp_' || g, 'Option ' || g, 0, now() FROM generate_series(1, 10) g`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "ProductVariation" ("productId","optionId","organizationId") SELECT $1, 'vo_vp_' || g, $2 FROM generate_series(1, 10) g`,
+    [tee.id, org],
+  );
+  await page.goto(`${BASE}/dashboard/quotes/quo_vp2`);
+  await catalog.fill("Classic");
+  await page.getByTestId("catalog-results").getByRole("option").first().waitFor();
+  await catalog.press("Enter");
+  const lineNo = (await linesOf("quo_vp2")).length + 1;
+  await labelSelect(lineNo, "Color").waitFor();
+  await labelSelect(lineNo, "Color").selectOption(blackId);
+  await labelSelect(lineNo, "Size").selectOption(sizeL);
+  for (let g = 1; g <= 10; g += 1) await labelSelect(lineNo, `Extra ${g}`).selectOption(`vo_vp_${g}`);
+  await saveLines();
+  const twelve = (await linesOf("quo_vp2"))[lineNo - 1];
+  assert.equal(twelve.variationText.split(" · ").length, 12);
+  await page.goto(`${BASE}/dashboard/quotes/quo_vp`);
+  await page.getByRole("button", { name: "Blank line" }).click();
+  const typedNo = (await linesOf("quo_vp")).length + 1;
+  await page.getByLabel(`Line ${typedNo} product`, { exact: true }).fill("Classic Tee");
+  await saveLines();
+  const typed = (await linesOf("quo_vp"))[typedNo - 1];
+  const linked = (await sql(`SELECT "productId" FROM "QuoteLineItem" WHERE id=$1`, [typed.id])).rows[0].productId;
+  assert.equal(linked, tee.id, "linked to the catalog's Classic Tee by name");
+  assert.equal(typed.imageId, (await picturesOf(tee.id))[0].id, "and on a sent quote it takes the product's picture");
+  await sql(`UPDATE "VariationGroup" SET "archivedAt"=now() WHERE id LIKE 'vg_vp_%'`);
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,"unitPriceCents","defaultTag",active,"updatedAt")
+     VALUES ('prd_vp_polo',$1,'Polo',2000,'MATERIALS',true,now())`,
+    [org],
+  );
+  await sql(`INSERT INTO "ProductVariation" ("productId","optionId","organizationId") VALUES ('prd_vp_polo',$1,$2)`, [tee.customUnitId, org]);
+  await page.goto(`${BASE}/dashboard/products/labels`);
+  const boxRow = page.locator("[data-testid=labels-group][data-group=Unit] [data-testid=labels-option][data-name='Box of 12']");
+  // Classic Tee by its unit and Polo by its tick (Hoodie's unit was cleared
+  // when its tag went to Labor above): two products, where taking the larger
+  // of the two counts said one.
+  assert.equal((await productNamed("Hoodie")).customUnitId, null);
+  assert.match(await boxRow.innerText(), /on 2 products/);
 
   console.log("\nPAGE ERRORS:", pageErrors.length);
   assert.equal(pageErrors.length, 0);

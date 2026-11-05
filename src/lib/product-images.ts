@@ -116,6 +116,12 @@ export async function freezeQuotePictures(quoteId: string) {
     WHERE li.id = pick.line`;
 }
 
+// Back to Draft: its lines let go of their pictures and show the product's
+// live again; the next send freezes them afresh.
+export async function releaseQuotePictures(quoteId: string) {
+  await prisma.quoteLineItem.updateMany({ where: { quoteId, imageId: { not: null } }, data: { imageId: null } });
+}
+
 /* ------------------------------- Serving --------------------------------- */
 
 export type PictureFile = { body: ReadableStream; type: string; size: number | null };

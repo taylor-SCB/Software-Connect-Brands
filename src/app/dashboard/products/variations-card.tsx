@@ -48,58 +48,57 @@ export function VariationsCard({
   tag: string;
   saveState: ActionState;
 }) {
-  const [ticked, setTicked] = useState(() => new Set(savedIds));
+  // What was clicked on this card, never the whole set: labels ticked
+  // here (`on`) and saved ones unticked here (`off`). A label another tab
+  // adds or takes off, brought in by a refresh, is left as it now is.
+  const [on, setOn] = useState<Set<string>>(() => new Set());
+  const [off, setOff] = useState<Set<string>>(() => new Set());
   const [newLabels, setNewLabels] = useState<NewLabel[]>([]);
   const [newGroups, setNewGroups] = useState<string[]>([]);
-  const [touched, setTouched] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
-  const [unitNote, setUnitNote] = useState<string | null>(null);
 
   // After a save the card is what was stored.
   const [seenState, setSeenState] = useState(saveState);
   if (saveState !== seenState) {
     setSeenState(saveState);
     if (saveState?.success) {
-      setTicked(new Set(savedIds));
+      setOn(new Set());
+      setOff(new Set());
       setNewLabels([]);
       setNewGroups([]);
-      setTouched(false);
       setAdding(null);
       setDraft("");
       setProblem(null);
     }
   }
 
-  // A unit belongs to its tag's list: a new tag takes the old list's units
-  // off, and says so (the server does the same).
-  const unitGroup = groups.find((group) => group.kind === "UNIT");
-  const [seenTag, setSeenTag] = useState(tag);
-  if (tag !== seenTag) {
-    setSeenTag(tag);
-    const dropped = (unitGroup?.options ?? []).filter((option) => ticked.has(option.id) && option.tag !== tag);
-    if (dropped.length) {
-      const next = new Set(ticked);
-      for (const option of dropped) next.delete(option.id);
-      setTicked(next);
-      setTouched(true);
-      setUnitNote(`${dropped.map((option) => option.name).join(", ")} taken off: units follow the Default tag.`);
-    } else {
-      setUnitNote(null);
-    }
-  }
-
   const saved = new Set(savedIds);
-  const added = [...ticked].filter((id) => !saved.has(id));
-  const removed = savedIds.filter((id) => !ticked.has(id));
+  const isTicked = (id: string) => (saved.has(id) && !off.has(id)) || on.has(id);
+  const ticked = { has: isTicked };
+  const touched = on.size > 0 || off.size > 0 || newLabels.length > 0 || newGroups.length > 0;
+
+  // A unit belongs to its tag's list: units ticked from another list are
+  // taken off when the product is saved (the server does it), and said so
+  // here. Nothing is unticked on the card, so changing the tag back loses
+  // nothing.
+  const unitGroup = groups.find((group) => group.kind === "UNIT");
+  const otherListUnits = (unitGroup?.options ?? []).filter((option) => isTicked(option.id) && option.tag !== tag);
+  const unitNote = otherListUnits.length
+    ? `${otherListUnits.map((option) => option.name).join(", ")} will be taken off when you save: units follow the Default tag.`
+    : null;
 
   function toggle(id: string) {
-    const next = new Set(ticked);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setTicked(next);
-    setTouched(true);
+    const nextOn = new Set(on);
+    const nextOff = new Set(off);
+    if (isTicked(id)) {
+      if (nextOn.has(id)) nextOn.delete(id);
+      else nextOff.add(id);
+    } else if (nextOff.has(id)) nextOff.delete(id);
+    else nextOn.add(id);
+    setOn(nextOn);
+    setOff(nextOff);
     setProblem(null);
   }
 
@@ -122,7 +121,6 @@ export function VariationsCard({
       if (!ticked.has(existing.id)) toggle(existing.id);
     } else if (!newLabels.some((label) => same(label.name, name) && (label.groupId ?? label.groupName) === (group.id ?? group.name))) {
       setNewLabels([...newLabels, { key: nextKey(), ...(group.id ? { groupId: group.id } : { groupName: group.name }), name }]);
-      setTouched(true);
     }
     setDraft("");
     setProblem(null);
@@ -140,15 +138,14 @@ export function VariationsCard({
       return;
     }
     if (!newGroups.some((group) => same(group, name))) setNewGroups([...newGroups, name]);
-    setTouched(true);
     setAdding(`new:${name}`);
     setDraft("");
     setProblem(null);
   }
 
   const payload = JSON.stringify({
-    added,
-    removed,
+    added: [...on],
+    removed: [...off],
     newLabels: newLabels.map(({ groupId, groupName, name }) => ({ groupId, groupName, name })),
     newGroups,
   });
@@ -228,8 +225,12 @@ export function VariationsCard({
           <div className="flex flex-wrap items-center gap-1.5" data-testid="variation-group" data-group={unitGroup.name}>
             <span className="label !mb-0 w-24 shrink-0">{unitGroup.name}s</span>
             {unitList.map((option) => chip(option, unitGroup.name))}
-            {unitNote && <p className="w-full text-xs text-[var(--warn)]">{unitNote}</p>}
           </div>
+        )}
+        {unitNote && (
+          <p className="text-xs text-[var(--warn)]" data-testid="unit-note">
+            {unitNote}
+          </p>
         )}
         {unitGroup && unitList.length === 0 && (
           <p className="faint text-xs">No units for {TAG_LABELS[tag as keyof typeof TAG_LABELS] ?? "this tag"}.</p>

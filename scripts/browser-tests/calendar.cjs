@@ -476,7 +476,10 @@ function daysAgo(n) {
 
   log("Coming up is in day order, not clock order");
   await page.goto(`${BASE}/dashboard/projects/${projectId}/schedule`);
-  const order = await page.locator("[data-testid=event-card]").evaluateAll((cards) =>
+  // Only the Coming up card: a seeded November day that is behind us now
+  // sits under Already been, below it (Nov 5, 2026).
+  const comingUp = page.locator("h2", { hasText: /^Coming up$/ }).locator("xpath=ancestor::*[contains(@class,'card')][1]");
+  const order = await comingUp.locator("[data-testid=event-card]").evaluateAll((cards) =>
     cards.map((card) => card.getAttribute("data-start")),
   );
   // A 7am day next month must never sort above a 9:30am day tomorrow, so

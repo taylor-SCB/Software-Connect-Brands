@@ -704,11 +704,12 @@ export async function orderFromSupplier(
 
   // Priced at what the material costs, which is what a purchase order
   // is: the sell price is the customer's business, not the supplier's.
-  // Its labels and unit come from the contract row, or from the quote line
-  // for a row made before Release 3b.
+  // Its labels and unit come from the contract row as it was signed (an
+  // empty list when it had none), or from the quote line for a row made
+  // before Release 3b (null).
   const lineItems = lines.map((line, position) => {
     const unitCostCents = orderUnitCost(line.unitCostCents, line.quoteLineItem?.product?.costCents);
-    const labelled = line.variationText || line.unitLabel || !line.quoteLineItem;
+    const labelled = line.variations !== null || !line.quoteLineItem;
     return {
       name: line.name,
       description: line.description,
