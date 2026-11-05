@@ -137,28 +137,23 @@ export async function repairSupplierRows(organizationId: string, productIds: str
   const ids = [...new Set(productIds)];
   for (let start = 0; start < ids.length; start += SYNC_CHUNK) {
     const chunk = ids.slice(start, start + SYNC_CHUNK);
-    // Decided once, before anything here stamps a row: the statements
-    // below each touch updatedAt, and a later one comparing against those
-    // fresh stamps would skip the very product it is meant to repair.
-    const newer = (
-      await prisma.$queryRaw<{ id: string }[]>`
-        SELECT p."id" FROM "Product" p
-          JOIN "ProductSupplier" s ON s."preferredFor" = p."id"
-         WHERE p."id" = ANY(${chunk}::text[])
-           AND p."organizationId" = ${organizationId}
-           AND p."updatedAt" > s."updatedAt"`
-    ).map((row) => row.id);
-    if (newer.length > 0) {
-      // Set to no supplier after its star was written: no rows, as "— None —"
-      // on the product form leaves it.
-      await prisma.$executeRaw`
-        DELETE FROM "ProductSupplier" AS r
-         USING "Product" p
-         WHERE r."productId" = p."id"
-           AND p."id" = ANY(${newer}::text[])
-           AND p."organizationId" = ${organizationId}
-           AND p."distributorId" IS NULL`;
-    }
+    // Each statement checks "product written after its star" as it runs,
+    // so a row a 3a save stamps a moment ago is left alone. The repair's
+    // own star moves don't stamp the rows (they follow the product, they
+    // aren't newer than it), so the statements after them still see the
+    // product as the newer of the two; the removal runs first for the same
+    // reason.
+    //
+    // Set to no supplier after its star was written: no rows, as
+    // "— None —" on the product form leaves it.
+    await prisma.$executeRaw`
+      DELETE FROM "ProductSupplier" AS r
+       USING "Product" p
+       WHERE r."productId" = p."id"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND p."distributorId" IS NULL
+         AND EXISTS (SELECT 1 FROM "ProductSupplier" s WHERE s."preferredFor" = p."id" AND p."updatedAt" > s."updatedAt")`;
     await prisma.$executeRaw`
       INSERT INTO "ProductSupplier" ("id", "organizationId", "productId", "distributorId", "costCents", "discountBp",
                                      "listPriceCents", "preferredFor", "createdAt", "updatedAt")
@@ -170,44 +165,41 @@ export async function repairSupplierRows(organizationId: string, productIds: str
          AND p."organizationId" = ${organizationId}
          AND NOT EXISTS (SELECT 1 FROM "ProductSupplier" x WHERE x."productId" = p."id" AND x."distributorId" = p."distributorId")
       ON CONFLICT DO NOTHING`;
-    if (newer.length > 0) {
-      // The star onto the supplier the product names: off any other row
-      // first (the star is unique), then onto theirs.
-      await prisma.$executeRaw`
-        UPDATE "ProductSupplier" AS s SET "preferredFor" = NULL, "updatedAt" = now()
-          FROM "Product" p
-         WHERE s."preferredFor" = p."id"
-           AND p."id" = ANY(${newer}::text[])
-           AND p."organizationId" = ${organizationId}
-           AND p."distributorId" IS NOT NULL
-           AND s."distributorId" <> p."distributorId"
-           AND EXISTS (SELECT 1 FROM "ProductSupplier" x WHERE x."productId" = p."id" AND x."distributorId" = p."distributorId")`;
-    }
-    // A product with no star at all (a row just made above, or a star
-    // just taken off) stars the supplier it names.
+    // The star onto the supplier the product names: off any other row
+    // first (the star is unique), then onto theirs — or onto it for a
+    // product with no star at all.
     await prisma.$executeRaw`
-      UPDATE "ProductSupplier" AS s SET "preferredFor" = s."productId", "updatedAt" = now()
+      UPDATE "ProductSupplier" AS s SET "preferredFor" = NULL
+        FROM "Product" p
+       WHERE s."preferredFor" = p."id"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND p."distributorId" IS NOT NULL
+         AND s."distributorId" <> p."distributorId"
+         AND p."updatedAt" > s."updatedAt"
+         AND EXISTS (SELECT 1 FROM "ProductSupplier" x WHERE x."productId" = p."id" AND x."distributorId" = p."distributorId")`;
+    await prisma.$executeRaw`
+      UPDATE "ProductSupplier" AS s SET "preferredFor" = s."productId"
         FROM "Product" p
        WHERE s."productId" = p."id"
          AND s."distributorId" = p."distributorId"
          AND p."id" = ANY(${chunk}::text[])
          AND p."organizationId" = ${organizationId}
          AND NOT EXISTS (SELECT 1 FROM "ProductSupplier" y WHERE y."preferredFor" = p."id")`;
-    if (newer.length > 0) {
-      // The starred row carries the product's COGS (worked back through
-      // its discount) and MSRP where the two have drifted apart.
-      await prisma.$executeRaw`
-        UPDATE "ProductSupplier" AS s
-           SET "costCents" = CASE WHEN s."discountBp" <= 0 THEN p."costCents"
-                                  ELSE LEAST(ROUND(p."costCents"::numeric * 10000 / (10000 - LEAST(s."discountBp", ${MAX_DISCOUNT_BP}))), 2147483647)::int END,
-               "listPriceCents" = p."listPriceCents",
-               "updatedAt" = now()
-          FROM "Product" p
-         WHERE s."preferredFor" = p."id"
-           AND p."id" = ANY(${newer}::text[])
-           AND p."organizationId" = ${organizationId}
-           AND (ROUND(s."costCents"::numeric * (10000 - LEAST(GREATEST(s."discountBp", 0), ${MAX_DISCOUNT_BP})) / 10000) <> p."costCents"
-                OR s."listPriceCents" IS DISTINCT FROM p."listPriceCents")`;
-    }
+    // The starred row carries the product's COGS (worked back through its
+    // discount) and MSRP where the two have drifted apart.
+    await prisma.$executeRaw`
+      UPDATE "ProductSupplier" AS s
+         SET "costCents" = CASE WHEN s."discountBp" <= 0 THEN p."costCents"
+                                ELSE LEAST(ROUND(p."costCents"::numeric * 10000 / (10000 - LEAST(s."discountBp", ${MAX_DISCOUNT_BP}))), 2147483647)::int END,
+             "listPriceCents" = p."listPriceCents",
+             "updatedAt" = now()
+        FROM "Product" p
+       WHERE s."preferredFor" = p."id"
+         AND p."id" = ANY(${chunk}::text[])
+         AND p."organizationId" = ${organizationId}
+         AND p."updatedAt" > s."updatedAt"
+         AND (ROUND(s."costCents"::numeric * (10000 - LEAST(GREATEST(s."discountBp", 0), ${MAX_DISCOUNT_BP})) / 10000) <> p."costCents"
+              OR s."listPriceCents" IS DISTINCT FROM p."listPriceCents")`;
   }
 }

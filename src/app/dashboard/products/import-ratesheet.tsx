@@ -530,6 +530,9 @@ export function ImportRatesheet({
     else if (supplierChoice.startsWith(PLATFORM_SUPPLIER_PREFIX))
       form.set("platformSupplierId", supplierChoice.slice(PLATFORM_SUPPLIER_PREFIX.length));
     else if (supplierChoice) form.set("supplierId", supplierChoice);
+    // Whose products the preview was worked out for (blank: a new
+    // supplier), so the server can refuse to save a plan for anyone else.
+    form.set("previewSupplierId", supplierId ?? "");
     form.set(
       "tabs",
       JSON.stringify(tabs.map((tab) => ({ sheetIndex: tab.sheetIndex, included: tab.included, roles: tab.roles }))),

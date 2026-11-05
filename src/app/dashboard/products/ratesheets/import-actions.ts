@@ -387,22 +387,43 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
   // preview showed that supplier's products as someone else's, at another
   // discount, so what it would save isn't what was shown.
   // Who was on file before this import could make anyone (ids, not
-  // timestamps: the app's clock and the database's needn't agree).
+  // timestamps: the app's clock and the database's needn't agree), and
+  // whose products the screen's preview was worked out for (blank for a
+  // new supplier; an older screen that doesn't say is taken at the
+  // server's own reading).
   const onFileBefore = new Map(
-    (await prisma.distributor.findMany({ where: { organizationId }, select: { id: true, name: true } })).map((row) => [row.id, row.name]),
+    (
+      await prisma.distributor.findMany({
+        where: { organizationId },
+        select: { id: true, name: true, platformOrganizationId: true },
+      })
+    ).map((row) => [row.id, row]),
   );
+  const previewed = formData.has("previewSupplierId") ? text(formData, "previewSupplierId", 60) || null : plannedFor;
   const unplanned = (distributorId: string) => {
-    if (distributorId === plannedFor || !onFileBefore.has(distributorId)) return null;
-    return `${onFileBefore.get(distributorId)} is already one of your suppliers. Pick it under "Who sent it?" so the preview shows what changes on its products, then import.`;
+    if (distributorId === previewed || !onFileBefore.has(distributorId)) return null;
+    return `${onFileBefore.get(distributorId)!.name} is already one of your suppliers. Pick it under "Who sent it?" so the preview shows what changes on its products, then import.`;
   };
   let supplier: { id: string; name: string };
   if (existingSupplier) {
+    const refused = unplanned(existingSupplier.id);
+    if (refused) return { ok: false, error: refused };
     supplier = existingSupplier;
   } else if (platformSupplier) {
     const linked = await linkPlatformSupplier(organizationId, platformSupplier.id);
     if (!linked.ok) return { ok: false, error: linked.error };
     const refused = unplanned(linked.distributorId);
-    if (refused) return { ok: false, error: refused };
+    if (refused) {
+      // Nothing goes in, so the link this import just made comes off too:
+      // left on, the next click would find it and import as that supplier.
+      if (onFileBefore.get(linked.distributorId)?.platformOrganizationId === null) {
+        await prisma.distributor.updateMany({
+          where: { id: linked.distributorId, organizationId, platformOrganizationId: platformSupplier.id },
+          data: { platformOrganizationId: null, platformLinkedAs: null, platformLinkedAt: null },
+        });
+      }
+      return { ok: false, error: refused };
+    }
     supplier = { id: linked.distributorId, name: linked.name };
     if (supplier.id !== plannedFor) ({ plan } = await planFor(supplier.id));
   } else {

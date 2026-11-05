@@ -774,6 +774,17 @@ async function login(page) {
   await page.getByTestId("ratesheet-import").click();
   await page.getByText(/^ADI is already one of your suppliers\./).waitFor();
   assert.equal((await product("AP-1")).costCents, 15000, "nothing written through the account either");
+  assert.equal(
+    (await sql(`SELECT "platformOrganizationId" FROM "Distributor" WHERE id='dst_cs_adi'`)).rows[0].platformOrganizationId,
+    null,
+    "the link the refused import made comes off with it",
+  );
+  // Clicking Import again (the dialog keeps its state) is refused again,
+  // rather than finding ADI by the link and importing as ADI.
+  await page.getByTestId("ratesheet-import").click();
+  await page.waitForTimeout(1500);
+  await page.getByText(/^ADI is already one of your suppliers\./).waitFor();
+  assert.equal((await product("AP-1")).costCents, 15000, "still nothing written");
   await page.getByLabel("Close").first().click();
 
   log("fix review: a save whose answer is lost re-reads the list, so an untick after it is sent");
