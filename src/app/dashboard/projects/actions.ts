@@ -33,6 +33,7 @@ import { publicToken } from "@/lib/tokens";
 import { hasFile, readUpload, MAX_DOCUMENT_BYTES } from "@/lib/uploads";
 import { deleteObject } from "@/lib/storage";
 import { pickPrimaryQuote } from "@/lib/deals";
+import { contractRowLabels } from "@/lib/variations";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -337,6 +338,10 @@ export async function awardWithoutPaperwork(
               tag: true,
               serviceType: true,
               cancelledAt: true,
+              variations: true,
+              variationText: true,
+              unitOfMeasure: true,
+              unitLabel: true,
               product: { select: { costCents: true } },
             },
           },
@@ -404,6 +409,7 @@ export async function awardWithoutPaperwork(
     tag: line.tag,
     serviceType: line.serviceType,
     unitCostCents: line.product ? line.product.costCents : null,
+    ...contractRowLabels(line),
     position,
   }));
   const subtotalCents = contractSubtotalCents(lineItems);
@@ -681,9 +687,44 @@ export async function orderFromSupplier(
       serviceType: true,
       scopeId: true,
       quoteLineItemId: true,
-      quoteLineItem: { select: { product: { select: { costCents: true } } } },
+      variations: true,
+      variationText: true,
+      unitLabel: true,
+      quoteLineItem: {
+        select: {
+          product: { select: { costCents: true } },
+          variations: true,
+          variationText: true,
+          unitOfMeasure: true,
+          unitLabel: true,
+        },
+      },
     },
   });
+
+  // Priced at what the material costs, which is what a purchase order
+  // is: the sell price is the customer's business, not the supplier's.
+  // Its labels and unit come from the contract row as it was signed (an
+  // empty list when it had none), or from the quote line for a row made
+  // before Release 3b (null).
+  const lineItems = lines.map((line, position) => {
+    const unitCostCents = orderUnitCost(line.unitCostCents, line.quoteLineItem?.product?.costCents);
+    const labelled = line.variations !== null || !line.quoteLineItem;
+    return {
+      name: line.name,
+      description: line.description,
+      quantity: line.quantity,
+      unitPriceCents: unitCostCents,
+      tag: line.tag,
+      serviceType: line.serviceType,
+      unitCostCents,
+      scopeId: line.scopeId,
+      quoteLineItemId: line.quoteLineItemId,
+      ...contractRowLabels(labelled ? { ...line, unitOfMeasure: null } : line.quoteLineItem!),
+      position,
+    };
+  });
+  const totalCents = contractTotalCents(lineItems);
 
   // Outside the transaction, and before the company is written: a company
   // tagged with a type the pick list doesn't carry renders as an orphan
@@ -770,26 +811,11 @@ export async function orderFromSupplier(
       contractNumber: `CON-${number}`,
       paymentTerms: organization.defaultPaymentTerms,
       signerName: owner?.name ?? null,
+      // Its own rows at cost: {{contract_total}} and {{line_items}} on a
+      // purchase order are what the supplier is asked for, never the
+      // customer's quote (which they read before Release 3b).
+      lineItems,
     });
-
-    // Priced at what the material costs, which is what a purchase order
-    // is: the sell price is the customer's business, not the supplier's.
-    const lineItems = lines.map((line, position) => {
-      const unitCostCents = orderUnitCost(line.unitCostCents, line.quoteLineItem?.product?.costCents);
-      return {
-        name: line.name,
-        description: line.description,
-        quantity: line.quantity,
-        unitPriceCents: unitCostCents,
-        tag: line.tag,
-        serviceType: line.serviceType,
-        unitCostCents,
-        scopeId: line.scopeId,
-        quoteLineItemId: line.quoteLineItemId,
-        position,
-      };
-    });
-    const totalCents = contractTotalCents(lineItems);
 
     const contract = await tx.contract.create({
       data: {

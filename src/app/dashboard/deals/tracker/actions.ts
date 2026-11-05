@@ -27,6 +27,7 @@ import { loadPaymentDefaults } from "@/lib/tracker";
 import { discountInputSchema, newScheduleRowSchema } from "@/lib/schedule-input";
 import { refreshTotals, refreshTotalsForContract, refreshProjectTotals, syncProjectScopes } from "@/lib/projects";
 import { syncContractEvents } from "@/lib/calendar-auto";
+import { contractRowLabels } from "@/lib/variations";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -183,6 +184,9 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       // later when the catalog or the quote does.
       serviceType: line.serviceType,
       unitCostCents: line.product ? line.product.costCents : null,
+      // Release 3b: its labels and a workspace unit's name, as the quote
+      // line has them.
+      ...contractRowLabels(line),
       position,
     }));
     // The whole-contract discount is worked out here against the rows as

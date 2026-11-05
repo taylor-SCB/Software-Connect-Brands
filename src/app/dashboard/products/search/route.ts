@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { cleanSearch } from "@/lib/list-params";
 import { productSearchWhere } from "@/lib/product-list";
 import { STARRED_MINIMUM_SELECT, starredMinimumCents } from "@/lib/supplier-math";
+import { lineLabelsFor } from "@/lib/line-labels";
 
 // The most products one ratesheet holds (ratesheets/actions.ts).
 const RATESHEET_MAX = 2000;
@@ -20,6 +21,8 @@ const RATESHEET_MAX = 2000;
 //   ?all=1           every match up to 2,000 (a ratesheet's limit), for
 //                    "Select all"
 //   ?id=…&id=…       those products, for a picker showing what is ticked
+//   ?withVariations=1 each product's labels and pictures too, for a quote
+//                    line's pickers (never with all=1)
 export async function GET(request: Request) {
   const { organizationId } = await requireSession();
   const url = new URL(request.url);
@@ -27,6 +30,7 @@ export async function GET(request: Request) {
   const ids = url.searchParams.getAll("id").slice(0, 200);
   const activeOnly = url.searchParams.get("active") === "1";
   const all = url.searchParams.get("all") === "1";
+  const withVariations = !all && url.searchParams.get("withVariations") === "1";
   const take = all ? RATESHEET_MAX : Math.min(50, Math.max(1, Number(url.searchParams.get("take")) || 20));
   const skip = all ? 0 : Math.min(100_000, Math.max(0, Math.floor(Number(url.searchParams.get("skip")) || 0)));
 
@@ -41,6 +45,8 @@ export async function GET(request: Request) {
     unitOfMeasure: true,
     softwareRate: true,
     softwareTerm: true,
+    customUnitId: true,
+    customUnit: { select: { name: true } },
     active: true,
     manufacturer: { select: { name: true } },
     // The starred supplier's minimum, for the quote line's red flag.
@@ -76,15 +82,30 @@ export async function GET(request: Request) {
   // match off this page, and "Show 50 more" starts after it.
   const seen = new Set<string>();
   const rows = [...exact, ...matches].filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)));
-  return NextResponse.json(rows.map(flatten), { headers: { "Cache-Control": "private, no-store" } });
+  const labels = withVariations ? await lineLabelsFor(organizationId, rows.map((row) => row.id)) : null;
+  return NextResponse.json(
+    rows.map((row) => ({ ...flatten(row), ...(labels ? { labels: labels[row.id] ?? null } : {}) })),
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 
 function flatten<
   T extends {
+    unitOfMeasure: string | null;
+    customUnitId: string | null;
+    customUnit: { name: string } | null;
     manufacturer: { name: string } | null;
     suppliers: { costCents: number; discountBp: number; minMarginBp: number | null; preferredFor: string | null }[];
   },
 >(row: T) {
-  const { manufacturer, suppliers, ...rest } = row;
-  return { ...rest, manufacturerName: manufacturer?.name ?? null, minPriceCents: starredMinimumCents(suppliers) };
+  const { manufacturer, suppliers, customUnit, customUnitId, ...rest } = row;
+  // A workspace unit counts only while no built-in one is set.
+  const ownUnit = rest.unitOfMeasure ? null : customUnitId;
+  return {
+    ...rest,
+    customUnitId: ownUnit,
+    customUnitName: ownUnit ? (customUnit?.name ?? null) : null,
+    manufacturerName: manufacturer?.name ?? null,
+    minPriceCents: starredMinimumCents(suppliers),
+  };
 }

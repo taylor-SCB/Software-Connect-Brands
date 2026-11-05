@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { renderPdf, baseUrlFromRequest, safeFilename } from "@/lib/pdf";
+import { renderPdf, baseUrlFromRequest, safeFilename, PdfTooLargeError } from "@/lib/pdf";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -50,6 +50,7 @@ export async function GET(
       },
     });
   } catch (error) {
+    if (error instanceof PdfTooLargeError) return new Response(error.message, { status: 413 });
     console.error("[invoice pdf]", error);
     return new Response("Could not generate the PDF. Try again in a moment.", { status: 500 });
   }

@@ -20,7 +20,7 @@ export function CatalogPicker({ onPick }: { onPick: (product: CatalogResult) => 
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const searchUrl = (text: string) => `/dashboard/products/search?active=1&q=${encodeURIComponent(text.trim())}`;
+  const searchUrl = (text: string) => `/dashboard/products/search?active=1&withVariations=1&q=${encodeURIComponent(text.trim())}`;
   const { results, loading } = useSearch<CatalogResult>(open ? searchUrl(query) : null);
 
   useEffect(() => {
@@ -106,7 +106,9 @@ export function CatalogPicker({ onPick }: { onPick: (product: CatalogResult) => 
           className="card popover absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto py-1 sm:w-[26rem]"
         >
           {results.map((product, index) => {
-            const unit = product.unitOfMeasure ? UNIT_LABELS[product.unitOfMeasure as UnitOfMeasureValue] : null;
+            const unit = product.unitOfMeasure
+              ? UNIT_LABELS[product.unitOfMeasure as UnitOfMeasureValue]
+              : (product.customUnitName ?? null);
             return (
               <li
                 key={product.id}

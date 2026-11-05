@@ -30,6 +30,8 @@ import { basisPointsToPercent, marginPercent, markupPercent, percentToBasisPoint
 import { supplierMoney } from "@/lib/supplier-math";
 import { IconPlus, IconTrash, IconMail, IconPhone, IconEdit, IconCheck } from "@/components/icons";
 import type { ActionState } from "@/lib/forms";
+import { VariationsCard, type CardGroup } from "./variations-card";
+import { containsText, customUnitIdOf, customUnitValue } from "@/lib/variation-shared";
 import {
   LINKED_SUPPLIER_SUFFIX,
   PLATFORM_SECTION_LABEL,
@@ -68,6 +70,9 @@ export type ProductFormDefaults = {
   defaultTag?: string;
   serviceType?: string | null;
   unitOfMeasure?: string | null;
+  // One of the workspace's own units (Release 3b), when unitOfMeasure is
+  // null.
+  customUnitId?: string | null;
   softwareRate?: string | null;
   softwareTerm?: number | null;
   manufacturerId?: string | null;
@@ -77,6 +82,16 @@ export type ProductFormDefaults = {
   // Everyone who sells it to you (Release 3a); the starred one is
   // distributorId above.
   suppliers?: FormSupplierRow[];
+};
+
+// A workspace's own unit, for the Unit box.
+export type FormCustomUnit = {
+  id: string;
+  name: string;
+  tag: string;
+  contains: number | null;
+  baseUnit: string | null;
+  archived: boolean;
 };
 
 export type FormSupplierRow = {
@@ -111,6 +126,9 @@ function draftMoney(row: SupplierDraft) {
 
 // Sentinel option value meaning "let me type a new one".
 const NEW = "__new__";
+// "+ Add custom unit…" in the Unit box.
+const NEW_UNIT = "__newunit__";
+const CUSTOM_UNIT_TAGS = ["LABOR", "MATERIALS"];
 
 const TAG_OPTIONS = LINE_ITEM_TAGS.map((tag) => ({ value: tag, label: TAG_LABELS[tag] }));
 
@@ -128,6 +146,9 @@ export function ProductForm({
   distributors,
   platformSuppliers = [],
   serviceTypes,
+  variationGroups = [],
+  savedVariationIds = [],
+  customUnits = [],
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   defaults?: ProductFormDefaults;
@@ -137,6 +158,11 @@ export function ProductForm({
   // Accounts on Software Connect Brands this workspace hasn't linked yet.
   platformSuppliers?: PlatformSupplier[];
   serviceTypes: string[];
+  // Release 3b: the workspace's label groups (with any retired label the
+  // product still has), the product's own, and the workspace's units.
+  variationGroups?: CardGroup[];
+  savedVariationIds?: string[];
+  customUnits?: FormCustomUnit[];
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
   const active = defaults?.active ?? true;
@@ -145,12 +171,25 @@ export function ProductForm({
   // plain text fields stay uncontrolled like the rest of the app's forms.
   const [manufacturerId, setManufacturerId] = useState(defaults?.manufacturerId ?? "");
   const [tag, setTag] = useState(defaults?.defaultTag ?? "MATERIALS");
-  const [unit, setUnit] = useState(defaults?.unitOfMeasure ?? "");
+  // A built-in unit's enum value, "cu:<id>" for one of the workspace's own
+  // (Release 3b), or NEW_UNIT while one is being typed.
+  const savedUnit = defaults?.customUnitId ? customUnitValue(defaults.customUnitId) : (defaults?.unitOfMeasure ?? "");
+  const [unit, setUnit] = useState(savedUnit);
   // Set when a tag change had to drop the unit, so the blank field is
   // explained rather than silently emptied.
   const [unitCleared, setUnitCleared] = useState(false);
   const allowedGroups = unitGroupsForTag(tag);
   const hasUnits = tagHasUnits(tag);
+  const ownUnits = CUSTOM_UNIT_TAGS.includes(tag);
+  const [newUnitBase, setNewUnitBase] = useState("");
+
+  // Whether a unit value can stay on a product of this tag.
+  function unitFits(value: string, nextTag: string) {
+    if (value === NEW_UNIT) return CUSTOM_UNIT_TAGS.includes(nextTag);
+    const customId = customUnitIdOf(value);
+    if (customId) return customUnits.find((item) => item.id === customId)?.tag === nextTag;
+    return unitAllowedForTag(value, nextTag);
+  }
 
   function changeTag(next: string) {
     setTag(next);
@@ -158,11 +197,22 @@ export function ProductForm({
       // No unit field at all for these tags, so nothing to explain.
       setUnit("");
       setUnitCleared(false);
-    } else if (!unitAllowedForTag(unit, next)) {
+    } else if (!unitFits(unit, next)) {
       setUnit("");
       setUnitCleared(unit !== "");
     }
+    setNewUnitBase("");
   }
+
+  // A unit made with "+ Add custom unit…" is an ordinary one once saved.
+  const [seenUnit, setSeenUnit] = useState(savedUnit);
+  if (savedUnit !== seenUnit) {
+    setSeenUnit(savedUnit);
+    if (unit === NEW_UNIT || unit === seenUnit) setUnit(savedUnit);
+  }
+  const customUnitsForTag = customUnits.filter(
+    (item) => item.tag === tag && (!item.archived || customUnitValue(item.id) === savedUnit),
+  );
 
   function changeUnit(next: string) {
     setUnit(next);
@@ -741,7 +791,74 @@ export function ProductForm({
                         ))}
                       </optgroup>
                     ))}
+                    {ownUnits && customUnitsForTag.length > 0 && (
+                      <optgroup label="Your units">
+                        {customUnitsForTag.map((item) => (
+                          <option key={item.id} value={customUnitValue(item.id)}>
+                            {item.name}
+                            {item.archived ? " (retired)" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {/* A saved unit of the workspace's own that this tag
+                        can't have is offered back, labelled, or the box
+                        would fall back to the first option. */}
+                    {customUnitIdOf(unit) && !customUnitsForTag.some((item) => customUnitValue(item.id) === unit) && (
+                      <option value={unit}>
+                        {customUnits.find((item) => customUnitValue(item.id) === unit)?.name ?? "Your unit"} (not on this list)
+                      </option>
+                    )}
+                    {ownUnits && <option value={NEW_UNIT}>+ Add custom unit…</option>}
                   </select>
+                  {unit === NEW_UNIT && (
+                    <div className="mt-2 space-y-2 rounded-lg border border-[var(--border)] p-2" data-testid="new-unit-fields">
+                      <input
+                        name="newUnitName"
+                        placeholder="Box of 12"
+                        aria-label="New unit name"
+                        maxLength={40}
+                        required
+                        autoFocus
+                        className="input input-sm"
+                      />
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span>Contains</span>
+                        <input
+                          name="newUnitContains"
+                          inputMode="decimal"
+                          placeholder="12"
+                          aria-label="How many it contains"
+                          required
+                          className="input input-sm num w-16"
+                        />
+                        <select
+                          name="newUnitBase"
+                          value={newUnitBase}
+                          onChange={(event) => setNewUnitBase(event.target.value)}
+                          aria-label="Of which unit"
+                          required
+                          className="select input-sm w-auto"
+                        >
+                          <option value="">of…</option>
+                          {allowedGroups.flatMap((group) =>
+                            UNIT_GROUPS[group].map((value) => (
+                              <option key={value} value={value}>
+                                {UNIT_LABELS[value]}
+                              </option>
+                            )),
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                  {(() => {
+                    const picked = customUnits.find((item) => customUnitValue(item.id) === unit);
+                    const text = picked
+                      ? containsText(picked.contains, picked.baseUnit ? UNIT_LABELS[picked.baseUnit as keyof typeof UNIT_LABELS] : null)
+                      : null;
+                    return text ? <p className="faint mt-1 text-xs" data-testid="unit-contains">{picked!.name} {text}.</p> : null;
+                  })()}
                   {unitCleared ? (
                     <p className="mt-1 text-xs text-[var(--warn)]">
                       Unit cleared — pick one from the {TAG_LABELS[tag as keyof typeof TAG_LABELS]} list.
@@ -1216,6 +1333,11 @@ export function ProductForm({
           )}
         </div>
       </Card>
+
+      {/* ---------- Variations (Release 3b) ---------- */}
+      {variationGroups.length > 0 && (
+        <VariationsCard groups={variationGroups} savedIds={savedVariationIds} tag={tag} saveState={state} />
+      )}
 
       <FormError message={state?.error} />
       <FormSuccess message={state?.success} />

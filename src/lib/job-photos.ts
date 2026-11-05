@@ -146,6 +146,7 @@ export async function startMediaUpload(
     key,
     ticket: uploadTicket({
       organizationId: actor.organizationId,
+      purpose: "job-photo",
       projectId: actor.projectId,
       key,
       type,
@@ -171,7 +172,14 @@ export async function finishMediaUpload(
   input: { fileName: string; uploadedByName?: string; tagIds?: string[] },
 ): Promise<{ error?: string; ok?: true }> {
   const ticket = readUploadTicket(rawTicket);
-  if (!ticket || ticket.projectId !== actor.projectId || ticket.organizationId !== actor.organizationId) {
+  if (
+    !ticket ||
+    (ticket.purpose ?? "job-photo") !== "job-photo" ||
+    ticket.productId ||
+    !ticket.projectId ||
+    ticket.projectId !== actor.projectId ||
+    ticket.organizationId !== actor.organizationId
+  ) {
     return { error: "This upload took too long and expired. Send it again." };
   }
   const parsed = finishSchema.safeParse(input);
@@ -191,7 +199,7 @@ export async function finishMediaUpload(
   await prisma.upload.create({
     data: {
       organizationId: ticket.organizationId,
-      projectId: ticket.projectId,
+      projectId: actor.projectId,
       kind: "PROJECT_FILE",
       name: fileName.replace(/\.[^.]+$/, "").slice(0, 160) || fileName,
       fileName,

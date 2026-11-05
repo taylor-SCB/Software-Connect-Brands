@@ -428,7 +428,7 @@ and 24 s at 8,600), the picker's search in 0.12 s, a 25,000-row sheet
 imported in 9 s, and the 8,000 same-named tees previewed in 2.3 s and
 imported in 4 s. **Order materials** prices a row at the catalog cost
 when its contract captured $0 (Taylor, Oct 25, 2026); a real captured
-cost is kept. The agreed next releases, in order: 2 account types +
+cost is kept. The agreed next releases, in order (re-ordered Nov 5, 2026: 3b, then the apparel pack, then 4, 5, 6): 2 account types +
 Admin Create Account (done Oct 25, below); 3 the deeper catalog (3a done Nov 4, below; 3b is the variation labels, custom units and images) (each ratesheet a row with
 its own search and a See product list pop-out with COGS discount and a
 required minimum markup and Cancel / Save and accept; per-supplier
@@ -556,6 +556,98 @@ COGS = round(price × (1 − discount)), minimum = ceil(COGS ÷ (1 −
 margin)), both capped at 95%. Proven by `catalog-suppliers.cjs` and the
 25,000-line steps of `products-load-test.cjs`.
 
+**Variation labels, units and pictures (Release 3b, approved Nov 5, built
+Nov 6, 2026; plan: the "Release 3b Plan" artifact).** Taylor's calls:
+labels are picked on the quote line and printed under the product name
+on the customer's quote, the contract and the supplier's purchase order;
+generic product pictures show small on the customer's quote, its PDF and
+partner ratesheets, and a sent quote keeps the picture it went out with;
+Add product lands on the new product's page ("Product added. Add
+pictures below."); anyone adds a label or unit, only Owners and Admins
+rename, retire, restore or reorder (`requireAdminSession().allowed`).
+**Labels**: `VariationGroup` (Unit, Color, Size built in, fixed names,
+seeded on first read with the 19 built-in units as Unit options; the
+workspace's own groups such as Sleeve or Print location, up to 20) and
+`VariationOption` (up to 300 a group, 40 characters, matched with
+lower(), a retired one refused by name rather than quietly re-used);
+`src/lib/variations.ts` (server) and `src/lib/variation-shared.ts`
+(browser-safe). A product ticks the labels it comes in
+(`ProductVariation`) on the **Variations** card
+(`products/variations-card.tsx`), which posts only the chips clicked on
+it (`added` / `removed` / new labels and groups) and only once one was
+(`variationsPresent=1`): a price save, or a save after a refresh brought
+in another tab's labels, never takes off a label it didn't click, and a
+retired label the product has is drawn "(retired)". Units from another
+tag's list come off when the product is saved (the server does it; the
+card says so and unticks nothing, so changing the tag back loses
+nothing). **Units**: a workspace's own unit
+("Box of 12" contains 12 Each, display only until Release 6) is a Unit
+option with `contains`, `baseUnit` and a tag, **Labor and Materials
+only** (a Software product's rate and term need a built-in Software
+unit). `Product.customUnitId` / `QuoteLineItem.customUnitId` count only
+while `unitOfMeasure` is null — code from before 3b writes the enum and
+it wins — and every new write sets one and clears the other. The Unit box
+and a quote line's unit select carry "Your units" (`cu:<id>`) and
+"+ Add custom unit…"; built-in units still print nowhere a customer sees,
+a workspace unit does (`customUnitLabel`). **Quote lines**: one select per
+group the product has (units never), plus any group the line already
+has, a label no longer offered offered back "(no longer offered)". The
+line keeps what it was written with (`variations` JSON of group, option
+and both names, and `variationText` "Black · L"): picks are sent only
+when changed in the editor, kept entries are copied as stored and new
+ones take today's names, so a rename on Labels & Units never rewrites a
+sent quote. Every check is a batched read before the save's transaction
+(a 200-line quote saves in about a second through the slow proxy).
+**Pictures**: `ProductImage`, up to six a product, positions 0..n-1 with
+the lowest the main one; three copies made in the browser
+(`src/lib/image-resize.ts`: display 1600 px and thumb 400 px as WebP, or
+JPEG on white where Safari can't make WebP — checked after every encode
+— and a 160 px JPEG for documents), sent straight to the private Blob
+store with tickets (`purpose: 'product-image'`, a role each; job-photo
+tickets read `purpose ?? 'job-photo'`), written by an idempotent finish
+step (`src/lib/product-images.ts`, `products/picture-actions.ts`,
+`products/pictures-card.tsx`). A picture can belong to a Color: a quote
+line shows the one tagged with its Color, else the main one. Remove closes
+the gap in one locked transaction; a picture a sent quote's line holds is
+kept (position null, `removedAt`) and swept with its files once nothing
+holds it; files go only when no row has the key (clones share them).
+`/files/<token>` serves a picture publicly like a logo — `?v=thumb`,
+`?v=doc` — **always streamed, never a redirect to Blob**, cached
+`public, s-maxage=31536000, immutable` (a new picture is a new token). A
+draft quote shows the product's pictures live; **leaving Draft writes
+each line's picture onto it** (`freezeQuotePictures` in
+`setQuoteStatus`, only on Draft → Sent / Accepted / Declined: an answer
+never swaps a picture the customer has), **Back to Draft lets them go**
+(`releaseQuotePictures`), and changing a sent line's product or labels
+takes the new picture. A typed line that Save as product links to a
+catalog product by name takes its picture too. Contract rows copy `variations`, `variationText` and the
+workspace unit's name at the Coordinator, Award and Order materials
+(`contractRowLabels`; a row with none stores an empty list, so a purchase
+order fills labels from the quote line only for a row made before 3b,
+which stores null — a row signed with no labels never takes a later
+quote edit); the contract document, the Coordinator grid, the
+job's scopes and Award show them; `{{line_items}}` adds " (Black · L)"
+only when present. **Order materials now passes the purchase order's own
+rows (at cost) to the merge fields**, so its body's ORDER TOTAL is what
+the supplier is asked for — before 3b it read the customer's quote. A
+PDF's session cookie is set for the site only, the bypass header goes on
+same-site requests only, and a PDF over 4 MB is refused in words. The
+**Labels & Units** tab (`/dashboard/products/labels`) lists every group
+with its labels, how many products have each (ticked, or as the
+product's own unit, each product once), and a Retired section with
+Restore. A quote line takes up to 25 labels, one a group. The Products list shows each product's main picture and "4 colors
+· 4 sizes". Supplier sheets' Color / Size / pack columns wait for Release
+4; prices per label for Releases 6 and 7.
+**The apparel pack moves up to right after 3b** (Taylor, Nov 5, 2026: his
+main focus is acquiring Hauffs Sports, which prints schools' logos on team
+gear): Artwork per customer company, proofs (a logo placed on a product,
+color and print location, AI-rendered at about $2 an image, metered per
+account), approval from a link like contract signing, and the approved
+proof on the quote line and the printer's purchase order. **It is turned on
+by a switch in Settings ("We do apparel / custom print"), not an account
+type**, keeping the Oct 25 rule that the type turns no button on or off.
+Releases 4 (AI upload), 5 (publishing) and 6 (inventory) follow it.
+
 **Mobile on contacts (Oct 27, 2026).** `Contact.mobile` is its own
 field, shown on the contact page and edit form, found by the list
 search, kept by Merge Contacts, and never copied to a company's phone.
@@ -664,8 +756,8 @@ are all blocking before the first paying customer.
   link and logs it; the app says so on the screen.
 - **A ratesheet is read up to 25,000 rows.** Past that the rest are
   left out and the preview says so; a bigger catalog comes in as two
-  sheets. There is no unit for a box, roll or case yet (the units are a
-  fixed list); custom units are Release 3.
+  sheets. A sheet's Unit column is read against the built-in units only:
+  a workspace's own units (Box of 12) are picked by hand until Release 4.
 - **PDF ratesheets aren't read.** Excel and CSV only; a PDF is refused in
   words and can still be saved with Upload File or declined.
 - **Only Order materials falls back to the catalog cost.** A contract
@@ -688,8 +780,32 @@ are all blocking before the first paying customer.
 - **A discount typed on a product's supplier row is overwritten when
   that sheet's discount is changed** in its product list (it goes onto
   every row the sheet set). A row a newer sheet set is left alone.
-- **Variation labels, custom units and product images are Release 3b,**
-  not built.
+- **Product pictures went through the local driver only.** The Blob path
+  (client upload, `head`, the streamed read) is first exercised on the
+  live site, like job photos; check `[storage]` in the runtime logs after
+  the first upload. **The first iPhone / Safari upload is checked on the
+  live site too**: Safari can't make WebP, which the suite fakes in
+  Chromium; a Safari upload should land as `.jpg`.
+- **A picture upload abandoned part-way leaves its files in Blob** (tab
+  closed between the copies and the finish), and deleting a workspace
+  leaves its pictures, as with job photos. A sweep by the
+  `org/<id>/products/` prefix is the fix when it matters.
+- **Pictures are public by link, like logos**: anyone holding a picture's
+  `/files/<token>` address can open it. They are generic product photos;
+  nothing private belongs there.
+- **Quotes sent before 3b show no pictures**: they went out with none. A
+  draft shows them as soon as the product has one.
+- **Pictures print on quotes, their PDFs and partner ratesheets only**,
+  not on contracts or purchase orders (labels do). The apparel pack's
+  proofs are where a picture reaches the printer.
+- **The quote editor's label select shows today's names**, while the
+  sent quote, its PDF and its contracts keep the names they went out with.
+  A rename is meant to show on new lines; a line only takes it when its
+  pick is changed.
+- **A workspace unit's "contains" is printed, never calculated** (Release
+  6): 3 Box of 12 is 3 on the quote and the purchase order.
+- **Built-in units still don't print on a customer's quote or contract**
+  (they never have); a workspace's own unit does.
 - **Ticking a line in See product list prices from that sheet, except
   over a newer one.** A line whose product a newer sheet of the same
   supplier priced is linked to it and left alone ("already priced from a
@@ -777,7 +893,12 @@ are all blocking before the first paying customer.
 - **"Receive in-app messages" is a stored switch only.** There is no
   in-app messaging yet.
 - **No billing.** Nothing charges anybody.
-- **`AUTH_SECRET` was exposed in chat and still needs rotating.**
+- **`AUTH_SECRET` was rotated Nov 5, 2026** (Taylor, in Vercel, all three
+  environments, then a redeploy) after the old one was exposed in chat.
+  The old value no longer signs anything.
+- **`BLOB_READ_WRITE_TOKEN` reads "Needs Attention" in Vercel**: it is
+  stored as a readable value rather than a Sensitive one. Re-saving it as
+  Sensitive is a Vercel click for Taylor; nothing in the app changes.
 - **The GitHub repository is public.**
 - Operator access (`isSuperAdmin`) is deliberately unreachable from the app.
   It is only ever set with SQL or `npm run promote-admin`.
@@ -911,7 +1032,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-five** are checked in at
+suite, and the delete-confirmation suite. **Thirty-six** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1025,11 +1146,44 @@ part numbers, the newest sheet's tick, a quantity under one, a typed
 markup after a save, a sheet's discount after an outside write; and one
 for the last review — an outside switch onto a supplier already on the
 product, None with a new COGS, a discounted quote line exactly at the
-minimum).
+minimum), and from Nov 6, 2026 `variations-pictures.cjs` (30, Release
+3b: Add product landing on its page with labels typed and a Box of 12
+unit, a price save leaving labels alone, an untick taking only that one,
+a retired label kept and refused by name, a tag change dropping units and
+Software offering no workspace unit, pictures made small in the browser,
+Make main, a Color, Safari's missing WebP faked so a cut-out lands as JPEG
+on white, the six cap, Remove closing the gap, the list's thumbnail and
+counts, clone and delete with shared files, a quote line's labels / unit
+/ picture, the customer's copy, Mark as sent freezing pictures, a rename
+and another line's edit leaving a sent quote alone, a label offered back,
+a removed picture kept for the sent quote and dropped from a draft, an
+enum unit written by older code winning, the draft PDF with its picture,
+the Coordinator and the contract printing labels, Order materials' purchase
+order carrying them with its body at cost, Labels & Units as a Member and
+as an Owner; three steps for the Nov 6 audit — Mark accepted keeping the
+picture a sent quote went out with, the editor showing pictures after
+Mark as sent, Back to draft letting go, another tab's label kept through a
+refresh, a tag changed back keeping units, twelve labels on one line, a
+typed line linked by name taking the picture, a row signed with no labels
+staying that way on the purchase order, per-product counts; **it needs
+`STORAGE_DRIVER=local`** like `job-photos.cjs`). **`calendar.cjs` steps
+29 and 30 read the Coming up card and pick the roofing day by its date**
+(Nov 6, 2026): a seeded November day now behind us sits under Already
+been. The suite is built around November 2026; once that month is past,
+its fixed days need moving to a month still ahead.
 `products-load-test.cjs` also opens, searches, clears and re-ticks the
 25,000-line sheet through the slow proxy (open 1.2 s, all off 25 s, all
 back 81 s; the 25,000-row import is 26 s, up from 9 s, for the supplier
-rows and the kept lines). **`calendar.cjs` no longer assumes November
+rows and the kept lines), and from Nov 6, 2026 every product with eight
+labels and a picture (the list and its 100-row page inside budget) and a
+200-line sent quote with labels, a workspace unit and pictures opened and
+saved through the proxy. That page is about 1.4 MB before compression
+(1.0 MB before 3b: every row carries the supplier list), so it has a 2 MB
+budget where every other page has 1 MB. Saving it takes about 5 s end to
+end through the proxy (4.9 s without 3b's labels), of which the
+all-or-nothing transaction — one write per line — is 3.8 s; **that
+transaction now has 20 s** (`saveLineItems`), and the load test fails if
+it ever holds more than 5. **`calendar.cjs` no longer assumes November
 2026 is in the future** (Nov 4, 2026): it clears the Contract sent /
 closed entries its seed contract writes on the real today, and paging
 into its month may land on today.

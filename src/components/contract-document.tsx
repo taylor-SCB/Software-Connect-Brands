@@ -31,6 +31,10 @@ export type ContractDocumentData = {
     tag: string;
     discountCents?: number;
     discountPercent?: number | null;
+    // Release 3b, copied from the quote line: "Black · L" and a workspace
+    // unit's name ("Box of 12").
+    variationText?: string | null;
+    unitLabel?: string | null;
   }[];
   // Money off the whole contract, after the rows' own discounts.
   discountCents?: number;
@@ -125,10 +129,22 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                 <tr key={item.id} className="border-b border-[#f3f4f6] align-top">
                   <td className="py-1.5 pr-2">
                     <p className="font-medium">{item.name}</p>
+                    {item.variationText && (
+                      <p className="text-xs font-medium text-[#374151]" data-testid="document-line-labels">
+                        {item.variationText}
+                      </p>
+                    )}
                     {item.description && <p className="text-xs text-[#6b7280]">{item.description}</p>}
                   </td>
                   <td className="py-1.5 pr-2 text-[#6b7280]">{TAG_LABELS[item.tag as LineItemTagValue] ?? item.tag}</td>
-                  <td className="py-1.5 pr-2 text-right tabular-nums">{item.quantity}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">
+                    {item.quantity}
+                    {item.unitLabel && (
+                      <span className="block text-[0.7rem] text-[#6b7280]" data-testid="document-line-unit">
+                        {item.unitLabel}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-2 text-right tabular-nums">{formatCents(item.unitPriceCents)}</td>
                   {anyLineDiscount && (
                     <td className="py-1.5 pr-2 text-right tabular-nums text-[#047857]">

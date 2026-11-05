@@ -24,6 +24,9 @@ import { QuoteMetaForm } from "./quote-meta-form";
 import { dateToIso, todayIso, quoteBaselineRows } from "@/lib/payments";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { setQuoteStatus, deleteQuote } from "../actions";
+import { lineLabelsFor } from "@/lib/line-labels";
+import { getCustomUnits } from "@/lib/variations";
+import { readSnapshot } from "@/lib/variation-shared";
 
 // yyyy-mm-dd for <input type="date">, which only accepts that shape.
 function toDateInput(date: Date | null) {
@@ -51,7 +54,10 @@ export default async function QuoteBuilderPage({
         deal: { select: { id: true, title: true, stage: true } },
         lineItems: {
           orderBy: { position: "asc" },
-          include: { product: { select: { suppliers: STARRED_MINIMUM_SELECT } } },
+          include: {
+            product: { select: { suppliers: STARRED_MINIMUM_SELECT } },
+            image: { select: { publicToken: true, removedAt: true } },
+          },
         },
         payments: { orderBy: { position: "asc" } },
       },
@@ -65,7 +71,7 @@ export default async function QuoteBuilderPage({
 
   // Suppliers already on a line are fetched back even if they have since
   // stopped being distributors, so the picker can offer the linked one.
-  const [suppliers, platformSuppliers] = await Promise.all([
+  const [suppliers, platformSuppliers, productLabels, units] = await Promise.all([
     loadDistributorCompanies(
       organizationId,
       quote.lineItems
@@ -73,6 +79,16 @@ export default async function QuoteBuilderPage({
         .filter((value): value is string => Boolean(value)),
     ),
     loadPlatformSuppliers(organizationId),
+    // Release 3b: the labels and pictures of the products on the quote, in
+    // one go, and the workspace's own units (plus any a line still has).
+    lineLabelsFor(
+      organizationId,
+      quote.lineItems.flatMap((item) => (item.productId ? [item.productId] : [])),
+    ),
+    getCustomUnits(
+      organizationId,
+      quote.lineItems.map((item) => item.customUnitId),
+    ),
   ]);
 
   const publicPath = `/q/${quote.publicToken}`;
@@ -187,7 +203,16 @@ export default async function QuoteBuilderPage({
               softwareRate: item.softwareRate,
               softwareTermMonths: item.softwareTermMonths,
               minPriceCents: item.product ? starredMinimumCents(item.product.suppliers) : null,
+              variations: readSnapshot(item.variations),
+              customUnitId: item.customUnitId,
+              unitLabel: item.unitLabel,
+              imageId: item.imageId,
+              imageToken: item.image?.publicToken ?? null,
+              imageRemoved: Boolean(item.image?.removedAt),
             }))}
+            productLabels={productLabels}
+            units={units.map((unit) => ({ id: unit.id, name: unit.name, tag: unit.tag, archived: unit.archived }))}
+            draft={quote.status === "DRAFT"}
             initialDiscount={{ discountCents: quote.discountCents, discountPercent: quote.discountPercent }}
             serviceTypes={serviceTypes}
             suppliers={suppliers}

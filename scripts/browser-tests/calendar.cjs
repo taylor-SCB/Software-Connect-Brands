@@ -476,7 +476,10 @@ function daysAgo(n) {
 
   log("Coming up is in day order, not clock order");
   await page.goto(`${BASE}/dashboard/projects/${projectId}/schedule`);
-  const order = await page.locator("[data-testid=event-card]").evaluateAll((cards) =>
+  // Only the Coming up card: a seeded November day that is behind us now
+  // sits under Already been, below it (Nov 5, 2026).
+  const comingUp = page.locator("h2", { hasText: /^Coming up$/ }).locator("xpath=ancestor::*[contains(@class,'card')][1]");
+  const order = await comingUp.locator("[data-testid=event-card]").evaluateAll((cards) =>
     cards.map((card) => card.getAttribute("data-start")),
   );
   // A 7am day next month must never sort above a 9:30am day tomorrow, so
@@ -490,7 +493,9 @@ function daysAgo(n) {
 
   log("deleting a day takes it off, and the job's start day follows the installs");
   const cardsBefore = await page.locator("[data-testid=event-card]").count();
-  const firstInstall = page.locator("[data-testid=event-card]").filter({ hasText: "Roofing — " }).first();
+  // The first roofing days by their date: from Nov 5, 2026 they sit under
+  // Already been, below the later booking in Coming up.
+  const firstInstall = page.locator(`[data-testid=event-card][data-start="${day(2)}"]`).filter({ hasText: "Roofing — " }).first();
   await firstInstall.locator("[data-testid=event-delete]").click();
   // "Coming up" is already on the screen, so wait for the list to
   // actually shrink rather than for a heading that never moved.

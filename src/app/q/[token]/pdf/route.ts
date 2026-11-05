@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { renderPdf, baseUrlFromRequest, safeFilename } from "@/lib/pdf";
+import { renderPdf, baseUrlFromRequest, safeFilename, PdfTooLargeError } from "@/lib/pdf";
 
 // Headless Chrome needs the Node runtime and more than the default budget.
 export const runtime = "nodejs";
@@ -53,6 +53,7 @@ export async function GET(
       },
     });
   } catch (error) {
+    if (error instanceof PdfTooLargeError) return new Response(error.message, { status: 413 });
     console.error("[quote pdf]", error);
     return new Response("Could not generate the PDF. Try again in a moment.", {
       status: 500,

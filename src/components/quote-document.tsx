@@ -42,6 +42,12 @@ export type QuoteDocumentData = {
     // Money off this line, already in cents. Shown as a saving on the
     // customer's copy; how it was typed is not their business.
     discountCents?: number;
+    // Release 3b: the labels picked ("Black · L"), a workspace unit's name
+    // ("Box of 12") and the product's picture (its token; the small
+    // document copy is what is drawn). Absent, the line prints as before.
+    variationText?: string | null;
+    unitLabel?: string | null;
+    pictureToken?: string | null;
   }[];
   // A discount on the whole quote, under the lines' own: the cents, and
   // the percent it was typed as when it was one (printed beside it, as a
@@ -301,7 +307,25 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           {quote.lineItems.map((item) => (
             <tr key={item.id} className="border-b border-[#f3f4f6] align-top">
               <td className="py-3 pr-4">
+                <div className="flex items-start gap-3">
+                {item.pictureToken && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`/files/${item.pictureToken}?v=doc`}
+                    alt=""
+                    width={44}
+                    height={44}
+                    data-testid="document-line-picture"
+                    className="h-11 w-11 shrink-0 rounded border border-[#e5e7eb] bg-white object-contain"
+                  />
+                )}
+                <div className="min-w-0">
                 <p className="font-medium">{item.name}</p>
+                {item.variationText && (
+                  <p className="mt-0.5 text-xs font-medium text-[#374151]" data-testid="document-line-labels">
+                    {item.variationText}
+                  </p>
+                )}
                 {item.description && (
                   <p className="mt-0.5 text-xs text-[#6b7280]">{item.description}</p>
                 )}
@@ -313,8 +337,17 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
                 <span className="mt-1 inline-block rounded border border-[#e5e7eb] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-[#6b7280]">
                   {TAG_LABELS[item.tag as LineItemTagValue]}
                 </span>
+                </div>
+                </div>
               </td>
-              <td className="py-3 text-right font-mono tabular-nums">{item.quantity}</td>
+              <td className="py-3 text-right font-mono tabular-nums">
+                {item.quantity}
+                {item.unitLabel && (
+                  <span className="block font-sans text-[0.7rem] text-[#6b7280]" data-testid="document-line-unit">
+                    {item.unitLabel}
+                  </span>
+                )}
+              </td>
               <td className="py-3 text-right font-mono tabular-nums">
                 {formatCents(item.unitPriceCents)}
               </td>
@@ -477,6 +510,17 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
                 key={item.id}
                 className="doc-block flex flex-wrap items-start justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.03] p-4"
               >
+                {item.pictureToken && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`/files/${item.pictureToken}?v=doc`}
+                    alt=""
+                    width={48}
+                    height={48}
+                    data-testid="document-line-picture"
+                    className="h-12 w-12 shrink-0 rounded-lg bg-white object-contain"
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-medium text-white">{item.name}</p>
@@ -491,6 +535,11 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
                       {TAG_LABELS[tag]}
                     </span>
                   </div>
+                  {item.variationText && (
+                    <p className="mt-1 text-xs font-medium text-white/80" data-testid="document-line-labels">
+                      {item.variationText}
+                    </p>
+                  )}
                   {item.description && (
                     <p className="mt-1 text-xs text-white/55">{item.description}</p>
                   )}
@@ -505,7 +554,8 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
                     {formatCents(lineTotalCents(item.quantity, item.unitPriceCents, item.discountCents ?? 0))}
                   </p>
                   <p className="font-mono text-xs tabular-nums text-white/40">
-                    {item.quantity} × {formatCents(item.unitPriceCents)}
+                    {item.quantity}
+                    {item.unitLabel ? <span data-testid="document-line-unit"> {item.unitLabel}</span> : null} × {formatCents(item.unitPriceCents)}
                     {(item.discountCents ?? 0) > 0 && (
                       <span className="text-emerald-300" data-testid="document-line-discount">
                         {" "}− {formatCents(item.discountCents ?? 0)} off

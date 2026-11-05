@@ -216,6 +216,8 @@ export default async function ContractDetailPage({
                       <tr key={item.id}>
                         <td>
                           <p className="font-medium">{item.name}</p>
+                          {item.variationText && <p className="text-xs text-[var(--text-dim)]">{item.variationText}</p>}
+                          {item.unitLabel && <p className="faint text-xs">{item.unitLabel}</p>}
                           {item.description && <p className="faint text-xs">{item.description}</p>}
                         </td>
                         <td><TagBadge tag={item.tag} /></td>

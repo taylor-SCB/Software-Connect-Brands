@@ -85,6 +85,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               unitPriceCents: true,
               discountCents: true,
               tag: true,
+              variationText: true,
               contract: { select: { id: true, number: true, type: true, payable: true, status: true } },
             },
           },
@@ -380,6 +381,7 @@ type Line = {
   discountCents: number;
   tag: string;
   contract: { id: string; number: number; type: string; payable: boolean; status: string };
+  variationText?: string | null;
 };
 
 function tagTotals(lines: Line[]) {
@@ -413,7 +415,10 @@ export function ScopeLines({
       {lines.map((line) => (
         <li key={line.id} className="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3" data-testid="scope-line">
           <div className="min-w-0">
-            <p className="text-sm font-medium">{line.name}</p>
+            <p className="text-sm font-medium">
+              {line.name}
+              {line.variationText && <span className="faint font-normal"> · {line.variationText}</span>}
+            </p>
             <p className="faint num text-xs">
               <Link href={`/dashboard/contracts/${line.contract.id}`} className="link">
                 CON-{line.contract.number}

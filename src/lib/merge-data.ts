@@ -23,7 +23,15 @@ export async function loadMergeContext(input: {
   // not the contact's own company (a purchase order to a supplier), the
   // rows split onto this contract, its payment schedule and who signs.
   companyId?: string | null;
-  lineItems?: { name: string; quantity: number; unitPriceCents: number; tag: string; discountCents?: number | null }[];
+  lineItems?: {
+    name: string;
+    quantity: number;
+    unitPriceCents: number;
+    tag: string;
+    discountCents?: number | null;
+    // Release 3b: "Black · L", printed after the name.
+    variationText?: string | null;
+  }[];
   // Money off the whole contract, after the rows' own discounts.
   discountCents?: number | null;
   payments?: { label: string; amountCents: number; dueOn: Date | null }[];
@@ -112,7 +120,7 @@ export async function loadMergeContext(input: {
           discountPercent: true,
           lineItems: {
             orderBy: { position: "asc" },
-            select: { name: true, quantity: true, unitPriceCents: true, discountCents: true, tag: true },
+            select: { name: true, quantity: true, unitPriceCents: true, discountCents: true, tag: true, variationText: true },
           },
         },
       })
@@ -226,12 +234,16 @@ export async function loadMergeContext(input: {
   };
 }
 
-function itemLines(items: { name: string; quantity: number; unitPriceCents: number; discountCents?: number | null }[]) {
+function itemLines(
+  items: { name: string; quantity: number; unitPriceCents: number; discountCents?: number | null; variationText?: string | null }[],
+) {
   return items
     .map((item) => {
       const discount = item.discountCents ?? 0;
       const off = discount ? ` less ${formatCents(discount)} discount` : "";
-      return `${trimQuantity(item.quantity)} × ${item.name} @ ${formatCents(item.unitPriceCents)}${off} = ${formatCents(lineTotalCents(item.quantity, item.unitPriceCents, discount))}`;
+      // Labels only when the line has them, so an old body reads the same.
+      const name = item.variationText ? `${item.name} (${item.variationText})` : item.name;
+      return `${trimQuantity(item.quantity)} × ${name} @ ${formatCents(item.unitPriceCents)}${off} = ${formatCents(lineTotalCents(item.quantity, item.unitPriceCents, discount))}`;
     })
     .join("\n");
 }

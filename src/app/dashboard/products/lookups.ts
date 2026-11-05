@@ -3,6 +3,9 @@ import { getServiceTypes } from "@/lib/service-types";
 import { COLUMN_ROLES, type ColumnRole } from "@/lib/price-list";
 import { LINK_STATUS, loadPlatformSuppliers, stillListed } from "@/lib/platform-suppliers";
 import type { RatesheetSupplier } from "./import-ratesheet";
+import { getCustomUnits, getVariationGroups } from "@/lib/variations";
+import type { CardGroup } from "./variations-card";
+import type { FormCustomUnit } from "./product-form";
 
 // The pick lists on the product form, scoped to the workspace, plus the
 // suppliers on Software Connect Brands it can pick from. Both pages that
@@ -88,4 +91,46 @@ export async function loadRatesheetSuppliers(organizationId: string): Promise<Ra
       lastDiscountBp: linkedRatesheets[0]?.discountBp ?? 0,
     };
   });
+}
+
+// The product form's Variations card and Unit box (Release 3b): every live
+// group and label, plus any retired one this product still has (drawn
+// "(retired)" so it can be taken off on purpose), the labels it has, and
+// the workspace's own units.
+export async function loadVariationLookups(
+  organizationId: string,
+  product: { id: string; customUnitId: string | null } | null,
+): Promise<{ variationGroups: CardGroup[]; savedVariationIds: string[]; customUnits: FormCustomUnit[] }> {
+  const [groups, saved, units] = await Promise.all([
+    getVariationGroups(organizationId, { includeArchived: true }),
+    product
+      ? prisma.productVariation.findMany({ where: { organizationId, productId: product.id }, select: { optionId: true } })
+      : Promise.resolve([]),
+    getCustomUnits(organizationId, [product?.customUnitId]),
+  ]);
+  const savedIds = new Set(saved.map((row) => row.optionId));
+  const variationGroups: CardGroup[] = [];
+  for (const group of groups) {
+    // Retired labels come along too: drawn only when the product has them,
+    // and known to the card so typing one says it was retired.
+    const options = group.options
+      .map((option) => ({
+        id: option.id,
+        name: option.name,
+        retired: option.archived || group.archived,
+        tag: option.tag,
+        builtInUnit: option.builtInUnit,
+        contains: option.contains,
+        baseUnit: option.baseUnit,
+      }));
+    variationGroups.push({
+      id: group.id,
+      kind: group.kind,
+      name: group.name,
+      builtIn: group.builtIn,
+      retired: group.archived,
+      options,
+    });
+  }
+  return { variationGroups, savedVariationIds: [...savedIds], customUnits: units };
 }

@@ -24,6 +24,13 @@ import { SupplierCell, type SupplierOption } from "./supplier-cell";
 import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
 import {
+  customUnitIdOf,
+  customUnitValue,
+  pickLivePicture,
+  type LineProductLabels,
+  type VariationEntry,
+} from "@/lib/variation-shared";
+import {
   DiscountInput,
   discountAsStored,
   discountPayload,
@@ -44,7 +51,15 @@ export type EditorProduct = {
   softwareTerm: number | null;
   // The lowest price the starred supplier's minimum margin allows.
   minPriceCents?: number | null;
+  // Release 3b: one of the workspace's own units, and the product's labels
+  // and pictures for the line's pickers.
+  customUnitId?: string | null;
+  customUnitName?: string | null;
+  labels?: LineProductLabels | null;
 };
+
+// A workspace unit for the line's unit select.
+export type EditorUnit = { id: string; name: string; tag: string; archived: boolean };
 
 export type EditorLine = {
   // The stored row's id, so a save keeps it (and the contract rows and
@@ -68,6 +83,14 @@ export type EditorLine = {
   softwareTermMonths: number | null;
   // The product's starred supplier's minimum price, when it has one.
   minPriceCents?: number | null;
+  // Release 3b, as stored: the labels picked, a workspace unit and its
+  // name, and the picture the line went out with.
+  variations?: VariationEntry[];
+  customUnitId?: string | null;
+  unitLabel?: string | null;
+  imageId?: string | null;
+  imageToken?: string | null;
+  imageRemoved?: boolean;
 };
 
 // Quantity and price live as strings while the user types so a partially
@@ -100,7 +123,26 @@ type Row = {
   // Below this a unit is under the starred supplier's minimum margin:
   // allowed, and flagged in red. Never saved.
   minPriceCents: number | null;
+  // Release 3b. One pick per group (group id → option id), the labels as
+  // stored (kept as written), and whether the picks were changed here:
+  // only then are they sent, so a save of something else never rewrites
+  // a sent quote's labels.
+  picks: Record<string, string>;
+  savedVariations: VariationEntry[];
+  labelsTouched: boolean;
+  // A workspace unit's name as the line has it (unitOfMeasure holds
+  // "cu:<id>" for one).
+  savedUnitLabel: string | null;
+  // The picture the line holds, if any.
+  imageToken: string | null;
+  imageRemoved: boolean;
 };
+
+function picksOf(entries: VariationEntry[]) {
+  const picks: Record<string, string> = {};
+  for (const entry of entries) picks[entry.groupId] = entry.optionId;
+  return picks;
+}
 
 let uidCounter = 0;
 const nextUid = () => `row-${(uidCounter += 1)}`;
@@ -141,10 +183,18 @@ function toRow(line: EditorLine): Row {
     tag: line.tag as LineItemTagValue,
     serviceType: line.serviceType ?? "",
     supplierCompanyId: line.supplierCompanyId,
-    unitOfMeasure: line.unitOfMeasure ?? "",
+    // A built-in unit wins over a workspace one (code from before 3b may
+    // have set it beside one).
+    unitOfMeasure: line.unitOfMeasure ?? (line.customUnitId ? customUnitValue(line.customUnitId) : ""),
     softwareRate: line.softwareRate ?? "",
     termYearsInput: term.years,
     termMonthsInput: term.months,
+    picks: picksOf(line.variations ?? []),
+    savedVariations: line.variations ?? [],
+    labelsTouched: false,
+    savedUnitLabel: line.unitOfMeasure ? null : (line.unitLabel ?? null),
+    imageToken: line.imageToken ?? null,
+    imageRemoved: line.imageRemoved ?? false,
     // Off for anything loaded from the database. A line typed by hand and
     // already saved comes back with productId null too, so productId alone
     // is not a reliable "typed by hand" signal — it would re-offer the tick
@@ -181,6 +231,9 @@ export function LineItemsEditor({
   suppliers,
   platformSuppliers = [],
   readOnly = false,
+  productLabels = {},
+  units = [],
+  draft = true,
 }: {
   quoteId: string;
   initialLines: EditorLine[];
@@ -194,8 +247,37 @@ export function LineItemsEditor({
   // Accounts on Software Connect Brands this workspace hasn't linked yet.
   platformSuppliers?: PlatformSupplier[];
   readOnly?: boolean;
+  // Release 3b: the labels and pictures of the products already on the
+  // quote, the workspace's own units, and whether the quote is a draft (a
+  // draft's lines show the product's picture live).
+  productLabels?: Record<string, LineProductLabels>;
+  units?: EditorUnit[];
+  draft?: boolean;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
+  // Grows as products are added from the catalog.
+  const [labelData, setLabelData] = useState<Record<string, LineProductLabels>>(productLabels);
+  const [unitOptions, setUnitOptions] = useState<EditorUnit[]>(units);
+  // What each row's picks were when a save went out, so the answer only
+  // replaces picks nobody has changed since.
+  const sentPicks = useRef(new Map<string, string>());
+  // The pictures the lines hold, as stored: Mark as sent writes them and
+  // Back to draft lets them go, re-rendering the page, and the rows follow
+  // without losing anything typed.
+  const imageKey = initialLines
+    .map((line) => `${line.id ?? ""}:${line.imageToken ?? ""}:${line.imageRemoved ? 1 : 0}`)
+    .join("|");
+  const [seenImages, setSeenImages] = useState(imageKey);
+  if (imageKey !== seenImages) {
+    setSeenImages(imageKey);
+    const byId = new Map(initialLines.map((line) => [line.id ?? "", line]));
+    setRows((current) =>
+      current.map((row) => {
+        const line = row.id ? byId.get(row.id) : undefined;
+        return line ? { ...row, imageToken: line.imageToken ?? null, imageRemoved: Boolean(line.imageRemoved) } : row;
+      }),
+    );
+  }
   // Grows when someone adds a distributor from inside a row, so every row's
   // picker sees it without a page reload.
   const [supplierOptions, setSupplierOptions] = useState<SupplierOption[]>(suppliers);
@@ -277,6 +359,12 @@ export function LineItemsEditor({
         // Typed once, kept forever — the default Taylor asked for.
         saveAsProduct: true,
         minPriceCents: null,
+        picks: {},
+        savedVariations: [],
+        labelsTouched: false,
+        savedUnitLabel: null,
+        imageToken: null,
+        imageRemoved: false,
       },
     ]);
   }
@@ -284,6 +372,13 @@ export function LineItemsEditor({
   // The product comes from the catalog search (CatalogPicker), not a list
   // of every product handed to the page.
   function addProductLine(product: EditorProduct) {
+    if (product.labels) setLabelData((current) => ({ ...current, [product.id]: product.labels! }));
+    if (product.customUnitId && !unitOptions.some((unit) => unit.id === product.customUnitId)) {
+      setUnitOptions((current) => [
+        ...current,
+        { id: product.customUnitId!, name: product.customUnitName ?? "Your unit", tag: product.defaultTag, archived: true },
+      ]);
+    }
     const term = splitTerm(
       product.softwareRate === "PER_MONTH"
         ? product.softwareTerm
@@ -308,15 +403,64 @@ export function LineItemsEditor({
         // The catalog already knows what kind of work it is.
         serviceType: product.serviceType ?? "",
         supplierCompanyId: null,
-        unitOfMeasure: product.unitOfMeasure ?? "",
+        unitOfMeasure: product.unitOfMeasure ?? (product.customUnitId ? customUnitValue(product.customUnitId) : ""),
         softwareRate: product.softwareRate ?? "",
         termYearsInput: term.years,
         termMonthsInput: term.months,
         // It is already in the catalog; that is where it came from.
         saveAsProduct: false,
         minPriceCents: product.minPriceCents ?? null,
+        picks: {},
+        savedVariations: [],
+        labelsTouched: false,
+        savedUnitLabel: null,
+        imageToken: null,
+        imageRemoved: false,
       },
     ]);
+  }
+
+  // One label picked on a row.
+  function pickLabel(uid: string, groupId: string, optionId: string) {
+    const row = rows.find((item) => item.uid === uid);
+    if (!row) return;
+    const picks = { ...row.picks };
+    if (optionId) picks[groupId] = optionId;
+    else delete picks[groupId];
+    updateRow(uid, { picks, labelsTouched: true });
+  }
+
+  // The selects a row shows: one per group its product has, plus any group
+  // the line already has a label in; a label no longer offered is offered
+  // back, labelled, so the select never falls back and loses it.
+  function rowGroups(row: Row) {
+    const groups = (row.productId ? (labelData[row.productId]?.groups ?? []) : []).map((group) => ({
+      id: group.id,
+      name: group.name,
+      options: group.options.map((option) => ({ ...option, gone: false })),
+    }));
+    for (const entry of row.savedVariations) {
+      let group = groups.find((item) => item.id === entry.groupId);
+      if (!group) {
+        group = { id: entry.groupId, name: entry.group, options: [] };
+        groups.push(group);
+      }
+      if (!group.options.some((option) => option.id === entry.optionId)) {
+        group.options.push({ id: entry.optionId, name: entry.label, gone: true });
+      }
+    }
+    return groups;
+  }
+
+  // The picture the row shows: the one the line holds, unless its labels
+  // or product changed here; else the product's, live, on a draft — and
+  // on a sent quote, what a changed line will take when saved.
+  function rowPicture(row: Row) {
+    const changed = row.labelsTouched || row.id === null;
+    if (row.imageToken && !changed && (!draft || !row.imageRemoved)) return row.imageToken;
+    if (!draft && !changed) return null;
+    const live = row.productId ? pickLivePicture(labelData[row.productId]?.pictures, Object.values(row.picks)) : null;
+    return live?.token ?? null;
   }
 
   // Changing the tag changes which units are legal, so a unit left over
@@ -325,11 +469,13 @@ export function LineItemsEditor({
   function changeTag(uid: string, tag: LineItemTagValue) {
     const row = rows.find((item) => item.uid === uid);
     if (!row) return;
-    const stillLegal =
-      row.unitOfMeasure &&
-      unitGroupsForTag(tag).some((group) =>
-        (UNIT_GROUPS[group] as readonly string[]).includes(row.unitOfMeasure),
-      );
+    const ownUnit = customUnitIdOf(row.unitOfMeasure);
+    const stillLegal = ownUnit
+      ? unitOptions.find((unit) => unit.id === ownUnit)?.tag === tag
+      : row.unitOfMeasure &&
+        unitGroupsForTag(tag).some((group) =>
+          (UNIT_GROUPS[group] as readonly string[]).includes(row.unitOfMeasure),
+        );
     updateRow(uid, {
       tag,
       unitOfMeasure: stillLegal ? row.unitOfMeasure : "",
@@ -373,7 +519,9 @@ export function LineItemsEditor({
       supplierCompanyId: row.supplierCompanyId,
       // The select only ever holds a value from the lists above or "", and
       // the server re-checks the pairing against the tag regardless.
-      unitOfMeasure: (row.unitOfMeasure || null) as UnitOfMeasureValue | null,
+      unitOfMeasure: (customUnitIdOf(row.unitOfMeasure) ? null : row.unitOfMeasure || null) as UnitOfMeasureValue | null,
+      customUnitId: customUnitIdOf(row.unitOfMeasure),
+      ...(row.labelsTouched ? { optionIds: Object.values(row.picks).filter(Boolean) } : {}),
       softwareRate: row.tag === "SOFTWARE" ? ((row.softwareRate || null) as SoftwareRateValue | null) : null,
       softwareTermMonths: row.tag === "SOFTWARE" ? rowTermMonths(row) : null,
       saveAsProduct: row.saveAsProduct && !row.id && !row.productId,
@@ -393,6 +541,7 @@ export function LineItemsEditor({
     }
 
     editedDuringSave.current = false;
+    sentPicks.current = new Map(rows.map((row) => [row.uid, JSON.stringify(row.picks)]));
     startTransition(async () => {
       const result = await saveLineItems(quoteId, payload, discountPayload(quoteDiscount));
       setState({ error: result.error, success: result.success });
@@ -409,9 +558,22 @@ export function LineItemsEditor({
           // offer made about a brand-new line, not a standing setting.
           // The flag follows the product the line is linked to now (a
           // typed line can be linked to one by name).
-          return saved
-            ? { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false, minPriceCents: saved.minPriceCents }
-            : row;
+          if (!saved) return row;
+          const next = { ...row, id: saved.id, productId: saved.productId, saveAsProduct: false, minPriceCents: saved.minPriceCents };
+          // The labels, unit and picture as stored — unless the picks were
+          // changed again while the save was out.
+          if (sentPicks.current.get(row.uid) === JSON.stringify(row.picks)) {
+            next.picks = picksOf(saved.variations);
+            next.savedVariations = saved.variations;
+            next.labelsTouched = false;
+            next.imageToken = saved.imageToken;
+            next.imageRemoved = false;
+          }
+          if (customUnitIdOf(row.unitOfMeasure)) {
+            next.unitOfMeasure = saved.customUnitId ? customUnitValue(saved.customUnitId) : "";
+            next.savedUnitLabel = saved.unitLabel;
+          }
+          return next;
         }),
       );
       if (!editedDuringSave.current) setDirty(false);
@@ -481,6 +643,22 @@ export function LineItemsEditor({
               return (
                 <tr key={row.uid} className="align-top">
                   <td>
+                    <div className="flex items-start gap-2">
+                    {(() => {
+                      const token = rowPicture(row);
+                      return token ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={`/files/${token}?v=thumb`}
+                          alt=""
+                          width={36}
+                          height={36}
+                          data-testid="line-picture"
+                          className="mt-0.5 h-9 w-9 shrink-0 rounded border border-[var(--border)] bg-white object-contain"
+                        />
+                      ) : null;
+                    })()}
+                    <div className="min-w-0 flex-1">
                     <input
                       value={row.name}
                       onChange={(event) =>
@@ -534,6 +712,41 @@ export function LineItemsEditor({
                       </label>
                     )}
 
+                    {(() => {
+                      const groups = rowGroups(row);
+                      if (!groups.length) return null;
+                      // A line whose product is gone keeps its labels, read-only.
+                      if (!row.productId || readOnly) {
+                        const text = row.savedVariations.map((entry) => entry.label).join(" · ");
+                        return text ? (
+                          <p className="mt-1 text-[0.7rem] text-[var(--text-dim)]" data-testid="line-labels-text">{text}</p>
+                        ) : null;
+                      }
+                      return (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1" data-testid="line-labels">
+                          {groups.map((group) => (
+                            <select
+                              key={group.id}
+                              value={row.picks[group.id] ?? ""}
+                              onChange={(event) => pickLabel(row.uid, group.id, event.target.value)}
+                              aria-label={`Line ${index + 1} ${group.name}`}
+                              data-testid="line-label"
+                              data-group={group.name}
+                              className="select input-sm !h-7 !w-auto !py-0 !text-[0.68rem]"
+                            >
+                              <option value="">{group.name} —</option>
+                              {group.options.map((option) => (
+                                <option key={option.id} value={option.id}>
+                                  {option.name}
+                                  {option.gone ? " (no longer offered)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
                     {tagHasUnits(row.tag) && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">
                         <select
@@ -554,6 +767,30 @@ export function LineItemsEditor({
                               </option>
                             )),
                           )}
+                          {(() => {
+                            const own = unitOptions.filter((unit) => unit.tag === row.tag && !unit.archived);
+                            const current = customUnitIdOf(row.unitOfMeasure);
+                            const offeredBack =
+                              current && !own.some((unit) => unit.id === current)
+                                ? (unitOptions.find((unit) => unit.id === current)?.name ?? row.savedUnitLabel ?? "Your unit")
+                                : null;
+                            return (
+                              <>
+                                {own.length > 0 && (
+                                  <optgroup label="Your units">
+                                    {own.map((unit) => (
+                                      <option key={unit.id} value={customUnitValue(unit.id)}>
+                                        {unit.name}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                {/* The line's own unit, offered back when it was
+                                    retired or isn't on this list. */}
+                                {offeredBack && <option value={row.unitOfMeasure}>{offeredBack} (retired)</option>}
+                              </>
+                            );
+                          })()}
                         </select>
 
                         {row.tag === "SOFTWARE" && (
@@ -604,6 +841,8 @@ export function LineItemsEditor({
                         )}
                       </div>
                     )}
+                    </div>
+                    </div>
                   </td>
                   <td>
                     <input

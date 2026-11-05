@@ -599,6 +599,9 @@ export function TrackerGrid({
                 <tr key={row.id} className={row.cancelled ? "opacity-50" : ""} data-testid="tracker-row" data-line-id={row.id}>
                   <td>
                     <p className="font-medium">{row.name}</p>
+                    {row.variationText && (
+                      <p className="text-xs text-[var(--text-dim)]" data-testid="tracker-row-labels">{row.variationText}</p>
+                    )}
                     {row.description && <p className="faint truncate text-xs">{row.description}</p>}
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       <TagBadge tag={row.tag} />
@@ -1040,7 +1043,8 @@ function ContractCard({
                 title={`Take ${row.name} off ${name}`}
                 aria-label={`Take ${row.name} off ${name}`}
               >
-                {row.name} · {formatCents(lineNet(row.id))}
+                {row.name}
+                {row.variationText ? ` (${row.variationText})` : ""} · {formatCents(lineNet(row.id))}
                 <IconX size={10} />
               </button>
             ))

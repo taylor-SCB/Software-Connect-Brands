@@ -34,6 +34,13 @@ export function isMediaType(type: string) {
   return /^(image\/(jpeg|png|gif|webp|heic|heif)|video\/(mp4|quicktime|webm|3gpp|x-m4v))$/.test(type);
 }
 
+// org/<org>/products/<product>/<random>.webp and its -thumb and -doc
+// copies: one random base for the three, so the finish step can tell they
+// belong together.
+export function productImageBase(organizationId: string, productId: string) {
+  return `org/${organizationId}/products/${productId}/${randomBytes(12).toString("base64url")}`;
+}
+
 // org/<org>/projects/<job>/<random>-<name>: unguessable, and grouped so a
 // workspace's files can be found in the store's own browser.
 export function mediaKey(organizationId: string, projectId: string, fileName: string) {
@@ -55,7 +62,15 @@ export type UploadTicket = {
   type: string;
   maxBytes: number;
   organizationId: string;
-  projectId: string;
+  // What the file is for, checked by every finish step so a ticket for one
+  // can't be finished as the other. Tickets signed before Release 3b carry
+  // none and are job photos.
+  purpose?: "job-photo" | "product-image";
+  projectId?: string;
+  // A product picture (Release 3b): which product, and which of its three
+  // copies this file is.
+  productId?: string;
+  role?: "display" | "thumb" | "doc";
   photoLinkId?: string;
   photoGrantId?: string;
   photoFolderId?: string;
