@@ -1179,7 +1179,11 @@ labels and a picture (the list and its 100-row page inside budget) and a
 200-line sent quote with labels, a workspace unit and pictures opened and
 saved through the proxy. That page is about 1.4 MB before compression
 (1.0 MB before 3b: every row carries the supplier list), so it has a 2 MB
-budget where every other page has 1 MB. **`calendar.cjs` no longer assumes November
+budget where every other page has 1 MB. Saving it takes about 5 s end to
+end through the proxy (4.9 s without 3b's labels), of which the
+all-or-nothing transaction — one write per line — is 3.8 s; **that
+transaction now has 20 s** (`saveLineItems`), and the load test fails if
+it ever holds more than 5. **`calendar.cjs` no longer assumes November
 2026 is in the future** (Nov 4, 2026): it clears the Contract sent /
 closed entries its seed contract writes on the real today, and paging
 into its month may land on today.

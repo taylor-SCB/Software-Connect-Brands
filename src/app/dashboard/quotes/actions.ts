@@ -535,7 +535,10 @@ export async function saveLineItems(
 
     await tx.quote.update({ where: { id: quote.id }, data: { updatedAt: new Date() } });
     return saved;
-  });
+    // One write per line, all or nothing: a 200-line quote held the
+    // transaction open 3.8 s of Prisma's default 5 through the slow-db proxy
+    // (Nov 6, 2026), too close for a live database a little further away.
+  }, { timeout: 20_000, maxWait: 10_000 });
 
   revalidatePath(`/dashboard/quotes/${quote.id}`);
   revalidatePath("/dashboard/quotes");

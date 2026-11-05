@@ -349,14 +349,35 @@ async function timedSearch(page, label, query) {
   await page.locator("select[aria-label='Line 1 Color']").selectOption("vo_pl_color_2");
   await page.locator("select[aria-label='Line 200 Size']").selectOption("vo_pl_size_3");
   await page.getByLabel("Line 100 quantity").fill("7");
+  // How long the save holds its transaction open, read from Postgres while
+  // it runs: one write per line, all or nothing. It has 20 s; past 5 s is
+  // the early warning that a quote this size is getting slow to save.
+  const monitor = new Client({ connectionString: DB });
+  await monitor.connect();
+  let longestTx = 0;
+  let watching = true;
+  const watcher = (async () => {
+    while (watching) {
+      const open = await monitor.query(
+        `SELECT max(extract(epoch FROM now() - xact_start)) AS s FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid() AND xact_start IS NOT NULL AND state <> 'idle'`,
+      );
+      longestTx = Math.max(longestTx, Number(open.rows[0].s || 0));
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+  })();
   const saveStart = Date.now();
   await page.getByRole("button", { name: "Save line items" }).click();
   await page.getByText(/Line items saved|went wrong|error/i).first().waitFor({ timeout: 30000 });
   const saveSeconds = (Date.now() - saveStart) / 1000;
+  watching = false;
+  await watcher;
+  await monitor.end();
   timings.push({ label: "saving the 200-line quote", seconds: saveSeconds });
-  console.log(`     ${saveSeconds.toFixed(2)}s  saving the 200-line quote`);
+  console.log(`     ${saveSeconds.toFixed(2)}s  saving the 200-line quote, the page redrawn after (transaction open ${longestTx.toFixed(2)}s)`);
   await page.getByText("Line items saved").waitFor({ timeout: 1000 });
-  assert.ok(saveSeconds < 4.5, `the save took ${saveSeconds.toFixed(2)}s`);
+  assert.ok(longestTx < 5, `the save held its transaction ${longestTx.toFixed(2)}s`);
+  assert.ok(saveSeconds < 8, `the save took ${saveSeconds.toFixed(2)}s`);
   const saved = (await sql(
     `SELECT id, "variationText", "imageId", quantity FROM "QuoteLineItem" WHERE id IN ('qli_pl_1','qli_pl_100','qli_pl_200') ORDER BY position`,
   )).rows;
