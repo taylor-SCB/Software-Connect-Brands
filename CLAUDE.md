@@ -777,7 +777,12 @@ are all blocking before the first paying customer.
 - **"Receive in-app messages" is a stored switch only.** There is no
   in-app messaging yet.
 - **No billing.** Nothing charges anybody.
-- **`AUTH_SECRET` was exposed in chat and still needs rotating.**
+- **`AUTH_SECRET` was rotated Nov 5, 2026** (Taylor, in Vercel, all three
+  environments, then a redeploy) after the old one was exposed in chat.
+  The old value no longer signs anything.
+- **`BLOB_READ_WRITE_TOKEN` reads "Needs Attention" in Vercel**: it is
+  stored as a readable value rather than a Sensitive one. Re-saving it as
+  Sensitive is a Vercel click for Taylor; nothing in the app changes.
 - **The GitHub repository is public.**
 - Operator access (`isSuperAdmin`) is deliberately unreachable from the app.
   It is only ever set with SQL or `npm run promote-admin`.
