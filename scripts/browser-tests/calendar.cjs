@@ -493,7 +493,9 @@ function daysAgo(n) {
 
   log("deleting a day takes it off, and the job's start day follows the installs");
   const cardsBefore = await page.locator("[data-testid=event-card]").count();
-  const firstInstall = page.locator("[data-testid=event-card]").filter({ hasText: "Roofing — " }).first();
+  // The first roofing days by their date: from Nov 5, 2026 they sit under
+  // Already been, below the later booking in Coming up.
+  const firstInstall = page.locator(`[data-testid=event-card][data-start="${day(2)}"]`).filter({ hasText: "Roofing — " }).first();
   await firstInstall.locator("[data-testid=event-delete]").click();
   // "Coming up" is already on the screen, so wait for the list to
   // actually shrink rather than for a heading that never moved.
