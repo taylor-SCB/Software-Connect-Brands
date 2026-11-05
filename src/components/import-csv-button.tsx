@@ -163,7 +163,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
               />
               <p className="faint text-xs">
                 First row is headers. Only <strong>Name</strong> or <strong>Company Name</strong> is required; Title,
-                Email, Phone, Website, City, State (or one Location column like &quot;Austin, TX&quot;), Birthday, Status, the company&apos;s details, Industry and Company
+                Email, Phone, Mobile, Other Number (used when Phone is blank), Website, City, State (or one Location column like &quot;Austin, TX&quot;), Birthday, Status, the company&apos;s details, Industry and Company
                 Type are picked up when present. First name and Last name columns are joined.{" "}
                 <a href="/dashboard/contacts/import-template" download className="link">
                   Download the template
@@ -266,6 +266,7 @@ function Preview({ plan }: { plan: ContactImportPlan }) {
               <th>City, State</th>
               <th>Email</th>
               <th>Phone</th>
+              <th>Mobile</th>
               <th>Company</th>
               <th>Industry · Type</th>
             </tr>
@@ -279,7 +280,8 @@ function Preview({ plan }: { plan: ContactImportPlan }) {
                   {[row.city ?? row.company?.city, row.state ?? row.company?.state].filter(Boolean).join(", ") || "—"}
                 </td>
                 <td className="faint max-w-[12rem] truncate text-xs">{row.email ?? "—"}</td>
-                <td className="num text-xs">{row.phone ?? "—"}</td>
+                <td className="num whitespace-nowrap text-xs">{row.phone ?? "—"}</td>
+                <td className="num whitespace-nowrap text-xs" data-testid="import-preview-mobile">{row.mobile ?? "—"}</td>
                 <td className="max-w-[12rem] truncate">{row.company?.name ?? <span className="faint">—</span>}</td>
                 <td className="text-xs">{[...(row.company?.industries ?? []), ...(row.company?.companyTypes ?? [])].join(", ") || "—"}</td>
               </tr>

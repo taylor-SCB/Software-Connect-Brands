@@ -194,22 +194,23 @@ function isoDaysAgo(n) {
   await form.locator("[data-testid=activity-submit]").click();
   await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_SET", "Ben meeting set");
 
-  log("the Pipeline starts at Meeting Set, with Ava and Ben as contact cards and Nic as Ava's rep");
+  log("the Pipeline starts at Meeting Set, with Ava and Ben as opportunity tiles and Nic as Ava's rep");
   await page.goto(`${BASE}/dashboard/deals`);
   const headers = (await page.locator("[data-testid^=pipeline-column-] h2").allTextContents()).map((t) => t.trim());
   assert.deepEqual(headers, ["Meeting Set", "Meeting Completed", "Quote Sent", "Contract Sent", "Signed / Won", "Lost"]);
   const meetingCol = page.locator("[data-testid=pipeline-column-MEETING_SET]");
-  const avaCard = meetingCol.locator("[data-testid=pipeline-contact]", { hasText: "Ava Stone" });
+  const avaCard = meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ava Stone" });
   await avaCard.waitFor();
-  assert.equal(await avaCard.locator("[data-testid=pipeline-contact-rep]").textContent(), "Nic Rivera");
-  await meetingCol.locator("[data-testid=pipeline-contact]", { hasText: "Ben Ortiz" }).waitFor();
+  assert.equal(await avaCard.locator("[data-testid=tile-rep]").textContent(), "Nic Rivera");
+  await meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
   await shot(page, "01-pipeline-meetings");
 
-  log("Meeting Completed from the card moves Ben to the second column, no dates needed");
-  const benCard = meetingCol.locator("[data-testid=pipeline-contact]", { hasText: "Ben Ortiz" });
-  await benCard.locator("[data-testid=status-picker]").click();
-  await benCard.locator("[data-testid=status-option-MEETING_COMPLETED]").click();
-  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-contact]", { hasText: "Ben Ortiz" }).waitFor();
+  log("Meeting Completed from the tile's stage menu moves Ben to the second column, no prompt");
+  const benCard = meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" });
+  await benCard.locator("[data-testid=tile-move]").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_COMPLETED]").click();
+  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
+  await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_COMPLETED", "Ben meeting completed");
 
   log("skipping Ava from Meeting Set to Quote Sent asks both dates, prefilled with the meeting day");
   await sql(`UPDATE "StatusChange" SET "on" = now() - interval '6 days' WHERE "contactId"=$1 AND "toStatus"='MEETING_SET'`, [ava]);
@@ -235,24 +236,26 @@ function isoDaysAgo(n) {
   assert.equal(await status("Company", aster), "QUOTE_SENT", "the company comes along with a move made by hand");
   assert.ok(written.every((r) => r.auto === false));
   await page.goto(`${BASE}/dashboard/deals`);
-  assert.equal(await page.locator("[data-testid=pipeline-column-MEETING_SET] [data-testid=pipeline-contact]", { hasText: "Ava Stone" }).count(), 0, "Ava left the meeting column");
+  // Oct 27, 2026: she no longer vanishes. Only a deal sits in Quote Sent,
+  // so her tile stays at Meeting Completed until it is converted.
+  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Ava Stone" }).waitFor();
+  assert.equal(await page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-tile]", { hasText: "Ava Stone" }).count(), 0);
+  assert.equal(await page.locator("[data-testid=pipeline-column-MEETING_SET] [data-testid=pipeline-tile]", { hasText: "Ava Stone" }).count(), 0, "Ava left the meeting column");
 
-  log("a deal on its tile asks the day it moved, and its contact moves with it");
+  log("a deal moved from its tile's menu needs no date, and its contact moves with it");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('ctc_ps_cara',$1,'Cara Diaz','QUOTE_SENT',now())`, [org]);
   await sql(
     `INSERT INTO "Deal" (id,"organizationId","contactId",title,"valueCents",stage,"ownerId","updatedAt") VALUES ('deal_ps_cara',$1,'ctc_ps_cara','Cara roof',500000,'QUOTE_SENT',$2,now())`,
     [org, nicId],
   );
   await page.reload();
-  const tile = page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-deal]", { hasText: "Cara roof" });
-  await tile.locator("[data-testid=deal-stage]").selectOption("WON");
-  await tile.locator("[data-testid=deal-stage-date]").waitFor();
-  await tile.locator("[data-testid=deal-stage-date] input").fill(isoDaysAgo(1));
-  await tile.getByRole("button", { name: "Save" }).click();
+  const tile = page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-tile]", { hasText: "Cara roof" });
+  await tile.locator("[data-testid=tile-move]").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-WON]").click();
   await until(async () => (await sql(`SELECT stage FROM "Deal" WHERE id='deal_ps_cara'`)).rows[0].stage === "WON", "Cara won");
   assert.equal(await status("Contact", "ctc_ps_cara"), "WON");
   await page.reload();
-  await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-deal]", { hasText: "Cara roof" }).waitFor();
+  await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-tile]", { hasText: "Cara roof" }).waitFor();
 
   log("a contract unanswered for 90 days is Archived and off the board; at 180 it is Lost");
   await sql(
@@ -272,10 +275,10 @@ function isoDaysAgo(n) {
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_ps_eli'`)).rows[0].stage, "LOST");
   assert.equal(await status("Contact", "ctc_ps_eli"), "LOST");
   assert.equal(await status("Contact", "ctc_ps_dee"), "CONTRACT_SENT", "archiving the deal leaves the person as they were");
-  assert.equal(await page.locator("[data-testid=pipeline-deal]", { hasText: "Dee install" }).count(), 0, "archived is off the board");
-  await page.locator("[data-testid=pipeline-column-LOST] [data-testid=pipeline-deal]", { hasText: "Eli install" }).waitFor();
+  assert.equal(await page.locator("[data-testid=pipeline-tile]", { hasText: "Dee install" }).count(), 0, "archived is off the board");
+  await page.locator("[data-testid=pipeline-column-LOST] [data-testid=pipeline-tile]", { hasText: "Eli install" }).waitFor();
   await page.locator("[data-testid=toggle-archived]", { hasText: "Show archived (1)" }).click();
-  await page.locator("[data-testid=pipeline-deal]", { hasText: "Dee install" }).waitFor();
+  await page.locator("[data-testid=pipeline-tile]", { hasText: "Dee install" }).waitFor();
   await shot(page, "03-pipeline-deals");
 
   log("Stats: tiles, funnel and close rate count the people and money above");

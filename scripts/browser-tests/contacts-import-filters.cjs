@@ -168,7 +168,7 @@ async function rowCount(page, testId) {
   log("a contact with no company reads Individual / Personal on its page");
   await page.goto(`${BASE}/dashboard/contacts/new`);
   await page.fill("#name", "Taylor Homeowner");
-  await page.fill("#phone", "555-0199");
+  await page.fill("#phone", "512-555-0199");
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
   assert.ok(await page.locator("dl").first().getByText("Individual / Personal").isVisible());
@@ -179,17 +179,17 @@ async function rowCount(page, testId) {
   const firstLine = (await template.text()).split("\r\n")[0];
   assert.equal(
     firstLine,
-    "Name,Title,Email,Phone,Website,City,State,Birthday,Status,Company Name,Company Phone,Company Email,Company Website,Company City,Company State,Company Status,Industry,Company Type",
+    "Name,Title,Email,Phone,Mobile,Other Number,Website,City,State,Birthday,Status,Company Name,Company Phone,Company Email,Company Website,Company City,Company State,Company Status,Industry,Company Type",
   );
 
   log("import a messy CSV: First/Last name, mixed headers, a company-only row, a duplicate, an individual, 60 people at one company");
   const rows = [
-    "First Name,Last Name,Job Title,E-mail,Cell,ST,DOB,Lead Status,Company,Company Phone,Industry,Type",
-    "Dana,Owner,CEO,dana@acme.test,555-1000,,,client,Acme Towers,555-2000,MDU,Owner",
-    "Sam,Rivera,,sam@bluebird.test,555-1001,Texas,3/9/1984,Lead,Bluebird ISP,,Service Provider,Networks/ISP",
+    "First Name,Last Name,Job Title,E-mail,Phone,ST,DOB,Lead Status,Company,Company Phone,Industry,Type",
+    "Dana,Owner,CEO,dana@acme.test,512-555-1000,,,client,Acme Towers,512-555-2000,MDU,Owner",
+    "Sam,Rivera,,sam@bluebird.test,512-555-1001,Texas,3/9/1984,Lead,Bluebird ISP,,Service Provider,Networks/ISP",
     "Sam,Rivera,,SAM@bluebird.test,,,,,Bluebird ISP,,,",
-    "Pat,Solo,,,555-1002,CA,,,,,,",
-    ",,,,,,,,Ghost Holdings LLC,555-3000,Commercial,",
+    "Pat,Solo,,,512-555-1002,CA,,,,,,",
+    ",,,,,,,,Ghost Holdings LLC,512-555-3000,Commercial,",
     "Lee,Gates,Owner,lee@gates.test,,FL,,customer,Gates Co,,Service Provider,Gates; Access Control",
     "Ivy,Blank,,,,,,,,,,",
   ];
@@ -216,7 +216,7 @@ async function rowCount(page, testId) {
   await shot(page, "04-import-done");
   await page.getByTestId("import-done").click();
   const acme = (await sql(`SELECT phone, "companyTypes" FROM "Company" WHERE name='Acme Towers' AND "organizationId"=$1`, [org])).rows[0];
-  assert.equal(acme.phone, "555-2000", "blank phone filled on the existing company");
+  assert.equal(acme.phone, "512-555-2000", "blank phone filled on the existing company");
   const dana = (await sql(`SELECT title, phone, "companyId" FROM "Contact" WHERE email='dana@acme.test' AND "organizationId"=$1`, [org])).rows;
   assert.equal(dana.length, 1, "Dana matched by email, not doubled");
   assert.equal(dana[0].title, "CEO");
@@ -227,7 +227,7 @@ async function rowCount(page, testId) {
   assert.deepEqual(gates.industries, ["Service Provider"]);
   assert.deepEqual([...gates.companyTypes].sort(), ["Access Control", "Gates"]);
   const ghost = (await sql(`SELECT phone, industries FROM "Company" WHERE name='Ghost Holdings LLC' AND "organizationId"=$1`, [org])).rows[0];
-  assert.equal(ghost.phone, "555-3000", "company-only row created the company");
+  assert.equal(ghost.phone, "512-555-3000", "company-only row created the company");
   const seededGeneral = (await sql(`SELECT count(*)::int AS n FROM "CompanyTypeOption" t JOIN "IndustryOption" i ON i.id=t."industryId" WHERE i.name='Construction' AND t.name='General' AND t."organizationId"=$1`, [org])).rows[0].n;
   assert.equal(seededGeneral, 1, "Construction has General");
 
@@ -344,7 +344,7 @@ async function rowCount(page, testId) {
   // Was 3 before Sept 14, 2026: the import now copies Sam's phone up to Bluebird ISP (its one person with a number), so only Gates and Big Co are left unreachable.
   assert.equal(await pageSummary(page), "Showing 1–2 of 2 companies", "Gates and Big Co have no phone or email");
   const bluebirdPhone = (await sql(`SELECT phone, "autoFilled" FROM "Company" WHERE name='Bluebird ISP' AND "organizationId"=$1`, [org])).rows[0];
-  assert.equal(bluebirdPhone.phone, "555-1001", "Bluebird's phone copied up from Sam");
+  assert.equal(bluebirdPhone.phone, "512-555-1001", "Bluebird's phone copied up from Sam");
   assert.ok(bluebirdPhone.autoFilled.includes("phone"), "and marked as filled in by the app");
   await page.goto(`${BASE}/dashboard/companies`);
   await page.locator("tr", { hasText: "Big Co" }).getByRole("link", { name: "Big Co" }).click();
@@ -375,10 +375,10 @@ async function rowCount(page, testId) {
   log("audit fixes: messy exports import correctly (owner column, Google-style labels, Inactive, company-only rows, orphan type, name update, phone list, bad birthday, stray quote)");
   const messy = [
     "First Name,Last Name,Contact owner,E-mail 1 - Label,E-mail 1 - Value,Phone 1 - Label,Phone 1 - Value,Status,Company,Type,Birthday,Title",
-    'Hub,Spot,Taylor Owner,Work,hub@spot.test,Mobile,555-7001,Inactive,Spot Co,Integrator,March 9,12" pipe guy',
+    'Hub,Spot,Taylor Owner,Work,hub@spot.test,Mobile,512-555-7001,Inactive,Spot Co,Integrator,March 9,12" pipe guy',
     "Dana,Renamed,Taylor Owner,,dana@acme.test,,,,Acme Towers,,,",
-    "Sam,Rivera,Taylor Owner,,,,555-7002,,Bluebird ISP,,,",
-    ",,,,office@plain.test,,555-7003,Customer,Plain Company Row,,,",
+    "Sam,Rivera,Taylor Owner,,,,512-555-7002,,Bluebird ISP,,,",
+    ",,,,office@plain.test,,512-555-7003,Customer,Plain Company Row,,,",
     "After,Quote,Taylor Owner,,after@quote.test,,,,,,,",
   ];
   const messyPath = path.join(OUT, "messy.csv");
@@ -395,7 +395,7 @@ async function rowCount(page, testId) {
   const hub = (await sql(`SELECT name, email, phone, status, title, birthday FROM "Contact" WHERE email='hub@spot.test' AND "organizationId"=$1`, [org])).rows[0];
   assert.ok(hub, "Hub Spot imported");
   assert.equal(hub.name, "Hub Spot", "First + Last used, not the owner column");
-  assert.equal(hub.phone, "555-7001", "Phone 1 - Value, not the label");
+  assert.equal(hub.phone, "512-555-7001", "Phone 1 - Value, not the label");
   assert.equal(hub.status, "ARCHIVED", "Inactive is archived, not customer");
   assert.equal(hub.title, '12" pipe guy', "stray quote is a character");
   assert.equal(hub.birthday, null, "year-less birthday left blank");
@@ -408,7 +408,7 @@ async function rowCount(page, testId) {
   const sams = (await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE name='Sam Rivera' AND "organizationId"=$1`, [org])).rows[0].n;
   assert.equal(sams, 1, "phone-list row without email matched Sam by name + company");
   const plain = (await sql(`SELECT phone, email, status FROM "Company" WHERE name='Plain Company Row' AND "organizationId"=$1`, [org])).rows[0];
-  assert.equal(plain.phone, "555-7003", "company-only row keeps bare phone");
+  assert.equal(plain.phone, "512-555-7003", "company-only row keeps bare phone");
   assert.equal(plain.email, "office@plain.test", "company-only row keeps bare email");
   assert.equal(plain.status, "WON", "a Customer status imports as Signed / Won");
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE email='after@quote.test' AND "organizationId"=$1`, [org])).rows[0].n, 1, "row after the stray quote still imported");

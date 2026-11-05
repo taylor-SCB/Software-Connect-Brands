@@ -95,9 +95,6 @@ export function dropAutoMarks(organizationId: string, companyId: string, fields:
 const needsTags = (c: EnrichableCompany) => c.industries.length === 0 && c.companyTypes.length === 0;
 const needsSomething = (c: EnrichableCompany) => needsTags(c) || !c.phone || !c.website;
 
-type FilledField = "tagged" | "phonesFilled" | "websitesFilled";
-
-const WRITES_AT_ONCE = 8;
 
 // Fills the blanks on these companies from what the workspace already
 // has, and only the blanks: nothing a person typed is touched. Every
@@ -182,51 +179,62 @@ export async function enrichCompanies(organizationId: string, companies: Enricha
   // old one back keeps "last changed" honest — the app filling a blank
   // is not the user changing the company.
   const now = new Date();
-  const writes: Prisma.PrismaPromise<{ count: number }>[] = [];
-  const fields: FilledField[] = [];
+  const tags: { id: string; updatedAt: Date; industry: string; companyType: string }[] = [];
+  const phones: { id: string; updatedAt: Date; value: string }[] = [];
+  const websites: { id: string; updatedAt: Date; value: string }[] = [];
   for (const plan of plans) {
     const { company } = plan;
     const stillTagless = needsTags(company) && !plan.suggestion;
     if (stillTagless || (!company.phone && !plan.phone) || (!company.website && !plan.website)) counts.stillMissing += 1;
-    const asRead = { id: company.id, organizationId, updatedAt: company.updatedAt };
-    const stamp = { enrichedAt: now, updatedAt: company.updatedAt };
-    const mark = (add: AutoField[]) => {
-      const missing = add.filter((field) => !company.autoFilled.includes(field));
-      return missing.length > 0 ? { autoFilled: { push: missing } } : {};
-    };
     if (plan.suggestion) {
-      writes.push(
-        prisma.company.updateMany({
-          where: { ...asRead, ...untaggedWhere },
-          data: {
-            industries: [canonIndustry(plan.suggestion.industry)],
-            companyTypes: [canonType(plan.suggestion.companyType)],
-            ...mark(["industries", "companyTypes"]),
-            ...stamp,
-          },
-        }),
-      );
-      fields.push("tagged");
+      tags.push({
+        id: company.id,
+        updatedAt: company.updatedAt,
+        industry: canonIndustry(plan.suggestion.industry),
+        companyType: canonType(plan.suggestion.companyType),
+      });
     }
-    if (plan.phone) {
-      writes.push(prisma.company.updateMany({ where: { ...asRead, phone: null }, data: { phone: plan.phone, ...mark(["phone"]), ...stamp } }));
-      fields.push("phonesFilled");
-    }
-    if (plan.website) {
-      writes.push(prisma.company.updateMany({ where: { ...asRead, website: null }, data: { website: plan.website, ...mark(["website"]), ...stamp } }));
-      fields.push("websitesFilled");
-    }
+    if (plan.phone) phones.push({ id: company.id, updatedAt: company.updatedAt, value: plan.phone });
+    if (plan.website) websites.push({ id: company.id, updatedAt: company.updatedAt, value: plan.website });
   }
-  // Not one transaction: each write is already guarded on its own, and an
-  // import batch makes a thousand of them. Against the live database, a
-  // few milliseconds away, one transaction holding them all ran past
-  // Prisma's five-second limit and the import stopped (Sept 27, 2026).
-  // A few at a time, so a batch never takes every pooled connection.
-  for (let start = 0; start < writes.length; start += WRITES_AT_ONCE) {
-    const results = await Promise.all(writes.slice(start, start + WRITES_AT_ONCE));
-    results.forEach((result, i) => {
-      counts[fields[start + i]] += result.count;
-    });
+  // One statement per kind of fill for the whole batch (Nov 4, 2026); one
+  // write per company per field, eight at a time, was four and a half
+  // seconds of every 500 imported rows against the live database. Not one
+  // transaction: each statement is guarded row by row on its own.
+  const stamps = (rows: { updatedAt: Date }[]) => rows.map((row) => row.updatedAt.toISOString());
+  if (tags.length) {
+    counts.tagged += await prisma.$executeRaw`
+      UPDATE "Company" AS c SET
+        industries = ARRAY[v.industry],
+        "companyTypes" = ARRAY[v.company_type],
+        "autoFilled" = c."autoFilled"
+          || CASE WHEN 'industries' = ANY(c."autoFilled") THEN '{}'::text[] ELSE ARRAY['industries'] END
+          || CASE WHEN 'companyTypes' = ANY(c."autoFilled") THEN '{}'::text[] ELSE ARRAY['companyTypes'] END,
+        "enrichedAt" = ${now}
+      FROM unnest(${tags.map((row) => row.id)}::text[], ${stamps(tags)}::text[], ${tags.map((row) => row.industry)}::text[], ${tags.map((row) => row.companyType)}::text[])
+        AS v(id, stamp, industry, company_type)
+      WHERE c.id = v.id AND c."organizationId" = ${organizationId} AND c."updatedAt" = v.stamp::timestamptz AT TIME ZONE 'UTC'
+        AND cardinality(c.industries) = 0 AND cardinality(c."companyTypes") = 0`;
+  }
+  if (phones.length) {
+    counts.phonesFilled += await prisma.$executeRaw`
+      UPDATE "Company" AS c SET
+        phone = v.value,
+        "autoFilled" = CASE WHEN 'phone' = ANY(c."autoFilled") THEN c."autoFilled" ELSE array_append(c."autoFilled", 'phone') END,
+        "enrichedAt" = ${now}
+      FROM unnest(${phones.map((row) => row.id)}::text[], ${stamps(phones)}::text[], ${phones.map((row) => row.value)}::text[]) AS v(id, stamp, value)
+      WHERE c.id = v.id AND c."organizationId" = ${organizationId} AND c."updatedAt" = v.stamp::timestamptz AT TIME ZONE 'UTC'
+        AND c.phone IS NULL`;
+  }
+  if (websites.length) {
+    counts.websitesFilled += await prisma.$executeRaw`
+      UPDATE "Company" AS c SET
+        website = v.value,
+        "autoFilled" = CASE WHEN 'website' = ANY(c."autoFilled") THEN c."autoFilled" ELSE array_append(c."autoFilled", 'website') END,
+        "enrichedAt" = ${now}
+      FROM unnest(${websites.map((row) => row.id)}::text[], ${stamps(websites)}::text[], ${websites.map((row) => row.value)}::text[]) AS v(id, stamp, value)
+      WHERE c.id = v.id AND c."organizationId" = ${organizationId} AND c."updatedAt" = v.stamp::timestamptz AT TIME ZONE 'UTC'
+        AND c.website IS NULL`;
   }
   return counts;
 }

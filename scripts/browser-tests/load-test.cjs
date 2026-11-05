@@ -187,7 +187,7 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     const fresh = i % 2 === 0;
     lines.push(
       fresh
-        ? `Import Person ${i},import${i}@example.test,555-${String(i % 10000).padStart(4, "0")},TX,Imported Co ${Math.ceil(i / 25)},Small Business,General`
+        ? `Import Person ${i},import${i}@example.test,512-555-${String(i % 10000).padStart(4, "0")},TX,Imported Co ${Math.ceil(i / 25)},Small Business,General`
         : `Alex Rivera ${i},person${i}@example.test,,CO,,,`,
     );
   }

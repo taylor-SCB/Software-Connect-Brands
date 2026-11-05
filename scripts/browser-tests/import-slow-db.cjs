@@ -30,7 +30,8 @@ const EMAIL = "test-slow@example.com";
 const PASSWORD = "password123";
 const COMPANY = "Test Slow Import Co";
 const SLUG = "test-slow-import-co";
-const ROWS = 1800;
+// ROWS=3200 times an import the size of a real one (Oct 27, 2026).
+const ROWS = Number(process.env.ROWS) || 1800;
 
 let step = 0;
 function log(msg) {
@@ -74,7 +75,7 @@ async function sql(text, params) {
   const titles = ["Property Manager", "Owner", "General Contractor", "Leasing Agent", "Facilities Director"];
   const lines = ["Name,Title,Email,Phone,Mailing City,Mailing State,Company Name"];
   for (let i = 1; i <= ROWS; i += 1) {
-    lines.push(`Slow Person ${i},${titles[i % titles.length]},slow${i}@slowco${i}.test,555-${String(i).padStart(4, "0")},Austin,TX,Slow Company ${i}`);
+    lines.push(`Slow Person ${i},${titles[i % titles.length]},slow${i}@slowco${i}.test,512-555-${String(i).padStart(4, "0")},Austin,TX,Slow Company ${i}`);
   }
   const csvPath = path.join(OUT, "slow.csv");
   fs.writeFileSync(csvPath, lines.join("\r\n") + "\r\n");
@@ -83,7 +84,7 @@ async function sql(text, params) {
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-start").click();
   const started = Date.now();
-  await page.getByTestId("import-done").waitFor({ timeout: 280000 });
+  await page.getByTestId("import-done").waitFor({ timeout: 900000 });
   await page.screenshot({ path: path.join(OUT, "01-finished.png") });
   const progress = await page.getByTestId("import-progress").textContent();
   console.log(`   ${progress} in ${Math.round((Date.now() - started) / 1000)}s`);
@@ -97,8 +98,10 @@ async function sql(text, params) {
   await page.getByTestId("import-done").click();
   await page.getByTestId("import-csv").click();
   await page.getByTestId("import-file").setInputFiles(csvPath);
+  const again = Date.now();
   await page.getByTestId("import-start").click();
-  await page.getByTestId("import-done").waitFor({ timeout: 280000 });
+  await page.getByTestId("import-done").waitFor({ timeout: 900000 });
+  console.log(`   re-import of ${ROWS} rows in ${Math.round((Date.now() - again) / 1000)}s`);
   assert.equal(await page.getByTestId("import-progress").textContent(), `Imported ${ROWS.toLocaleString()} rows`);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId"=$1`, [org])).rows[0].n, ROWS, "no doubles");
 

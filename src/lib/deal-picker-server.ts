@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { ensureOpportunityForDeal } from "@/lib/opportunities";
 
 // Turns what the DealPicker sent into a deal id. An existing deal must
 // belong to this contact; a typed name is matched against the contact's
@@ -30,8 +31,11 @@ export async function resolveDeal(input: {
   });
   if (existing) return existing;
 
-  return prisma.deal.create({
+  const deal = await prisma.deal.create({
     data: { organizationId, contactId, title, ownerId },
     select: { id: true },
   });
+  // No deal without an opportunity (Oct 27, 2026).
+  await ensureOpportunityForDeal({ organizationId, userId: ownerId }, deal.id);
+  return deal;
 }

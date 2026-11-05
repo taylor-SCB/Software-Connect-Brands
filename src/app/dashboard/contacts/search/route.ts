@@ -36,7 +36,7 @@ export async function GET(request: Request) {
               { name: { contains: q, mode: "insensitive" } },
               { email: { contains: q, mode: "insensitive" } },
               { email2: { contains: q, mode: "insensitive" } },
-              ...(/\d{3}/.test(q) ? [{ phone: { contains: q } }, { phone2: { contains: q } }] : []),
+              ...(/\d{3}/.test(q) ? [{ phone: { contains: q } }, { phone2: { contains: q } }, { mobile: { contains: q } }] : []),
               ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
             ],
           }

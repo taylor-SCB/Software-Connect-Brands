@@ -239,7 +239,7 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
   const earliest = (rows: typeof activities) => rows.map((row) => row.occurredAt).sort((a, b) => a.getTime() - b.getTime())[0];
   await markContacted(who, { contactIds: [contact.id], companyId: activities[0].companyId }, earliest(activities));
   const meetings = activities.filter((row) => row.type === "MEETING");
-  if (meetings.length) await markMeetingSet(who, [contact.id], earliest(meetings));
+  if (meetings.length) await markMeetingSet(who, [contact.id], earliest(meetings), { activityId: meetings[0].id });
 
   for (const companyId of new Set(activities.map((row) => row.companyId!))) revalidatePath(`/dashboard/companies/${companyId}`);
   revalidatePath(`/dashboard/contacts/${contact.id}`);

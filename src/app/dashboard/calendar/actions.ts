@@ -198,7 +198,7 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
   // first one for that person; anyone already past Meeting Set stays put.
   if (type === "Meeting") {
     const people = [data.contactId, ...attendees.map((row) => row.id)].filter((id): id is string => Boolean(id));
-    await markMeetingSet({ organizationId, userId }, Array.from(new Set(people)), new Date());
+    await markMeetingSet({ organizationId, userId }, Array.from(new Set(people)), new Date(), { on: data.startOn, eventId });
   }
 
   await startJobOnFirstDatedDay(organizationId, project?.id);

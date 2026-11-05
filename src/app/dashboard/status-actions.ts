@@ -10,6 +10,7 @@ import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { zonedNoon } from "@/lib/money";
 import { advanceCompany, skippedSteps } from "@/lib/status";
+import { followContactStatus } from "@/lib/opportunities";
 
 const schema = z.object({
   kind: z.enum(["contact", "company"]),
@@ -100,6 +101,14 @@ export async function setRecordStatus(input: {
       await advanceCompany({ organizationId, userId }, company.companyId, target, { on: at, auto: true });
       revalidatePath(`/dashboard/companies/${company.companyId}`);
     }
+  }
+
+  // Their opportunity follows a move made by hand (Oct 27, 2026), so
+  // nobody leaves the Pipeline because their status went past a column
+  // they had no deal for.
+  if (kind === "contact") {
+    await followContactStatus({ organizationId, userId }, id, target);
+    revalidatePath("/dashboard/deals");
   }
 
   revalidatePath(kind === "contact" ? `/dashboard/contacts/${id}` : `/dashboard/companies/${id}`);

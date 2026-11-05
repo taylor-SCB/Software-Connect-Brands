@@ -179,6 +179,7 @@ export async function ContactsList({
                   <th>Contact</th>
                   <th>Industry · Type</th>
                   <th>Email</th>
+                  <th>Mobile</th>
                   <th>Phone</th>
                   <th>Location</th>
                   <th>Notes</th>
@@ -244,7 +245,16 @@ export async function ContactsList({
                           <span className="faint">—</span>
                         )}
                       </td>
-                      <td className="muted num">
+                      <td className="muted num whitespace-nowrap" data-testid="contact-row-mobile">
+                        {contact.mobile ? (
+                          <a href={`tel:${contact.mobile}`} className="hover:underline">
+                            {contact.mobile}
+                          </a>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
+                      </td>
+                      <td className="muted num whitespace-nowrap">
                         {contact.phone ? (
                           <a href={`tel:${contact.phone}`} className="hover:underline">
                             {contact.phone}

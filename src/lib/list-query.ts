@@ -79,6 +79,7 @@ export async function contactWhere(
         { phone: { contains: p.q } },
         { email2: { contains: p.q, mode: insensitive } },
         { phone2: { contains: p.q } },
+        { mobile: { contains: p.q } },
         { city: { contains: p.q, mode: insensitive } },
         ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
       ],
@@ -111,7 +112,7 @@ export async function contactWhere(
   if (p.attn) {
     and.push({
       OR: [
-        { AND: [{ email: null }, { phone: null }, { email2: null }, { phone2: null }] },
+        { AND: [{ email: null }, { phone: null }, { email2: null }, { phone2: null }, { mobile: null }] },
         { company: { industries: { isEmpty: true } } },
       ],
     });
