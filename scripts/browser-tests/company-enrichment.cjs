@@ -291,11 +291,19 @@ async function company(org, name) {
   // Untagged: the 1,200 seeded. No phone: those + Lakeside + Zqx. No website: those + Zqx + Typed Co.
   assert.match(plan, /tag 1,200 companies and try to fill in 1,202 phones and 1,202 websites/, plan);
   await shot(page, "03-fill-missing-plan");
+  // Since Nov 4, 2026 a batch takes a moment, so the first one's answer is
+  // held back long enough for Stop to land while it is still running.
+  const hold = async (route) => {
+    if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  };
+  await page.route("**/dashboard/companies**", hold);
   await page.getByTestId("fill-missing-start").click();
   // Stop straight away: the first batch (the 500 oldest, Seeded 1200 down
   // to 701) still finishes, the other two never start.
   await page.getByTestId("fill-missing-stop").click();
   await page.getByText("Stopped after 500 of 1,203 companies").waitFor({ timeout: 60000 });
+  await page.unroute("**/dashboard/companies**", hold);
   await page.getByTestId("fill-missing-stopped").waitFor();
   assert.equal(await page.getByText("Done. Look for the small").count(), 0, "a stopped run does not say Done");
   const partial = await page.getByTestId("fill-missing-summary").textContent();
