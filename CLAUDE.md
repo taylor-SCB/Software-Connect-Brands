@@ -742,8 +742,9 @@ are all blocking before the first paying customer.
   unpack to gigabytes is not caught before the reader opens it.
 - **Contract templates are not limited to Owners and Admins.** The
   template actions only check for a signed-in user, so a Member can edit
-  or replace one despite the Company Users rule. Found Oct 7, 2026; not
-  changed without asking.
+  or replace one despite the Company Users rule. Found Oct 7, 2026.
+  **Taylor's call, Nov 6, 2026: leave it open to Members and Admins alike
+  for now.** Don't lock it or ask again unless he raises it.
 - **An uploaded agreement keeps its words, not its look.** Bold, tables,
   columns and logos from the Word or PDF file don't come across; the
   Phase 4 PDF designer is where formatting lives.
