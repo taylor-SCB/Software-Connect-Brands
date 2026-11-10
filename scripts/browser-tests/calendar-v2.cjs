@@ -26,7 +26,9 @@
  * and both trashes ask "Take this off the calendar?" before deleting; a
  * month square shows a count instead of chips cut to "8:3…" (the desktop
  * keeps its chips); tapping a day scrolls its list on screen, titled
- * "Tue, Nov 10, 2026" rather than the ISO date, closed with Close.
+ * "Tue, Nov 10, 2026" rather than the ISO date, closed with Close; the
+ * Team view's day list is titled "Taylor Test (me) · Tue, Nov 10, 2026"
+ * the same way.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
@@ -106,6 +108,14 @@ const TODAY = dayInZone(new Date());
 const daysAgo = (n) => shift(TODAY, -n);
 const daysOn = (n) => shift(TODAY, n);
 const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10));
+// How the app titles a day's list: "Tue, Nov 10, 2026" (readableDay).
+const readableDay = (iso) =>
+  `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${iso}T12:00:00Z`).getUTCDay()]}, ${new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${iso}T12:00:00Z`))}`;
 
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
@@ -654,9 +664,15 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
   await myRow.locator(`[data-testid=team-cell][data-day="${TODAY}"]`).click();
   const teamPanel = page.locator("[data-testid=day-panel]");
   await teamPanel.waitFor();
-  assert.match(await page.locator("h2", { hasText: "Taylor Test (me)" }).textContent(), new RegExp(TODAY));
   assert.match(await teamPanel.textContent(), /Contract sent · Dana Ruiz/);
   await shot(page, "06-team");
+
+  log("audit fixes (UX review): the Team view's day list is titled with whose it is and a readable date, not the ISO date");
+  // It read "Taylor Test (me) · 2026-11-10" after the Month view's list
+  // had been fixed to read "Tue, Nov 10, 2026".
+  const teamHeading = (await page.locator("h2", { hasText: "Taylor Test (me)" }).textContent()).trim();
+  assert.equal(teamHeading, `Taylor Test (me) · ${readableDay(TODAY)}`, `the Team view's day title reads like a date; got "${teamHeading}"`);
+  assert.doesNotMatch(teamHeading, /\d{4}-\d{2}-\d{2}/, "not 2026-11-10");
 
   /* --------------------------------- The form --------------------------------- */
 
@@ -845,12 +861,7 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
     return top >= -1 && top <= window.innerHeight - 80;
   }, null, { timeout: 5000 });
   const panelTop = await panelCard.evaluate((el) => Math.round(el.getBoundingClientRect().top));
-  const readable = `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${TODAY}T12:00:00Z`).getUTCDay()]}, ${new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${TODAY}T12:00:00Z`))}`;
+  const readable = readableDay(TODAY);
   const heading = (await panelCard.locator("h2").first().textContent()).trim();
   assert.equal(heading, readable, `the day's title reads like a date (top at ${panelTop}px)`);
   assert.doesNotMatch(heading, /\d{4}-\d{2}-\d{2}/, "not 2026-11-10");
