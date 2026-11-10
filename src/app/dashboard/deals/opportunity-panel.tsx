@@ -168,7 +168,7 @@ export function OpportunityPanel({
         className="card popover flex h-full w-full max-w-xl flex-col rounded-none"
         data-testid="opportunity-panel"
       >
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--hairline-3)] px-5 py-4">
           <div className="min-w-0 flex-1">
             <p className="eyebrow mb-1">{isDeal ? "Deal" : "Opportunity"}</p>
             {detail ? (
@@ -373,7 +373,7 @@ export function OpportunityPanel({
           </div>
         )}
 
-        <div className="border-t border-[var(--border)] px-5 py-3">
+        <div className="border-t border-[var(--hairline-3)] px-5 py-3">
           {error && <p className="mb-2 text-xs text-[var(--danger)]" data-testid="panel-error">{error}</p>}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="btn btn-ghost btn-sm">

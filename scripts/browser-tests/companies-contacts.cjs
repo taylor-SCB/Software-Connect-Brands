@@ -515,6 +515,18 @@ function backLink(page) {
   const remaining = await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE name IN ('Danny Ortiz','Sara Lee') AND "organizationId"=$1`, [org]);
   assert.equal(remaining.rows[0].n, 2, "deleting a company keeps its people");
 
+  log("audit fixes (UX review): the people picker finds a number however it's typed, and shows a mobile-only person's mobile");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,mobile,"updatedAt") VALUES ('cc_mobile_only',$1,'Mona Mobile','(870) 555-0167',now())`,
+    [org],
+  );
+  for (const typed of ["870-555-0167", "8705550167", "870.555.0167"]) {
+    const hits = await (await page.request.get(`${BASE}/dashboard/contacts/search?q=${encodeURIComponent(typed)}`)).json();
+    const mona = hits.find((hit) => hit.id === "cc_mobile_only");
+    assert.ok(mona, `"${typed}" doesn't find Mona`);
+    assert.equal(mona.phone, "(870) 555-0167", "her mobile stands in for the missing phone");
+  }
+
   void quoteBUrl;
   void quoteCUrl;
   await browser.close();

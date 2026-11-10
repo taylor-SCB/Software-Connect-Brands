@@ -21,7 +21,7 @@ export default async function AdminLayout({
       style={{ ["--brand" as string]: "#a855f7" }}
       data-theme={theme}
     >
-      <header className="border-b border-[var(--border)] px-5 py-3 sm:px-8">
+      <header className="border-b border-[var(--hairline-3)] px-5 py-3 sm:px-8">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div

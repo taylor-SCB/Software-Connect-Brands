@@ -213,7 +213,7 @@ export function Columns({
         >
           {ticks.map((tick, index) => (
             <g key={tick}>
-              <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} stroke="var(--border)" />
+              <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} stroke="var(--chart-grid)" />
               <text x={pad.l - 6} y={yAt(tick) + 4} textAnchor="end" className="num fill-[var(--text-faint)] text-[11px]" data-testid="columns-y-label" data-value={tick}>
                 {tickText[index]}
               </text>

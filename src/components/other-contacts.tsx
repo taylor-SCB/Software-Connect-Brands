@@ -32,7 +32,7 @@ export function OtherContacts({ companyId, people, groups }: { companyId: string
   const total = groups.reduce((sum, group) => sum + group.activities.length, 0);
 
   return (
-    <div className="border-t border-[var(--border)]" data-testid="other-contacts">
+    <div className="border-t border-[var(--hairline-3)]" data-testid="other-contacts">
       <div className="px-5 pb-2 pt-4">
         <p className="text-sm font-medium">Other Contacts</p>
         <p className="faint text-xs">

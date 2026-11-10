@@ -15,6 +15,7 @@ import { openItems } from "@/lib/close-out";
 import { ensureServiceType } from "@/lib/service-types";
 import { ensureDistributorTypeName } from "@/lib/distributors";
 import { advanceDealStage } from "@/lib/deals";
+import { acceptSourceQuote } from "@/lib/quote-accept";
 import {
   computeSchedule,
   isoToDate,
@@ -524,6 +525,8 @@ export async function awardWithoutPaperwork(
   });
 
   await advanceDealStage(deal.id, organizationId, "WON", userId);
+  // Awarding from a quote is the customer's yes to it, as signing is.
+  await acceptSourceQuote(organizationId, quote?.id ?? null, signedAt, userId);
   const projectId = await awardFromContract(organizationId, contractId);
   if (projectId) revalidateProject(projectId);
   revalidatePath("/dashboard/contracts");

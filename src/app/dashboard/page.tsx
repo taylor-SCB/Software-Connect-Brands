@@ -381,7 +381,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 // breakdown go back to each report's own default.
 function ReportBar({ choice }: { choice: ReportChoice }) {
   return (
-    <nav className="mb-6 flex flex-wrap gap-1.5 border-b border-[var(--border)] pb-3" aria-label="Reports" data-testid="report-bar">
+    <nav className="mb-6 flex flex-wrap gap-1.5 border-b border-[var(--hairline-3)] pb-3" aria-label="Reports" data-testid="report-bar">
       {REPORT_KEYS.map((key) => {
         const active = key === choice.report;
         const target: ReportChoice = { report: key, period: "today", repId: choice.repId, by: REPORT_BREAKDOWNS[key][0] ?? "rep" };

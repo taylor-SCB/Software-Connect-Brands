@@ -141,7 +141,7 @@ export function MergeButton({
             className="card card-lit popover flex max-h-[88vh] w-full max-w-xl flex-col"
             data-testid="merge-dialog"
           >
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
               <div>
                 <h2 className="text-sm font-semibold">Merge duplicate {noun}</h2>
                 <p className="faint mt-0.5 text-xs">
@@ -153,7 +153,7 @@ export function MergeButton({
               </button>
             </div>
 
-            <div className="border-b border-[var(--border)] p-3">
+            <div className="border-b border-[var(--hairline-3)] p-3">
               <div className="relative">
                 <IconSearch size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]" />
                 <input
@@ -234,7 +234,7 @@ export function MergeButton({
               )}
             </div>
 
-            <div className="border-t border-[var(--border)] px-5 py-3">
+            <div className="border-t border-[var(--hairline-3)] px-5 py-3">
               <FormError message={error} />
               {confirming && keeper ? (
                 <div className="flex flex-wrap items-center justify-between gap-2" data-testid="merge-confirm">

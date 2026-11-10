@@ -149,7 +149,7 @@ function ImportDialog({
         onClick={(event) => event.stopPropagation()}
         className="card card-lit popover flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden"
       >
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold">Import {kind}</h2>
             <p className="faint mt-0.5 text-xs">
@@ -221,7 +221,7 @@ function ImportDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] px-5 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
           <div className="flex items-center gap-2">
             {phase.step === "preview" && (
               <>

@@ -752,6 +752,21 @@ async function textContrast(locator) {
     }
   }
 
+  log("audit fixes (UX review): the active page's glowing bar in the sidebar isn't clipped by the nav's scroll box");
+  {
+    await page.goto(`${BASE}/dashboard/contacts`);
+    await settle(page);
+    const clip = await page.evaluate(() => {
+      const item = document.querySelector("aside .nav-item-active");
+      const bar = getComputedStyle(item, "::before");
+      let box = item.parentElement;
+      while (box && getComputedStyle(box).overflowY !== "auto") box = box.parentElement;
+      const barLeft = item.getBoundingClientRect().left + parseFloat(bar.left);
+      return { barLeft: Math.round(barLeft), boxLeft: Math.round(box.getBoundingClientRect().left) };
+    });
+    assert.ok(clip.boxLeft <= clip.barLeft - 4, `the bar starts at ${clip.barLeft}px but the scroll box clips from ${clip.boxLeft}px`);
+  }
+
   log("audit fixes (UX review): Light lines that only separate (a divider, a table's header line, the sidebar's edge, the phone bar's line) stay soft; Dark's are as they were");
   {
     // Each line's colour and its contrast against what is behind it.
@@ -770,6 +785,10 @@ async function textContrast(locator) {
       ["/dashboard/contacts", "the sidebar's edge", `() => { const a = document.querySelector("aside"); return [a, getComputedStyle(a).borderRightColor]; }`],
       ["/dashboard/contacts", "the sidebar's divider", `() => { const d = document.querySelector("aside .divider"); return [d, getComputedStyle(d).backgroundColor]; }`],
       [`/dashboard/contacts/${contactId}`, "a divider in a card", `() => { const d = document.querySelector("main .divider"); return [d, getComputedStyle(d).backgroundColor]; }`],
+      // Follow-up: every one-sided separator moved to --hairline-3, the
+      // line under each card's header the most visible of them.
+      [`/dashboard/contacts/${contactId}`, "the line under a card header", `() => { const d = document.querySelector("main .card h2").closest("div.border-b"); return [d, getComputedStyle(d).borderBottomColor]; }`],
+      ["/dashboard/contacts", "the Showing 1–N footer's line", `() => { const d = [...document.querySelectorAll("main div.border-t")].find((x) => /Showing/.test(x.textContent)); return [d, getComputedStyle(d).borderTopColor]; }`],
     ];
     // The bar holding the phone's look switch: its first ancestor with a
     // line along the bottom only (the switch has an outline all round).

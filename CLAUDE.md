@@ -1278,6 +1278,12 @@ are all blocking before the first paying customer.
   allow) is its own choice in the filter; the Labels screen groups it
   with the rest (outer spaces and inner runs ignored), and a rename or
   merge there tidies it.
+- **Search matches word by word, so it can find more than a phrase
+  would** ("Property Manager" also finds a Community Manager at a "…
+  Property Group"). A run of 4–6 digits typed across a dash isn't
+  compared digits-only, and digit matches stop at 1,000 per word.
+- **The Companies list (12 columns) scrolls sideways inside its card at
+  1440**, like Contacts; its scrollbar is at the bottom of the table.
 - **The Overview page's recent-activity list leaves marketing sends out**
   (Nov 10, 2026); the contact and company feeds show them with the badge.
 - **The Pipeline's Lead Label filter and the opportunity panel no longer
@@ -1584,6 +1590,71 @@ Also: a "last touch" stored on the row leaves out activities dated ahead
 (`crm_touch_due` puts them on once their time comes), "gone quiet" never
 includes an opportunity with a meeting still to come, and "all matching"
 bulk Assign only picks records that don't already have that rep.
+
+The Nov 10, 2026 UX review walked a seeded sales team (demo workspace
+"Summit Low Voltage", slug demo-summit, in scb_test) through the BDR day
+on phone and desktop, Dark and Light: 128 findings, 34 distinct confirmed
+bugs, all fixed with "audit fixes (UX review): …" steps in their module's
+suite (the step counts quoted elsewhere in these notes predate it; the
+suites are the source). The redesign it proposed (Connected, the
+lifecycle meter, health) is a plan waiting on Taylor's decisions, not
+built. What the fixes taught:
+- **Anything with a transform, filter or backdrop-filter is the box its
+  position:fixed children are placed against, and so is an animation that
+  keeps a transform after it ends.** `.fade-up` ran with fill-mode `both`
+  and every in-place dialog opened in the middle of the whole page column,
+  far below the screen. Entrance animations use `backwards`; in Dark,
+  `.card:has(.modal-backdrop)` drops the glass blur while a dialog is open
+  in it. A new dialog should still render through a portal on
+  document.body. overlay-readability.cjs checks every in-place dialog.
+- **Light outlines clear 3:1** (`--border` slate at 0.5, `--border-strong`
+  0.6). **A line that only separates uses `--hairline-3`**, never
+  `--border`: one-sided borders, `divide-*`, card and dialog header
+  underlines, table header lines. Chart gridlines use `--chart-grid`.
+  A focused field in Light gets the darkened brand edge; a disabled
+  `.btn-primary` in Light is grey with `--text-dim` words, not faded.
+- **A grid item holding a `truncate` line, a wide table or a form needs
+  `min-w-0` (or the grid `grid-cols-1`)**, or the page widens on a phone.
+  Test phone layouts with `isMobile: true`: a phone browser widens the
+  layout viewport instead of showing a sideways scrollbar.
+- **Anything that hangs off a button is a FloatingMenu** (filter menus,
+  Add person). Its panel is hidden the frame it takes to place itself, so
+  `autoFocus` inside does nothing: focus in a requestAnimationFrame. The
+  filter menus steer the keyboard with FocusGuard stops; menus are reached
+  in tests by their `<button testid>-menu` testid, not as DOM siblings.
+- **A form that can sit in a narrow column lays out by its own width**
+  (Tailwind container queries, `@container` + `@sm:`), as EventForm does.
+- **SVG charts draw at their real pixel width** (`useBoxWidth` in
+  stats/charts.tsx), never a fixed viewBox scaled by `w-full`, so labels
+  stay 11px on a phone.
+- **"N days ago" is counted on the workspace's calendar**:
+  `daysSince(date, timeZone)` takes the zone.
+- **A change from zero reads "▲ up from 0"**, through `changeText()` in
+  reports/format.ts, Stats tiles included; never "100%" or "vs 0".
+- **One touch logged on several people is one row each with a shared
+  batchId**: anything counting or listing touches across people counts
+  `COALESCE(batchId, id)`.
+- **Search is word by word** (`searchTerms`, up to 6 words); a search
+  that is a phone number (7+ digits) is also compared digits-only on the
+  last 10 (`phoneSearchDigits`, `contactIdsByPhone`) using the hand-made
+  trigram expression indexes in `20261110231500_list_search_phone`.
+  **`prisma migrate dev` will offer to drop them; take those lines out.**
+  The lists' `q` keeps `% _ \` (`cleanListSearch` + `likeText`); the
+  pickers still use `cleanSearch`.
+- **Signing a contract, Mark as signed and Award without paperwork accept
+  the source quote** (`acceptSourceQuote` in src/lib/quote-accept.ts, kept
+  out of "use server" files). **After this goes live, run once against
+  the live database:** `npx tsx scripts/accept-signed-quotes.ts --check`,
+  then without `--check`, to catch up deals signed before it.
+- Mark as sent is refused with no saved line items, and waits while the
+  editor has unsaved edits. Delete quote and the calendar's trash ask
+  first, with Yes away from where the trash was. The opportunity panel's
+  Stage menu saves the panel's edits first.
+- Lead label fills are Taylor's; built-in chips use black letters, N/A
+  #991b1b on #d4d4d8, and a hue used as words goes through
+  `leadLabelInk()`, never opacity.
+- A component that copies a prop into state (OwnerSelect, RepField) is
+  keyed by that prop wherever something else can save it.
 
 **Anything that floats over other content must be opaque.** The app's
 look is glass — `.card` is about 4% white with a blur behind it — which

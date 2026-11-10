@@ -75,7 +75,7 @@ export function LeadLabelPicker({
             </li>
           ))}
         </ul>
-        <div className="border-t border-[var(--border)] p-2">
+        <div className="border-t border-[var(--hairline-3)] p-2">
           {adding ? (
             <form
               onSubmit={(event) => {

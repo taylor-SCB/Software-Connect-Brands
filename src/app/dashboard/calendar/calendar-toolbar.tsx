@@ -469,7 +469,7 @@ function Row({ row, on, onToggle }: { row: Named; on: boolean; onToggle: () => v
 function ResetLine({ label, count, onReset }: { label: string; count: number; onReset: () => void }) {
   if (count === 0) return null;
   return (
-    <div className="border-t border-[var(--border)] px-3 py-1.5">
+    <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
       <button type="button" onClick={onReset} className="link text-xs">
         Reset {label.toLowerCase()}
       </button>
@@ -502,7 +502,7 @@ function MultiSelect({
   return (
     <Dropdown label={label} count={values.length} testId={testId}>
       {searchable && (
-        <div className="border-b border-[var(--border)] p-2">
+        <div className="border-b border-[var(--hairline-3)] p-2">
           <input
             type="search"
             value={query}
@@ -557,7 +557,7 @@ function SearchSelect({
 
   return (
     <Dropdown label={label} count={values.length} testId={testId} onOpenChange={setOpen}>
-      <div className="border-b border-[var(--border)] p-2">
+      <div className="border-b border-[var(--hairline-3)] p-2">
         <input
           type="search"
           value={query}

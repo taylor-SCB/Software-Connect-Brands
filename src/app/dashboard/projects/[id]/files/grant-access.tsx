@@ -175,7 +175,7 @@ function GrantDialog({
                     </button>
                   </div>
                   {isOpen && (
-                    <ul className="space-y-1 border-t border-[var(--border)] p-2 pl-10">
+                    <ul className="space-y-1 border-t border-[var(--hairline-3)] p-2 pl-10">
                       {account.people.length === 0 && <li className="faint text-xs">Nobody at this company in your CRM yet.</li>}
                       {account.people.map((person) => (
                         <li key={person.id}>

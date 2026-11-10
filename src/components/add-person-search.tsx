@@ -80,7 +80,7 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
       </button>
 
       <FloatingMenu anchor={button} open={open} onClose={() => setOpen(false)} width={352} testId="add-person-panel" label="Add person">
-        <div className="border-b border-[var(--border)] p-2.5">
+        <div className="border-b border-[var(--hairline-3)] p-2.5">
           <label className="faint mb-1 block text-[0.7rem]" htmlFor={`add-person-${companyId}`}>
             Contact name — checks who&apos;s already in your contacts
           </label>
@@ -129,7 +129,7 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
           </ul>
         )}
 
-        <div className="border-t border-[var(--border)] p-2.5">
+        <div className="border-t border-[var(--hairline-3)] p-2.5">
           {/* Wraps rather than running past the panel with a long company
               or typed name. */}
           <Link href={newHref} className="btn btn-ghost btn-sm w-full justify-start whitespace-normal text-left" data-testid="add-person-new">

@@ -77,7 +77,7 @@ export function SenderPicker({
       </div>
 
       {!allUsers && (
-        <div className="border-t border-[var(--border)]">
+        <div className="border-t border-[var(--hairline-3)]">
           <div className="p-2.5">
             <div className="relative">
               <IconSearch
@@ -117,7 +117,7 @@ export function SenderPicker({
             ))}
           </ul>
           {users.length === 1 && (
-            <p className="faint border-t border-[var(--border)] px-4 py-2 text-[0.7rem]">
+            <p className="faint border-t border-[var(--hairline-3)] px-4 py-2 text-[0.7rem]">
               You are the only user in this workspace today. Teammates show up here once they
               have logins.
             </p>

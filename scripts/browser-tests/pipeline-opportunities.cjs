@@ -723,6 +723,32 @@ async function pixelContrast(page, png) {
   }
   await sql(`UPDATE "User" SET theme='dark' WHERE email=$1`, [EMAIL]);
 
+  log("audit fixes (UX review): a long label never covers a short title, and a long name stays inside its tile");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_long',$1,'Maximiliana Featherstonehaugh-Wolfeschlegelsteinhausen','MEETING_SET',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"leadLabel","createdAt","updatedAt") VALUES ('op_opp_long',$1,'Lab Soft','MEETING_SET','Software Integration',now(),now())`,
+    [org],
+  );
+  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_oc_long','op_opp_long','op_long','PRIMARY',true)`);
+  await page.goto(`${BASE}/dashboard/deals`);
+  const longTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_long']");
+  await longTile.waitFor();
+  const fit = await longTile.evaluate((tile) => {
+    const box = tile.getBoundingClientRect();
+    const title = tile.querySelector("[data-testid=tile-open]");
+    const t = title.getBoundingClientRect();
+    const c = tile.querySelector("[data-testid=lead-label-picker]").getBoundingClientRect();
+    const overlap = c.left < t.right && c.right > t.left && c.top < t.bottom && c.bottom > t.top;
+    const name = tile.querySelector("[data-testid=tile-people] a").getBoundingClientRect();
+    return { overlap, titleWidth: Math.round(t.width), titleText: title.textContent, nameRight: Math.round(name.right), tileRight: Math.round(box.right) };
+  });
+  assert.equal(fit.overlap, false, "the label chip sits clear of the title");
+  assert.ok(fit.titleWidth >= 60, `the title is squeezed to ${fit.titleWidth}px`);
+  assert.ok(fit.nameRight <= fit.tileRight, `the name runs to ${fit.nameRight}px, past the tile's edge at ${fit.tileRight}px`);
+
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED. Screenshots in ${OUT}`);
 })().catch((err) => {

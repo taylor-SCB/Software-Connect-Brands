@@ -526,7 +526,7 @@ export function MultiSelect({
       {() => (
         <>
           {searchable && all.length > 12 && (
-            <div className="border-b border-[var(--border)] p-2">
+            <div className="border-b border-[var(--hairline-3)] p-2">
               <input
                 type="search"
                 value={query}
@@ -554,7 +554,7 @@ export function MultiSelect({
             })}
           </ul>
           {values.length > 0 && (
-            <div className="border-t border-[var(--border)] px-3 py-1.5">
+            <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
               <button type="button" onClick={onClear} className="link text-xs">
                 Clear {label.toLowerCase()}
               </button>
@@ -593,7 +593,7 @@ function CompanySelect({
       {() => {
         return (
           <>
-            <div className="border-b border-[var(--border)] p-2">
+            <div className="border-b border-[var(--hairline-3)] p-2">
               <input
                 type="search"
                 value={query}
@@ -623,7 +623,7 @@ function CompanySelect({
               )}
             </ul>
             {selectedIds.length > 0 && (
-              <div className="border-t border-[var(--border)] px-3 py-1.5">
+              <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
                 <button type="button" onClick={onClear} className="link text-xs">
                   Clear company
                 </button>
@@ -661,7 +661,7 @@ function ActivitySelect({ value, onPick }: { value: ActivityWindow | ""; onPick:
             </li>
           ))}
           {value && (
-            <li className="border-t border-[var(--border)] px-3 py-1.5">
+            <li className="border-t border-[var(--hairline-3)] px-3 py-1.5">
               <button type="button" onClick={() => (onPick(""), close())} className="link text-xs">
                 Clear activity
               </button>
@@ -691,7 +691,7 @@ function TitleSelect({ values, onToggle, onClear }: { values: string[]; onToggle
     <Dropdown label="Job title" count={values.length} testId="filter-job-title" onOpenChange={setOpen}>
       {() => (
         <>
-          <div className="border-b border-[var(--border)] p-2">
+          <div className="border-b border-[var(--hairline-3)] p-2">
             <input
               type="search"
               value={query}
@@ -715,7 +715,7 @@ function TitleSelect({ values, onToggle, onClear }: { values: string[]; onToggle
             {!loading && rows.length === 0 && <li className="faint px-3 py-3 text-xs">{query.trim() ? "No titles match." : "No job titles on file yet."}</li>}
           </ul>
           {values.length > 0 && (
-            <div className="border-t border-[var(--border)] px-3 py-1.5">
+            <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
               <button type="button" onClick={onClear} className="link text-xs">
                 Clear job title
               </button>

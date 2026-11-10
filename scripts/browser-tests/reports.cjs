@@ -438,6 +438,10 @@ async function narrativeText(page) {
     assert.deepEqual(calRows.map((row) => row.done), [false, false, true, true, true, true, true, true], "open first, the done calls after");
     assert.match(calRows[0].text, /Site walk at Acme.*09:00/s);
     assert.match(calRows[1].text, /Call Bob/);
+    // Follow-up: a done row is struck through but not faded (opacity 0.6
+    // on faint text read 2.57:1 in Light).
+    const doneLook = await page.locator("[data-testid=rundown-calendar] li[data-done=true] > span").first().evaluate((el) => ({ opacity: getComputedStyle(el).opacity, line: getComputedStyle(el).textDecorationLine }));
+    assert.deepEqual(doneLook, { opacity: "1", line: "line-through" }, "done rows are struck through, not faded");
     assert.match(await narrativeText(page), /The team has 11 things on the calendar today, 2 still open, starting with “Site walk at Acme” at 09:00\./);
     await sql(`UPDATE "CalendarEvent" SET "doneAt"=now() WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
     await open(page, `${BASE}/dashboard`, "daily");

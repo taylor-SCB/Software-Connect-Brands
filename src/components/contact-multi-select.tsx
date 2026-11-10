@@ -78,7 +78,7 @@ export function ContactMultiSelect({ current }: { current: PickableContact }) {
             onClick={(event) => event.stopPropagation()}
             className="card card-lit popover flex max-h-[80vh] w-full max-w-md flex-col"
           >
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
               <div>
                 <h2 className="text-sm font-semibold">Include multiple contacts</h2>
                 <p className="faint mt-0.5 text-xs">The same entry is logged on everyone you tick.</p>
@@ -88,7 +88,7 @@ export function ContactMultiSelect({ current }: { current: PickableContact }) {
               </button>
             </div>
 
-            <div className="border-b border-[var(--border)] p-3">
+            <div className="border-b border-[var(--hairline-3)] p-3">
               <div className="relative">
                 <IconSearch
                   size={14}
@@ -133,7 +133,7 @@ export function ContactMultiSelect({ current }: { current: PickableContact }) {
               )}
             </ul>
 
-            <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-3">
+            <div className="flex items-center justify-between border-t border-[var(--hairline-3)] px-5 py-3">
               <span className="faint text-xs">{picked.length + 1} selected</span>
               <button type="button" onClick={() => setOpen(false)} className="btn btn-primary btn-sm">
                 Done

@@ -85,7 +85,7 @@ export function TeamView({
         <div className="overflow-x-auto">
           <table className="w-full min-w-[56rem] border-collapse text-sm" data-testid="team-grid">
             <thead>
-              <tr className="border-b border-[var(--border)]">
+              <tr className="border-b border-[var(--hairline-3)]">
                 <th className="eyebrow w-44 px-3 py-2 text-left">Who</th>
                 {days.map((day, index) => (
                   <th key={day} className="eyebrow px-2 py-2 text-center">

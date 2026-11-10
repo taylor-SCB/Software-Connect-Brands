@@ -3,7 +3,7 @@
 // counted in "$X out with customers" and Quotes out, its "Quote follow up"
 // sat in Coming up and on the calendar, and a newer $0 draft on the same
 // deal could become the won deal's value. Signing now accepts that quote
-// itself (acceptSourceQuote in src/app/dashboard/contracts/actions.ts);
+// itself (acceptSourceQuote in src/lib/quote-accept.ts);
 // this does the same for contracts signed before the fix.
 //
 // For every signed customer contract (not a purchase order) whose quote

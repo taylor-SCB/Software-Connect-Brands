@@ -173,7 +173,7 @@ export function PipelineBoard({
                   if (tile) move(tile, column);
                 }}
               >
-                <div className="border-b border-[var(--border)] px-3 py-3">
+                <div className="border-b border-[var(--hairline-3)] px-3 py-3">
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: accent, boxShadow: `0 0 10px ${accent}` }} />
                     <h2 className="whitespace-nowrap text-sm font-semibold">{PIPELINE_COLUMN_LABELS[column]}</h2>
@@ -317,8 +317,11 @@ function Tile({
       data-id={tile.id}
       data-title={tile.title}
     >
-      <div className="flex items-start justify-between gap-2">
-        <button type="button" onClick={onOpen} className="min-w-0 text-left text-sm font-medium hover:underline" data-testid="tile-open">
+      {/* Wraps rather than squeezing (UX review follow-up, Nov 10, 2026): a
+          long lead label used to cover a short title ("Lab Soft" read
+          "Lal"); now the chips drop under the title when there's no room. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+        <button type="button" onClick={onOpen} className="min-w-[6rem] flex-1 break-words text-left text-sm font-medium hover:underline" data-testid="tile-open">
           {tile.title}
         </button>
         <LeadLabelPicker value={label} customLabels={customLabels} onChange={onLabel} />
@@ -334,7 +337,7 @@ function Tile({
         {shown.map((person) => (
           <li key={person.id} className="flex min-w-0 items-center gap-1 text-xs">
             <IconUsers size={11} className="faint shrink-0" />
-            <Link href={`/dashboard/contacts/${person.id}`} className="shrink-0 hover:underline">
+            <Link href={`/dashboard/contacts/${person.id}`} title={person.name} className="min-w-0 truncate hover:underline">
               {person.name}
             </Link>
             {person.company && person.company !== tile.title && <span className="faint truncate">· {person.company}</span>}

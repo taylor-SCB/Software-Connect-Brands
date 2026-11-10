@@ -162,7 +162,7 @@ function Section({ item: { href, label, Icon, children }, pathname }: { item: Na
         {label}
       </Link>
       {children && sectionActive && (
-        <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-[var(--border)] pl-2">
+        <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-[var(--hairline-3)] pl-2">
           {children.map((child) => {
             const on = child === childActive;
             return (

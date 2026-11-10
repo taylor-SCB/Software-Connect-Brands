@@ -491,7 +491,7 @@ export default async function CompanyDetailPage({
             )}
             <OtherContacts companyId={company.id} people={companyPeople} groups={bypassGroups} />
             {peoplePages > 1 && (
-              <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-2.5 text-xs">
+              <div className="flex items-center justify-between border-t border-[var(--hairline-3)] px-5 py-2.5 text-xs">
                 <span className="faint">
                   Page {peoplePage} of {peoplePages}
                 </span>

@@ -110,7 +110,7 @@ export function ConvertDialog({
                 </label>
 
                 {on_ && (
-                  <div className="mt-3 space-y-2 border-t border-[var(--border)] pl-6 pt-3" data-testid="convert-mode">
+                  <div className="mt-3 space-y-2 border-t border-[var(--hairline-3)] pl-6 pt-3" data-testid="convert-mode">
                     <label className="flex cursor-pointer items-center gap-2.5 text-sm">
                       <input
                         type="radio"

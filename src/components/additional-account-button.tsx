@@ -106,7 +106,7 @@ export function AdditionalAccountButton({
             className="card card-lit popover flex max-h-[85vh] w-full max-w-lg flex-col"
             data-testid="additional-account-dialog"
           >
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
               <div>
                 <h2 className="text-sm font-semibold">Link {contactName} to more companies</h2>
                 <p className="faint mt-0.5 text-xs">Their main company stays the one their quotes and contracts go under.</p>
@@ -116,7 +116,7 @@ export function AdditionalAccountButton({
               </button>
             </div>
 
-            <div className="border-b border-[var(--border)] p-3">
+            <div className="border-b border-[var(--hairline-3)] p-3">
               <div className="relative">
                 <IconSearch size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]" />
                 <input
@@ -158,7 +158,7 @@ export function AdditionalAccountButton({
               )}
             </ul>
 
-            <div className="border-t border-[var(--border)] p-3">
+            <div className="border-t border-[var(--hairline-3)] p-3">
               {adding ? (
                 <div className="grid gap-2 sm:grid-cols-[1fr_8rem_4.5rem_auto]" data-testid="account-new">
                   <input
@@ -206,7 +206,7 @@ export function AdditionalAccountButton({
               )}
             </div>
 
-            <div className="border-t border-[var(--border)] px-5 py-3">
+            <div className="border-t border-[var(--hairline-3)] px-5 py-3">
               <FormError message={error} />
               <div className="flex items-center justify-between">
                 <span className="faint text-xs">{count} selected</span>

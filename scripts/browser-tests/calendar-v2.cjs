@@ -438,6 +438,12 @@ const readableDay = (iso) =>
   const todayCell = page.locator(`[data-testid=month-day][data-day="${TODAY}"]`);
   // Quote sent, Contract sent, Contract closed all landed today.
   assert.ok(Number(await todayCell.getAttribute("data-count")) >= 3, "today carries the three milestones");
+  // Audit follow-up (UX review): days outside the month are tinted, not
+  // faded to 40% (their chips read 2.0:1 in Light).
+  const outside = await page
+    .locator("[data-testid=month-day]")
+    .evaluateAll((cells, month) => cells.filter((cell) => !cell.dataset.day.startsWith(month)).map((cell) => getComputedStyle(cell).opacity), TODAY.slice(0, 7));
+  assert.ok(outside.length > 0 && outside.every((opacity) => opacity === "1"), `days outside the month are faded: ${outside.join(",")}`);
   await shot(page, "02-calendar");
 
   log("Calendar + Log puts the grid on top and the two columns beneath");

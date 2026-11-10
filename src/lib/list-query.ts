@@ -96,7 +96,7 @@ function likeText(term: string) {
 // are built on, character for character, so the match is an index scan
 // at any size. The ids are capped at 1,000 a word, like the company-name
 // matches below; seven digits or more is a number, not a crowd.
-async function contactIdsByPhone(organizationId: string, digits: string): Promise<string[]> {
+export async function contactIdsByPhone(organizationId: string, digits: string): Promise<string[]> {
   const rows = await prisma.$queryRaw<{ id: string }[]>`
     SELECT id FROM "Contact"
     WHERE "organizationId" = ${organizationId}

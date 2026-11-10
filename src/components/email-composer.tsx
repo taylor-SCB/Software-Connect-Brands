@@ -223,7 +223,7 @@ function EmailComposer({
         onClick={(event) => event.stopPropagation()}
         className="card card-lit popover flex max-h-[92vh] w-full max-w-2xl flex-col"
       >
-        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3.5">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--hairline-3)] px-5 py-3.5">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Email</h2>
             <p className="faint mt-0.5 text-xs">Each person gets their own copy. Replies come to you.</p>
@@ -316,7 +316,7 @@ function EmailComposer({
 
                 {searching && (
                   <div className="mt-2 rounded-lg border border-[var(--border)]">
-                    <div className="border-b border-[var(--border)] p-2">
+                    <div className="border-b border-[var(--hairline-3)] p-2">
                       <input
                         type="search"
                         value={query}
@@ -356,7 +356,7 @@ function EmailComposer({
                         </li>
                       )}
                     </ul>
-                    <div className="flex justify-end border-t border-[var(--border)] p-2">
+                    <div className="flex justify-end border-t border-[var(--hairline-3)] p-2">
                       <button type="button" onClick={() => setSearching(false)} className="btn btn-primary btn-sm">
                         Done
                       </button>
@@ -503,7 +503,7 @@ function EmailComposer({
               <FormError message={error ?? undefined} />
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
               <span className={`text-xs ${overLimit ? "text-[var(--danger)]" : "faint"}`} data-testid="email-summary">
                 {sending
                   ? `Sending ${sendable.length}… keep this open.`

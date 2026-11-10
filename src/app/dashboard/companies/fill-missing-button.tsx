@@ -94,7 +94,7 @@ function FillDialog({ onClose }: { onClose: () => void }) {
         onClick={(event) => event.stopPropagation()}
         className="card card-lit popover flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden"
       >
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold">Fill in missing</h2>
             <p className="faint mt-0.5 text-xs">Tags, phones and websites, from what you already have.</p>
@@ -120,7 +120,7 @@ function FillDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 border-t border-[var(--border)] px-5 py-3">
+        <div className="flex items-center gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
           {phase.step === "ready" && phase.plan.ids.length > 0 && (
             <button type="button" onClick={() => run(phase.plan)} className="btn btn-primary btn-sm" data-testid="fill-missing-start">
               <IconSparkles size={13} />

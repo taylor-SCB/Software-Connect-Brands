@@ -101,7 +101,7 @@ export function EmailMe({
             )}
           </form>
           {subscriptions.length > 0 && (
-            <div className="mt-4 border-t border-[var(--border)] pt-3">
+            <div className="mt-4 border-t border-[var(--hairline-3)] pt-3">
               <p className="label">Already going out</p>
               <ul className="space-y-1.5" data-testid="email-me-list">
                 {subscriptions.map((sub) => (

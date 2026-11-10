@@ -33,7 +33,7 @@ export async function MyReportEmails({ organizationId, userId }: { organizationI
             and press <strong>Email me this</strong>.
           </p>
         ) : (
-          <ul className="divide-y divide-[var(--border)] text-sm">
+          <ul className="divide-y divide-[var(--hairline-3)] text-sm">
             {subscriptions.map((sub) => {
               const report = reportFromCode(sub.report);
               return (

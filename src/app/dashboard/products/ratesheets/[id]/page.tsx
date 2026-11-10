@@ -101,7 +101,7 @@ export default async function EditRatesheetPage({
           />
           <SendInviteForm ratesheetId={ratesheet.id} disabled={state !== "ACTIVE"} />
           {ratesheet.invites.length > 0 && (
-            <ul className="divide-y divide-[var(--hairline)] border-t border-[var(--border)]">
+            <ul className="divide-y divide-[var(--hairline)] border-t border-[var(--hairline-3)]">
               {ratesheet.invites.map((invite) => {
                 const inviteStatus = inviteState(invite, ratesheet, now);
                 return (

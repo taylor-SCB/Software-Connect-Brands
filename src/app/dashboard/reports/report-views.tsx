@@ -130,7 +130,7 @@ function Delta({ now, before }: { now: number; before: number }) {
 function RundownList({ title, sub, empty, children, count, listed = count, testId, href }: { title: string; sub?: string; empty: string; children: React.ReactNode; count: number; listed?: number; testId: string; href?: string }) {
   return (
     <Panel title={`${title}${count ? ` · ${count}` : ""}`} sub={sub} testId={testId}>
-      {listed === 0 ? <p className="faint text-sm">{empty}</p> : <ul className="divide-y divide-[var(--border)] text-sm">{children}</ul>}
+      {listed === 0 ? <p className="faint text-sm">{empty}</p> : <ul className="divide-y divide-[var(--hairline-3)] text-sm">{children}</ul>}
       {href && listed > 0 && (
         <Link href={href} className="link mt-2 inline-block text-xs">
           See all
@@ -160,7 +160,7 @@ function DailyView({ report }: { report: DailyReport }) {
       >
         {report.calendar.items.map((item) => (
           <li key={item.id} className="flex justify-between gap-3 py-2" data-done={item.done ? "true" : undefined}>
-            <span className={`min-w-0 truncate ${item.done ? "line-through opacity-60" : ""}`}>
+            <span className={`min-w-0 truncate ${item.done ? "line-through" : ""}`}>
               {item.title}
               <span className="faint block text-[0.7rem]">
                 {item.type} · {item.owner}
@@ -314,7 +314,7 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
         {report.stuck.length > 0 && (
           <>
             <p className="label mt-4">Waiting longest</p>
-            <ul className="divide-y divide-[var(--border)] text-sm" data-testid="pipeline-stuck">
+            <ul className="divide-y divide-[var(--hairline-3)] text-sm" data-testid="pipeline-stuck">
               {report.stuck.map((item, index) => (
                 <li key={index} className="flex justify-between gap-3 py-1.5">
                   <Link href={item.href} className="link min-w-0 truncate">
@@ -420,7 +420,7 @@ function ClosingView({ report, by }: { report: ClosingReport } & ViewProps) {
         {report.biggestWins.length === 0 ? (
           <p className="faint text-sm">No wins in this period yet.</p>
         ) : (
-          <ul className="divide-y divide-[var(--border)] text-sm">
+          <ul className="divide-y divide-[var(--hairline-3)] text-sm">
             {report.biggestWins.map((win, index) => (
               <li key={index} className="flex justify-between gap-3 py-2">
                 <span className="min-w-0 truncate">
@@ -494,7 +494,7 @@ function MoneyView({ report, by }: { report: MoneyReport } & ViewProps) {
         {report.unsigned.oldest.length === 0 ? (
           <p className="faint text-sm">No contracts are waiting on a signature.</p>
         ) : (
-          <ul className="divide-y divide-[var(--border)] text-sm">
+          <ul className="divide-y divide-[var(--hairline-3)] text-sm">
             {report.unsigned.oldest.map((row) => (
               <li key={row.id} className="flex justify-between gap-3 py-2">
                 <Link href={`/dashboard/contracts/${row.id}`} className="link min-w-0 truncate">

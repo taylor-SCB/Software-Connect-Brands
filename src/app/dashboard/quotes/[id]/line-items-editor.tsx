@@ -1153,7 +1153,7 @@ export function LineItemsEditor({
       </div>
 
       {!readOnly && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
           <CatalogPicker onPick={addProductLine} />
           {meetingDraft && <MeetingDraftButton quoteId={quoteId} auto={meetingDraft.auto} onLines={addDraftedLines} />}
           <button type="button" onClick={addBlankLine} className="btn btn-ghost btn-sm">
@@ -1175,7 +1175,7 @@ export function LineItemsEditor({
         </div>
       )}
 
-      <div className="space-y-3 border-t border-[var(--border)] p-5">
+      <div className="space-y-3 border-t border-[var(--hairline-3)] p-5">
         <FormError message={state.error} />
         <FormSuccess message={state.success} />
 
@@ -1206,7 +1206,7 @@ export function LineItemsEditor({
               disabled={readOnly}
             />
           </div>
-          <div className="flex items-center justify-between border-t border-[var(--border)] pt-2">
+          <div className="flex items-center justify-between border-t border-[var(--hairline-3)] pt-2">
             <span className="text-sm font-semibold">Quote total</span>
             <span className="num text-xl font-semibold" data-testid="quote-total">
               {formatCents(totals.totalCents)}

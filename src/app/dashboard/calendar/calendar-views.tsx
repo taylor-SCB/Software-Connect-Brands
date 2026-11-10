@@ -187,7 +187,7 @@ export function MonthView({
   return (
     <>
       <Card lit>
-        <div className="grid grid-cols-7 border-b border-[var(--border)]">
+        <div className="grid grid-cols-7 border-b border-[var(--hairline-3)]">
           {WEEKDAY_NAMES.map((name) => (
             <div key={name} className="eyebrow px-2 py-2 text-center">
               {name}
@@ -206,7 +206,7 @@ export function MonthView({
                 onClick={() => setOpenDay(day)}
                 aria-label={`${readableDay(day)}, ${onThisDay.length} ${onThisDay.length === 1 ? "thing" : "things"} on`}
                 className={`min-h-[5.5rem] border-b border-r border-[var(--hairline)] p-1.5 text-left align-top transition-colors hover:bg-[var(--tint-2)] ${
-                  inMonth ? "" : "opacity-40"
+                  inMonth ? "" : "bg-[var(--tint-2)]"
                 }`}
                 data-testid="month-day"
                 data-day={day}
@@ -299,7 +299,7 @@ export function WeekView({
         const onThisDay = (byDay.get(day) ?? []).sort(byTimeThenTitle);
         return (
           <Card key={day} lit={day === today}>
-            <div className="border-b border-[var(--border)] px-3 py-2">
+            <div className="border-b border-[var(--hairline-3)] px-3 py-2">
               <p className="text-sm font-semibold">
                 {WEEKDAY_NAMES[weekDays(weekOf).indexOf(day)]}{" "}
                 <span className="num faint font-normal">{dayOfMonth(day)}</span>

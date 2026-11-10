@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { cleanSearch } from "@/lib/list-params";
-import { companyIdsMatching } from "@/lib/list-query";
+import { cleanSearch, phoneSearchDigits } from "@/lib/list-params";
+import { companyIdsMatching, contactIdsByPhone } from "@/lib/list-query";
 
 // Type-to-search behind "+ Include multiple contacts", the company page's
 // Add person and the duplicate check on a new contact. Twenty-five best
 // matches by name, company, email or phone, never the whole table. Each
 // comes back with its email and phone so two Matt Smiths can be told
-// apart before one is picked.
+// apart before one is picked. A number finds them however it's typed,
+// and someone with only a mobile shows the mobile (UX review follow-up,
+// Nov 10, 2026: they read "No email or phone on file").
 export async function GET(request: Request) {
   const { organizationId } = await requireSession();
   const url = new URL(request.url);
@@ -22,7 +24,11 @@ export async function GET(request: Request) {
   const linkedIds = within
     ? (await prisma.contactAccount.findMany({ where: { companyId: within, organizationId }, select: { contactId: true }, take: 5000 })).map((row) => row.contactId)
     : [];
-  const companyIds = await companyIdsMatching(organizationId, q);
+  const digits = phoneSearchDigits(q);
+  const [companyIds, phoneIds] = await Promise.all([
+    companyIdsMatching(organizationId, q),
+    digits ? contactIdsByPhone(organizationId, digits) : Promise.resolve([] as string[]),
+  ]);
 
   const contacts = await prisma.contact.findMany({
     where: {
@@ -38,13 +44,14 @@ export async function GET(request: Request) {
               { email2: { contains: q, mode: "insensitive" } },
               ...(/\d{3}/.test(q) ? [{ phone: { contains: q } }, { phone2: { contains: q } }, { mobile: { contains: q } }] : []),
               ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
+              ...(phoneIds.length ? [{ id: { in: phoneIds } }] : []),
             ],
           }
         : {}),
     },
     orderBy: [{ favorite: "desc" }, { name: "asc" }],
     take: 25,
-    select: { id: true, name: true, email: true, phone: true, company: { select: { id: true, name: true } } },
+    select: { id: true, name: true, email: true, phone: true, mobile: true, company: { select: { id: true, name: true } } },
   });
 
   return NextResponse.json(
@@ -54,7 +61,7 @@ export async function GET(request: Request) {
       company: contact.company?.name ?? null,
       companyId: contact.company?.id ?? null,
       email: contact.email,
-      phone: contact.phone,
+      phone: contact.phone ?? contact.mobile,
     })),
     { headers: { "Cache-Control": "private, no-store" } },
   );

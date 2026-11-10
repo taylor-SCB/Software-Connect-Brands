@@ -1076,7 +1076,7 @@ function ContractCard({
               baseCents={subtotalCents}
             />
           </div>
-          <div className="flex items-center justify-between border-t border-[var(--border)] pt-1.5">
+          <div className="flex items-center justify-between border-t border-[var(--hairline-3)] pt-1.5">
             <span className="font-semibold">Total</span>
             <span className="num font-semibold">{formatCents(totalCents)}</span>
           </div>

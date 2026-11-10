@@ -235,7 +235,7 @@ export function AwardWithoutPaperwork({
       </div>
 
       {open && (
-        <div className="space-y-4 border-t border-[var(--border)] p-5" data-testid="award-form">
+        <div className="space-y-4 border-t border-[var(--hairline-3)] p-5" data-testid="award-form">
           <p className="muted text-sm">
             Records the quote as an agreement the customer said yes to — a signed Sales Order, marked signed
             offline — so the job can be tracked. The rows and the discount are what the job is awarded at, so
@@ -324,7 +324,7 @@ export function AwardWithoutPaperwork({
                     baseCents={subtotalCents}
                   />
                 </div>
-                <div className="mt-1.5 flex items-center justify-between border-t border-[var(--border)] pt-1.5">
+                <div className="mt-1.5 flex items-center justify-between border-t border-[var(--hairline-3)] pt-1.5">
                   <span className="font-semibold">Awarded</span>
                   <span className="num text-lg font-semibold" data-testid="award-total">{formatCents(totalCents)}</span>
                 </div>
