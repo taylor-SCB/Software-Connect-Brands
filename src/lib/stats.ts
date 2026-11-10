@@ -132,7 +132,8 @@ export async function loadStats(
     }),
     prisma.activity.groupBy({
       by: ["userId", "type"],
-      where: { organizationId, occurredAt: { gte: from, lt: to }, ...(only ? { userId: { in: [...only] } } : {}) },
+      // Marketing sends are not touches (Nov 10, 2026).
+      where: { organizationId, marketing: false, occurredAt: { gte: from, lt: to }, ...(only ? { userId: { in: [...only] } } : {}) },
       _count: { _all: true },
     }),
     prisma.$queryRaw<{ day: string; type: ActivityTypeValue; n: number }[]>`
@@ -140,13 +141,14 @@ export async function loadStats(
              type::text AS type, COUNT(*)::int AS n
         FROM "Activity"
        WHERE "organizationId" = ${organizationId}
+         AND marketing = false
          AND "occurredAt" >= ${from} AND "occurredAt" < ${to}
          ${only ? prismaIn([...only]) : emptySql()}
        GROUP BY 1, 2`,
     production(organizationId, from, to),
     production(organizationId, previousFrom, from),
     prisma.activity.count({
-      where: { organizationId, occurredAt: { gte: previousFrom, lt: from }, ...(only ? { userId: { in: [...only] } } : {}) },
+      where: { organizationId, marketing: false, occurredAt: { gte: previousFrom, lt: from }, ...(only ? { userId: { in: [...only] } } : {}) },
     }),
     prisma.contact.groupBy({
       by: ["status"],

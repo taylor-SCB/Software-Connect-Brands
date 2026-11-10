@@ -132,7 +132,39 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
      FROM generate_series(1, 150) g`,
     [org],
   );
-  await sql(`ANALYZE "Contact"; ANALYZE "Company"; ANALYZE "Deal";`);
+  // Clean CRM data (Nov 10, 2026): a touch on every other person spread
+  // over the last 200 days, a marketing send on every tenth, a rep on a
+  // third of them, and a Client opportunity on a few hundred, so the
+  // Activity, Rep, Lead Label filters and the duplicate finder have
+  // something real to chew through.
+  const owner = (await sql(`SELECT id FROM "User" WHERE email = $1`, [EMAIL])).rows[0].id;
+  await sql(
+    `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, marketing, "occurredAt")
+     SELECT 'la' || lpad(g::text, 8, '0'), $1, 'lp' || lpad(g::text, 8, '0'), $2,
+       (ARRAY['PHONE_CALL','EMAIL','TEXT','MEETING']::"ActivityType"[])[1 + g % 4], 'Seeded touch', false,
+       now() - ((g % 200) || ' days')::interval
+     FROM generate_series(2, $3, 2) g`,
+    [org, owner, CONTACTS],
+  );
+  await sql(
+    `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, marketing, "occurredAt")
+     SELECT 'lm' || lpad(g::text, 8, '0'), $1, 'lp' || lpad(g::text, 8, '0'), $2, 'EMAIL', 'Emailed “Seeded”', true,
+       now() - ((g % 30) || ' days')::interval
+     FROM generate_series(10, $3, 10) g`,
+    [org, owner, CONTACTS],
+  );
+  await sql(`UPDATE "Contact" SET "ownerId" = $2, "createdById" = $2 WHERE "organizationId" = $1 AND right(id, 1) IN ('0','3','6')`, [org, owner]);
+  await sql(
+    `INSERT INTO "Opportunity" (id, "organizationId", title, "leadLabel", "updatedAt")
+     SELECT 'lo' || lpad(g::text, 8, '0'), $1, 'Seeded opportunity ' || g, 'Client', now() FROM generate_series(1, 500) g`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id, "opportunityId", "contactId", role)
+     SELECT 'loc' || lpad(g::text, 8, '0'), 'lo' || lpad(g::text, 8, '0'), 'lp' || lpad((g * 397)::text, 8, '0'), 'PRIMARY'
+     FROM generate_series(1, 500) g`,
+  );
+  await sql(`ANALYZE "Contact"; ANALYZE "Company"; ANALYZE "Deal"; ANALYZE "Activity"; ANALYZE "Opportunity"; ANALYZE "OpportunityContact";`);
   console.log(`     seeded in ${((Date.now() - seedStart) / 1000).toFixed(1)}s`);
   const counts = (await sql(`SELECT (SELECT count(*) FROM "Contact" WHERE "organizationId"=$1)::int AS c, (SELECT count(*) FROM "Company" WHERE "organizationId"=$1)::int AS co`, [org])).rows[0];
   assert.equal(counts.c, CONTACTS);
@@ -165,6 +197,52 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   await timed(page, "A contact page", `${BASE}/dashboard/contacts/lp00000001`, "dl");
   await timed(page, "New contact form (pick list, no company dump)", `${BASE}/dashboard/contacts/new`, "#companyName");
   await timed(page, "Dashboard overview", `${BASE}/dashboard`, "main");
+
+  log("time the Clean CRM data filters, the Labels screen and the duplicate finder");
+  const ownerId = (await sql(`SELECT id FROM "User" WHERE email = $1`, [EMAIL])).rows[0].id;
+  for (const [label, url, ready] of [
+    ["Contacts touched in the last 30 days", "/dashboard/contacts?act=t30", "[data-testid=contact-row]"],
+    ["Contacts not touched in the last 30 days", "/dashboard/contacts?act=n30", "[data-testid=contact-row]"],
+    ["Contacts never touched", "/dashboard/contacts?act=never", "[data-testid=contact-row]"],
+    ["Contacts Job title = owner", "/dashboard/contacts?title=owner", "[data-testid=contact-row]"],
+    ["Contacts Rep = Unassigned", "/dashboard/contacts?rep=none", "[data-testid=contact-row]"],
+    ["Contacts Rep = the owner", `/dashboard/contacts?rep=${ownerId}`, "[data-testid=contact-row]"],
+    ["Contacts Added by the owner", `/dashboard/contacts?by=${ownerId}`, "[data-testid=contact-row]"],
+    ["Contacts Added this year", "/dashboard/contacts?from=2026-01-01", "[data-testid=contact-row]"],
+    ["Contacts with no mobile and an email", "/dashboard/contacts?mobile=no&email=yes", "[data-testid=contact-row]"],
+    ["Contacts Lead Label = Client", "/dashboard/contacts?label=Client", "[data-testid=contact-row]"],
+    ["Contacts stacked: Rep + title + not touched 90 days + State", `/dashboard/contacts?rep=${ownerId}&title=Owner&act=n90&state=TX`, "[data-testid=contact-row]"],
+    ["Companies touched in the last 7 days", "/dashboard/companies?act=t7", "[data-testid=company-row]"],
+    ["Companies not touched in the last 90 days", "/dashboard/companies?act=n90", "h1"],
+    ["Companies Lead Label = Client", "/dashboard/companies?label=Client", "[data-testid=company-row]"],
+    ["Companies Rep = Unassigned + has phone", "/dashboard/companies?rep=none&phone=yes", "[data-testid=company-row]"],
+    ["CRM Labels screen", "/dashboard/labels", "[data-testid=label-row]"],
+    ["Duplicate contacts by email", "/dashboard/contacts/duplicates?by=email", "h1"],
+    ["Duplicate contacts by phone", "/dashboard/contacts/duplicates?by=phone", "h1"],
+    ["Duplicate contacts by name at a company", "/dashboard/contacts/duplicates?by=name", "h1"],
+    ["Duplicate companies by name", "/dashboard/companies/duplicates?by=name", "h1"],
+    ["Duplicate companies by phone", "/dashboard/companies/duplicates?by=phone", "h1"],
+  ]) {
+    await timed(page, label, `${BASE}${url}`, ready);
+  }
+  {
+    const started = Date.now();
+    const response = await page.request.get(`${BASE}/dashboard/contacts/titles?q=`);
+    const seconds = (Date.now() - started) / 1000;
+    const rows = await response.json();
+    console.log(`     ${seconds.toFixed(2)}s  job title choices → ${rows.length} rows`);
+    assert.ok(rows.length > 0 && seconds <= 1, `job title choices took ${seconds.toFixed(2)}s`);
+  }
+  log("bulk assign the first 1,000 of every Unassigned contact in one go");
+  await page.goto(`${BASE}/dashboard/contacts?rep=none`);
+  await page.getByTestId("page-check").check();
+  await page.getByTestId("bulk-all").click();
+  const assignStart = Date.now();
+  await page.getByTestId("bulk-me").click();
+  await page.getByTestId("bulk-message").filter({ hasText: "1,000 records" }).waitFor({ timeout: 60000 });
+  const assignSeconds = (Date.now() - assignStart) / 1000;
+  console.log(`     ${assignSeconds.toFixed(2)}s  assign 1,000 of all Unassigned`);
+  assert.ok(assignSeconds <= BUDGET_S * 2, `bulk assign took ${assignSeconds.toFixed(2)}s`);
 
   log("type-to-search answers fast");
   for (const [label, url] of [

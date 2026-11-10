@@ -749,6 +749,7 @@ export async function orderFromSupplier(
               industries: ["Service Provider"],
               companyTypes: [distributorTypeName],
               status: "WON",
+              createdById: userId,
             },
             select: { id: true },
           })
@@ -788,6 +789,7 @@ export async function orderFromSupplier(
           email: rep?.email ?? null,
           phone: rep?.phone ?? null,
           status: "WON",
+          createdById: userId,
         },
         select: { id: true },
       });

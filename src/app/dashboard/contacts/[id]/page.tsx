@@ -44,6 +44,9 @@ import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm, AddDealForm } from "./forms";
+import { AddedBy } from "@/components/crm-cells";
+import { RepPicker } from "@/components/rep-select";
+import { loadRepChoices } from "@/lib/reps";
 
 export default async function ContactDetailPage({
   params,
@@ -59,6 +62,7 @@ export default async function ContactDetailPage({
     where: { id, organizationId },
     include: {
       company: { select: { id: true, name: true, industries: true, companyTypes: true } },
+      createdBy: { select: { name: true } },
       accounts: {
         orderBy: { createdAt: "asc" },
         select: { company: { select: { id: true, name: true, city: true, state: true } } },
@@ -102,7 +106,7 @@ export default async function ContactDetailPage({
 
   const today = todayIso(timeZone);
   const meetingSet = await meetingSetDay(organizationId, { contactId: contact.id });
-  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices] = await Promise.all([
+  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices, reps] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
     // A homeowner's own balance. Someone at a company is billed through
@@ -126,11 +130,14 @@ export default async function ContactDetailPage({
     // attendee on — a property manager is often not the main contact.
     upcomingFor(organizationId, { contactId: contact.id }, today),
     loadEventChoices(organizationId, userId),
+    loadRepChoices(organizationId),
   ]);
+  // Marketing sends are on the log but never a touch (Nov 10, 2026).
+  const touches = contact.activities.filter((a) => !a.marketing);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
-      acc[type] = contact.activities.filter((a) => a.type === type).length;
+      acc[type] = touches.filter((a) => a.type === type).length;
       return acc;
     },
     {} as Record<ActivityTypeValue, number>,
@@ -139,7 +146,7 @@ export default async function ContactDetailPage({
   const openDeals = contact.deals.filter((deal) => isOpenStage(deal.stage));
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
   const quotesOut = contact.quotes.filter((quote) => quote.status === "SENT").length;
-  const lastTouchAt = contact.activities[0]?.occurredAt ?? null;
+  const lastTouchAt = touches[0]?.occurredAt ?? null;
 
   const pickable = { id: contact.id, name: contact.name, company: contact.company?.name ?? null };
 
@@ -233,6 +240,7 @@ export default async function ContactDetailPage({
                     userName: activity.user.name,
                     when: formatDateTime(activity.occurredAt, timeZone),
                     others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
+                    marketing: activity.marketing,
                   },
                 })),
                 ...contact.opportunityLogs
@@ -394,7 +402,8 @@ export default async function ContactDetailPage({
                 label="Birthday"
                 value={contact.birthday ? formatDate(contact.birthday, "UTC") : null}
               />
-              <Detail label="Added" value={formatDate(contact.createdAt, timeZone)} />
+              <Detail label="Rep" value={<RepPicker kind="contact" id={contact.id} ownerId={contact.ownerId} reps={reps} />} />
+              <Detail label="Added" value={<AddedBy name={contact.createdBy?.name ?? null} at={contact.createdAt} timeZone={timeZone} />} />
               <Detail label="City" value={contact.city} />
               <Detail label="State" value={contact.state} />
             </dl>

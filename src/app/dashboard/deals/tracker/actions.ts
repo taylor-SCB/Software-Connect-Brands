@@ -252,7 +252,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         });
         companyId = existing
           ? existing.id
-          : (await tx.company.create({ data: { organizationId, name }, select: { id: true } })).id;
+          : (await tx.company.create({ data: { organizationId, name, createdById: userId }, select: { id: true } })).id;
       }
 
       // Contact: existing (must be in this workspace), or created under
@@ -275,7 +275,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
           ? existing.id
           : (
               await tx.contact.create({
-                data: { organizationId, companyId, name, status: "NOT_ACTIONED" },
+                data: { organizationId, companyId, name, status: "NOT_ACTIONED", createdById: userId },
                 select: { id: true },
               })
             ).id;

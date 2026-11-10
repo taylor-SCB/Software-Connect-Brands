@@ -79,11 +79,11 @@ type Linked = { ok: true; distributorId: string; companyId: string; name: string
  *  3. When that one is already linked to a different account of the same
  *     name, a separate supplier named with the account's city and state.
  */
-export async function linkPlatformSupplier(organizationId: string, platformOrganizationId: string): Promise<Linked> {
+export async function linkPlatformSupplier(organizationId: string, platformOrganizationId: string, createdById: string | null = null): Promise<Linked> {
   const platform = await findPlatformSupplier(organizationId, platformOrganizationId);
   if (!platform) return { ok: false, error: NOT_LISTED };
 
-  const existing = await linkedSupplier(organizationId, platform.id);
+  const existing = await linkedSupplier(organizationId, platform.id, createdById);
   if (existing) return existing;
 
   const place = [platform.city, platform.state].filter(Boolean).join(", ");
@@ -101,7 +101,7 @@ export async function linkPlatformSupplier(organizationId: string, platformOrgan
          AND lower(regexp_replace(btrim("name"), '\\s+', ' ', 'g')) = lower(${name})
        ORDER BY "createdAt" ASC LIMIT 1`;
     if (sameName[0]?.platformOrganizationId && sameName[0].platformOrganizationId !== platform.id) continue;
-    const pair = await linkDistributorCompany(organizationId, name);
+    const pair = await linkDistributorCompany(organizationId, name, createdById);
     if (!pair) continue;
     try {
       const claimed = await prisma.distributor.updateMany({
@@ -125,7 +125,7 @@ export async function linkPlatformSupplier(organizationId: string, platformOrgan
   return { ok: false, error: `Couldn't link ${platform.name}. Add them by hand with + Add new instead.` };
 }
 
-async function linkedSupplier(organizationId: string, platformOrganizationId: string): Promise<Linked | null> {
+async function linkedSupplier(organizationId: string, platformOrganizationId: string, createdById: string | null = null): Promise<Linked | null> {
   const row = await prisma.distributor.findUnique({
     where: { organizationId_platformOrganizationId: { organizationId, platformOrganizationId } },
     select: { id: true, name: true, companyId: true },
@@ -134,7 +134,7 @@ async function linkedSupplier(organizationId: string, platformOrganizationId: st
   if (row.companyId) return { ok: true, distributorId: row.id, companyId: row.companyId, name: row.name };
   // Linked but its company is gone (deleted, or merged away): give this
   // record a company of its own, never another supplier's pair.
-  const companyId = await bridgeDistributor(organizationId, row.id);
+  const companyId = await bridgeDistributor(organizationId, row.id, createdById);
   if (!companyId) return { ok: false, error: `Couldn't link ${row.name}. Try again.` };
   return { ok: true, distributorId: row.id, companyId, name: row.name };
 }

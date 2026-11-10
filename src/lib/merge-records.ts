@@ -17,7 +17,9 @@ export const MAX_MERGE = 5;
 
 type Result = { error: string } | { keptId: string; merged: number };
 
-const CONTACT_FIELDS = ["title", "email", "phone", "email2", "phone2", "mobile", "website", "city", "state", "birthday", "imageUrl"] as const;
+// The rep and who added it too (Nov 10, 2026): the kept one's own win, an
+// Unassigned keeper takes the first rep among the others.
+const CONTACT_FIELDS = ["title", "email", "phone", "email2", "phone2", "mobile", "website", "city", "state", "birthday", "imageUrl", "ownerId", "createdById"] as const;
 
 export async function mergeContacts(organizationId: string, keepId: string, otherIds: string[]): Promise<Result> {
   const others = Array.from(new Set(otherIds.filter((id) => id !== keepId))).slice(0, MAX_MERGE - 1);
@@ -130,7 +132,7 @@ export async function mergeContacts(organizationId: string, keepId: string, othe
   return { keptId: keepId, merged: goneIds.length };
 }
 
-const COMPANY_FIELDS = ["phone", "email", "website", "city", "state", "logoUrl"] as const;
+const COMPANY_FIELDS = ["phone", "email", "website", "city", "state", "logoUrl", "ownerId", "createdById"] as const;
 
 export async function mergeCompanies(organizationId: string, keepId: string, otherIds: string[]): Promise<Result> {
   const others = Array.from(new Set(otherIds.filter((id) => id !== keepId))).slice(0, MAX_MERGE - 1);

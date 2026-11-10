@@ -8,6 +8,7 @@ import {
   IconCalendar,
   IconTrending,
 } from "@/components/icons";
+import { MarketingBadge } from "@/components/crm-cells";
 import { ACTIVITY_LABELS, DEAL_STAGE_COLORS, DEAL_STAGE_LABELS, type ActivityTypeValue, type DealStageValue } from "@/lib/constants";
 
 const ACTIVITY_ICONS = {
@@ -41,6 +42,8 @@ export type ActivityItem = {
   // "Opportunity Created" / "Deal Created": the person's role on it now,
   // and for a deal its stage now.
   special?: { role: "PRIMARY" | "ASSOCIATED"; stage: string | null } | null;
+  // An email marketing send (Nov 10, 2026): on the log, never a touch.
+  marketing?: boolean;
 };
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {
@@ -95,7 +98,7 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
           );
         }
         return (
-          <li key={activity.id} className="flex gap-3 px-5 py-3">
+          <li key={activity.id} className="flex gap-3 px-5 py-3" data-testid="activity-line" data-marketing={activity.marketing ? "1" : undefined}>
             <div
               className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
               style={{
@@ -108,7 +111,8 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             <div className="min-w-0">
               <p className="text-sm leading-relaxed">{activity.body}</p>
               <p className="faint mt-1 text-[0.7rem]">
-                {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} · {activity.userName} ·{" "}
+                {ACTIVITY_LABELS[activity.type as ActivityTypeValue]}
+                {activity.marketing && <MarketingBadge />} · {activity.userName} ·{" "}
                 {activity.when}
                 {activity.via && (
                   <>

@@ -3,7 +3,61 @@ import { prisma } from "@/lib/prisma";
 import { INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
 import { getIndustryPickList } from "@/lib/industries";
 import { owingIds } from "@/lib/money";
-import type { ListParams } from "@/lib/list-params";
+import { UNASSIGNED, type ListParams, type Presence } from "@/lib/list-params";
+import { getTimeZone } from "@/lib/organization";
+import { zonedMoment } from "@/lib/calendar-auto";
+import { NO_LEAD_LABEL } from "@/lib/lead-labels";
+
+// ---- Clean CRM data filters (Nov 10, 2026) ---------------------------
+// Shared by both lists. Each returns the clauses to AND in.
+
+const WINDOW_DAYS = { t7: 7, t30: 30, t90: 90, n7: 7, n30: 30, n90: 90 } as const;
+
+// A touch: a call, text, email or meeting somebody logged. Marketing
+// sends are never a touch (Taylor, Nov 10, 2026). The latest one is kept
+// on the row (lastTouchAt, by database triggers; a company's counts its
+// people's), so these are indexed ranges rather than a search of Activity.
+function touchClause(act: ListParams["act"]): { lastTouchAt: { gte: Date } | { lt: Date } | null } | { OR: object[] } | null {
+  if (!act) return null;
+  if (act === "never") return { lastTouchAt: null };
+  const since = new Date(Date.now() - WINDOW_DAYS[act] * 86_400_000);
+  if (act.startsWith("t")) return { lastTouchAt: { gte: since } };
+  return { OR: [{ lastTouchAt: null }, { lastTouchAt: { lt: since } }] };
+}
+
+function present(field: "mobile" | "email" | "phone", value: Presence) {
+  if (value === "yes") return { AND: [{ [field]: { not: null } }, { NOT: { [field]: "" } }] };
+  return { OR: [{ [field]: null }, { [field]: "" }] };
+}
+
+function repClause(ids: string[]) {
+  const people = ids.filter((id) => id !== UNASSIGNED);
+  const or: { ownerId: { in: string[] } | null }[] = [];
+  if (people.length) or.push({ ownerId: { in: people } });
+  if (ids.includes(UNASSIGNED)) or.push({ ownerId: null });
+  return { OR: or };
+}
+
+async function addedClause(p: ListParams) {
+  if (!p.from && !p.to) return null;
+  const timeZone = await getTimeZone();
+  const createdAt: { gte?: Date; lt?: Date } = {};
+  if (p.from) createdAt.gte = zonedMoment(p.from, "00:00", timeZone);
+  if (p.to) {
+    const next = new Date(Date.parse(`${p.to}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    createdAt.lt = zonedMoment(next, "00:00", timeZone);
+  }
+  return { createdAt };
+}
+
+function opportunityLabel(labels: string[]): Prisma.OpportunityContactWhereInput {
+  const named = labels.filter((label) => label !== NO_LEAD_LABEL);
+  const or: Prisma.OpportunityWhereInput[] = [];
+  if (named.length) or.push({ leadLabel: { in: named } });
+  if (labels.includes(NO_LEAD_LABEL)) or.push({ leadLabel: null });
+  // Do Not List is off the opportunity as far as anyone reading it goes.
+  return { role: { not: "HIDDEN" }, opportunity: { OR: or } };
+}
 
 // The database side of the Contacts and Companies lists: the where-clauses
 // the address-bar filters become, and the choices the dropdowns offer.
@@ -47,6 +101,15 @@ export async function companyWhere(organizationId: string, p: ListParams): Promi
   // The net figure, so the filter and the "Owes you" line beside each
   // name can never disagree.
   if (p.owed) and.push({ id: { in: await owingIds(organizationId, "company") } });
+  const touch = touchClause(p.act);
+  if (touch) and.push(touch as Prisma.CompanyWhereInput);
+  if (p.reps.length) and.push(repClause(p.reps));
+  if (p.addedBy.length) and.push({ createdById: { in: p.addedBy } });
+  const added = await addedClause(p);
+  if (added) and.push(added);
+  if (p.email) and.push(present("email", p.email));
+  if (p.phone) and.push(present("phone", p.phone));
+  if (p.labels.length) and.push({ contacts: { some: { opportunities: { some: opportunityLabel(p.labels) } } } });
   return { AND: and };
 }
 
@@ -123,6 +186,16 @@ export async function contactWhere(
   // the contact happens to be at today, which is why this goes through
   // owingIds rather than a clause about the contact.
   if (p.owed) and.push({ id: { in: await owingIds(organizationId, "contact") } });
+  const touch = touchClause(p.act);
+  if (touch) and.push(touch as Prisma.ContactWhereInput);
+  if (p.titles.length) and.push({ title: { in: p.titles, mode: insensitive } });
+  if (p.reps.length) and.push(repClause(p.reps));
+  if (p.addedBy.length) and.push({ createdById: { in: p.addedBy } });
+  const added = await addedClause(p);
+  if (added) and.push(added);
+  if (p.mobile) and.push(present("mobile", p.mobile));
+  if (p.email) and.push(present("email", p.email));
+  if (p.labels.length) and.push({ opportunities: { some: opportunityLabel(p.labels) } });
   return { AND: and };
 }
 
@@ -140,7 +213,8 @@ export async function getFilterOptions(organizationId: string): Promise<FilterOp
   const [contactStates, companyStates, industries] = await Promise.all([
     prisma.contact.groupBy({ by: ["state"], where: { organizationId, state: { not: null } } }),
     prisma.company.groupBy({ by: ["state"], where: { organizationId, state: { not: null } } }),
-    getIndustryPickList(organizationId),
+    // Retired values too: records keep them, so they can still be found.
+    getIndustryPickList(organizationId, { includeRetired: true }),
   ]);
   const states = Array.from(
     new Set([...contactStates, ...companyStates].map((row) => row.state!.trim()).filter(Boolean)),

@@ -6,6 +6,7 @@ import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
 import { DeleteRecordForm } from "@/components/delete-record-form";
 import { CompanyForm } from "../../company-form";
 import { updateCompany, deleteCompany } from "../../actions";
+import { loadRepChoices } from "@/lib/reps";
 
 export default async function EditCompanyPage({
   params,
@@ -15,11 +16,9 @@ export default async function EditCompanyPage({
   const { id } = await params;
   const { organizationId } = await requireSession();
 
-  const [company, pickList] = await Promise.all([
-    prisma.company.findFirst({ where: { id, organizationId } }),
-    getIndustryPickList(organizationId),
-  ]);
+  const [company, reps] = await Promise.all([prisma.company.findFirst({ where: { id, organizationId } }), loadRepChoices(organizationId)]);
   if (!company) notFound();
+  const pickList = await getIndustryPickList(organizationId, { keep: { industries: company.industries, types: company.companyTypes } });
 
   return (
     <div className="max-w-3xl">
@@ -31,6 +30,7 @@ export default async function EditCompanyPage({
         <CompanyForm
           action={updateCompany}
           pickList={pickList}
+          reps={reps}
           submitLabel="Save changes"
           defaults={{
             industries: company.industries,
@@ -44,6 +44,7 @@ export default async function EditCompanyPage({
             city: company.city,
             state: company.state,
             status: company.status,
+            ownerId: company.ownerId,
           }}
         />
       </Card>

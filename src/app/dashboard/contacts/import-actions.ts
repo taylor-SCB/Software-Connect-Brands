@@ -10,6 +10,7 @@ import { IMPORT_BATCH_SIZE, emptyBatchResult, type ImportBatchResult } from "@/l
 import type { AutoField, ContactHint } from "@/lib/enrich";
 import { dropAutoMarks, enrichCompanies, loadCompaniesForEnrichment } from "@/lib/enrich-companies";
 import type { Prisma } from "@/generated/prisma/client";
+import { checkedRep } from "@/lib/reps";
 
 const text = (max: number) => z.string().trim().max(max).nullable();
 const statusSchema = z.enum(CONTACT_STATUSES).nullable();
@@ -52,10 +53,21 @@ const lower = (value: string) => value.toLowerCase();
 // exists), then contacts (a row matching an existing contact by email, or
 // by name + company, updates it; the rest are created). Re-running the
 // same file is safe: the second pass updates instead of doubling up.
-export async function importContactsBatch(input: unknown): Promise<ImportBatchResult | { error: string }> {
-  const { organizationId } = await requireSession();
+//
+// Reps (Nov 10, 2026, Taylor: no auto-assigning). Every record the batch
+// creates is added by the importer (createdById) and starts Unassigned,
+// unless the dialog's "Assign everyone in this file to" names a teammate:
+// then every person in the file — new or already here — goes to them, and
+// so does every company in it that nobody owns yet (a company someone
+// already owns keeps them; it may hold people outside this file). With
+// Unassigned picked, an existing record keeps whatever rep it has: an
+// import never takes a rep away.
+export async function importContactsBatch(input: unknown, options?: { assignTo?: string }): Promise<ImportBatchResult | { error: string }> {
+  const { organizationId, userId } = await requireSession();
   const parsed = batchSchema.safeParse(input);
   if (!parsed.success) return { error: "That batch couldn't be read. Refresh and try the import again." };
+  const ownerId = await checkedRep(organizationId, options?.assignTo ?? "");
+  if (ownerId === undefined) return { error: "The teammate picked to assign this file to is no longer on the account. Pick another and import again." };
   const rows = parsed.data;
   const result = emptyBatchResult();
 
@@ -180,6 +192,8 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
           status: company.status ?? "NOT_ACTIONED",
           industries: mergeTags([], company.industries.map(canonIndustry)),
           companyTypes: mergeTags([], company.companyTypes.map(canonType)),
+          createdById: userId,
+          ownerId,
         })),
       });
       result.companiesCreated += missing.length;
@@ -188,6 +202,13 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
         select: { id: true, name: true },
       });
       for (const company of created) companyIds.set(lower(company.name), company.id);
+    }
+    // An explicit assignee also takes the file's companies nobody owns yet.
+    if (ownerId && companyIds.size > 0) {
+      await prisma.company.updateMany({
+        where: { organizationId, id: { in: Array.from(companyIds.values()) }, ownerId: null },
+        data: { ownerId },
+      });
     }
   }
 
@@ -271,9 +292,11 @@ export async function importContactsBatch(input: unknown): Promise<ImportBatchRe
       state: row.state,
       birthday: row.birthday ? new Date(`${row.birthday}T00:00:00.000Z`) : null,
       status: row.status ?? "NOT_ACTIONED",
+      createdById: userId,
+      ownerId,
     });
   }
-  if (updates.size > 0) await updateContacts(organizationId, Array.from(updates.values()));
+  if (updates.size > 0) await updateContacts(organizationId, Array.from(updates.values()), ownerId);
   if (creates.length > 0) {
     await prisma.contact.createMany({ data: creates });
     result.contactsCreated += creates.length;
@@ -305,6 +328,7 @@ async function fillInBlanks(organizationId: string, companyIds: string[], result
 async function updateContacts(
   organizationId: string,
   updates: { id: string; row: z.infer<typeof rowSchema>; companyId: string | null }[],
+  ownerId: string | null,
 ) {
   const col = <T,>(pick: (update: (typeof updates)[number]) => T) => updates.map(pick);
   await prisma.$executeRaw`
@@ -320,6 +344,7 @@ async function updateContacts(
       status = COALESCE(v.status::"ContactStatus", c.status),
       email = COALESCE(NULLIF(v.email, ''), c.email),
       "companyId" = COALESCE(v.company_id, c."companyId"),
+      "ownerId" = COALESCE(${ownerId}::text, c."ownerId"),
       "updatedAt" = now()
     FROM unnest(
       ${col((u) => u.id)}::text[],

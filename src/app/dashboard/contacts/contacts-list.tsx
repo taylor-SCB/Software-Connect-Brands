@@ -11,6 +11,7 @@ import {
   IconPhone,
   IconCalendar,
   IconGlobe,
+  IconMerge,
 } from "@/components/icons";
 import { ACTIVITY_TYPES, INDIVIDUAL_COMPANY_TYPE, type ActivityTypeValue } from "@/lib/constants";
 import { parseListParams, listHref, pageWindow, type ListLock } from "@/lib/list-params";
@@ -28,6 +29,11 @@ import { OwesLine } from "@/components/owes-line";
 import { lastContactedContacts } from "@/lib/last-contacted";
 import { LastContactedCell } from "@/components/last-contacted-cell";
 import { MergeButton } from "@/components/merge-button";
+import { marketingContacts } from "@/lib/last-contacted";
+import { MarketingCell, RepCell } from "@/components/crm-cells";
+import { BulkAssign, PageCheck, RowCheck } from "@/components/bulk-assign";
+import { loadRepChoices } from "@/lib/reps";
+import { loadLeadLabelChoices } from "@/lib/crm-labels";
 import { setContactFavorite } from "./actions";
 
 const ACTIVITY_ICONS = {
@@ -67,12 +73,14 @@ export async function ContactsList({
   const params = { ...parseListParams(searchParams, lock), auto: false };
   const where = await contactWhere(organizationId, params, await companyIdsMatching(organizationId, params.q));
 
-  const [total, options, selectedCompanies, unfiltered, timeZone] = await Promise.all([
+  const [total, options, selectedCompanies, unfiltered, timeZone, reps, leadLabels] = await Promise.all([
     prisma.contact.count({ where }),
     getFilterOptions(organizationId),
     namesForCompanies(organizationId, params.companies),
     totalInWorkspace(organizationId, lock),
     getTimeZone(),
+    loadRepChoices(organizationId),
+    loadLeadLabelChoices(organizationId),
   ]);
   const window = pageWindow(total, params.per, params.page);
 
@@ -84,14 +92,16 @@ export async function ContactsList({
     include: {
       _count: { select: { notes: true, deals: true } },
       company: { select: { id: true, name: true, industries: true, companyTypes: true, autoFilled: true, enrichedAt: true } },
+      owner: { select: { name: true, removedAt: true } },
     },
   });
 
-  // Activity counts for just the rows on this page.
+  // Activity counts for just the rows on this page. Marketing sends are
+  // not touches; they have their own column.
   const activityCounts = contacts.length
     ? await prisma.activity.groupBy({
         by: ["contactId", "type"],
-        where: { organizationId, contactId: { in: contacts.map((contact) => contact.id) } },
+        where: { organizationId, marketing: false, contactId: { in: contacts.map((contact) => contact.id) } },
         _count: { _all: true },
       })
     : [];
@@ -105,9 +115,10 @@ export async function ContactsList({
 
   // A homeowner has no company, so what they owe lands on their own row.
   const pageIds = contacts.map((contact) => contact.id);
-  const [owed, lastContacted] = await Promise.all([
+  const [owed, lastContacted, marketing] = await Promise.all([
     owedBy(organizationId, "contact", pageIds, todayIso(timeZone)),
     lastContactedContacts(organizationId, pageIds),
+    marketingContacts(organizationId, pageIds),
   ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
 
@@ -119,8 +130,12 @@ export async function ContactsList({
         subtitle={subtitle ?? `${total.toLocaleString()} ${total === 1 ? "record" : "records"}${params.q ? ` matching “${params.q}”` : ""}`}
         actions={
           <>
-            <ImportCsvButton kind="contacts" />
+            <ImportCsvButton kind="contacts" reps={reps} />
             <MergeButton kind="contacts" />
+            <Link href="/dashboard/contacts/duplicates" className="btn btn-ghost btn-sm" data-testid="find-duplicates">
+              <IconMerge size={13} />
+              Find duplicates
+            </Link>
             <EmailButton />
             <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
@@ -138,8 +153,18 @@ export async function ContactsList({
         kind="contacts"
         selectedCompanies={selectedCompanies}
         placeholder="Search contacts…"
+        reps={reps}
+        leadLabels={leadLabels}
       />
 
+      <BulkAssign
+        kind="contacts"
+        pageIds={pageIds}
+        total={total}
+        query={listHref("", params).replace(/^\?/, "")}
+        interested={Boolean(lock.interested)}
+        reps={reps}
+      >
       <Card lit>
         {contacts.length === 0 ? (
           <EmptyState
@@ -173,10 +198,13 @@ export async function ContactsList({
             <table className="table table-hover">
               <thead>
                 <tr>
-                  <th className="w-8"></th>
+                  <th className="w-8 whitespace-nowrap">
+                    <PageCheck />
+                  </th>
                   <th>Last Contacted By</th>
                   <th>Company</th>
                   <th>Contact</th>
+                  <th>Rep</th>
                   <th>Industry · Type</th>
                   <th>Email</th>
                   <th>Mobile</th>
@@ -184,6 +212,7 @@ export async function ContactsList({
                   <th>Location</th>
                   <th>Notes</th>
                   <th>Activity</th>
+                  <th>Marketing</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -193,7 +222,8 @@ export async function ContactsList({
                   const location = [contact.city, contact.state].filter(Boolean).join(", ");
                   return (
                     <tr key={contact.id} data-testid="contact-row">
-                      <td className="pr-0">
+                      <td className="whitespace-nowrap pr-0">
+                        <RowCheck id={contact.id} label={contact.name} />
                         <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} />
                       </td>
                       <td>
@@ -219,6 +249,9 @@ export async function ContactsList({
                           </p>
                         )}
                         <OwesLine balance={owed.get(contact.id)} timeZone={timeZone} />
+                      </td>
+                      <td>
+                        <RepCell name={contact.owner ? (contact.owner.removedAt ? `${contact.owner.name} (removed)` : contact.owner.name) : null} />
                       </td>
                       <td className="text-xs">
                         <div className="flex flex-wrap items-center gap-1">
@@ -311,6 +344,9 @@ export async function ContactsList({
                         </div>
                       </td>
                       <td>
+                        <MarketingCell tally={marketing.get(contact.id)} timeZone={timeZone} />
+                      </td>
+                      <td>
                         <StatusBadge status={contact.status} />
                       </td>
                     </tr>
@@ -330,6 +366,7 @@ export async function ContactsList({
           noun="contacts"
         />
       </Card>
+      </BulkAssign>
     </div>
   );
 }

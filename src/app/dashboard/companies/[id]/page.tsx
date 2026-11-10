@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
-import { formatCents, formatDateTime, formatDate } from "@/lib/format";
+import { formatCents, formatDateTime } from "@/lib/format";
 import { ACTIVITY_TYPES, OPEN_DEAL_STAGES, PERSONAL_NOTE_LABELS, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
@@ -39,6 +39,9 @@ import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm } from "../../contacts/[id]/forms";
 import { OtherContacts, type BypassGroup } from "@/components/other-contacts";
+import { AddedBy } from "@/components/crm-cells";
+import { RepPicker } from "@/components/rep-select";
+import { loadRepChoices } from "@/lib/reps";
 
 // A company can have thousands of people and years of activity, so the
 // page shows the people fifty at a time and the latest slice of every
@@ -61,7 +64,7 @@ export default async function CompanyDetailPage({
 
   const company = await prisma.company.findFirst({
     where: { id, organizationId },
-    include: { _count: { select: { contacts: true, linkedContacts: true } } },
+    include: { _count: { select: { contacts: true, linkedContacts: true } }, createdBy: { select: { name: true } } },
   });
   if (!company) notFound();
 
@@ -138,9 +141,10 @@ export default async function CompanyDetailPage({
       batchOthers("activity", activities.map((activity) => activity.batchId)),
       prisma.note.count({ where: { organizationId, OR: [{ companyId: company.id }, viaPeople] } }),
       prisma.note.count({ where: { organizationId, label: { in: [...PERSONAL_NOTE_LABELS] }, OR: [{ companyId: company.id }, viaPeople] } }),
+      // Touches only: marketing sends are on the feed, never counted.
       prisma.activity.groupBy({
         by: ["type"],
-        where: { organizationId, OR: [{ companyId: company.id }, viaPeople] },
+        where: { organizationId, marketing: false, OR: [{ companyId: company.id }, viaPeople] },
         _count: { _all: true },
       }),
       prisma.deal.count({ where: { organizationId, ...viaPeople } }),
@@ -172,9 +176,15 @@ export default async function CompanyDetailPage({
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, today);
 
-  const [upcoming, eventChoices] = await Promise.all([
+  const [upcoming, eventChoices, reps, lastTouch] = await Promise.all([
     upcomingFor(organizationId, { companyId: company.id }, today),
     loadEventChoices(organizationId, userId),
+    loadRepChoices(organizationId),
+    prisma.activity.findFirst({
+      where: { organizationId, marketing: false, OR: [{ companyId: company.id }, viaPeople] },
+      orderBy: { occurredAt: "desc" },
+      select: { occurredAt: true },
+    }),
   ]);
 
   // The jobs won here, newest first.
@@ -265,6 +275,7 @@ export default async function CompanyDetailPage({
                 others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
                 via: activity.contact,
                 bypassedBy: activity.contact ? null : activity.user.name,
+                marketing: activity.marketing,
               }))}
             />
           </Card>
@@ -352,7 +363,8 @@ export default async function CompanyDetailPage({
                   ) : null
                 }
               />
-              <Detail label="Added" value={formatDate(company.createdAt, timeZone)} />
+              <Detail label="Rep" value={<RepPicker kind="company" id={company.id} ownerId={company.ownerId} reps={reps} />} />
+              <Detail label="Added" value={<AddedBy name={company.createdBy?.name ?? null} at={company.createdAt} timeZone={timeZone} />} />
               <Detail label="City" value={company.city} />
               <Detail label="State" value={company.state} />
             </dl>
@@ -378,7 +390,7 @@ export default async function CompanyDetailPage({
             notes={noteTotal}
             personalNotes={personalNoteTotal}
             activity={activityCounts}
-            lastTouchAt={activities[0]?.occurredAt ?? null}
+            lastTouchAt={lastTouch?.occurredAt ?? null}
             openDealCents={openDealValue}
             openDealCount={openDeals.length}
             quotesOut={quotesOutTotal}
