@@ -12,6 +12,16 @@
  * re-import that updates instead of doubling), the template download and
  * the paged People list on a company.
  *
+ * And the UX review fixes (Nov 10, 2026), each an "audit fixes (UX
+ * review):" step: the search box finding a phone number however it is
+ * typed (phone, second phone, mobile, a company's phone; digits-only, never
+ * across two numbers), matching word by word (a name and a company, a name
+ * in either order, a job title) with % _ and \ as plain characters; every
+ * filter menu on Contacts and Companies opening inside a phone's screen and
+ * a 1440 window, its names whole; and the Companies list keeping a phone
+ * number on one line with its last columns reached by scrolling the table,
+ * as on Contacts.
+ *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace, activates it with SQL, and deletes it again
@@ -72,6 +82,28 @@ async function pageSummary(page) {
 }
 async function rowCount(page, testId) {
   return page.getByTestId(testId).count();
+}
+// A filter menu, opened and placed (FloatingMenu draws it hidden until it
+// has measured where it fits).
+async function openMenu(page, id) {
+  await page.getByTestId(id).click();
+  const menu = page.getByTestId(`${id}-menu`);
+  await menu.waitFor();
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return el && getComputedStyle(el).visibility === "visible";
+  }, `[data-testid="${id}-menu"]`);
+  return menu;
+}
+// Inside the window, every choice's name whole, and the page no wider.
+async function assertMenuInside(page, menu, what) {
+  const width = page.viewportSize().width;
+  const box = await menu.boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= width, `${what} spans ${Math.round(box.x)}–${Math.round(box.x + box.width)} in a ${width}px window`);
+  const cut = await menu.evaluate((el) => [...el.querySelectorAll("span.truncate")].filter((span) => span.scrollWidth > span.clientWidth + 1).map((span) => span.textContent));
+  assert.deepEqual(cut, [], `${what} cuts names off`);
+  const page_ = await page.evaluate(() => document.documentElement.scrollWidth);
+  assert.ok(page_ <= width + 1, `${what} widens the page to ${page_}px`);
 }
 
 (async () => {
@@ -484,6 +516,122 @@ async function rowCount(page, testId) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);
   await shot(page, "09-mobile");
+
+  // ---------------------------------------------------------------------
+  // UX review fixes (Nov 10, 2026): one step per confirmed defect.
+  log("audit fixes (UX review): search finds a phone number however it is typed — phone, second phone, mobile and a company's phone — never across two numbers");
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await sql(
+    `INSERT INTO "Company" (id, "organizationId", name, phone, website, "updatedAt")
+     VALUES ('cif_ux_delta', $1, 'Delta Door & Hardware', '(870) 555-0367', 'https://deltadoorhw.com', now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Contact" (id, "organizationId", "companyId", name, title, phone, phone2, mobile, "updatedAt") VALUES
+       ('cif_ux_alan', $1, 'cif_ux_delta', 'Alan Osborne', 'Operations Manager', NULL, NULL, '(870) 555-0123', now()),
+       ('cif_ux_denise', $1, NULL, 'Denise Howard', 'Property Manager', NULL, '512 555 0125', '999 000 1111', now()),
+       ('cif_ux_phil', $1, NULL, 'Phil Dotted', NULL, '512.555.0177', NULL, NULL, now())`,
+    [org],
+  );
+  const found = async (list, q) => {
+    await page.goto(`${BASE}/dashboard/${list}?q=${encodeURIComponent(q)}`);
+    await page.getByTestId("page-summary").waitFor();
+    const cell = list === "contacts" ? "[data-testid=contact-row] td:nth-child(4) a.link" : "[data-testid=company-row] td:nth-child(3) a.link";
+    return (await page.locator(cell).allTextContents()).map((t) => t.trim()).sort();
+  };
+  for (const typed of ["(870) 555-0123", "870-555-0123", "8705550123", "870.555.0123", "+1 870 555 0123", "555-0123"]) {
+    assert.deepEqual(await found("contacts", typed), ["Alan Osborne"], `a mobile stored as (870) 555-0123, typed ${typed}`);
+  }
+  for (const typed of ["512-555-0125", "(512) 555-0125", "5125550125"]) {
+    assert.deepEqual(await found("contacts", typed), ["Denise Howard"], `a second phone stored as 512 555 0125, typed ${typed}`);
+  }
+  for (const typed of ["(512) 555-0177", "512-555-0177", "5125550177"]) {
+    assert.deepEqual(await found("contacts", typed), ["Phil Dotted"], `a phone stored as 512.555.0177, typed ${typed}`);
+  }
+  assert.deepEqual(await found("contacts", "0125999"), [], "the end of one number and the start of the next are not a number");
+  assert.equal(await pageSummary(page), "No contacts");
+  for (const typed of ["8705550367", "870-555-0367", "870.555.0367", "(870) 555-0367"]) {
+    assert.deepEqual(await found("companies", typed), ["Delta Door & Hardware"], `a company phone typed ${typed}`);
+  }
+
+  log("audit fixes (UX review): search matches word by word — a name and a company, a name in either order, a job title — and % _ \\ stay plain characters");
+  assert.deepEqual(await found("contacts", "alan delta"), ["Alan Osborne"], "a first name and the company");
+  assert.deepEqual(await found("contacts", "osborne alan"), ["Alan Osborne"], "a name in either order");
+  assert.deepEqual(await found("contacts", "howard denise"), ["Denise Howard"]);
+  assert.deepEqual(await found("contacts", "Property Manager"), ["Denise Howard"], "a job title");
+  assert.deepEqual(await found("contacts", "operations manager"), ["Alan Osborne", "Mia Mailing"]);
+  assert.ok((await page.getByTestId("active-filters").textContent()).includes("“operations manager”"), "the chip reads what was typed");
+  assert.deepEqual(await found("companies", "delta door"), ["Delta Door & Hardware"]);
+  for (const typed of ["r%a", "r_a", "blue\\"]) {
+    assert.deepEqual(await found("contacts", typed), [], `${typed} is matched as typed, not as a wildcard`);
+    assert.equal(await pageSummary(page), "No contacts");
+  }
+  assert.deepEqual(await found("contacts", "sam rivera"), ["Sam Rivera"], "a plain two-word name still finds one person");
+
+  log("audit fixes (UX review): every filter menu on Contacts and Companies opens inside a phone's screen and a 1440 window, names whole, the page no wider");
+  const menus = {
+    contacts: ["filter-state", "filter-industry", "filter-company-type", "filter-company", "filter-status", "filter-activity", "filter-job-title", "filter-rep", "filter-added-by", "filter-added", "filter-contact-info", "filter-lead-label"],
+    companies: ["filter-state", "filter-industry", "filter-company-type", "filter-status", "filter-activity", "filter-rep", "filter-added-by", "filter-added", "filter-contact-info", "filter-lead-label"],
+  };
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const [list, ids] of Object.entries(menus)) {
+      await page.goto(`${BASE}/dashboard/${list}`);
+      for (const id of ids) {
+        const menu = await openMenu(page, id);
+        await assertMenuInside(page, menu, `${width}px ${list} ${id}`);
+        if (id === "filter-company" || id === "filter-job-title") {
+          // Focused on the frame after the menu shows (a hidden box can't take focus).
+          await page
+            .waitForFunction(() => document.activeElement?.getAttribute("type") === "search", null, { timeout: 3000 })
+            .catch(() => assert.fail(`${id}'s search box doesn't take the cursor`));
+        }
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "detached" });
+      }
+    }
+  }
+  // The reported ones, by name: Companies' Status on a phone reads Meeting
+  // Completed whole, and Contact info's None buttons can be pressed.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/dashboard/companies`);
+  const status = await openMenu(page, "filter-status");
+  const completed = await status.locator("label", { hasText: "Meeting Completed" }).boundingBox();
+  assert.ok(completed.x >= 0 && completed.x + completed.width <= 390, "Meeting Completed is on the screen");
+  await shot(page, "10-ux-status-menu-phone");
+  await page.keyboard.press("Escape");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await openMenu(page, "filter-contact-info");
+  for (const field of ["mobile", "email"]) {
+    const none = await page.getByTestId(`presence-${field}-no`).boundingBox();
+    assert.ok(none.x >= 0 && none.x + none.width <= 390, `${field}'s None is on the screen at ${Math.round(none.x)}`);
+  }
+  await page.getByTestId("presence-email-no").click();
+  await page.waitForURL(/email=no/);
+  await page.keyboard.press("Escape");
+
+  log("audit fixes (UX review): Companies list phone numbers stay on one line; its last columns are reached by scrolling the table, as on Contacts");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${BASE}/dashboard/companies`);
+    const phones = await page.locator("[data-testid=company-row-phone] a").evaluateAll((links) => links.map((a) => [a.textContent.trim(), a.getClientRects().length]));
+    assert.ok(phones.length >= 4, `phones listed: ${JSON.stringify(phones)}`);
+    for (const [number, lines] of phones) assert.equal(lines, 1, `${number} breaks onto ${lines} lines at ${width}px`);
+    const reach = await page.evaluate(() => {
+      const box = document.querySelector("table").parentElement;
+      box.scrollLeft = box.scrollWidth;
+      const edge = box.getBoundingClientRect();
+      const heads = [...document.querySelectorAll("thead th")];
+      const last = heads[heads.length - 1];
+      const at = last.getBoundingClientRect();
+      return { name: last.textContent.trim(), overflow: getComputedStyle(box).overflowX, inside: at.left >= edge.left - 1 && at.right <= edge.right + 1, page: document.documentElement.scrollWidth, window: document.documentElement.clientWidth };
+    });
+    assert.equal(reach.name, "Status");
+    assert.equal(reach.overflow, "auto", "the table scrolls inside its card, like the Contacts list");
+    assert.ok(reach.inside, `at ${width}px the Status column can be scrolled into view`);
+    assert.ok(reach.page <= reach.window + 1, `at ${width}px the page itself scrolls sideways (${reach.page}px)`);
+  }
+  await shot(page, "11-ux-companies-phone");
 
   void acmeUrl;
   await browser.close();

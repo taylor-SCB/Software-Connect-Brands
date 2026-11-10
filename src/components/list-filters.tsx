@@ -17,6 +17,7 @@ import {
   type Presence,
 } from "@/lib/list-params";
 import { useSearch } from "@/lib/use-search";
+import { FloatingMenu } from "@/components/floating-menu";
 
 export type FilterBarOptions = {
   states: string[];
@@ -346,6 +347,13 @@ export function Chip({ children, onRemove }: { children: React.ReactNode; onRemo
 
 // A button that opens a list of checkboxes. Closes on outside click or
 // Escape. Ticks apply straight away.
+//
+// The list is a FloatingMenu (UX review, Nov 10, 2026): drawn on the page
+// body and kept inside the window, flipping up when there is more room
+// above. It used to hang off the button's left edge at a fixed 256px, so
+// any button in the right half of a wrapped filter row — Rep, Added by,
+// Contact info, Status on a phone, Lead Label on the Pipeline — opened a
+// menu that ran off the screen, cut its names and widened the page.
 function Dropdown({
   label,
   count,
@@ -360,7 +368,8 @@ function Dropdown({
   onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpenState] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const setOpen = useCallback(
     (value: boolean) => {
       setOpenState(value);
@@ -368,26 +377,21 @@ function Dropdown({
     },
     [onOpenChange],
   );
+  const close = useCallback(() => setOpen(false), [setOpen]);
 
+  // The menu is drawn hidden until it has measured where it fits, and a
+  // hidden box can't take focus, so a search box marked data-autofocus is
+  // focused on the next frame, once the menu is on screen.
   useEffect(() => {
     if (!open) return;
-    function onDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, setOpen]);
+    const frame = requestAnimationFrame(() => panel.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={button}
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
@@ -399,10 +403,12 @@ function Dropdown({
         {count > 0 && <span className="num rounded-full bg-[var(--tint-5)] px-1.5 text-[0.65rem]">{count}</span>}
         <IconChevronDown size={12} className="opacity-70" />
       </button>
-      {open && (
-        <div className="card popover absolute left-0 top-full z-30 mt-1 w-64 py-1">{children(() => setOpen(false))}</div>
-      )}
-    </div>
+      <FloatingMenu anchor={button} open={open} onClose={close} width={256} testId={`${testId}-menu`} label={label}>
+        <div ref={panel} className="py-1">
+          {children(close)}
+        </div>
+      </FloatingMenu>
+    </>
   );
 }
 
@@ -447,7 +453,7 @@ export function MultiSelect({
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={`Search ${label.toLowerCase()}…`}
                 aria-label={`Search ${label.toLowerCase()}`}
-                autoFocus
+                data-autofocus
                 className="input input-sm"
               />
             </div>
@@ -514,7 +520,7 @@ function CompanySelect({
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search companies…"
                 aria-label="Search companies"
-                autoFocus
+                data-autofocus
                 className="input input-sm"
               />
             </div>
@@ -612,7 +618,7 @@ function TitleSelect({ values, onToggle, onClear }: { values: string[]; onToggle
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search job titles…"
               aria-label="Search job titles"
-              autoFocus
+              data-autofocus
               className="input input-sm"
             />
           </div>

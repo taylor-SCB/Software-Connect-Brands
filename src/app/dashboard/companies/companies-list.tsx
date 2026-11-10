@@ -215,9 +215,11 @@ export async function CompaniesList({
                         </div>
                       </td>
                       <td className="muted">{location || <span className="faint">—</span>}</td>
-                      <td className="muted num">
+                      {/* One line, as on the Contacts list (UX review, Nov 10,
+                          2026): squeezed, "(870) 555-0367" broke into three. */}
+                      <td className="muted num" data-testid="company-row-phone">
                         {company.phone ? (
-                          <a href={`tel:${company.phone}`} className="hover:underline">
+                          <a href={`tel:${company.phone}`} className="whitespace-nowrap hover:underline">
                             {company.phone}
                           </a>
                         ) : (
