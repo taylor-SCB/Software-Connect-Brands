@@ -23,6 +23,8 @@ import { FormError, FormSuccess } from "@/components/ui";
 import { SupplierCell, type SupplierOption } from "./supplier-cell";
 import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
+import { MeetingDraftButton } from "./meeting-draft";
+import type { DraftedLine } from "../ai-actions";
 import {
   customUnitIdOf,
   customUnitValue,
@@ -136,6 +138,12 @@ type Row = {
   // The picture the line holds, if any.
   imageToken: string | null;
   imageRemoved: boolean;
+  // Drafted from the meeting with no catalog product (Nov 10, 2026): it
+  // has no price until someone types one, and the save waits for it.
+  priceNeeded?: boolean;
+  // Why the AI drafted it, shown in the editor only (never saved: project
+  // notes print on the customer's copy).
+  draftNote?: string;
 };
 
 function picksOf(entries: VariationEntry[]) {
@@ -234,6 +242,7 @@ export function LineItemsEditor({
   productLabels = {},
   units = [],
   draft = true,
+  meetingDraft = null,
 }: {
   quoteId: string;
   initialLines: EditorLine[];
@@ -253,6 +262,9 @@ export function LineItemsEditor({
   productLabels?: Record<string, LineProductLabels>;
   units?: EditorUnit[];
   draft?: boolean;
+  // "Draft lines from the meeting" (AI on, a draft quote whose deal came
+  // from a Pipeline opportunity); auto when Build Quote asked for it.
+  meetingDraft?: { auto: boolean } | null;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
   // Grows as products are added from the catalog.
@@ -420,6 +432,89 @@ export function LineItemsEditor({
     ]);
   }
 
+  // Lines drafted from the meeting notes, added unsaved for review: a
+  // catalog line at the catalog's price, a typed one at $0 marked
+  // "Price needed".
+  function addDraftedLines(lines: DraftedLine[]) {
+    if (lines.length === 0) return;
+    const added: Row[] = [];
+    for (const line of lines) {
+      if (line.kind === "catalog") {
+        const product = line.product;
+        if (product.labels) setLabelData((current) => ({ ...current, [product.id]: product.labels! }));
+        if (product.customUnitId && !unitOptions.some((unit) => unit.id === product.customUnitId)) {
+          setUnitOptions((current) => [
+            ...current,
+            { id: product.customUnitId!, name: product.customUnitName ?? "Your unit", tag: product.defaultTag, archived: true },
+          ]);
+        }
+        const term = splitTerm(
+          product.softwareRate === "PER_YEAR" && product.softwareTerm ? product.softwareTerm * 12 : product.softwareTerm,
+        );
+        added.push({
+          ...blankRow(),
+          productId: product.id,
+          name: product.name,
+          description: product.description,
+          draftNote: line.note,
+          quantityInput: String(line.quantity),
+          unitPriceInput: centsToDollarInput(product.unitPriceCents),
+          tag: product.defaultTag as LineItemTagValue,
+          serviceType: product.serviceType ?? "",
+          unitOfMeasure: product.unitOfMeasure ?? (product.customUnitId ? customUnitValue(product.customUnitId) : ""),
+          softwareRate: product.softwareRate ?? "",
+          termYearsInput: term.years,
+          termMonthsInput: term.months,
+          minPriceCents: product.minPriceCents ?? null,
+        });
+      } else {
+        added.push({
+          ...blankRow(),
+          name: line.name,
+          description: line.description,
+          draftNote: line.note,
+          quantityInput: String(line.quantity),
+          tag: line.tag,
+          priceNeeded: true,
+        });
+      }
+    }
+    setRows((current) => [...current, ...added]);
+    setDirty(true);
+    editedDuringSave.current = true;
+    setState({});
+  }
+
+  function blankRow(): Row {
+    return {
+      uid: nextUid(),
+      id: null,
+      productId: null,
+      name: "",
+      description: "",
+      projectNotes: "",
+      quantityInput: "1",
+      unitPriceInput: "0.00",
+      discountInput: "",
+      discountMode: "percent",
+      tag: "MATERIALS",
+      serviceType: "",
+      supplierCompanyId: null,
+      unitOfMeasure: "",
+      softwareRate: "",
+      termYearsInput: "",
+      termMonthsInput: "",
+      saveAsProduct: false,
+      minPriceCents: null,
+      picks: {},
+      savedVariations: [],
+      labelsTouched: false,
+      savedUnitLabel: null,
+      imageToken: null,
+      imageRemoved: false,
+    };
+  }
+
   // One label picked on a row.
   function pickLabel(uid: string, groupId: string, optionId: string) {
     const row = rows.find((item) => item.uid === uid);
@@ -527,6 +622,11 @@ export function LineItemsEditor({
       saveAsProduct: row.saveAsProduct && !row.id && !row.productId,
     }));
 
+    const unpriced = rows.findIndex((row) => row.priceNeeded && rowUnitCents(row) === 0);
+    if (unpriced >= 0) {
+      setState({ error: `Line ${unpriced + 1} needs a price: it was drafted from the meeting and isn't in your catalog.` });
+      return;
+    }
     const blank = payload.findIndex((line) => line.name.length === 0);
     if (blank >= 0) {
       setState({ error: `Line ${blank + 1} needs a product name.` });
@@ -691,6 +791,11 @@ export function LineItemsEditor({
                       disabled={readOnly}
                       className="input input-sm mt-1 border-transparent bg-transparent text-xs italic text-[var(--text-faint)]"
                     />
+                    {row.draftNote && (
+                      <p className="faint mt-0.5 px-2 text-[0.65rem]" data-testid="line-draft-note">
+                        Drafted from the meeting: {row.draftNote}
+                      </p>
+                    )}
 
                     {/* Only for a brand-new hand-typed line. A line that
                         was typed and already saved comes back with no
@@ -867,6 +972,11 @@ export function LineItemsEditor({
                       disabled={readOnly}
                       className="input input-sm num text-right"
                     />
+                    {row.priceNeeded && rowUnitCents(row) === 0 && (
+                      <p className="mt-0.5 text-right text-[0.65rem] font-semibold text-[var(--danger)]" data-testid="line-price-needed">
+                        Price needed
+                      </p>
+                    )}
                     {/* Net of the line's discount: a discount can take a
                         line under the minimum as surely as a low price. */}
                     {row.minPriceCents !== null &&
@@ -996,6 +1106,7 @@ export function LineItemsEditor({
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3">
           <CatalogPicker onPick={addProductLine} />
+          {meetingDraft && <MeetingDraftButton quoteId={quoteId} auto={meetingDraft.auto} onLines={addDraftedLines} />}
           <button type="button" onClick={addBlankLine} className="btn btn-ghost btn-sm">
             <IconPlus size={13} />
             Blank line

@@ -24,11 +24,14 @@ export function NewQuoteForm({
   deals,
   defaultContactId,
   defaultDealId,
+  draftFromMeeting = false,
 }: {
   contacts: { id: string; name: string; company: string | null }[];
   deals: PickableDeal[];
   defaultContactId?: string;
   defaultDealId?: string;
+  // Build Quote on the Pipeline with "Draft lines from the meeting" ticked.
+  draftFromMeeting?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     createQuote,
@@ -81,6 +84,7 @@ export function NewQuoteForm({
       <div>
         <span className="label">Template</span>
         <input type="hidden" name="template" value={template} />
+        {draftFromMeeting && <input type="hidden" name="draft" value="meeting" />}
         <div className="grid gap-2 sm:grid-cols-2">
           {TEMPLATES.map((option) => {
             const selected = template === option.value;

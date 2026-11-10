@@ -102,7 +102,9 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard/deals");
   revalidatePath(`/dashboard/contacts/${contact.id}`);
-  redirect(`/dashboard/quotes/${quote.id}`);
+  // Build Quote with "Draft lines from the meeting" ticked opens the new
+  // quote drafting them (Nov 10, 2026).
+  redirect(`/dashboard/quotes/${quote.id}${formData.get("draft") === "meeting" ? "?draft=meeting" : ""}`);
 }
 
 const QUOTE_META_FIELDS = ["title", "template", "introNote", "terms", "validUntil"] as const;

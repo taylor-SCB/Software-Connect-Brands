@@ -221,6 +221,7 @@ export type ContactImportPlan = {
   companiesNamed: number;
   skippedEmpty: number;
   skippedDuplicates: number;
+  samples?: string[][];
 };
 
 export function parseStatus(raw: string): { status: ContactStatusValue | null; note?: string } {
@@ -339,12 +340,23 @@ function cleanWebsite(raw: string) {
   return (/^https?:\/\//i.test(value) ? value : `https://${value}`).slice(0, 200);
 }
 
-export function planContactImport(text: string): { ok: true; plan: ContactImportPlan } | { ok: false; error: string } {
+// `mapped` (Nov 10, 2026): headers the person placed by hand from the
+// preview's suggestions, column → header index. Each wins over whatever
+// the detector gave that column or that header.
+export function planContactImport(
+  text: string,
+  mapped: Partial<Record<ContactCsvColumn, number>> = {},
+): { ok: true; plan: ContactImportPlan } | { ok: false; error: string } {
   const table = parseCsvLines(text);
   if (table.length === 0) return { ok: false, error: "The file is empty." };
 
   const headers = table[0].cells.map((h) => h.trim());
   const columns = detectContactColumns(headers);
+  for (const [column, index] of Object.entries(mapped) as [ContactCsvColumn, number | undefined][]) {
+    if (index === undefined || !Number.isInteger(index) || index < 0 || index >= headers.length) continue;
+    for (const other of CONTACT_CSV_COLUMNS) if (columns[other] === index) delete columns[other];
+    columns[column] = index;
+  }
   const hasName = columns.name !== undefined || columns.firstName !== undefined || columns.lastName !== undefined;
   if (!hasName && columns.companyName === undefined) {
     return {
@@ -468,6 +480,8 @@ export function planContactImport(text: string): { ok: true; plan: ContactImport
       companiesNamed: companies.size,
       skippedEmpty,
       skippedDuplicates,
+      // The first rows' cells as written, for the preview's column hints.
+      samples: table.slice(1, 4).map(({ cells }) => cells.map((cell) => cell.trim().slice(0, 120))),
     },
   };
 }
