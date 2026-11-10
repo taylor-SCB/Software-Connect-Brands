@@ -338,7 +338,7 @@ function Progress({
           </span>
           <span className="num faint">{percent}%</span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-[rgb(255_255_255/0.08)]" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+        <div className="h-2 overflow-hidden rounded-full bg-[var(--tint-4)]" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full bg-[var(--brand)] transition-[width]" style={{ width: `${percent}%` }} />
         </div>
         {!finished && <p className="faint mt-1 text-xs">Keep this tab open. Stopping early is fine; re-upload the same file to finish.</p>}

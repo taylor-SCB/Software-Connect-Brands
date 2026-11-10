@@ -163,7 +163,7 @@ export default async function ProjectSchedulePage({ params }: { params: Promise<
             title="Install days"
             subtitle="Each scope of work gets its own days, on the crew already assigned to it."
           />
-          <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+          <ul className="divide-y divide-[var(--hairline)]">
             {shownScopes.map((scope) => {
               const key = scope.isDefault ? "__job__" : scope.id;
               const booked = scheduled.has(key) || (scope.isDefault && scheduled.has(scope.id));

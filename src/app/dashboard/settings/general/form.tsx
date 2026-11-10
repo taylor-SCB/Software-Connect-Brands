@@ -23,7 +23,7 @@ function PaymentTablePreset({
 }) {
   const [preset, setPreset] = useState(organization.defaultPaymentPreset);
   return (
-    <div className="space-y-4 border-t border-[rgb(255_255_255/0.06)] pt-5">
+    <div className="space-y-4 border-t border-[var(--hairline-2)] pt-5">
       <div>
         <h3 className="text-sm font-semibold">Payment table</h3>
         <p className="muted text-sm">
@@ -195,7 +195,7 @@ export function CompanyInfoForm({
 
         <PaymentTablePreset organization={organization} />
 
-        <div className="space-y-4 border-t border-[rgb(255_255_255/0.06)] pt-5">
+        <div className="space-y-4 border-t border-[var(--hairline-2)] pt-5">
           <div>
             <h3 className="text-sm font-semibold">Follow-up rhythm</h3>
             <p className="muted text-sm">

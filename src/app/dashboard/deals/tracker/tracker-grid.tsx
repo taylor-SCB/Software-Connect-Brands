@@ -732,7 +732,7 @@ export function TrackerGrid({
 
       {/* --------------------------- The quote's total --------------------------- */}
       <div
-        className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] px-4 py-3 text-sm"
+        className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] px-4 py-3 text-sm"
         data-testid="quote-totals"
       >
         <div className="flex items-center gap-2">
@@ -809,7 +809,7 @@ export function TrackerGrid({
         ))}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="sm:w-80">
           <label className="label" htmlFor="signerName">
             Your Company Signer
@@ -901,7 +901,7 @@ function ContractCard({
 
   return (
     <div
-      className="space-y-3 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4"
+      className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4"
       data-testid="column-header"
       data-column={letter(index)}
     >
@@ -1029,7 +1029,7 @@ function ContractCard({
         </div>
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3" data-testid="column-money">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3" data-testid="column-money">
         <div className="flex flex-wrap items-center gap-1.5" data-testid="column-rows">
           {selectedRows.length === 0 ? (
             <span className="faint text-xs">No rows yet — tick them under {name} in the table above.</span>

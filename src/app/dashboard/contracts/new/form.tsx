@@ -123,7 +123,7 @@ export function NewContractComposer({
                         <>
                           <span className="text-[var(--ok)]">{filled} filled</span>
                           <span className="faint"> · </span>
-                          <span className={missing ? "text-[#f38b8b]" : "faint"}>
+                          <span className={missing ? "text-[var(--danger)]" : "faint"}>
                             {missing} missing
                           </span>
                         </>
@@ -133,7 +133,7 @@ export function NewContractComposer({
                 </div>
                 <div
                   data-testid="template-preview"
-                  className="max-h-[36rem] overflow-y-auto rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4"
+                  className="max-h-[36rem] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4"
                 >
                   <MergeBody body={template.body} context={previewing ? context : null} />
                 </div>

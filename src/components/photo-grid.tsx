@@ -131,7 +131,7 @@ export function PhotoGrid({
                   .map((tag) => (
                     <span
                       key={tag.id}
-                      className={`rounded px-1.5 py-0.5 text-[0.65rem] ${tag.kind === "TYPE" ? "bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]" : "bg-[rgb(255_255_255/0.08)]"}`}
+                      className={`rounded px-1.5 py-0.5 text-[0.65rem] ${tag.kind === "TYPE" ? "bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]" : "bg-[var(--tint-4)]"}`}
                     >
                       {tag.name}
                     </span>

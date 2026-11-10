@@ -214,7 +214,7 @@ export default async function ContactDetailPage({
       />
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
+        <div className="min-w-0 space-y-5 lg:col-span-2">
           <Card lit id="activity">
             <CardHeader
               title="Log activity"
@@ -275,7 +275,7 @@ export default async function ContactDetailPage({
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <Card lit>
             <CardHeader title="Details" />
             <dl className="space-y-3 p-5 text-sm">
@@ -441,7 +441,7 @@ export default async function ContactDetailPage({
             {contact.deals.length === 0 ? (
               <EmptyState title="No deals yet" body="Creating a quote adds one automatically." />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contact.deals.map((deal) => (
                   <li
                     key={deal.id}
@@ -488,7 +488,7 @@ export default async function ContactDetailPage({
             {contact.quotes.length === 0 ? (
               <EmptyState title="No quotes yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contact.quotes.map((quote) => (
                   <li key={quote.id} className="px-5 py-3">
                     <Link
@@ -527,7 +527,7 @@ export default async function ContactDetailPage({
             {contact.contracts.length === 0 ? (
               <EmptyState title="No contracts yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contact.contracts.map((contract) => (
                   <li key={contract.id} className="px-5 py-3">
                     <Link

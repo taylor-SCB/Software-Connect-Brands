@@ -293,7 +293,7 @@ function Tile({
         if ((event.target as HTMLElement).closest("a,button,select,input,label")) return;
         onOpen();
       }}
-      className="cursor-grab rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3 hover:border-[var(--border-strong)] active:cursor-grabbing"
+      className="cursor-grab rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3 hover:border-[var(--border-strong)] active:cursor-grabbing"
       data-testid="pipeline-tile"
       data-id={tile.id}
       data-title={tile.title}

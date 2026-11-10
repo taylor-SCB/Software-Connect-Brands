@@ -38,5 +38,5 @@ export function leadLabelStyle(label: string | null): { background: string; colo
     const color = BUILT_IN_COLORS[label];
     return { background: color, color: "#ffffff", borderColor: color };
   }
-  return { background: "transparent", color: "#e8ff3a", borderColor: "rgb(232 255 58 / 0.45)" };
+  return { background: "transparent", color: "var(--lead-custom)", borderColor: "color-mix(in srgb, var(--lead-custom) 45%, transparent)" };
 }

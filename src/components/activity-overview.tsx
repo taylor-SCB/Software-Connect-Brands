@@ -140,7 +140,7 @@ function OverviewRow({
   return (
     <div className="flex items-center justify-between gap-3">
       <dt className="faint flex items-center gap-1.5 text-xs">
-        <Icon size={12} className={warn ? "text-[#fbbf24]" : undefined} />
+        <Icon size={12} className={warn ? "text-[var(--warn)]" : undefined} />
         {label}
       </dt>
       <dd className="text-right text-sm">{value}</dd>

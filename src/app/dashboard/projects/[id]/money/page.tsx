@@ -167,7 +167,7 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
               body="Rows appear here once the customer signs an agreement with a payment table on it."
             />
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {owedRows.map(({ row, contract }) => (
                 <InvoiceRow
                   key={row.id}
@@ -215,7 +215,7 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
               }
             />
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {Array.from(bySupplier.entries()).map(([key, supplier]) => (
                 <li key={key} className="px-5 py-3" data-testid="supplier-group">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -278,7 +278,7 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
             subtitle="More work, or less. Signing one moves that scope's budget up or down."
           />
           {changeOrders.length > 0 && (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {changeOrders.map((contract) => {
                 const total = contractTotalCents(contract.lineItems, contract.discountCents);
                 return (
@@ -308,7 +308,7 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
               })}
             </ul>
           )}
-          <div className="border-t border-[rgb(255_255_255/0.06)] p-5">
+          <div className="border-t border-[var(--hairline-2)] p-5">
             <ChangeOrderForm projectId={project.id} scopes={scopeChoices} today={today} />
           </div>
         </Card>

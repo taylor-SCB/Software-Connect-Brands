@@ -89,7 +89,7 @@ export function NotesList({ notes, split = false }: { notes: NoteItem[]; split?:
           }
         />
       ) : (
-        <ul className="mt-2 divide-y divide-[rgb(255_255_255/0.045)]" data-testid="notes-rows">
+        <ul className="mt-2 divide-y divide-[var(--hairline)]" data-testid="notes-rows">
           {shown.map((note) => (
             <li key={note.id} className="px-5 py-3" data-testid="note-row">
               <div className="flex items-start justify-between gap-3">

@@ -124,7 +124,7 @@ function GrantDialog({
   // On document.body: a glass card's blur would otherwise pin a fixed
   // overlay inside the card instead of over the screen.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[var(--scrim)] p-4" role="dialog" aria-modal="true">
       <div className="card popover my-8 w-full max-w-lg space-y-5 p-5" data-testid="grant-dialog">
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -247,7 +247,7 @@ function GrantDialog({
         {picked.length > 0 && (
           <div className="flex flex-wrap gap-1.5" data-testid="grant-picked">
             {picked.map((each) => (
-              <span key={each.key} className="inline-flex items-center gap-1 rounded bg-[rgb(255_255_255/0.08)] px-2 py-1 text-xs">
+              <span key={each.key} className="inline-flex items-center gap-1 rounded bg-[var(--tint-4)] px-2 py-1 text-xs">
                 {each.label}
                 <button type="button" onClick={() => toggle(each)} aria-label={`Remove ${each.label}`}>
                   <IconX size={11} />

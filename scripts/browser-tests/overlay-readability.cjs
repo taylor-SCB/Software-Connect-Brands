@@ -24,6 +24,9 @@
  * `background` shorthand, which reset background-image and wiped the
  * arrow the moment you clicked the field).
  *
+ * From Nov 10, 2026 the same checks run again in the Light and Bright
+ * looks (each repaints --overlay and the page behind it).
+ *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace, activates it with SQL, and deletes it again
@@ -393,6 +396,95 @@ async function withOldGlass(page, selector, body) {
     `overlays have drifted onto different colours: ${surfaces.map((s) => `${s.what} ${s.colour}`).join("; ")}`,
   );
   console.log(`     ${surfaces.length} overlays, all rgb(${distinct[0]})`);
+
+  // The three looks (Nov 10, 2026). Everything above ran in Dark, the
+  // look a new person starts on. Light and Bright repaint --overlay and
+  // the page behind it, so each floating panel is checked again in both:
+  // opaque, nothing bleeding through, one shared colour per look, the old
+  // glass still caught, borders findable and faint text readable on that
+  // look's own page.
+  for (const look of ["light", "bright"]) {
+    log(`${look}: every overlay is opaque, one colour, and the old glass still fails`);
+    await sql(`UPDATE "User" SET theme = $2 WHERE email = $1 AND "organizationId" = $3`, [EMAIL, look, org]);
+    const lookSurfaces = surfaces.length;
+
+    await page.goto(`${BASE}/dashboard/contacts/new`);
+    assert.equal(await page.locator("[data-theme]").first().getAttribute("data-theme"), look);
+    await page.fill("#name", "Sam Rivera");
+    await page.fill("#title", "Owner");
+    await page.fill("#companyName", "a");
+    await companyPanel.waitFor();
+    await assertOpaqueSurface(companyPanel, `${look} company picker dropdown`);
+    const lookSolid = await bleedThrough(page, companyPanel, `${look}-01-company-panel`);
+    assert.equal(lookSolid, 0, `${look}: company picker is see-through: ${pct(lookSolid)}`);
+    await shot(page, `${look}-01b-company-picker-open`);
+    const lookGlass = await withOldGlass(page, 'ul[role="listbox"]', async () => {
+      await page.fill("#companyName", "a");
+      await companyPanel.waitFor();
+      await page.waitForTimeout(150);
+      return bleedThrough(page, companyPanel, `${look}-02-company-panel-OLD-GLASS`);
+    });
+    assert.ok(lookGlass > 0.5, `${look}: the check no longer catches a see-through panel (${pct(lookGlass)})`);
+
+    await page.goto(`${BASE}/dashboard/quotes/new?contactId=${contactIds[0]}`);
+    await page.fill("#dealTitle", "Roof");
+    await dealPanel.waitFor();
+    await page.waitForFunction(() =>
+      document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getTiming().iterations === Infinity),
+    );
+    await page.locator("#dealTitle").evaluate((el) => el.addEventListener("focusout", (event) => event.stopPropagation()));
+    await assertOpaqueSurface(dealPanel, `${look} deal picker dropdown`);
+    assert.equal(await bleedThrough(page, dealPanel, `${look}-03-deal-picker`), 0, `${look}: deal picker is see-through`);
+
+    await page.goto(`${BASE}/dashboard/contacts`);
+    await page.locator('[data-testid="filter-state"]').click();
+    const lookState = page.locator(".popover").first();
+    await lookState.getByText("TX").first().waitFor();
+    await assertOpaqueSurface(lookState, `${look} State filter menu`);
+    assert.equal(await bleedThrough(page, lookState, `${look}-04-state-filter`), 0, `${look}: State filter menu is see-through`);
+    await shot(page, `${look}-05-state-filter-open`);
+    await page.keyboard.press("Escape");
+    await page.locator('[data-testid="filter-company"]').click();
+    const lookCompany = page.locator(".popover").first();
+    await lookCompany.getByPlaceholder("Search companies…").fill("a");
+    await lookCompany.getByText("Asset Living").waitFor();
+    await assertOpaqueSurface(lookCompany, `${look} Company filter menu`);
+    assert.equal(await bleedThrough(page, lookCompany, `${look}-06-company-filter`), 0, `${look}: Company filter menu is see-through`);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: /Import CSV/i }).first().click();
+    await dialog.waitFor();
+    await assertOpaqueSurface(dialog, `${look} Import CSV dialog`);
+    assert.equal(await bleedThrough(page, dialog, `${look}-08-dialog`), 0, `${look}: Import CSV dialog is see-through`);
+    await shot(page, `${look}-09-dialog-open`);
+    await page.keyboard.press("Escape");
+
+    const mine = surfaces.slice(lookSurfaces);
+    const lookDistinct = [...new Set(mine.map((s) => s.colour))];
+    assert.equal(lookDistinct.length, 1, `${look}: overlays drifted apart: ${mine.map((s) => `${s.what} ${s.colour}`).join("; ")}`);
+    console.log(`     ${mine.length} overlays, all rgb(${lookDistinct[0]})`);
+
+    log(`${look}: fields keep a findable border, faint text reads on this look's page`);
+    await page.goto(`${BASE}/dashboard/contacts/new`);
+    const lookBorder = parseRgb(await page.locator("#name").evaluate((el) => getComputedStyle(el).borderTopColor));
+    assert.ok(lookBorder.a >= 0.14, `${look}: inputs lost their visible border (alpha ${lookBorder.a})`);
+    const lookSelect = page.locator("select.select").first();
+    await lookSelect.focus();
+    assert.notEqual(await lookSelect.evaluate((el) => getComputedStyle(el).backgroundImage), "none", `${look}: the select's chevron vanishes on focus`);
+    const [faintCss, pageCss] = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-faint)";
+      document.body.appendChild(probe);
+      const colour = getComputedStyle(probe).color;
+      probe.remove();
+      return [colour, getComputedStyle(document.documentElement).backgroundColor];
+    });
+    const lumOf = (c) => 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+    const lookRatio = (lumOf(parseRgb(pageCss)) + 0.05) / (lumOf(parseRgb(faintCss)) + 0.05);
+    assert.ok(lookRatio >= 4.5, `${look}: de-emphasised text is too dim (${lookRatio.toFixed(2)}:1)`);
+    console.log(`     faint text sits at ${lookRatio.toFixed(2)}:1 on the ${look} page`);
+    await shot(page, `${look}-10-contact-form-fields`);
+  }
+  await sql(`UPDATE "User" SET theme = NULL WHERE email = $1 AND "organizationId" = $2`, [EMAIL, org]);
 
   await browser.close();
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);

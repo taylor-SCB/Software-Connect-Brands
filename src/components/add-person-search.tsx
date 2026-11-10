@@ -110,7 +110,7 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
                       type="button"
                       disabled={pending || here}
                       onClick={() => pick(person)}
-                      className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-[rgb(255_255_255/0.04)] disabled:opacity-60"
+                      className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--hover)] disabled:opacity-60"
                       data-testid="add-person-hit"
                     >
                       <span className="min-w-0 flex-1">

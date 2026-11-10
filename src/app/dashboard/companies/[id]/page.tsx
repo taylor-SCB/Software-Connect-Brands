@@ -397,7 +397,7 @@ export default async function CompanyDetailPage({
                 body="Add the person you actually talk to, and their quotes and deals show up on this page."
               />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {people.map((person) => (
                   <li key={person.id} className="px-5 py-3">
                     <Link
@@ -455,7 +455,7 @@ export default async function CompanyDetailPage({
             {deals.length === 0 ? (
               <EmptyState title="No deals yet" body="Deals and quotes are started from a person's page." />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {deals.map((deal) => (
                   <li key={deal.id} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
@@ -479,7 +479,7 @@ export default async function CompanyDetailPage({
             {quotes.length === 0 ? (
               <EmptyState title="No quotes yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {quotes.map((quote) => (
                   <li key={quote.id} className="px-5 py-3">
                     <Link
@@ -505,7 +505,7 @@ export default async function CompanyDetailPage({
             {contracts.length === 0 ? (
               <EmptyState title="No contracts yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contracts.map((contract) => (
                   <li key={contract.id} className="px-5 py-3">
                     <Link

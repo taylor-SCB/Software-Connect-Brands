@@ -6,6 +6,8 @@ import { IconLogout, IconSparkles } from "@/components/icons";
 import { Avatar } from "@/components/avatar";
 import Link from "next/link";
 import { logout } from "./actions";
+import { themeFor } from "@/lib/theme";
+import { LookSwitch } from "@/components/look-switch";
 
 export default async function DashboardLayout({
   children,
@@ -16,6 +18,9 @@ export default async function DashboardLayout({
   const organization = await prisma.organization.findUniqueOrThrow({
     where: { id: session.organizationId },
   });
+  // The person's look, rendered into the server's HTML (data-theme below)
+  // so the page never flashes Dark before turning Light or Bright.
+  const theme = await themeFor(session.userId);
 
   const initials = organization.name
     .split(/\s+/)
@@ -29,6 +34,7 @@ export default async function DashboardLayout({
     <div
       className="relative z-10 flex min-h-screen flex-col lg:flex-row"
       style={{ ["--brand" as string]: organization.primaryColor }}
+      data-theme={theme}
     >
       <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--border)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
         <div>
@@ -72,7 +78,7 @@ export default async function DashboardLayout({
               Operator console
             </Link>
           )}
-          <Link href="/dashboard/settings/account" className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-[rgb(255_255_255/0.04)]">
+          <Link href="/dashboard/settings/account" className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-[var(--hover)]">
             <Avatar url={session.avatarUrl} name={session.name} size={28} round />
             <div className="min-w-0">
               <p className="truncate text-xs font-medium">{session.name}</p>
@@ -90,7 +96,8 @@ export default async function DashboardLayout({
 
       <div className="border-b border-[var(--border)] p-3 lg:hidden">
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-sm font-semibold">{organization.name}</p>
+          <p className="min-w-0 truncate text-sm font-semibold">{organization.name}</p>
+          <LookSwitch key={theme} theme={theme} className="ml-auto mr-2 inline-flex shrink-0" />
           <form action={logout}>
             <button type="submit" className="btn btn-ghost btn-sm">
               <IconLogout size={14} />
@@ -101,8 +108,9 @@ export default async function DashboardLayout({
         <MobileNav />
       </div>
 
-      <main className="min-w-0 flex-1 p-5 sm:p-8">
+      <main className="relative min-w-0 flex-1 p-5 sm:p-8 lg:pt-14">
         <PageTrail />
+        <LookSwitch key={theme} theme={theme} className="absolute right-8 top-3 z-20 hidden lg:inline-flex" />
         <div className="fade-up mx-auto max-w-[1400px]">{children}</div>
       </main>
     </div>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireSuperAdmin } from "@/lib/session";
+import { themeFor } from "@/lib/theme";
 import { IconArrowLeft, IconSparkles } from "@/components/icons";
 
 // Deliberately not the tenant dashboard shell: this console spans every
@@ -11,11 +12,14 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const operator = await requireSuperAdmin();
+  // The operator's own look (set from the switch in their workspace).
+  const theme = await themeFor(operator.userId);
 
   return (
     <div
       className="relative z-10 min-h-screen"
       style={{ ["--brand" as string]: "#a855f7" }}
+      data-theme={theme}
     >
       <header className="border-b border-[var(--border)] px-5 py-3 sm:px-8">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3">

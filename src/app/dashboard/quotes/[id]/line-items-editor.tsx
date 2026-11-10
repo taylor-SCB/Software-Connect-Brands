@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import { useMemo, useRef, useState, useTransition } from "react";
 import { saveLineItems, type LineItemInput } from "../actions";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
@@ -936,7 +937,7 @@ export function LineItemsEditor({
                       aria-label={`Line ${index + 1} tag`}
                       disabled={readOnly}
                       className="select input-sm"
-                      style={{ color: TAG_COLORS[row.tag] }}
+                      style={{ color: ink(TAG_COLORS[row.tag]) }}
                     >
                       {LINE_ITEM_TAGS.map((tag) => (
                         <option key={tag} value={tag}>
@@ -1019,7 +1020,7 @@ export function LineItemsEditor({
         <FormError message={state.error} />
         <FormSuccess message={state.success} />
 
-        <div className="space-y-1.5 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.03)] px-4 py-3" data-testid="quote-totals">
+        <div className="space-y-1.5 rounded-xl border border-[var(--border)] bg-[var(--tint-2)] px-4 py-3" data-testid="quote-totals">
           {/* Items / Line discounts / Subtotal / Discount on the whole quote
               / Quote total, each row only when there is something on it, so
               the figures always tie top to bottom. */}
@@ -1077,7 +1078,7 @@ export function LineItemsEditor({
               >
                 <p
                   className="text-[0.68rem] font-semibold"
-                  style={{ color: TAG_COLORS[tag] }}
+                  style={{ color: ink(TAG_COLORS[tag]) }}
                 >
                   {TAG_LABELS[tag]}
                 </p>

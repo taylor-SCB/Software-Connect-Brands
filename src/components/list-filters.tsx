@@ -306,7 +306,7 @@ function Dropdown({
         className={`btn btn-sm ${count > 0 ? "btn-primary" : "btn-ghost"}`}
       >
         {label}
-        {count > 0 && <span className="num rounded-full bg-[rgb(255_255_255/0.2)] px-1.5 text-[0.65rem]">{count}</span>}
+        {count > 0 && <span className="num rounded-full bg-[var(--tint-5)] px-1.5 text-[0.65rem]">{count}</span>}
         <IconChevronDown size={12} className="opacity-70" />
       </button>
       {open && (
@@ -369,7 +369,7 @@ export function MultiSelect({
               const on = values.includes(choice);
               return (
                 <li key={choice}>
-                  <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                  <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                     <input type="checkbox" checked={on} onChange={() => onToggle(choice)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
                     <span className="min-w-0 flex-1 truncate">{labels?.[choice] ?? choice}</span>
                   </label>
@@ -433,7 +433,7 @@ function CompanySelect({
                 const on = selectedIds.includes(company.id);
                 return (
                   <li key={company.id}>
-                    <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                    <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                       <input type="checkbox" checked={on} onChange={() => onToggle(company.id)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
                       <IconBuilding size={12} className="text-[var(--text-faint)]" />
                       <span className="min-w-0 flex-1 truncate">{company.name}</span>

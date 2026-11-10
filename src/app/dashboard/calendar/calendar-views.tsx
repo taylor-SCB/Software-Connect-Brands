@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
@@ -114,7 +115,7 @@ export function MonthView({
                 type="button"
                 onClick={() => setOpenDay(day)}
                 aria-label={`${day}, ${onThisDay.length} ${onThisDay.length === 1 ? "thing" : "things"} on`}
-                className={`min-h-[5.5rem] border-b border-r border-[rgb(255_255_255/0.045)] p-1.5 text-left align-top transition-colors hover:bg-[rgb(255_255_255/0.03)] ${
+                className={`min-h-[5.5rem] border-b border-r border-[var(--hairline)] p-1.5 text-left align-top transition-colors hover:bg-[var(--tint-2)] ${
                   inMonth ? "" : "opacity-40"
                 }`}
                 data-testid="month-day"
@@ -135,7 +136,7 @@ export function MonthView({
                       className="block truncate rounded px-1 py-0.5 text-[0.68rem] leading-tight"
                       style={{
                         background: `color-mix(in oklab, ${colorForType(event.type)} 20%, transparent)`,
-                        color: colorForType(event.type),
+                        color: ink(colorForType(event.type)),
                         textDecoration: event.doneAt ? "line-through" : undefined,
                       }}
                       data-testid="month-chip"
@@ -258,7 +259,7 @@ export function DayPanel({
       />
       <div className="space-y-3 p-5" data-testid="day-panel" data-day={day}>
         {adding && (
-          <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
             <EventForm choices={choices} defaults={{ startOn: day }} onDone={() => setAdding(false)} />
           </div>
         )}
@@ -309,7 +310,7 @@ export function EventCard({
 
   if (editing) {
     return (
-      <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
         <EventForm event={event} choices={choices} onDone={() => setEditing(false)} />
       </div>
     );

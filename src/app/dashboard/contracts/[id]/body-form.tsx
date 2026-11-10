@@ -25,7 +25,7 @@ export function ContractBodyForm({
     return (
       <div className="p-5">
         <p className="mb-3 text-sm font-semibold">{title}</p>
-        <pre className="whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4 font-sans text-xs leading-relaxed text-[var(--text-dim)]">
+        <pre className="whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4 font-sans text-xs leading-relaxed text-[var(--text-dim)]">
           {body}
         </pre>
       </div>

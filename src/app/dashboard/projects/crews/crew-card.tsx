@@ -158,7 +158,7 @@ export function CrewCard({
 
               {crew.notes && <p className="muted text-xs">{crew.notes}</p>}
 
-              <div className="border-t border-[rgb(255_255_255/0.06)] pt-3">
+              <div className="border-t border-[var(--hairline-2)] pt-3">
                 <div className="mb-2 flex items-baseline justify-between gap-2">
                   <p className="eyebrow">
                     {crew.kind === "SUBCONTRACTOR" ? "Their people" : "On this crew"}
@@ -189,7 +189,7 @@ export function CrewCard({
                 )}
 
                 {addingPerson && (
-                  <div className="mt-3 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+                  <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
                     <WorkerForm crewId={crew.id} onDone={() => setAddingPerson(false)} />
                   </div>
                 )}
@@ -231,7 +231,7 @@ function WorkerRow({
 
   if (editing) {
     return (
-      <li className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+      <li className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
         <WorkerForm crewId={crewId} worker={worker} onDone={() => setEditing(false)} />
       </li>
     );

@@ -133,7 +133,7 @@ export function CompanyPicker({
                   commit(company.name, company);
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[rgb(255_255_255/0.05)]"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--hover-strong)]"
               >
                 <IconBuilding size={13} className="text-[var(--text-faint)]" />
                 <span className="min-w-0 flex-1 truncate">{company.name}</span>

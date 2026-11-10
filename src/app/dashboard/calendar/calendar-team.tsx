@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import { useState } from "react";
 import { WEEKDAY_NAMES, byTimeThenTitle, colorForType, dayOfMonth, eventDays, formatTimeRange, weekDays } from "@/lib/calendar";
 import { UNASSIGNED_USER } from "@/lib/calendar-filters";
@@ -103,7 +104,7 @@ export function TeamView({
                 return (
                   <tr
                     key={row.key}
-                    className="border-b border-[rgb(255_255_255/0.045)] align-top"
+                    className="border-b border-[var(--hairline)] align-top"
                     data-testid="team-row"
                     data-row={row.key}
                     data-things={load.things}
@@ -129,7 +130,7 @@ export function TeamView({
                             type="button"
                             onClick={() => setOpen({ day, rowKey: row.key })}
                             aria-label={`${row.name}, ${day}, ${onThisDay.length} ${onThisDay.length === 1 ? "thing" : "things"} on`}
-                            className={`block min-h-[3.5rem] w-full rounded p-1 text-left transition-colors hover:bg-[rgb(255_255_255/0.03)] ${
+                            className={`block min-h-[3.5rem] w-full rounded p-1 text-left transition-colors hover:bg-[var(--tint-2)] ${
                               heavy ? "bg-[rgb(251_191_36/0.06)]" : ""
                             }`}
                             data-testid="team-cell"
@@ -142,7 +143,7 @@ export function TeamView({
                                 className="block truncate rounded px-1 py-0.5 text-[0.68rem] leading-tight"
                                 style={{
                                   background: `color-mix(in oklab, ${colorForType(event.type)} 20%, transparent)`,
-                                  color: colorForType(event.type),
+                                  color: ink(colorForType(event.type)),
                                   textDecoration: event.doneAt ? "line-through" : undefined,
                                 }}
                               >

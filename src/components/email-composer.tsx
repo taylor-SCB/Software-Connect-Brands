@@ -332,7 +332,7 @@ function EmailComposer({
                         const on = recipients.some((picked) => picked.id === row.id);
                         return (
                           <li key={row.id}>
-                            <label className="flex cursor-pointer items-center gap-3 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                            <label className="flex cursor-pointer items-center gap-3 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                               <input
                                 type="checkbox"
                                 checked={on}
@@ -480,7 +480,7 @@ function EmailComposer({
                       const full = !on && fileIds.length >= MAX_ATTACHMENTS;
                       return (
                         <li key={file.id}>
-                          <label className={`flex items-center gap-3 px-3 py-1.5 text-sm ${full ? "opacity-50" : "cursor-pointer hover:bg-[rgb(255_255_255/0.04)]"}`}>
+                          <label className={`flex items-center gap-3 px-3 py-1.5 text-sm ${full ? "opacity-50" : "cursor-pointer hover:bg-[var(--hover)]"}`}>
                             <input
                               type="checkbox"
                               checked={on}

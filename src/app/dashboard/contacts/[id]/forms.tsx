@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import { useActionState, useRef, useEffect, useState } from "react";
 import { addNote, logActivity, createDealForContact } from "../actions";
 import { FormError, FormSuccess } from "@/components/ui";
@@ -132,7 +133,7 @@ function NoteLabelChips() {
             onClick={() => setLabel(on ? "" : option)}
             className="badge transition-colors"
             style={{
-              color: on ? color : "var(--text-dim)",
+              color: on ? ink(color) : "var(--text-dim)",
               background: on ? `color-mix(in srgb, ${color} 16%, transparent)` : "transparent",
               borderColor: on
                 ? `color-mix(in srgb, ${color} 45%, transparent)`

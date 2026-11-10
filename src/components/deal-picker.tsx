@@ -144,7 +144,7 @@ export function DealPicker({
                   setIsNew(false);
                   setOpen(false);
                 }}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-[rgb(255_255_255/0.05)]"
+                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--hover-strong)]"
               >
                 <span className={isClosed(deal.stage) ? "faint" : ""}>{deal.title}</span>
                 <span className="faint text-[0.68rem]">

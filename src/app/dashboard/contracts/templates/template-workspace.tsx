@@ -432,7 +432,7 @@ export function TemplateWorkspace({
                       <>
                         <span className="text-[var(--ok)]">{filled} filled</span>
                         <span className="faint"> · </span>
-                        <span className={missing ? "text-[#f38b8b]" : "faint"}>
+                        <span className={missing ? "text-[var(--danger)]" : "faint"}>
                           {missing} missing
                         </span>
                       </>
@@ -441,7 +441,7 @@ export function TemplateWorkspace({
                 )}
               </div>
               {(importError || suggestError) && (
-                <p className="mb-1.5 text-xs text-[#f38b8b]" role="alert" data-testid="template-import-error">
+                <p className="mb-1.5 text-xs text-[var(--danger)]" role="alert" data-testid="template-import-error">
                   {importError ?? suggestError}
                 </p>
               )}
@@ -532,7 +532,7 @@ export function TemplateWorkspace({
               {previewing && (
                 <div
                   data-testid="template-preview"
-                  className="min-h-[24rem] rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4"
+                  className="min-h-[24rem] rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4"
                 >
                   <MergeBody body={body} context={context} />
                 </div>

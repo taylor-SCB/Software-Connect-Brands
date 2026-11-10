@@ -168,7 +168,7 @@ export default async function DashboardPage() {
               body="Calls, texts, emails and meetings you log on a contact show up here."
             />
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {recentActivity.map((activity) => {
                 const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue];
                 return (

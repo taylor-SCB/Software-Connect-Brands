@@ -58,7 +58,7 @@ export function BalanceCard({
           </p>
         )}
         {weOwe && (
-          <div className="flex items-baseline justify-between gap-3 border-t border-[rgb(255_255_255/0.06)] pt-2">
+          <div className="flex items-baseline justify-between gap-3 border-t border-[var(--hairline-2)] pt-2">
             <span className="muted text-sm">You owe them</span>
             <span className="num text-lg font-semibold" data-testid="balance-payable" data-cents={payable?.owedCents ?? 0}>
               {formatCents(payable?.owedCents ?? 0)}
@@ -68,7 +68,7 @@ export function BalanceCard({
         {!theyOwe && !weOwe && <p className="faint text-sm">Nothing outstanding.</p>}
       </div>
       {rows.length > 0 && (
-        <ul className="divide-y divide-[rgb(255_255_255/0.045)] border-t border-[rgb(255_255_255/0.06)]">
+        <ul className="divide-y divide-[var(--hairline)] border-t border-[var(--hairline-2)]">
           {rows.map((row) => (
             <li key={`${row.contractId}-${row.label}-${row.dueOn ?? ""}`} className="px-5 py-3" data-testid="balance-row">
               <div className="flex items-baseline justify-between gap-3">

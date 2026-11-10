@@ -149,7 +149,7 @@ export function ContactMultiSelect({ current }: { current: PickableContact }) {
 function ContactRow({ contact, on, onToggle }: { contact: PickableContact; on: boolean; onToggle: () => void }) {
   return (
     <li>
-      <label className="flex cursor-pointer items-center gap-3 px-5 py-2 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+      <label className="flex cursor-pointer items-center gap-3 px-5 py-2 text-sm hover:bg-[var(--hover)]">
         <input type="checkbox" checked={on} onChange={onToggle} className="h-4 w-4 accent-[var(--brand)]" />
         <span className="min-w-0 flex-1 truncate">
           {contact.name}

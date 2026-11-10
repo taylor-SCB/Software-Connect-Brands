@@ -38,7 +38,172 @@
   --warn: #fbbf24;
   --danger: #fb7185;
 
+  /* Faint fills and hairlines that used to be written as white-at-n% in
+     each file (bg-[var(--tint-1)] and friends). One token per
+     strength so the dark look is unchanged and Light / Bright can swap
+     every one of them at once. */
+  --tint-1: rgb(255 255 255 / 0.02);
+  --tint-2: rgb(255 255 255 / 0.03);
+  --hover: rgb(255 255 255 / 0.04);
+  --hover-strong: rgb(255 255 255 / 0.05);
+  --tint-3: rgb(255 255 255 / 0.06);
+  --tint-4: rgb(255 255 255 / 0.08);
+  --tint-5: rgb(255 255 255 / 0.2);
+  --hairline: rgb(255 255 255 / 0.045);
+  --hairline-2: rgb(255 255 255 / 0.06);
+  --hairline-3: rgb(255 255 255 / 0.08);
+  --grid-line: rgb(255 255 255 / 0.022);
+  --chart-grid: rgb(255 255 255 / 0.07);
+  --chart-cursor: rgb(255 255 255 / 0.25);
+
+  /* Pieces of the glass look that only make sense on a dark canvas. */
+  --card-bg: linear-gradient(180deg, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0.015));
+  --card-shadow: none;
+  --glass-blur: blur(14px);
+  --input-bg: rgb(255 255 255 / 0.06);
+  --input-bg-focus: rgb(255 255 255 / 0.085);
+  --title-from: #fff;
+  --title-to: rgb(255 255 255 / 0.62);
+  /* Text sitting on a brand-tinted chip (the active nav item, a tab). */
+  --text-strong: #fff;
+  --link-mix: white;
+  --body-glow: 18%;
+  --body-glow-2: rgb(56 189 248 / 0.07);
+  --popover-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.05) inset, 0 24px 60px -18px rgb(0 0 0 / 0.85),
+    0 4px 14px -4px rgb(0 0 0 / 0.6);
+  --scrim: rgb(0 0 0 / 0.72);
+  --scrollbar: rgb(255 255 255 / 0.1);
+  --scrollbar-hover: rgb(255 255 255 / 0.18);
+
+  /* How much of a status / tag colour is used as-is when it is the colour
+     of WORDS (a badge, a coloured label). The app's pastel status colours
+     were picked for a dark page; on white they are unreadable, so the
+     light looks mix them toward the text colour. See src/lib/ink.ts. */
+  --ink: 100%;
+  /* A custom Lead Label's letters: neon yellow on dark. */
+  --lead-custom: #e8ff3a;
+
   color-scheme: dark;
+}
+
+/* ---------- The three looks (Nov 10, 2026) ----------
+   Dark is the :root above. The signed-in shell (src/app/dashboard/layout.tsx)
+   carries data-theme="light" or "bright"; :has() lifts the tokens onto
+   <html> so the page background and the menus and dialogs drawn on
+   document.body follow too, and because the attribute is in the server's
+   HTML there is no flash of the dark look on load. Signed-out pages and
+   the customer's documents (/q, /c, /i, /r, /u, /p) never carry it. */
+:root:has([data-theme="light"]) {
+  --bg: #f4f5f8;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --border: rgb(15 23 42 / 0.11);
+  --border-strong: rgb(15 23 42 / 0.22);
+  --overlay: #ffffff;
+  --overlay-border: rgb(15 23 42 / 0.18);
+
+  --text: #111827;
+  --text-dim: #4b5563;
+  --text-faint: #5b6473;
+
+  --ok: #047857;
+  --warn: #a16207;
+  --danger: #be123c;
+
+  --tint-1: rgb(15 23 42 / 0.025);
+  --tint-2: rgb(15 23 42 / 0.035);
+  --hover: rgb(15 23 42 / 0.045);
+  --hover-strong: rgb(15 23 42 / 0.06);
+  --tint-3: rgb(15 23 42 / 0.06);
+  --tint-4: rgb(15 23 42 / 0.08);
+  --tint-5: rgb(15 23 42 / 0.2);
+  --hairline: rgb(15 23 42 / 0.08);
+  --hairline-2: rgb(15 23 42 / 0.1);
+  --hairline-3: rgb(15 23 42 / 0.12);
+  --grid-line: rgb(15 23 42 / 0.035);
+  --chart-grid: rgb(15 23 42 / 0.1);
+  --chart-cursor: rgb(15 23 42 / 0.35);
+
+  --card-bg: #ffffff;
+  --card-shadow: 0 1px 2px rgb(15 23 42 / 0.05), 0 6px 20px -12px rgb(15 23 42 / 0.18);
+  --glass-blur: none;
+  --input-bg: #ffffff;
+  --input-bg-focus: #ffffff;
+  --title-from: #0f172a;
+  --title-to: #334155;
+  --text-strong: #0f172a;
+  --link-mix: black;
+  --body-glow: 7%;
+  --body-glow-2: rgb(56 189 248 / 0.05);
+  --popover-shadow: 0 18px 44px -16px rgb(15 23 42 / 0.3), 0 3px 10px -4px rgb(15 23 42 / 0.15);
+  --scrim: rgb(15 23 42 / 0.45);
+  --scrollbar: rgb(15 23 42 / 0.18);
+  --scrollbar-hover: rgb(15 23 42 / 0.3);
+
+  --ink: 40%;
+  --lead-custom: #5b6b00;
+
+  color-scheme: light;
+}
+
+/* Bright: a phone in a truck in full sun. Pure white, near-black words,
+   solid dark borders, nothing see-through, and everything a size up. */
+:root:has([data-theme="bright"]) {
+  --bg: #ffffff;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #e5e7eb;
+  --border: #52525b;
+  --border-strong: #18181b;
+  --overlay: #ffffff;
+  --overlay-border: #000000;
+
+  --text: #000000;
+  --text-dim: #1f2937;
+  --text-faint: #374151;
+
+  --ok: #065f46;
+  --warn: #854d0e;
+  --danger: #9f1239;
+
+  --tint-1: rgb(0 0 0 / 0.04);
+  --tint-2: rgb(0 0 0 / 0.05);
+  --hover: rgb(0 0 0 / 0.08);
+  --hover-strong: rgb(0 0 0 / 0.1);
+  --tint-3: rgb(0 0 0 / 0.08);
+  --tint-4: rgb(0 0 0 / 0.12);
+  --tint-5: rgb(0 0 0 / 0.3);
+  --hairline: #a1a1aa;
+  --hairline-2: #71717a;
+  --hairline-3: #52525b;
+  --grid-line: transparent;
+  --chart-grid: rgb(0 0 0 / 0.22);
+  --chart-cursor: #000000;
+
+  --card-bg: #ffffff;
+  --card-shadow: none;
+  --glass-blur: none;
+  --input-bg: #ffffff;
+  --input-bg-focus: #ffffff;
+  --title-from: #000000;
+  --title-to: #000000;
+  --text-strong: #000000;
+  --link-mix: black;
+  --body-glow: 0%;
+  --body-glow-2: transparent;
+  --popover-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.45);
+  --scrim: rgb(0 0 0 / 0.6);
+  --scrollbar: rgb(0 0 0 / 0.4);
+  --scrollbar-hover: rgb(0 0 0 / 0.6);
+
+  --ink: 30%;
+  --lead-custom: #4d5a00;
+
+  color-scheme: light;
+  /* Every rem in the app grows with this: text, padding, buttons. */
+  font-size: 112.5%;
 }
 
 @layer base {
@@ -50,10 +215,10 @@
     background:
       radial-gradient(
         900px 500px at 12% -8%,
-        color-mix(in srgb, var(--brand) 18%, transparent),
+        color-mix(in srgb, var(--brand) var(--body-glow), transparent),
         transparent 70%
       ),
-      radial-gradient(700px 420px at 92% 0%, rgb(56 189 248 / 0.07), transparent 65%),
+      radial-gradient(700px 420px at 92% 0%, var(--body-glow-2), transparent 65%),
       var(--bg);
     color: var(--text);
     font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
@@ -69,15 +234,15 @@
     pointer-events: none;
     z-index: 0;
     background-image:
-      linear-gradient(to right, rgb(255 255 255 / 0.022) 1px, transparent 1px),
-      linear-gradient(to bottom, rgb(255 255 255 / 0.022) 1px, transparent 1px);
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
     background-size: 56px 56px;
     mask-image: radial-gradient(circle at 50% 0%, black, transparent 85%);
   }
 
   ::selection {
     background: color-mix(in srgb, var(--brand) 40%, transparent);
-    color: #fff;
+    color: var(--text-strong);
   }
 
   *:focus-visible {
@@ -90,13 +255,13 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgb(255 255 255 / 0.1);
+    background: var(--scrollbar);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgb(255 255 255 / 0.18);
+    background: var(--scrollbar-hover);
     background-clip: content-box;
   }
 }
@@ -106,15 +271,16 @@
   .glass {
     background: var(--surface);
     border: 1px solid var(--border);
-    backdrop-filter: blur(14px);
+    backdrop-filter: var(--glass-blur);
   }
 
   .card {
     position: relative;
     border-radius: 16px;
-    background: linear-gradient(180deg, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0.015));
+    background: var(--card-bg);
     border: 1px solid var(--border);
-    backdrop-filter: blur(14px);
+    backdrop-filter: var(--glass-blur);
+    box-shadow: var(--card-shadow);
   }
 
   /* Hairline highlight along the top edge — reads as "lit glass". */
@@ -156,10 +322,7 @@
     background: var(--overlay);
     border: 1px solid var(--overlay-border);
     backdrop-filter: none;
-    box-shadow:
-      0 1px 0 0 rgb(255 255 255 / 0.05) inset,
-      0 24px 60px -18px rgb(0 0 0 / 0.85),
-      0 4px 14px -4px rgb(0 0 0 / 0.6);
+    box-shadow: var(--popover-shadow);
   }
 
   /* ---------- Typography ---------- */
@@ -167,7 +330,7 @@
     font-size: 1.6rem;
     font-weight: 600;
     letter-spacing: -0.02em;
-    background: linear-gradient(180deg, #fff, rgb(255 255 255 / 0.62));
+    background: linear-gradient(180deg, var(--title-from), var(--title-to));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -311,7 +474,7 @@
     align-items: center;
     justify-content: center;
     padding: 1rem;
-    background: rgb(0 0 0 / 0.72);
+    background: var(--scrim);
     backdrop-filter: blur(8px);
   }
 
@@ -329,7 +492,7 @@
   .textarea {
     width: 100%;
     border-radius: 10px;
-    background-color: rgb(255 255 255 / 0.06);
+    background-color: var(--input-bg);
     border: 1px solid var(--border-strong);
     padding: 0.5rem 0.7rem;
     font-size: 0.85rem;
@@ -348,7 +511,7 @@
   .textarea:focus {
     outline: none;
     border-color: color-mix(in srgb, var(--brand) 55%, transparent);
-    background-color: rgb(255 255 255 / 0.085);
+    background-color: var(--input-bg-focus);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
   }
   .select {
@@ -416,7 +579,7 @@
   }
   .table tbody td {
     padding: 0.7rem 0.85rem;
-    border-bottom: 1px solid rgb(255 255 255 / 0.045);
+    border-bottom: 1px solid var(--hairline);
     vertical-align: middle;
   }
   .table tbody tr:last-child td {
@@ -426,7 +589,7 @@
     transition: background 0.14s ease;
   }
   .table-hover tbody tr:hover {
-    background: rgb(255 255 255 / 0.03);
+    background: var(--tint-2);
   }
   /* A table of inputs inside a card — the payment rows on a Contract
      Coordinator card — where the usual cell padding would push the last
@@ -453,11 +616,11 @@
       color 0.16s ease;
   }
   .nav-item:hover {
-    background: rgb(255 255 255 / 0.045);
+    background: var(--hover);
     color: var(--text);
   }
   .nav-item-active {
-    color: #fff;
+    color: var(--text-strong);
     background: color-mix(in srgb, var(--brand) 16%, transparent);
     border: 1px solid color-mix(in srgb, var(--brand) 32%, transparent);
   }
@@ -557,10 +720,10 @@
   }
   .merge-tab:hover {
     color: var(--text);
-    background: rgb(255 255 255 / 0.05);
+    background: var(--hover-strong);
   }
   .merge-tab-active {
-    color: #fff;
+    color: var(--text-strong);
     background: color-mix(in srgb, var(--brand) 22%, transparent);
     border-color: color-mix(in srgb, var(--brand) 45%, transparent);
   }
@@ -610,7 +773,7 @@
     flex: none;
     border-radius: 999px;
     border: 1px solid var(--border-strong);
-    background: rgb(255 255 255 / 0.08);
+    background: var(--tint-4);
     cursor: pointer;
     transition:
       background 0.16s ease,
@@ -642,11 +805,11 @@
   }
 
   .link {
-    color: color-mix(in srgb, var(--brand) 75%, white);
+    color: color-mix(in srgb, var(--brand) 75%, var(--link-mix));
     transition: color 0.14s ease;
   }
   .link:hover {
-    color: color-mix(in srgb, var(--brand) 45%, white);
+    color: color-mix(in srgb, var(--brand) 45%, var(--link-mix));
     text-decoration: underline;
   }
 
@@ -734,6 +897,25 @@
   .doc-hero h1 {
     margin-top: 1rem !important;
   }
+}
+
+
+/* Light and Bright: the silver divider's glow is for a dark page. */
+:root:has([data-theme="light"]) .divider-silver,
+:root:has([data-theme="light"]) .divider-silver-h,
+:root:has([data-theme="bright"]) .divider-silver,
+:root:has([data-theme="bright"]) .divider-silver-h {
+  background: var(--border-strong);
+  box-shadow: none;
+}
+/* Bright: borders you can find in sunlight, and no faint grid. */
+:root:has([data-theme="bright"]) .card,
+:root:has([data-theme="bright"]) .glass {
+  border-width: 1.5px;
+}
+:root:has([data-theme="bright"]) body::before,
+:root:has([data-theme="bright"]) .stats-root::before {
+  display: none;
 }
 
 /* Stats / Reporting (Sept 30, 2026): the command-center look — a faint

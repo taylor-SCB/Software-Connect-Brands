@@ -816,7 +816,7 @@ export function ImportRatesheet({
           )}
 
           {/* 3. What we read */}
-          <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
+          <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4">
             {tabs.length > 1 && (
               <div className="flex flex-wrap gap-3 text-xs" data-testid="ratesheet-tabs">
                 {tabs.map((tab) => (

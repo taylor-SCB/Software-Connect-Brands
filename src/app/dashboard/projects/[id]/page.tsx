@@ -251,7 +251,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               </span>
             </span>
           </div>
-          <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-[rgb(255_255_255/0.06)] pt-3 text-xs">
+          <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-[var(--hairline-2)] pt-3 text-xs">
             <span className="muted">
               Billed <span className="num font-medium">{formatCents(project.billedCents)}</span>
             </span>
@@ -310,7 +310,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             subtitle="Every row from the signed paperwork, and what it is for."
           />
           <ScopeLines lines={single.lineItems} scopeOptions={scopeOptions} showScopePicker={false} />
-          <div className="border-t border-[rgb(255_255_255/0.06)] px-5 py-4">
+          <div className="border-t border-[var(--hairline-2)] px-5 py-4">
             <p className="eyebrow mb-2">Awarded amount, and why</p>
             <ul className="space-y-1 text-xs">
               {single.awards.length === 0 && <li className="faint">Nothing awarded yet.</li>}
@@ -411,7 +411,7 @@ export function ScopeLines({
     return <p className="faint px-5 py-4 text-sm">No rows on this scope yet.</p>;
   }
   return (
-    <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+    <ul className="divide-y divide-[var(--hairline)]">
       {lines.map((line) => (
         <li key={line.id} className="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3" data-testid="scope-line">
           <div className="min-w-0">

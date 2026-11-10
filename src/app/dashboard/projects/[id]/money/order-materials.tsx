@@ -34,7 +34,7 @@ export function OrderMaterials({ projectId, suppliers }: { projectId: string; su
   }
 
   return (
-    <div className="w-full space-y-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+    <div className="w-full space-y-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
       <p className="muted text-xs">
         Priced at what the material costs you. Each one becomes a draft purchase order to review and send.
       </p>

@@ -10,7 +10,10 @@ import { pct } from "@/lib/format";
 // (Sept 30, 2026): blue, orange, aqua, yellow, always in that order.
 
 export const SERIES_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500"] as const;
-const GRID = "rgb(255 255 255 / 0.07)";
+// Grid and hover line follow the look (globals.css): faint white on Dark,
+// faint ink on Light and Bright. The series colours above are mid-tones
+// that hold 3:1 on both the dark surface and white.
+const GRID = "var(--chart-grid)";
 
 type Tip = { x: number | string; y: number | string; title: string; rows: { label: string; value: string; color?: string }[] } | null;
 
@@ -175,7 +178,7 @@ export function DailyTrend({
         </defs>
         {ticks.map((tick) => (
           <g key={tick}>
-            <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} stroke={GRID} />
+            <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} style={{ stroke: GRID }} />
             <text x={pad.l - 6} y={yAt(tick) + 3} textAnchor="end" className="num fill-[var(--text-faint)] text-[10px]">
               {tick}
             </text>
@@ -192,8 +195,8 @@ export function DailyTrend({
         <path d={line} fill="none" stroke={SERIES_COLORS[0]} strokeWidth={2} strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 6px ${SERIES_COLORS[0]}66)` }} />
         {h && hover !== null && (
           <g>
-            <line x1={xAt(hover)} x2={xAt(hover)} y1={pad.t} y2={height - pad.b} stroke="rgb(255 255 255 / 0.25)" />
-            <circle cx={xAt(hover)} cy={yAt(h.total)} r={4.5} fill={SERIES_COLORS[0]} stroke="#0b0d13" strokeWidth={2} />
+            <line x1={xAt(hover)} x2={xAt(hover)} y1={pad.t} y2={height - pad.b} style={{ stroke: "var(--chart-cursor)" }} />
+            <circle cx={xAt(hover)} cy={yAt(h.total)} r={4.5} fill={SERIES_COLORS[0]} style={{ stroke: "var(--bg-elev)" }} strokeWidth={2} />
           </g>
         )}
       </svg>
@@ -222,7 +225,7 @@ export function FunnelBars({ steps }: { steps: { label: string; value: number; r
       {steps.map((step) => (
         <div key={step.label} className="grid grid-cols-[8.5rem_1fr_3rem] items-center gap-2 text-xs">
           <span className="truncate text-[var(--text-dim)]">{step.label}</span>
-          <div className="relative h-5 rounded bg-[rgb(255_255_255/0.03)]">
+          <div className="relative h-5 rounded bg-[var(--tint-2)]">
             <div
               className="absolute inset-y-0 left-0 rounded"
               style={{
@@ -267,7 +270,7 @@ export function VelocityBars({ rows }: { rows: { label: string; days: number | n
       {rows.map((row) => (
         <div key={row.label} className="grid grid-cols-[11rem_1fr_4.5rem] items-center gap-2 text-xs" title={`${row.samples} ${row.samples === 1 ? "person" : "people"} measured`}>
           <span className="truncate text-[var(--text-dim)]">{row.label}</span>
-          <div className="h-2 rounded bg-[rgb(255_255_255/0.03)]">
+          <div className="h-2 rounded bg-[var(--tint-2)]">
             {row.days !== null && (
               <div className="h-2 rounded" style={{ width: `${Math.max(2, (row.days / max) * 100)}%`, background: SERIES_COLORS[2], boxShadow: `0 0 10px ${SERIES_COLORS[2]}55` }} />
             )}

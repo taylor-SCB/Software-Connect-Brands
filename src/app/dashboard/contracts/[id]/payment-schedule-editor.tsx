@@ -277,7 +277,7 @@ function RecordForm({
 
   return (
     <div
-      className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-2.5"
+      className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-2.5"
       data-testid="record-payment-form"
       aria-label={`Record a payment on ${label}`}
     >

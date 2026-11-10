@@ -122,7 +122,7 @@ export function CatalogPicker({ onPick }: { onPick: (product: CatalogResult) => 
                   pick(product);
                 }}
                 className={`flex cursor-pointer items-start gap-3 px-3 py-2 text-sm ${
-                  index === current ? "bg-[rgb(255_255_255/0.06)]" : ""
+                  index === current ? "bg-[var(--tint-3)]" : ""
                 }`}
               >
                 <div className="min-w-0 flex-1">

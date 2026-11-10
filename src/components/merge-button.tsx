@@ -142,7 +142,7 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
                     const on = picked.some((row) => row.id === hit.id);
                     return (
                       <li key={hit.id}>
-                        <label className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                        <label className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-[var(--hover)]">
                           <input
                             type="checkbox"
                             checked={on}

@@ -237,7 +237,7 @@ function CompanyRow({
   return (
     <li>
       <label
-        className={`flex items-center gap-3 px-5 py-2 text-sm ${locked ? "opacity-60" : "cursor-pointer hover:bg-[rgb(255_255_255/0.04)]"}`}
+        className={`flex items-center gap-3 px-5 py-2 text-sm ${locked ? "opacity-60" : "cursor-pointer hover:bg-[var(--hover)]"}`}
         data-testid="account-row"
       >
         <input type="checkbox" checked={on} disabled={locked} onChange={onToggle} className="h-4 w-4 accent-[var(--brand)]" />

@@ -67,7 +67,7 @@ export function LeadLabelPicker({
               <button
                 type="button"
                 onClick={() => pick(label)}
-                className={`flex w-full items-center px-3 py-1.5 text-left hover:bg-[rgb(255_255_255/0.04)] ${label === value ? "bg-[rgb(255_255_255/0.04)]" : ""}`}
+                className={`flex w-full items-center px-3 py-1.5 text-left hover:bg-[var(--hover)] ${label === value ? "bg-[var(--hover)]" : ""}`}
                 data-testid={`lead-label-option-${label ?? NO_LEAD_LABEL}`}
               >
                 <LeadLabelChip label={label} />

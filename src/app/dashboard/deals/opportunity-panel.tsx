@@ -118,7 +118,7 @@ export function OpportunityPanel({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex justify-end bg-[rgb(0_0_0/0.55)]"
+      className="fixed inset-0 z-[70] flex justify-end bg-[var(--scrim)]"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -382,7 +382,7 @@ function AddPerson({
                 setQuery("");
                 setResults([]);
               }}
-              className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left text-xs hover:bg-[rgb(255_255_255/0.04)]"
+              className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--hover)]"
               data-testid="panel-add-result"
             >
               <span className="font-medium">{row.name}</span>

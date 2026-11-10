@@ -35,7 +35,7 @@ export function StarButton({
           await action(id, !shown);
         })
       }
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[rgb(255_255_255/0.06)] ${
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--tint-3)] ${
         shown ? "text-[var(--warn)]" : "text-[var(--text-faint)] hover:text-[var(--text)]"
       }`}
     >

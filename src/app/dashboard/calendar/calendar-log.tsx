@@ -109,7 +109,7 @@ function LogColumn({
           </div>
         </div>
       )}
-      <div className="divide-y divide-[rgb(255_255_255/0.045)]" data-testid={testId} data-count={events.length}>
+      <div className="divide-y divide-[var(--hairline)]" data-testid={testId} data-count={events.length}>
         {events.length === 0 && overdue.length === 0 ? (
           <EmptyState icon={<IconCalendar size={20} />} title={`${title} is empty`} body={empty} />
         ) : (
@@ -157,7 +157,7 @@ function LogRow({ event, choices, overdue = false }: { event: EventView; choices
 
   if (editing) {
     return (
-      <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
         <EventForm event={event} choices={choices} onDone={() => setEditing(false)} />
       </div>
     );
@@ -165,7 +165,7 @@ function LogRow({ event, choices, overdue = false }: { event: EventView; choices
 
   return (
     <div
-      className="flex flex-wrap items-start gap-x-3 gap-y-1 rounded-md py-1 pl-2.5 pr-1 hover:bg-[rgb(255_255_255/0.03)]"
+      className="flex flex-wrap items-start gap-x-3 gap-y-1 rounded-md py-1 pl-2.5 pr-1 hover:bg-[var(--tint-2)]"
       style={{ borderLeft: `3px solid ${color}` }}
       data-testid="log-row"
       data-event-id={event.id}

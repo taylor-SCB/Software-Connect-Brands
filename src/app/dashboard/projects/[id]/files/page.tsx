@@ -298,7 +298,7 @@ export default async function ProjectFilesPage({
               body="Receipts, permits, plans, or the customer's own signed contract."
             />
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {documents.map((upload) => (
                 <li
                   key={upload.id}

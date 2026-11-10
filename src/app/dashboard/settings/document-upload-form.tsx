@@ -45,7 +45,7 @@ export function DocumentUploadForm({ kind }: { kind: "COMPLIANCE" | "MARKETING" 
             name="file"
             type="file"
             required
-            className="input file:mr-3 file:rounded-md file:border-0 file:bg-[rgb(255_255_255/0.08)] file:px-2 file:py-1 file:text-xs file:text-[var(--text)]"
+            className="input file:mr-3 file:rounded-md file:border-0 file:bg-[var(--tint-4)] file:px-2 file:py-1 file:text-xs file:text-[var(--text)]"
           />
           <p className="faint mt-1 text-xs">PDF, image or document, up to 4 MB.</p>
         </div>

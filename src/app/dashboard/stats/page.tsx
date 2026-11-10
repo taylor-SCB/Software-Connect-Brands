@@ -260,7 +260,7 @@ function Rate({ label, hint, value, testId }: { label: string; hint: string; val
         <p className="text-xs font-medium">{label}</p>
         <p className="num text-lg font-semibold">{value === null ? "—" : pct(value)}</p>
       </div>
-      <div className="mt-2 h-1.5 rounded-full bg-[rgb(255_255_255/0.05)]">
+      <div className="mt-2 h-1.5 rounded-full bg-[var(--hover-strong)]">
         <div className="h-1.5 rounded-full bg-[var(--brand)] shadow-[0_0_10px_var(--brand)]" style={{ width: `${Math.min(100, Math.round((value ?? 0) * 100))}%` }} />
       </div>
       <p className="faint mt-1.5 text-[0.66rem]">{hint}</p>

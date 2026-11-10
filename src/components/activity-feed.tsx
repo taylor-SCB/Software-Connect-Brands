@@ -1,3 +1,4 @@
+import { ink } from "@/lib/ink";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui";
 import {
@@ -52,7 +53,7 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
     );
   }
   return (
-    <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+    <ul className="divide-y divide-[var(--hairline)]">
       {items.map((activity) => {
         const Icon = ACTIVITY_ICONS[activity.type as keyof typeof ACTIVITY_ICONS] ?? IconCalendar;
         if (activity.special) {
@@ -78,7 +79,7 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
                   {stage && (
                     <span
                       className="badge text-[0.62rem]"
-                      style={{ color: DEAL_STAGE_COLORS[stage], borderColor: `color-mix(in srgb, ${DEAL_STAGE_COLORS[stage]} 45%, transparent)` }}
+                      style={{ color: ink(DEAL_STAGE_COLORS[stage]), borderColor: `color-mix(in srgb, ${DEAL_STAGE_COLORS[stage]} 45%, transparent)` }}
                       data-testid="activity-stage"
                     >
                       {DEAL_STAGE_LABELS[stage]}

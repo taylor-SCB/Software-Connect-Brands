@@ -56,7 +56,7 @@ export function UpcomingCard({
       />
       <div className="space-y-2 p-5" data-testid="upcoming-card">
         {adding && (
-          <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
             <EventForm choices={choices} defaults={defaults} onDone={() => setAdding(false)} />
           </div>
         )}
