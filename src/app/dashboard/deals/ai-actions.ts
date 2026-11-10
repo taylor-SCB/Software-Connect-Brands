@@ -203,7 +203,7 @@ export async function suggestFromMeeting(id: string): Promise<MeetingSuggestions
   if (!context) return { error: "That opportunity is no longer on the board" };
   const notes = await opportunityMeetingNotes(organizationId, context.id);
   if (notes.length === 0) return { error: "No meeting notes on this one yet. Log a meeting with notes first." };
-  const custom = await prisma.leadLabelOption.findMany({ where: { organizationId }, select: { name: true }, take: 100 });
+  const custom = await prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, select: { name: true }, take: 100 });
   const allowed = [...BUILT_IN_LEAD_LABELS, ...custom.map((row) => row.name)];
   const people = context.contacts.map(({ contact, role }) => ({
     id: contact.id,
@@ -258,7 +258,7 @@ export async function suggestLeadLabel(id: string): Promise<{ label: string; rea
   if (!context) return { error: "That opportunity is no longer on the board" };
   const [notes, custom] = await Promise.all([
     opportunityMeetingNotes(organizationId, context.id, 2),
-    prisma.leadLabelOption.findMany({ where: { organizationId }, select: { name: true }, take: 100 }),
+    prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, select: { name: true }, take: 100 }),
   ]);
   const allowed = [...BUILT_IN_LEAD_LABELS, ...custom.map((row) => row.name)];
   const people = context.contacts

@@ -211,6 +211,10 @@ export type Headline = {
   // Up is good (money in) or bad (money owed, overdue)?
   goodWhenUp?: boolean;
   hint?: string;
+  // Nothing to measure this period (an average of no deals): shown as "—"
+  // and never compared with the period before (audit fix, Nov 10, 2026:
+  // these read "0 days ▼ 100%" in green, as if deals closed faster).
+  empty?: boolean;
 };
 
 // A small table for the email and the bottom of the page.

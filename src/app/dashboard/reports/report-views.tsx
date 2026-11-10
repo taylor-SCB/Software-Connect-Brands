@@ -9,7 +9,7 @@ import type { ClosingReport } from "@/lib/reports/closing";
 import type { MoneyReport } from "@/lib/reports/money";
 import type { PeriodRange } from "@/lib/reports/period";
 import { formatIsoDay } from "@/lib/reports/period";
-import { changeText, formatValue, money, percent, plural } from "@/lib/reports/format";
+import { changeText, formatValue, headlineValue, money, percent, plural } from "@/lib/reports/format";
 import { Columns, HBars } from "./charts";
 
 // The body of each report under its write-up: headline tiles with the
@@ -41,7 +41,7 @@ export function HeadlineTiles({ headlines, compareLabel }: { headlines: Headline
           <div key={headline.id} className="card card-lit p-4" data-testid="report-tile" data-id={headline.id} data-value={headline.value}>
             <p className="faint text-[0.68rem] uppercase tracking-[0.12em]">{headline.label}</p>
             <p className="mt-1.5 text-xl font-semibold tracking-tight" data-testid="report-tile-value">
-              {formatValue(headline.value, headline.format)}
+              {headlineValue(headline)}
             </p>
             {moved && (
               <p

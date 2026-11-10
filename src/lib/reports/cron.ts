@@ -6,7 +6,7 @@ import { REPORT_BREAKDOWNS } from "@/lib/reports/common";
 import { writeNarrative } from "@/lib/reports/narrative";
 import { reportEmail } from "@/lib/reports/email";
 import { CADENCE_LABELS, isCadence, periodForCadence, SEND_HOUR, sendsOn, type Cadence } from "@/lib/reports/subscriptions";
-import { formatIsoDay, localIso, periodRange, zonedMidnight, zonedParts } from "@/lib/reports/period";
+import { formatIsoDay, localIso, periodRange, zonedHour, zonedParts } from "@/lib/reports/period";
 
 // The hourly clock behind "Email me this" (Nov 10, 2026). Vercel calls
 // /api/cron/reports at the top of every hour; this sends, for every active
@@ -54,7 +54,7 @@ export async function runReportEmails(input: { now: Date; baseUrl: string; budge
     if (clock.hour < SEND_HOUR) continue;
     const today = localIso(input.now, timeZone);
     // 6am today on the workspace's clock.
-    const morning = new Date(zonedMidnight(today, timeZone).getTime() + SEND_HOUR * 3_600_000);
+    const morning = zonedHour(today, SEND_HOUR, timeZone);
 
     const subscriptions = await prisma.reportSubscription.findMany({
       where: {

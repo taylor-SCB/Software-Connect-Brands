@@ -1,7 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { cleanName } from "@/lib/industries";
-import { DISTRIBUTOR_COMPANY_TYPE } from "@/lib/distributor-type";
+import { supplierLabelNames } from "@/lib/distributors";
 import { BUILT_IN_LEAD_LABELS, MAX_LEAD_LABEL_LENGTH, NO_LEAD_LABEL, canonicalLeadLabel, isBuiltInLeadLabel } from "@/lib/lead-labels";
 
 // The CRM Labels screen (/dashboard/labels, Nov 10, 2026, Taylor): every
@@ -15,8 +15,10 @@ import { BUILT_IN_LEAD_LABELS, MAX_LEAD_LABEL_LENGTH, NO_LEAD_LABEL, canonicalLe
 // - Lead Label lives on Opportunity.leadLabel; the five built-ins are fixed
 //   (merged into, never renamed, merged away or retired), the workspace's
 //   own are LeadLabelOption.
-// - Job Title is Contact.title, matched ignoring case and outer spaces. It
-//   has no pick list, so nothing to retire.
+// - Job Title is Contact.title, matched ignoring case and spaces (outer
+//   ones, and a run of them inside counts as one: "Sales  Manager" is
+//   "Sales Manager", audit fix Nov 10, 2026). It has no pick list, so
+//   nothing to retire.
 //
 // A merge rewrites every record carrying A to carry B instead, an array
 // keeping one of each (ignoring case, in the order it had them), and takes
@@ -47,9 +49,14 @@ export const TITLE_LIMIT = 300;
 
 const byName = (a: LabelRow, b: LabelRow) => a.name.localeCompare(b.name);
 
+// A job title as the screen groups it: no outer spaces, inner runs as one,
+// any case. The same rule as clean("title"), so a name picked on the
+// screen finds every contact in its group.
+const TITLE_KEY = Prisma.sql`lower(regexp_replace(btrim(title), '\\s+', ' ', 'g'))`;
+
 export async function loadLabelSections(organizationId: string, titleQuery = ""): Promise<LabelSections> {
   const needle = titleQuery.trim().replace(/[%_\\]/g, " ").slice(0, 60);
-  const [industryOptions, typeOptions, leadOptions, industryUse, typeUse, leadUse, titles, titleTotal] = await Promise.all([
+  const [industryOptions, typeOptions, leadOptions, industryUse, typeUse, leadUse, titles, titleTotal, supplier] = await Promise.all([
     prisma.industryOption.findMany({ where: { organizationId }, select: { name: true, retiredAt: true } }),
     prisma.companyTypeOption.findMany({ where: { organizationId }, select: { name: true, retiredAt: true, industry: { select: { name: true } } } }),
     prisma.leadLabelOption.findMany({ where: { organizationId }, select: { name: true, retiredAt: true } }),
@@ -63,16 +70,17 @@ export async function loadLabelSections(organizationId: string, titleQuery = "")
       SELECT "leadLabel" AS name, count(*)::int AS n FROM "Opportunity"
        WHERE "organizationId" = ${organizationId} AND "leadLabel" IS NOT NULL GROUP BY 1`,
     prisma.$queryRaw<{ name: string; n: number }[]>`
-      SELECT mode() WITHIN GROUP (ORDER BY btrim(title)) AS name, count(*)::int AS n
+      SELECT mode() WITHIN GROUP (ORDER BY regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS name, count(*)::int AS n
         FROM "Contact"
        WHERE "organizationId" = ${organizationId} AND btrim(coalesce(title, '')) <> ''
          ${needle ? Prisma.sql`AND title ILIKE ${`%${needle}%`}` : Prisma.empty}
-       GROUP BY lower(btrim(title))
+       GROUP BY ${TITLE_KEY}
        ORDER BY n DESC, name
        LIMIT ${TITLE_LIMIT}`,
     prisma.$queryRaw<{ n: number }[]>`
-      SELECT count(DISTINCT lower(btrim(title)))::int AS n FROM "Contact"
+      SELECT count(DISTINCT ${TITLE_KEY})::int AS n FROM "Contact"
        WHERE "organizationId" = ${organizationId} AND btrim(coalesce(title, '')) <> ''`,
+    supplierLabelNames(organizationId),
   ]);
 
   const industry = new Map<string, LabelRow>();
@@ -84,6 +92,8 @@ export async function loadLabelSections(organizationId: string, titleQuery = "")
     row.count = use.n;
     industry.set(use.name, row);
   }
+  const serviceProvider = industry.get(supplier.industry);
+  if (serviceProvider) serviceProvider.locked = true;
 
   const type = new Map<string, LabelRow>();
   for (const option of typeOptions) {
@@ -101,7 +111,11 @@ export async function loadLabelSections(organizationId: string, titleQuery = "")
     row.count = use.n;
     type.set(use.name, row);
   }
-  for (const row of type.values()) if (row.name.toLowerCase() === DISTRIBUTOR_COMPANY_TYPE.toLowerCase()) row.locked = true;
+  // Only the spelling suppliers are found by (audit fix, Nov 10, 2026): a
+  // stray "distributor" used to be locked too, so it could never be folded
+  // into the real one.
+  const distributor = type.get(supplier.type);
+  if (distributor) distributor.locked = true;
 
   const lead = new Map<string, LabelRow>();
   for (const name of BUILT_IN_LEAD_LABELS) lead.set(name, { name, count: 0, onList: true, retired: false, builtIn: true, locked: true });
@@ -190,39 +204,46 @@ async function exists(kind: LabelKind, organizationId: string, name: string): Pr
     return Boolean(option || used);
   }
   const used = await prisma.$queryRaw<{ n: number }[]>`
-    SELECT 1 AS n FROM "Contact" WHERE "organizationId" = ${organizationId} AND lower(btrim(title)) = lower(${name}) LIMIT 1`;
+    SELECT 1 AS n FROM "Contact" WHERE "organizationId" = ${organizationId} AND ${TITLE_KEY} = lower(${clean("title", name)}) LIMIT 1`;
   return used.length > 0;
 }
 
-// A name already taken ignoring case (other than `except`), for rename.
+// A name already taken ignoring case (other than `except` exactly), for
+// rename. `except` is compared exactly in SQL (audit fix, Nov 10, 2026):
+// Prisma's insensitive mode applied to `not` as well, so renaming "vip" to
+// "VIP" ruled out "VIP" itself, the rename went ahead and hit the pick
+// list's unique name.
 async function takenIgnoringCase(kind: Exclude<LabelKind, "title">, organizationId: string, name: string, except: string): Promise<string | null> {
-  const insensitive = { equals: name, mode: "insensitive" as const };
-  const notExcept = { not: except };
   if (kind === "lead") {
     const builtIn = BUILT_IN_LEAD_LABELS.find((label) => label.toLowerCase() === name.toLowerCase());
     if (builtIn) return builtIn;
-    const [option, used] = await Promise.all([
-      prisma.leadLabelOption.findFirst({ where: { organizationId, name: { ...insensitive, ...notExcept } }, select: { name: true } }),
-      prisma.opportunity.findFirst({ where: { organizationId, leadLabel: { ...insensitive, ...notExcept } }, select: { leadLabel: true } }),
-    ]);
-    return option?.name ?? used?.leadLabel ?? null;
+    const rows = await prisma.$queryRaw<{ v: string }[]>`
+      SELECT name AS v FROM "LeadLabelOption"
+       WHERE "organizationId" = ${organizationId} AND lower(name) = lower(${name}) AND name <> ${except}
+      UNION ALL
+      SELECT "leadLabel" FROM "Opportunity"
+       WHERE "organizationId" = ${organizationId} AND lower("leadLabel") = lower(${name}) AND "leadLabel" <> ${except}
+      LIMIT 1`;
+    return rows[0]?.v ?? null;
   }
   const column = kind === "industry" ? Prisma.raw("industries") : Prisma.raw(`"companyTypes"`);
-  const [option, used] = await Promise.all([
-    kind === "industry"
-      ? prisma.industryOption.findFirst({ where: { organizationId, name: { ...insensitive, ...notExcept } }, select: { name: true } })
-      : prisma.companyTypeOption.findFirst({ where: { organizationId, name: { ...insensitive, ...notExcept } }, select: { name: true } }),
-    prisma.$queryRaw<{ v: string }[]>`
-      SELECT v FROM "Company" c, unnest(c.${column}) v
-       WHERE c."organizationId" = ${organizationId} AND lower(v) = lower(${name}) AND v <> ${except} LIMIT 1`,
-  ]);
-  return option?.name ?? used[0]?.v ?? null;
+  const table = kind === "industry" ? Prisma.raw(`"IndustryOption"`) : Prisma.raw(`"CompanyTypeOption"`);
+  const rows = await prisma.$queryRaw<{ v: string }[]>`
+    SELECT name AS v FROM ${table}
+     WHERE "organizationId" = ${organizationId} AND lower(name) = lower(${name}) AND name <> ${except}
+    UNION ALL
+    SELECT v FROM "Company" c, unnest(c.${column}) v
+     WHERE c."organizationId" = ${organizationId} AND lower(v) = lower(${name}) AND v <> ${except}
+    LIMIT 1`;
+  return rows[0]?.v ?? null;
 }
 
-function lockedReason(kind: LabelKind, name: string): string | null {
+async function lockedReason(organizationId: string, kind: LabelKind, name: string): Promise<string | null> {
   if (kind === "lead" && isBuiltInLeadLabel(name)) return `${name} is built in: it can be merged into, but not renamed, merged away or retired.`;
-  if (kind === "type" && name.toLowerCase() === DISTRIBUTOR_COMPANY_TYPE.toLowerCase())
-    return `${name} is how suppliers are found for products and quotes, so it stays as it is.`;
+  if (kind !== "type" && kind !== "industry") return null;
+  const supplier = await supplierLabelNames(organizationId);
+  if (kind === "type" && name === supplier.type) return `${name} is how suppliers are found for products and quotes, so it stays as it is.`;
+  if (kind === "industry" && name === supplier.industry) return `${name} is where new suppliers are filed, so it stays as it is.`;
   return null;
 }
 
@@ -231,7 +252,7 @@ export async function renameLabel(organizationId: string, kind: LabelKind, rawFr
   const to = clean(kind, rawTo);
   if (!to) return { error: "Type the new name." };
   if (kind === "lead" && to.toUpperCase() === NO_LEAD_LABEL) return { error: "N/A means no label; pick another name." };
-  const locked = lockedReason(kind, from);
+  const locked = await lockedReason(organizationId, kind, from);
   if (locked) return { error: locked };
   if (to === from) return { error: "That's the name it already has." };
   if (!(await exists(kind, organizationId, from))) return { error: `"${from}" isn't used any more. Reload the page.` };
@@ -248,9 +269,9 @@ export async function mergeLabel(organizationId: string, kind: LabelKind, rawFro
   const from = String(rawFrom ?? "");
   const into = kind === "lead" ? (canonicalLeadLabel(rawInto) ?? "") : clean(kind, rawInto);
   if (!into) return { error: "Pick what to merge it into." };
-  const locked = lockedReason(kind, from);
+  const locked = await lockedReason(organizationId, kind, from);
   if (locked) return { error: locked };
-  if (kind === "title" ? from.toLowerCase() === into.toLowerCase() : from === into) return { error: "Pick a different one to merge into." };
+  if (kind === "title" ? clean("title", from).toLowerCase() === into.toLowerCase() : from === into) return { error: "Pick a different one to merge into." };
   if (!(await exists(kind, organizationId, from))) return { error: `"${from}" isn't used any more. Reload the page.` };
   if (!(await exists(kind, organizationId, into))) return { error: `"${into}" isn't one of yours. Pick it from the list.` };
   return rewrite(organizationId, kind, from, into, "merge");
@@ -261,7 +282,7 @@ async function rewrite(organizationId: string, kind: LabelKind, from: string, to
   if (kind === "title") {
     records = await prisma.$executeRaw`
       UPDATE "Contact" SET title = ${to}
-       WHERE "organizationId" = ${organizationId} AND lower(btrim(title)) = lower(btrim(${from}))`;
+       WHERE "organizationId" = ${organizationId} AND ${TITLE_KEY} = lower(${clean("title", from)})`;
   } else if (kind === "lead") {
     const statements: Prisma.PrismaPromise<unknown>[] = [
       prisma.opportunity.updateMany({ where: { organizationId, leadLabel: from }, data: { leadLabel: to } }),
@@ -317,7 +338,7 @@ async function rewrite(organizationId: string, kind: LabelKind, from: string, to
 
 export async function setLabelRetired(organizationId: string, kind: LabelKind, name: string, retired: boolean): Promise<LabelResult> {
   if (kind === "title") return { error: "Job titles have no pick list, so there's nothing to retire. Merge or rename instead." };
-  const locked = lockedReason(kind, name);
+  const locked = await lockedReason(organizationId, kind, name);
   if (locked) return { error: locked };
   const retiredAt = retired ? new Date() : null;
   const result =

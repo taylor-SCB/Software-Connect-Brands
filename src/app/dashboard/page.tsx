@@ -41,19 +41,29 @@ const ACTIVITY_ICONS = {
 // the money and pipeline tiles, recent activity, the shortcuts — now the
 // frame of the Daily Rundown: its write-up goes under the welcome
 // (`intro`) and its lists under the tiles (`children`).
+//
+// With a rep picked, every tile and the activity list are that rep's too
+// (audit fix, Nov 10, 2026: they stayed whole-team numbers under a scope
+// line naming the rep). The same rules as the reports: money and
+// paperwork by the deal's rep, contacts by their rep, activity by who
+// logged it.
 async function OverviewSummary({
   organizationId,
   name,
   timeZone,
+  repId,
   intro,
   children,
 }: {
   organizationId: string;
   name: string | null;
   timeZone: string;
+  repId: string | null;
   intro: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const mine = repId ? { ownerId: repId } : {};
+  const myDeal = repId ? { deal: { ownerId: repId } } : {};
 
   const [
     contactCount,
@@ -66,26 +76,26 @@ async function OverviewSummary({
     owed,
     activeProjects,
   ] = await Promise.all([
-    prisma.contact.count({ where: { organizationId } }),
-    prisma.contact.count({ where: { organizationId, status: { in: ["NOT_ACTIONED", "CONTACTED", "INTERESTED"] } } }),
+    prisma.contact.count({ where: { organizationId, ...mine } }),
+    prisma.contact.count({ where: { organizationId, ...mine, status: { in: ["NOT_ACTIONED", "CONTACTED", "INTERESTED"] } } }),
     prisma.deal.findMany({
-      where: { organizationId, stage: { in: [...OPEN_DEAL_STAGES] } },
+      where: { organizationId, ...mine, stage: { in: [...OPEN_DEAL_STAGES] } },
       select: { valueCents: true, quotes: QUOTES_FOR_VALUE },
     }),
     prisma.quote.findMany({
-      where: { organizationId, status: "SENT" },
+      where: { organizationId, ...myDeal, status: "SENT" },
       select: {
         discountCents: true,
         discountPercent: true,
         lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true, tag: true } },
       },
     }),
-    prisma.contract.count({ where: { organizationId, status: "SENT" } }),
-    prisma.contract.count({ where: { organizationId, status: "SIGNED" } }),
+    prisma.contract.count({ where: { organizationId, ...myDeal, status: "SENT" } }),
+    prisma.contract.count({ where: { organizationId, ...myDeal, status: "SIGNED" } }),
     // Real touches only (Nov 10, 2026): a marketing blast would fill the
     // box; it has its own column on the lists and its own chart in Activity.
     prisma.activity.findMany({
-      where: { organizationId, marketing: false },
+      where: { organizationId, marketing: false, ...(repId ? { userId: repId } : {}) },
       orderBy: { occurredAt: "desc" },
       take: 8,
       include: {
@@ -95,8 +105,8 @@ async function OverviewSummary({
       },
     }),
     // What every customer still owes on signed paperwork, in one query.
-    owedTotals(organizationId, todayIso(timeZone)),
-    prisma.project.count({ where: { organizationId, stage: { in: [...OPEN_PROJECT_STAGES] } } }),
+    owedTotals(organizationId, todayIso(timeZone), repId),
+    prisma.project.count({ where: { organizationId, ...myDeal, stage: { in: [...OPEN_PROJECT_STAGES] } } }),
   ]);
 
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
@@ -189,7 +199,7 @@ async function OverviewSummary({
       {children}
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
         <Card lit className="lg:col-span-2">
-          <CardHeader title="Recent activity" subtitle="Across every contact" />
+          <CardHeader title="Recent activity" subtitle={repId ? "Logged by this rep" : "Across every contact"} />
           {recentActivity.length === 0 ? (
             <EmptyState
               title="Nothing logged yet"
@@ -349,7 +359,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     <div>
       <ReportBar choice={choice} />
       {choice.report === "daily" ? (
-        <OverviewSummary organizationId={organizationId} name={session.name} timeZone={timeZone} intro={head}>
+        <OverviewSummary organizationId={organizationId} name={session.name} timeZone={timeZone} repId={choice.repId} intro={head}>
           <div className="mt-5">{body}</div>
         </OverviewSummary>
       ) : (

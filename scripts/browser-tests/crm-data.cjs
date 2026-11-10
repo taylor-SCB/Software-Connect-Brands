@@ -11,7 +11,11 @@
  * screen's Rename / Merge into… / Retire for Industry ("Student Housing" →
  * "Student"), Company Type, Lead Label and Job Title; a Member who can look
  * but not change; the duplicate finder's groups for contacts and companies
- * and a merge from it; the phone width.
+ * and a merge from it; the phone width; and the Nov 10 audit fixes (the
+ * edit form's Rep box on a second save, bulk all-matching run twice, a
+ * second merge from one duplicate group, the finder past its last page,
+ * label renames onto another's capitals, a stray "distributor", job titles
+ * with doubled spaces, and a touch dated ahead).
  *
  * Needs email switched on like email-marketing-users.cjs, with the catcher
  * on CATCHER_PORT (default 3999): the server's .env carries RESEND_API_KEY,
@@ -638,6 +642,133 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.equal(await groupFor("acme.example.com").locator("[data-testid=dup-record]").count(), 2);
   await page.getByTestId("dup-tab-phone").click();
   await groupFor("5125550199").waitFor();
+
+  // ---------------------------------------------------------------------
+  // Audit fixes (Nov 10, 2026): one step per confirmed defect.
+  log("audit fixes: the edit form's Rep box keeps a rep changed on it through the next save");
+  const rex = await seedContact({ name: "Rex Rep", ownerId: taylor.id });
+  await page.goto(`${BASE}/dashboard/contacts/${rex}/edit`);
+  await page.selectOption("[data-testid=rep-field]", nicId);
+  await page.click("button:has-text('Save changes')");
+  await page.waitForSelector("text=Contact saved");
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [rex])).rows[0].ownerId, nicId);
+  await page.waitForFunction(() => document.querySelector("[data-testid=rep-field]")?.value === "usr_crmdata_nic");
+  await page.fill("[name=title]", "Second Save");
+  await page.click("button:has-text('Save changes')");
+  for (let i = 0; i < 40; i++) {
+    if ((await sql(`SELECT title FROM "Contact" WHERE id=$1`, [rex])).rows[0].title === "Second Save") break;
+    await page.waitForTimeout(150);
+  }
+  const rexRow = (await sql(`SELECT title, "ownerId" FROM "Contact" WHERE id=$1`, [rex])).rows[0];
+  assert.equal(rexRow.title, "Second Save");
+  assert.equal(rexRow.ownerId, nicId, "the second save doesn't put the old rep back");
+
+  log("audit fixes: bulk all-matching run again reaches the next 1,000, not the same ones");
+  await sql(
+    `INSERT INTO "Contact" (id, "organizationId", name, "updatedAt")
+     SELECT 'cd_again_' || g, $1, 'Again Person ' || g, now() - (g || ' minutes')::interval FROM generate_series(1, 1005) g`,
+    [org],
+  );
+  for (const expected of ["1,000 records → Taylor Test. 5 more still match", "5 records → Taylor Test."]) {
+    await page.goto(`${BASE}/dashboard/contacts?q=Again%20Person`);
+    await page.getByTestId("page-check").check();
+    await page.getByTestId("bulk-all").click();
+    await page.getByTestId("bulk-me").click();
+    await page.getByTestId("bulk-message").filter({ hasText: expected }).waitFor();
+  }
+  assert.equal(
+    Number((await sql(`SELECT count(*) FROM "Contact" WHERE "organizationId"=$1 AND id LIKE 'cd_again_%' AND "ownerId"=$2`, [org, taylor.id])).rows[0].count),
+    1005,
+    "two runs cover all 1,005",
+  );
+  await sql(`DELETE FROM "Contact" WHERE "organizationId"=$1 AND id LIKE 'cd_again_%'`, [org]);
+
+  log("audit fixes: Find duplicates — a second merge on a group still listed picks the records left");
+  const seven = [];
+  for (let i = 1; i <= 7; i++) seven.push(await seedContact({ name: `Sev Dupe ${i}`, email: "seven@dupe.example.com", createdAt: `2026-0${i}-01T00:00:00Z` }));
+  await page.goto(`${BASE}/dashboard/contacts/duplicates?by=email`);
+  await groupFor("seven@dupe.example.com").getByTestId("duplicate-merge").click();
+  assert.equal(await dialog.locator("[data-testid=merge-picked] li").count(), 5, "the first five");
+  await dialog.getByTestId("merge-go").click();
+  await dialog.getByTestId("merge-yes").click();
+  await dialog.waitFor({ state: "detached" });
+  await groupFor("seven@dupe.example.com").locator("[data-testid=dup-record]").nth(2).waitFor();
+  assert.equal(await groupFor("seven@dupe.example.com").locator("[data-testid=dup-record]").count(), 3);
+  await groupFor("seven@dupe.example.com").getByTestId("duplicate-merge").click();
+  const pickedNow = (await dialog.locator("[data-testid=merge-picked] li .font-medium").allTextContents()).map((t) => t.trim());
+  assert.deepEqual(pickedNow, ["Sev Dupe 1", "Sev Dupe 6", "Sev Dupe 7"], "the kept one and the two left, not the five merged");
+  await dialog.getByTestId("merge-go").click();
+  await dialog.getByTestId("merge-yes").click();
+  await dialog.waitFor({ state: "detached" });
+  assert.deepEqual((await sql(`SELECT id FROM "Contact" WHERE id = ANY($1)`, [seven])).rows.map((r) => r.id), [seven[0]]);
+
+  log("audit fixes: Find duplicates past the last page shows the last page there is, not 0 groups");
+  await seedContact({ name: "Pair One", email: "pair@dupe.example.com" });
+  await seedContact({ name: "Pair Two", email: "pair@dupe.example.com" });
+  await page.goto(`${BASE}/dashboard/contacts/duplicates?by=email&page=9`);
+  await groupFor("pair@dupe.example.com").waitFor();
+  assert.equal(await page.locator("text=No duplicates found").count(), 0);
+  assert.equal(await page.getByText(/^0 groups that look like/).count(), 0, "the count comes from the page shown");
+
+  log("audit fixes: Labels — a lead label renamed onto another's capitals says Merge into…, then merges");
+  await sql(`INSERT INTO "LeadLabelOption" (id, "organizationId", name) VALUES ('cd_lead_vip1', $1, 'vip'), ('cd_lead_vip2', $1, 'VIP')`, [org]);
+  await sql(`UPDATE "Opportunity" SET "leadLabel"='vip' WHERE id='cd_opp_1'`);
+  await page.goto(`${BASE}/dashboard/labels`);
+  await leadRow("vip").getByTestId("label-rename").click();
+  await leadRow("vip").getByTestId("label-rename-input").fill("VIP");
+  await leadRow("vip").getByTestId("label-rename-save").click();
+  await page.locator("[data-testid=labels-lead]", { hasText: '"VIP" already exists. Use Merge into… to fold "vip" into it.' }).waitFor();
+  await page.goto(`${BASE}/dashboard/labels`);
+  await leadRow("vip").getByTestId("label-merge").click();
+  await leadRow("vip").getByTestId("label-merge-into").selectOption("VIP");
+  await leadRow("vip").getByTestId("label-merge-save").click();
+  await page.locator("[data-testid=labels-lead] [data-testid=labels-result]", { hasText: 'Merged "vip" into "VIP": 1 opportunity changed.' }).waitFor();
+  assert.equal((await sql(`SELECT "leadLabel" FROM "Opportunity" WHERE id='cd_opp_1'`)).rows[0].leadLabel, "VIP");
+
+  log("audit fixes: Labels — a stray 'distributor' folds into Distributor; Service Provider stays put");
+  const mduId = (await sql(`SELECT id FROM "IndustryOption" WHERE "organizationId"=$1 AND name='MDU'`, [org])).rows[0].id;
+  await sql(`INSERT INTO "CompanyTypeOption" (id, "organizationId", "industryId", name) VALUES ('cd_type_dist', $1, $2, 'distributor')`, [org, mduId]);
+  const strayCo = await seedCompany({ name: "Stray Supply", industries: ["MDU"], companyTypes: ["distributor"] });
+  await page.goto(`${BASE}/dashboard/labels`);
+  assert.equal(await typeRow("Distributor").getByTestId("label-merge").count(), 0, "the real one stays locked");
+  assert.equal(await industryRow("Service Provider").getByTestId("label-merge").count(), 0, "where new suppliers are filed");
+  assert.equal(await industryRow("Service Provider").getByTestId("label-rename").count(), 0);
+  await typeRow("distributor").getByTestId("label-merge").click();
+  await typeRow("distributor").getByTestId("label-merge-into").selectOption("Distributor");
+  await typeRow("distributor").getByTestId("label-merge-save").click();
+  await page.locator("[data-testid=labels-type] [data-testid=labels-result]", { hasText: 'Merged "distributor" into "Distributor": 1 company changed.' }).waitFor();
+  assert.deepEqual((await sql(`SELECT "companyTypes" FROM "Company" WHERE id=$1`, [strayCo])).rows[0].companyTypes, ["Distributor"]);
+
+  log("audit fixes: Labels — a job title with doubled spaces is one group and can be merged into");
+  const sm1 = await seedContact({ name: "Sam Spaces", title: "Sales  Manager" });
+  const sm2 = await seedContact({ name: "Sal Spaces", title: "Sales  Manager" });
+  const sm3 = await seedContact({ name: "Sid Short", title: "Sales Mgr" });
+  await page.goto(`${BASE}/dashboard/labels`);
+  assert.match(await titleRow("Sales Manager").getByTestId("label-count").textContent(), /^2 contacts$/);
+  await titleRow("Sales Mgr").getByTestId("label-merge").click();
+  await titleRow("Sales Mgr").getByTestId("label-merge-into").selectOption("Sales Manager");
+  await titleRow("Sales Mgr").getByTestId("label-merge-save").click();
+  await page.locator("[data-testid=labels-title] [data-testid=labels-result]", { hasText: 'Merged "Sales Mgr" into "Sales Manager": 1 contact changed.' }).waitFor();
+  await page.goto(`${BASE}/dashboard/labels`);
+  assert.match(await titleRow("Sales Manager").getByTestId("label-count").textContent(), /^3 contacts$/, "one group of three");
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Contact" WHERE id = ANY($1) AND title='Sales Mgr'`, [[sm1, sm2, sm3]])).rows[0].n, 0);
+
+  log("audit fixes: a touch dated ahead isn't a touch until its time comes");
+  const fu = await seedContact({ name: "Fu Future" });
+  const sue = await seedContact({ name: "Sue Soon" });
+  await sql(
+    `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, "occurredAt")
+     VALUES ('cd_act_future', $1, $2, $3, 'PHONE_CALL', 'Follow-up ticked Done early', now() + interval '14 days'),
+            ('cd_act_soon', $1, $4, $3, 'PHONE_CALL', 'Logged for a few seconds from now', now() + interval '4 seconds')`,
+    [org, fu, taylor.id, sue],
+  );
+  assert.equal((await sql(`SELECT "lastTouchAt" FROM "Contact" WHERE id=$1`, [sue])).rows[0].lastTouchAt, null, "not yet");
+  const neverNow = await contactsAt(page, "act=never");
+  assert.ok(neverNow.includes("Fu Future"), "a call two weeks out leaves them never touched");
+  assert.ok(!(await contactsAt(page, "act=t7")).includes("Fu Future"));
+  await page.waitForTimeout(4500);
+  assert.ok((await contactsAt(page, "act=t7")).includes("Sue Soon"), "once its time has passed it counts");
+  assert.notEqual((await sql(`SELECT "lastTouchAt" FROM "Contact" WHERE id=$1`, [sue])).rows[0].lastTouchAt, null);
 
   // ---------------------------------------------------------------------
   log("the phone width: lists, Labels and duplicates stay inside the screen");

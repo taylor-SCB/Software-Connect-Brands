@@ -280,7 +280,9 @@ export async function payableBy(
 }
 
 // One workspace-wide number for the dashboard tile.
-export async function owedTotals(organizationId: string, today: string) {
+// `repId`: only paperwork on that rep's deals (a contract's rep is its
+// deal's, as in the Money Owed report).
+export async function owedTotals(organizationId: string, today: string, repId: string | null = null) {
   const rows = await prisma.$queryRaw<
     { owed: number | string | null; overdue: number | string | null; customers: number | string | null }[]
   >`
@@ -299,6 +301,7 @@ export async function owedTotals(organizationId: string, today: string) {
      WHERE c."organizationId" = ${organizationId}
        AND c.payable = false
        AND c.status = 'SIGNED'
+       ${repId ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Deal" d WHERE d.id = c."dealId" AND d."ownerId" = ${repId})` : Prisma.empty}
   `;
   const row = rows[0];
   return {

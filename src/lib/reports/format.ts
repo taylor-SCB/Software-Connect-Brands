@@ -33,8 +33,13 @@ export function plural(n: number, one: string, many = `${one}s`) {
 }
 
 // "▲ 20% vs last week", "▼ $300", or "same as last week".
+// A tile's number: "—" when there's nothing to measure.
+export function headlineValue(headline: Headline) {
+  return headline.empty ? "—" : formatValue(headline.value, headline.format);
+}
+
 export function changeText(headline: Headline): { text: string; tone: "good" | "bad" | "flat" } | null {
-  if (headline.previous === undefined || headline.previous === null) return null;
+  if (headline.empty || headline.previous === undefined || headline.previous === null) return null;
   const now = headline.value;
   const before = headline.previous;
   if (now === before) return { text: "same as before", tone: "flat" };

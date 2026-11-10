@@ -112,8 +112,16 @@ export function localIso(at: Date, timeZone: string) {
 
 // The instant the zone's clock reads 00:00 on that calendar day.
 export function zonedMidnight(iso: string, timeZone: string): Date {
+  return zonedHour(iso, 0, timeZone);
+}
+
+// The instant the zone's clock reads hour:00 on that calendar day. Not
+// midnight plus that many hours: on the day the clocks go forward,
+// midnight + 6h is 7am (audit fix, Nov 10, 2026: the 6am emails went out
+// at 6 and again at 7 that Sunday).
+export function zonedHour(iso: string, hour: number, timeZone: string): Date {
   const [y, m, d] = iso.split("-").map(Number);
-  const target = Date.UTC(y, m - 1, d);
+  const target = Date.UTC(y, m - 1, d, hour);
   let guess = target;
   // Two passes settle a daylight-saving change on the day itself.
   for (let i = 0; i < 2; i += 1) {

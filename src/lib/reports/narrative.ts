@@ -62,7 +62,7 @@ export function factsFor(report: AnyReport, ctx: NarrativeContext): Facts {
       const moved = changeText(headline);
       return {
         label: headline.label,
-        value: formatValue(headline.value, headline.format),
+        value: headline.empty ? "none yet" : formatValue(headline.value, headline.format),
         ...(headline.previous !== undefined && headline.previous !== null ? { before: formatValue(headline.previous, headline.format) } : {}),
         ...(moved && headline.format !== "percent" && headline.previous ? { change: moved.text.replace("▲", "up").replace("▼", "down") } : {}),
         ...(headline.hint ? { note: headline.hint } : {}),
@@ -125,11 +125,34 @@ export function factsFor(report: AnyReport, ctx: NarrativeContext): Facts {
 
 /* ------------------------------ number check ------------------------------ */
 
+// Numbers written as words count too (audit fix, Nov 10, 2026): "won two
+// deals" was never checked. "One" only as a count, not "no one" or "one
+// of".
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+  nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  hundred: 100, dozen: 12,
+};
+const WORD_PATTERN = new RegExp(`(?<!\\bno\\s)\\b(${Object.keys(NUMBER_WORDS).join("|")})\\b(?!\\s+of\\b)`, "gi");
+
+// Dates are when, not how much (audit fix, Nov 10, 2026): the period's
+// "Nov 1 – Nov 10, 2026" put 2026 among the allowed numbers, so "$2k" in a
+// month that won nothing passed as 2026 give or take 500. Dates and years
+// come out of the facts and the answer alike before they are compared.
+const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?";
+const DATE_PATTERN = new RegExp(`\\b${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?\\b(?:,?\\s+\\d{4}\\b)?`, "g");
+const YEAR_PATTERN = /(?<![$\d,.])\b(?:19|20)\d{2}\b(?![,.]?\d|\s*(?:k\b|K\b|m\b|M\b|%|million|thousand))/g;
+export function withoutDates(text: string) {
+  return text.replace(DATE_PATTERN, " ").replace(YEAR_PATTERN, " ");
+}
+
 // Every number written in a piece of text, with how far off it may be and
 // still be the same number written another way: "$12k" is 12,000 give or
 // take 500, "33%" is 33 give or take a half.
 export function numbersIn(text: string): { value: number; tolerance: number }[] {
   const found: { value: number; tolerance: number }[] = [];
+  for (const match of text.matchAll(WORD_PATTERN)) found.push({ value: NUMBER_WORDS[match[1].toLowerCase()], tolerance: 0 });
   const pattern = /(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*(k\b|K\b|m\b|M\b|million\b|thousand\b)?/g;
   for (const match of text.matchAll(pattern)) {
     const whole = match[1].replace(/,/g, "");
@@ -145,8 +168,8 @@ export function numbersIn(text: string): { value: number; tolerance: number }[] 
 
 // The numbers in the AI's answer that aren't in the data it was given.
 export function inventedNumbers(answer: string, facts: Facts): number[] {
-  const allowed = numbersIn(JSON.stringify(facts)).map((entry) => entry.value);
-  return numbersIn(answer)
+  const allowed = numbersIn(withoutDates(JSON.stringify(facts))).map((entry) => entry.value);
+  return numbersIn(withoutDates(answer))
     .filter((entry) => !allowed.some((value) => Math.abs(value - entry.value) <= entry.tolerance + 1e-9))
     .map((entry) => entry.value);
 }
@@ -166,7 +189,7 @@ function biggestMove(report: AnyReport, range: PeriodRange, skip: string[] = [])
   let best: { text: string; size: number } | null = null;
   for (const headline of report.headlines) {
     if (skip.includes(headline.id)) continue;
-    if (headline.previous === undefined || headline.previous === null || headline.previous === headline.value) continue;
+    if (headline.empty || headline.previous === undefined || headline.previous === null || headline.previous === headline.value) continue;
     const size = headline.previous ? Math.abs(headline.value - headline.previous) / Math.abs(headline.previous) : 1;
     const text = `${headline.label} ${headline.value > headline.previous ? "rose" : "fell"} to ${formatValue(headline.value, headline.format)} from ${formatValue(headline.previous, headline.format)} ${range.compareLabel}.`;
     if (!best || size > best.size) best = { text, size };

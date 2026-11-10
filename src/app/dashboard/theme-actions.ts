@@ -16,7 +16,11 @@ export async function setTheme(theme: Theme): Promise<{ ok: boolean }> {
   store.set(THEME_COOKIE, theme, { path: "/", maxAge: THEME_COOKIE_MAX_AGE, sameSite: "lax" });
   const session = await auth();
   const userId = session?.user?.id;
-  if (userId) await prisma.user.update({ where: { id: userId }, data: { theme } });
+  // updateMany: a session whose person was deleted (a workspace removed
+  // while they were signed in) has no row to save on, and that's fine —
+  // the cookie still holds the look (audit fix, Nov 10, 2026: update threw
+  // and the page fell over).
+  if (userId) await prisma.user.updateMany({ where: { id: userId }, data: { theme } });
   refresh();
   return { ok: true };
 }

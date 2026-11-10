@@ -16,7 +16,9 @@
  * number is thrown out for the rules version); "Email me this" and its
  * list in Settings → My Account with Remove; the cron refusing without the
  * secret, a forced Monday-6am run sending exactly the due emails (caught
- * on :3993), a second run sending none; each report's open time (budget
+ * on :3993), a second run sending none; the Nov 10 audit fixes (a rep's
+ * Overview tiles and activity, Closing's empty tiles, one email on the
+ * spring-forward Sunday, invented numbers as words or near the year); each report's open time (budget
  * 2 s — run the server through slow-db-proxy.cjs to measure it the way the
  * live database answers); and the phone width.
  *
@@ -383,6 +385,31 @@ async function narrativeText(page) {
     assert.match(await page.locator("[data-testid=rundown-overdue]").textContent(), /Nothing overdue/);
     assert.match(await page.locator("[data-testid=report-scope]").textContent(), /Nic Rivera/);
 
+    log("audit fixes: with a rep picked, the Overview tiles and Recent activity are that rep's too");
+    const statValue = async (label) => (await page.locator(`[data-testid=stat-tile][data-label="${label}"] p.num`).textContent()).trim();
+    const statHint = async (label) => (await page.locator(`[data-testid=stat-tile][data-label="${label}"] p.faint`).textContent()).trim();
+    const count = async (text, params) => (await sql(text, params)).rows[0].n;
+    const nicContacts = await count(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1 AND "ownerId"=$2`, [org, N]);
+    const allContacts = await count(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1`, [org]);
+    assert.notEqual(nicContacts, allContacts, "the seed tells a rep from the team");
+    assert.equal(await statValue("Contacts"), String(nicContacts));
+    const nicOpenDeals = await count(
+      `SELECT count(*)::int n FROM "Deal" WHERE "organizationId"=$1 AND "ownerId"=$2 AND stage IN ('LEAD','CONTACTED','QUOTE_SENT','CONTRACT_SENT')`,
+      [org, N],
+    );
+    assert.match(await statHint("Open pipeline"), new RegExp(`^${nicOpenDeals} active deals`));
+    const nicSigned = await count(
+      `SELECT count(*)::int n FROM "Contract" c JOIN "Deal" d ON d.id = c."dealId" WHERE c."organizationId"=$1 AND c.status='SIGNED' AND d."ownerId"=$2`,
+      [org, N],
+    );
+    assert.equal(await statValue("Signed"), String(nicSigned));
+    const nicActs = await count(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1 AND "userId"=$2 AND marketing=false`, [org, N]);
+    await page.getByText("Logged by this rep").waitFor();
+    const recent = page.locator(".card", { has: page.locator("h2", { hasText: "Recent activity" }) }).locator("ul > li");
+    assert.equal(await recent.count(), Math.min(8, nicActs), "only what Nic logged");
+    await pick(page, "report-rep", "", "daily");
+    assert.equal(await statValue("Contacts"), String(allContacts), "Whole team again");
+
     log("Pipeline: open value by stage, from opportunities and deals, matches the seed and SQL");
     timings.pipeline = await open(page, `${BASE}/dashboard?report=pipeline`, "pipeline");
     assert.equal(await tile(page, "open-value"), 866000, "$2,160 + $3,000 + $3,500");
@@ -536,6 +563,27 @@ async function narrativeText(page) {
     assert.equal(await tile(page, "won-value"), 150000);
     assert.equal(await tile(page, "won-count"), 1);
     await shot(page, "04-closing");
+
+    log("audit fixes: Closing with nothing won shows — for the average and days, never a fake 100% drop");
+    assert.equal(
+      (await sql(`SELECT count(*)::int n FROM "Deal" WHERE "organizationId"=$1 AND stage='WON' AND "stageChangedAt" >= '2025-01-01' AND "stageChangedAt" < '2026-01-02'`, [org])).rows[0].n,
+      0,
+      "nothing won last year in the seed",
+    );
+    await sql(
+      `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"valueCents","ownerId","stageChangedAt","createdAt","updatedAt")
+       VALUES ('rp_audit_won',$1,'ct_rpt_ann','Two years back','WON',120000,$2,'2024-06-15T17:00:00Z','2024-06-01T17:00:00Z',now())`,
+      [org, T],
+    );
+    await open(page, `${BASE}/dashboard?report=closing&period=last-year`, "closing");
+    for (const id of ["avg-deal", "days-to-close"]) {
+      const el = page.locator(`[data-testid=report-tile][data-id=${id}]`);
+      assert.equal((await el.getByTestId("report-tile-value").textContent()).trim(), "—", `${id} has nothing to measure`);
+      assert.doesNotMatch(await el.textContent(), /[▲▼]/, `${id} isn't compared with last time`);
+      assert.match(await el.textContent(), /Nothing won yet/);
+    }
+    assert.match(await page.locator("[data-testid=report-tile][data-id=won-value]").textContent(), /▼ 100%/, "Won itself really did fall");
+    await sql(`DELETE FROM "Deal" WHERE id='rp_audit_won'`);
 
     log("Money Owed: the same 'owed' as the Owed to you tile, aged, with the top debtors");
     timings.money = await open(page, `${BASE}/dashboard?report=money`, "money");
@@ -732,6 +780,12 @@ async function narrativeText(page) {
       ["DAILY", "MONEY"],
     );
     assert.match(inbox.at(-1).subject + inbox.at(-2).subject, /Money Owed — Last month · Nov 1 – Nov 30, 2026/);
+    log("audit fixes: on the spring-forward Sunday the 6am email goes once, not at 6 and again at 7");
+    // Sunday Mar 14, 2027 in Chicago: 6am is 11:00Z (CDT), 7am is 12:00Z.
+    run = await cron("2027-03-14T11:05:00Z");
+    assert.deepEqual(run.sentTo.filter((sent) => [EMAIL, NIC_EMAIL].includes(sent.email)).map((sent) => sent.report), ["DAILY"]);
+    run = await cron("2027-03-14T12:05:00Z");
+    assert.equal(run.sentTo.filter((sent) => [EMAIL, NIC_EMAIL].includes(sent.email)).length, 0, "7am sends nothing again");
 
     log("with AI on, a good answer from Claude is used (second server, stand-in Claude)");
     aiServer = spawn("npx", ["next", "start", "-p", String(AI_PORT)], {
@@ -781,6 +835,29 @@ async function narrativeText(page) {
     assert.doesNotMatch(words, /999,999/);
     assert.match(words, /Customers owe \$5,450 in all/);
     assert.equal((await sql(`SELECT COUNT(*)::int AS n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='REPORT_NARRATIVE'`, [org])).rows[0].n, 2);
+    log("audit fixes: a number written as a word, or one only the year would match, is thrown out too");
+    const factsSent = JSON.stringify(claudeRequests.at(-1).body.messages)
+      .replace(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}\b(?:,?\s+\d{4}\b)?/g, " ")
+      .replace(/\b20\d\d\b/g, " ");
+    const factNumbers = (factsSent.match(/\d{1,3}(?:,\d{3})+|\d+/g) ?? []).map((n) => Number(n.replace(/,/g, "")));
+    // "$2.0k" is 1,950 to 2,050: before the fix only the year (2026) matched it.
+    assert.ok(!factNumbers.some((n) => n >= 1950 && n <= 2050), `nothing but the year near $2.0k in the facts (${factNumbers.join(", ")})`);
+    const word = [["eleven", 11], ["thirteen", 13], ["seventeen", 17], ["nineteen", 19]].find(([, n]) => !factNumbers.includes(n));
+    for (const invented of [`Customers owe $5,450, and ${word[0]} new customers signed up.`, "Customers owe $5,450; expect $2.0k more next week."]) {
+      await sql(`DELETE FROM "ReportNarrative" WHERE "organizationId"=$1`, [org]);
+      claudeReply = { paragraphs: [invented] };
+      const before = claudeRequests.length;
+      await page.locator("[data-testid=report-rewrite]").click();
+      for (let i = 0; claudeRequests.length === before; i += 1) {
+        if (i > 100) throw new Error("Claude was not asked");
+        await page.waitForTimeout(200);
+      }
+      await page.waitForFunction(() => !document.querySelector("[data-testid=report-rewrite]")?.disabled);
+      await page.reload();
+      await page.locator("[data-testid=report-narrative][data-source=RULES]").waitFor({ timeout: 20000 });
+      assert.doesNotMatch(await narrativeText(page), new RegExp(`${word[0]} new customers|\\$2\\.0k`), invented);
+      assert.equal((await sql(`SELECT source FROM "ReportNarrative" WHERE "organizationId"=$1 AND key LIKE 'MONEY|%'`, [org])).rows[0].source, "RULES");
+    }
 
     log("each report opens inside its time budget");
     for (const [name, ms] of Object.entries(timings)) {

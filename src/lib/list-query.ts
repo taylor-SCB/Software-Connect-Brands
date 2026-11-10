@@ -25,6 +25,13 @@ function touchClause(act: ListParams["act"]): { lastTouchAt: { gte: Date } | { l
   return { OR: [{ lastTouchAt: null }, { lastTouchAt: { lt: since } }] };
 }
 
+// A touch logged ahead of its day (a follow-up ticked Done early) is left
+// off the row until its time comes (audit fix, Nov 10, 2026); this puts
+// the ones that have come due on, just before an Activity filter reads it.
+async function touchesDue(organizationId: string) {
+  await prisma.$executeRaw`SELECT crm_touch_due(${organizationId})`;
+}
+
 function present(field: "mobile" | "email" | "phone", value: Presence) {
   if (value === "yes") return { AND: [{ [field]: { not: null } }, { NOT: { [field]: "" } }] };
   return { OR: [{ [field]: null }, { [field]: "" }] };
@@ -102,7 +109,10 @@ export async function companyWhere(organizationId: string, p: ListParams): Promi
   // name can never disagree.
   if (p.owed) and.push({ id: { in: await owingIds(organizationId, "company") } });
   const touch = touchClause(p.act);
-  if (touch) and.push(touch as Prisma.CompanyWhereInput);
+  if (touch) {
+    await touchesDue(organizationId);
+    and.push(touch as Prisma.CompanyWhereInput);
+  }
   if (p.reps.length) and.push(repClause(p.reps));
   if (p.addedBy.length) and.push({ createdById: { in: p.addedBy } });
   const added = await addedClause(p);
@@ -187,7 +197,10 @@ export async function contactWhere(
   // owingIds rather than a clause about the contact.
   if (p.owed) and.push({ id: { in: await owingIds(organizationId, "contact") } });
   const touch = touchClause(p.act);
-  if (touch) and.push(touch as Prisma.ContactWhereInput);
+  if (touch) {
+    await touchesDue(organizationId);
+    and.push(touch as Prisma.ContactWhereInput);
+  }
   if (p.titles.length) and.push({ title: { in: p.titles, mode: insensitive } });
   if (p.reps.length) and.push(repClause(p.reps));
   if (p.addedBy.length) and.push({ createdById: { in: p.addedBy } });

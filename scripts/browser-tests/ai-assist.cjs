@@ -13,8 +13,11 @@
  * and AI header mapping re-planning the preview with nothing saved until
  * Import; lead label rules (Vendor, Residential, Client) and the AI
  * suggestion, an unreadable answer shown as a message; the daily cap; the
- * phone width; and, against a second server started without the key,
- * every AI control hidden.
+ * phone width; the Nov 10 audit fixes (a saved drafted quote never drafting
+ * again, the import clean-up following the importer's matching, a booked
+ * meeting keeping a tile off Gone quiet, the follow-up dialog's clicks and
+ * Escape staying in it, retired labels kept from the AI); and, against a
+ * second server started without the key, every AI control hidden.
  *
  * Claude is never called. Start the server with
  *   ANTHROPIC_API_KEY=test-key
@@ -429,6 +432,23 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await page.getByTestId("quote-draft-info").getByText("Nothing in the notes to add. 1 line named a product not in your catalog").waitFor();
   assert.match(lastRequest("QUOTE").prompt, /Already on it: 3 × Cat6 Cable Box 1000ft; 1 × Pull permit/);
 
+  log("audit fixes: after the drafted quote is saved the address stays clean, and coming back never drafts again");
+  const quoteAsks = () => requests.filter((row) => row.kind === "QUOTE").length;
+  const asked = quoteAsks();
+  await page.locator("input[aria-label='Line 1 quantity']").fill("4");
+  await page.getByRole("button", { name: "Save line items" }).click();
+  await until(async () => (await one(`SELECT quantity FROM "QuoteLineItem" WHERE "quoteId"=$1 AND "productId"='aa_cat6'`, [quoteId])).quantity === 4, "saved again");
+  await page.waitForTimeout(600);
+  assert.ok(!page.url().includes("draft=meeting"), "a save doesn't put ?draft=meeting back in the address bar");
+  await page.reload();
+  await page.getByTestId("quote-draft-meeting").waitFor();
+  await page.waitForTimeout(800);
+  await page.goto(`${BASE}/dashboard/quotes/${quoteId}?draft=meeting`);
+  await page.getByTestId("quote-draft-meeting").waitFor();
+  await page.waitForTimeout(800);
+  assert.equal(quoteAsks(), asked, "neither a reload nor the old address asks again once the quote has lines");
+  assert.equal((await one(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId])).n, 2);
+
   log("Import CSV: duplicates flagged in the file and against contacts on file; nothing saved");
   const csv = [
     "Name,Email,Mobile,Company Name,Role Held,Hometown Code",
@@ -454,7 +474,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   assert.match(dupList, /Lee Twin — same name at the same company/);
   assert.match(dupList, /Kim Phone \/ Kip Phone — same phone number/);
   assert.match(dupList, /looks like Sam Helper — same phone number/);
-  assert.match(await cleanup.getByTestId("import-dup-updates").innerText(), /1 row has the email of a contact/);
+  assert.match(await cleanup.getByTestId("import-dup-updates").innerText(), /1 row matches a contact already on file/);
   assert.match(await page.getByTestId("import-unused").innerText(), /"Role Held", "Hometown Code"/);
 
   log("AI header mapping: Role Held → Title (a made-up field dropped); accepting re-plans the preview, Import saves it");
@@ -476,6 +496,88 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await page.getByTestId("import-start").click();
   await page.getByTestId("import-done").waitFor();
   assert.equal((await one(`SELECT title FROM "Contact" WHERE "organizationId"=$1 AND email='dana@else.com'`, [org])).title, "Buyer");
+
+  // ---------------------------------------------------------------------
+  // Audit fixes (Nov 10, 2026): one step per confirmed defect.
+  log("audit fixes: the import clean-up says what the import will do (name at the company updates; a second email doesn't)");
+  await sql(`UPDATE "Contact" SET email2='sammy@gmail.com' WHERE id='aa_sam'`);
+  const csv2 = ["Name,Email,Mobile,Company Name", "Sam Helper,,,Quiet Builders", "Sammy G,sammy@gmail.com,,Other Co"].join("\n");
+  const csv2Path = path.join(OUT, "ai-import-2.csv");
+  fs.writeFileSync(csv2Path, csv2);
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await page.getByTestId("import-csv").click();
+  await page.getByTestId("import-file").setInputFiles(csv2Path);
+  await cleanup.waitFor();
+  await until(async () => (await cleanup.getByTestId("import-dup-updates").count()) === 1, "existing check");
+  assert.match(await cleanup.getByTestId("import-dup-updates").innerText(), /^1 row matches a contact already on file/);
+  const dupList2 = await cleanup.getByTestId("import-dup-list").innerText();
+  assert.match(dupList2, /looks like Sam Helper — same email as their second email\. It would be added as a second contact\./);
+  assert.doesNotMatch(dupList2, /same name at the same company/, "the importer updates that one; it isn't a second contact");
+
+  log("audit fixes: a meeting booked ahead keeps an old opportunity off Gone quiet");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,email,status,"updatedAt") VALUES
+       ('aa_bea',$1,'Bea Booked','bea@booked.example.com','MEETING_SET',now()),
+       ('aa_quinn',$1,'Quinn Quiet','quinn@quiet.example.com','MEETING_SET',now()),
+       ('aa_lou',$1,'Lou Label','lou@loulabs.example.com','MEETING_SET',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES
+       ('aa_oppbook',$1,'Bea Booked','MEETING_SET',$2,now() - interval '20 days',now()),
+       ('aa_oppq',$1,'Quinn Quiet','MEETING_SET',$2,now() - interval '20 days',now()),
+       ('aa_opplou',$1,'Lou Label','MEETING_SET',$2,now(),now())`,
+    [org, userId],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES
+       ('aa_ocb','aa_oppbook','aa_bea','PRIMARY',true), ('aa_ocq','aa_oppq','aa_quinn','PRIMARY',true), ('aa_ocl','aa_opplou','aa_lou','PRIMARY',true)`,
+  );
+  await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on") VALUES ('aa_ombook','aa_oppbook',now() + interval '5 days')`);
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tile("Quinn Quiet").locator("[data-testid=quiet-badge]").waitFor();
+  assert.equal(await tile("Bea Booked").locator("[data-testid=quiet-badge]").count(), 0, "the next meeting is already booked");
+  await page.goto(`${BASE}/dashboard/deals?quiet=1`);
+  await tile("Quinn Quiet").waitFor();
+  assert.equal(await tile("Bea Booked").count(), 0);
+
+  log("audit fixes: clicks inside the follow-up dialog stay in it; the tile's panel doesn't open underneath");
+  replies.FOLLOW_UP = json({ text: "Hi Quinn, checking in.", emailSubject: "Checking in", emailBody: "Hi Quinn,\n\nChecking in.\n\nThanks" });
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tile("Quinn Quiet").getByTestId("follow-up-draft").click();
+  await dialog.getByTestId("follow-up-text").waitFor();
+  await dialog.getByTestId("follow-up-text").click();
+  await dialog.locator("h2").click();
+  await page.waitForTimeout(400);
+  assert.equal(await page.getByTestId("opportunity-panel").count(), 0, "typing in the dialog opens nothing");
+  await page.mouse.click(8, 8);
+  await dialog.waitFor({ state: "detached" });
+  await page.waitForTimeout(400);
+  assert.equal(await page.getByTestId("opportunity-panel").count(), 0, "dismissing by the backdrop opens nothing");
+
+  log("audit fixes: Escape closes the follow-up dialog only, not the panel it came from");
+  await tile("Quinn Quiet").getByTestId("tile-open").click();
+  await panel.getByTestId("panel-title").waitFor();
+  await panel.getByTestId("follow-up-draft").click();
+  await dialog.getByTestId("follow-up-text").waitFor();
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "detached" });
+  await page.waitForTimeout(300);
+  assert.equal(await panel.count(), 1, "the panel and its unsaved edits stay");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+
+  log("audit fixes: AI lead-label suggestions never offer a retired label");
+  await sql(`DELETE FROM "AiRequest" WHERE id LIKE 'aa_cap_%'`);
+  await sql(`INSERT INTO "LeadLabelOption" (id,"organizationId",name,"retiredAt") VALUES ('aa_lbl_old',$1,'Old Custom',now()), ('aa_lbl_live',$1,'Live Custom',NULL)`, [org]);
+  replies.LABEL = json({ leadLabel: "Old Custom", reason: "Retired, but it fits" });
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tile("Lou Label").getByTestId("suggest-label").click();
+  await until(async () => requests.length > 0 && lastRequest("LABEL").prompt.includes("Live Custom"), "asked");
+  assert.doesNotMatch(lastRequest("LABEL").prompt, /Old Custom/, "a retired label isn't offered to the AI");
+  await page.waitForTimeout(600);
+  assert.equal(await tile("Lou Label").locator("[data-testid=suggested-label][data-label='Old Custom']").count(), 0, "nor shown");
+  assert.equal((await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opplou'`)).leadLabel, null);
 
   log("phone width: the board scrolls inside itself and the follow-up dialog fits");
   await sql(`UPDATE "Opportunity" SET "createdAt"=now() - interval '30 days' WHERE id='aa_opp6'`);

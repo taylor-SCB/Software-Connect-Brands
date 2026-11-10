@@ -111,7 +111,7 @@ export function ImportCleanup({
         )}
         {updates.length > 0 && (
           <p className="faint mt-1" data-testid="import-dup-updates">
-            {updates.length.toLocaleString()} {updates.length === 1 ? "row has the email of a contact" : "rows have the email of contacts"} already on file and will update {updates.length === 1 ? "it" : "them"}.
+            {updates.length.toLocaleString()} {updates.length === 1 ? "row matches a contact" : "rows match contacts"} already on file (the same email, or the same name at the same company) and will update {updates.length === 1 ? "it" : "them"}.
           </p>
         )}
         {(inFile.length > 0 || realDuplicates.length > 0) && (

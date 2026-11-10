@@ -573,11 +573,15 @@ export async function materialsToOrder(projectId: string) {
 
   // Rows on the customer's own signed paperwork are the work sold; the
   // ones with a product that has a distributor are what has to be bought.
+  // In the paperwork's own order, contract by contract (audit fix, Nov 10,
+  // 2026): unordered, a row moved to another scope came back last and the
+  // purchase order listed it out of place.
   const lines = await prisma.contractLineItem.findMany({
     where: {
       contract: { organizationId, projectId: project.id, payable: false, status: "SIGNED" },
       quoteLineItem: { product: { distributorId: { not: null } } },
     },
+    orderBy: [{ contract: { number: "asc" } }, { position: "asc" }, { id: "asc" }],
     select: {
       id: true,
       name: true,

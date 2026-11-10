@@ -75,7 +75,9 @@ export default async function QuoteBuilderPage({
 
   // "Draft lines from the meeting" (Nov 10, 2026): AI on, a draft, and a
   // deal that came from a Pipeline opportunity. Build Quote can ask for it
-  // to run on arrival (?draft=meeting).
+  // to run on arrival (?draft=meeting), and only while the quote has no
+  // lines, so coming back to that address never drafts on top of saved
+  // ones.
   const fromOpportunity =
     aiConfigured() && quote.status === "DRAFT"
       ? await prisma.opportunity.findFirst({ where: { organizationId, dealId: quote.dealId }, select: { id: true } })
@@ -229,7 +231,7 @@ export default async function QuoteBuilderPage({
             serviceTypes={serviceTypes}
             suppliers={suppliers}
             platformSuppliers={platformSuppliers}
-            meetingDraft={fromOpportunity ? { auto: draftParam === "meeting" } : null}
+            meetingDraft={fromOpportunity ? { auto: draftParam === "meeting" && quote.lineItems.length === 0 } : null}
           />
         </Card>
 

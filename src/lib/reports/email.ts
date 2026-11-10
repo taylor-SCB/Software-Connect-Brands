@@ -1,6 +1,6 @@
 import { escapeHtml } from "@/lib/email-marketing";
 import type { Headline, SummaryTable } from "@/lib/reports/common";
-import { changeText, formatValue } from "@/lib/reports/format";
+import { changeText, formatValue, headlineValue } from "@/lib/reports/format";
 
 // The report as an email (Nov 10, 2026): the business's name, the
 // write-up, the headline numbers, one small table and a link to the full
@@ -30,7 +30,7 @@ export function reportEmail(input: {
     ...paragraphs.flatMap((paragraph) => [paragraph, ""]),
     ...headlines.map((headline) => {
       const moved = changeText(headline);
-      return `${headline.label}: ${formatValue(headline.value, headline.format)}${moved ? ` (${moved.text})` : ""}`;
+      return `${headline.label}: ${headlineValue(headline)}${moved ? ` (${moved.text})` : ""}`;
     }),
     "",
     input.table.title,
@@ -47,7 +47,7 @@ export function reportEmail(input: {
     const tone = moved?.tone === "good" ? "#0f7a52" : moved?.tone === "bad" ? "#b42318" : "#667085";
     return `<td style="padding:10px 12px;border:1px solid #e4e7ec;border-radius:8px;vertical-align:top;width:33%">
       <div style="font-size:11px;color:#667085;text-transform:uppercase;letter-spacing:.06em">${escapeHtml(headline.label)}</div>
-      <div style="font-size:20px;font-weight:600;color:#101828;margin-top:4px">${escapeHtml(formatValue(headline.value, headline.format))}</div>
+      <div style="font-size:20px;font-weight:600;color:#101828;margin-top:4px">${escapeHtml(headlineValue(headline))}</div>
       ${moved ? `<div style="font-size:12px;color:${tone};margin-top:2px">${escapeHtml(moved.text)}</div>` : ""}
       ${headline.hint ? `<div style="font-size:12px;color:#667085;margin-top:2px">${escapeHtml(headline.hint)}</div>` : ""}
     </td>`;

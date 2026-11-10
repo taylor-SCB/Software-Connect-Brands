@@ -5,7 +5,9 @@ import { prisma } from "@/lib/prisma";
 // life is older than the workspace's quietDays. Signs of life: a logged
 // call, text, email or meeting with anyone listed on it (marketing sends
 // never count), a meeting date that has passed, its deal changing stage,
-// and the opportunity being made. Shared by the Pipeline tiles, the Daily
+// and the opportunity being made. One with a meeting still to come is
+// never quiet (audit fix, Nov 10, 2026): a meeting booked for two weeks
+// out was "Quiet 9 days" with a follow-up offered. Shared by the Pipeline tiles, the Daily
 // Rundown report and the drafted follow-ups, so they always agree.
 
 export type QuietOpportunity = { id: string; title: string; lastTouchAt: Date; days: number; dealId: string | null };
@@ -31,10 +33,10 @@ export async function goneQuietOpportunities(organizationId: string, options: { 
        WHERE oc.role <> 'HIDDEN'
        GROUP BY oc."opportunityId"
     ), meet AS (
-      SELECT m."opportunityId" AS id, max(m."on") AS t
+      SELECT m."opportunityId" AS id, max(m."on") FILTER (WHERE m."on" <= now()) AS t,
+             bool_or(m."on" > now()) AS booked
         FROM "OpportunityMeeting" m
         JOIN open ON open.id = m."opportunityId"
-       WHERE m."on" <= now()
        GROUP BY m."opportunityId"
     )
     SELECT open.id, open.title, open."dealId" AS deal_id,
@@ -43,6 +45,7 @@ export async function goneQuietOpportunities(organizationId: string, options: { 
       LEFT JOIN touch ON touch.id = open.id
       LEFT JOIN meet ON meet.id = open.id
      WHERE GREATEST(open."createdAt", open."stageChangedAt", touch.t, meet.t) < now() - make_interval(days => ${quietDays}::int)
+       AND meet.booked IS NOT TRUE
      ORDER BY last_touch ASC
      LIMIT ${options.limit ?? 500}`;
   const now = Date.now();

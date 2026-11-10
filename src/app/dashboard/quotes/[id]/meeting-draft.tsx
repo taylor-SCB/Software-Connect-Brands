@@ -39,8 +39,11 @@ export function MeetingDraftButton({ quoteId, auto, onLines }: { quoteId: string
   useEffect(() => {
     if (!auto || ran.current) return;
     ran.current = true;
-    // Once only: a reload of the page doesn't ask again.
-    window.history.replaceState(window.history.state, "", window.location.pathname);
+    // Once only: a reload of the page doesn't ask again. A null state,
+    // as Next's docs show, so its router takes the new address too (audit
+    // fix, Nov 10, 2026): passing Next's own state skipped that, and the
+    // next save put ?draft=meeting back in the address bar.
+    window.history.replaceState(null, "", window.location.pathname);
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
   }, [auto]);

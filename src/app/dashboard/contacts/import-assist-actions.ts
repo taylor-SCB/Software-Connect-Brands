@@ -29,8 +29,11 @@ const rowSchema = z.object({
 export type ExistingMatch = { line: number; contactId: string; contactName: string; reason: string; updates: boolean };
 
 // Up to 1,000 rows a call: which look like a contact already in the
-// workspace, by email (the import updates those), by phone or mobile
-// digits, or by the same name at the same company.
+// workspace. `updates` follows the importer's own rule exactly (audit fix,
+// Nov 10, 2026; src/app/dashboard/contacts/import-actions.ts): the same
+// main email, or else the same name at the same company (or both with no
+// company), and the row updates that contact. A match on a second email
+// or a phone number is a possible duplicate the import would add anew.
 export async function checkImportDuplicates(input: z.input<typeof rowSchema>[]): Promise<{ matches: ExistingMatch[] } | { error: string }> {
   const { organizationId } = await requireSession();
   const parsed = z.array(rowSchema).max(1000).safeParse(input);
@@ -38,7 +41,7 @@ export async function checkImportDuplicates(input: z.input<typeof rowSchema>[]):
   const rows = parsed.data;
   const emails = [...new Set(rows.flatMap((row) => (row.email ? [row.email.trim().toLowerCase()] : [])))];
   const digits = [...new Set(rows.flatMap((row) => row.phones.map(phoneKey).filter((key): key is string => Boolean(key))))];
-  const names = [...new Set(rows.flatMap((row) => (row.name && row.company ? [row.name.trim().toLowerCase()] : [])))];
+  const names = [...new Set(rows.flatMap((row) => (row.name ? [row.name.trim().toLowerCase()] : [])))];
   if (emails.length + digits.length + names.length === 0) return { matches: [] };
   const found = await prisma.$queryRaw<
     { id: string; name: string; email: string | null; email2: string | null; p1: string; p2: string; p3: string; company: string | null }[]
@@ -62,20 +65,25 @@ export async function checkImportDuplicates(input: z.input<typeof rowSchema>[]):
   for (const row of rows) {
     const email = row.email?.trim().toLowerCase() || null;
     const keys = row.phones.map(phoneKey).filter((key): key is string => Boolean(key));
+    // The importer tries the main email first, then name and company; the
+    // best match is the one it would act on.
+    let best: (ExistingMatch & { rank: number }) | null = null;
     for (const contact of found) {
+      const sameName =
+        Boolean(row.name) &&
+        contact.name.toLowerCase() === row.name!.trim().toLowerCase() &&
+        (contact.company ?? "") === (row.company?.trim().toLowerCase() ?? "");
       let reason: string | null = null;
-      let updates = false;
-      if (email && (contact.email === email || contact.email2 === email)) {
-        reason = "same email";
-        updates = true;
-      } else if (keys.some((key) => key === contact.p1 || key === contact.p2 || key === contact.p3)) reason = "same phone number";
-      else if (row.name && row.company && contact.company && contact.name.toLowerCase() === row.name.trim().toLowerCase() && contact.company === row.company.trim().toLowerCase())
-        reason = "same name at the same company";
-      if (reason) {
-        matches.push({ line: row.line, contactId: contact.id, contactName: contact.name, reason, updates });
-        break;
+      let rank = 0;
+      if (email && contact.email === email) [reason, rank] = ["same email", 3];
+      else if (sameName) [reason, rank] = [row.company ? "same name at the same company" : "same name, no company", 2];
+      else if (email && contact.email2 === email) [reason, rank] = ["same email as their second email", 1];
+      else if (keys.some((key) => key === contact.p1 || key === contact.p2 || key === contact.p3)) [reason, rank] = ["same phone number", 1];
+      if (reason && (!best || rank > best.rank)) {
+        best = { line: row.line, contactId: contact.id, contactName: contact.name, reason, updates: rank >= 2, rank };
       }
     }
+    if (best) matches.push({ line: best.line, contactId: best.contactId, contactName: best.contactName, reason: best.reason, updates: best.updates });
   }
   return { matches };
 }

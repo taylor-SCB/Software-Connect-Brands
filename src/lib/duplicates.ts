@@ -86,17 +86,28 @@ export async function findDuplicateGroups(
   mode: DuplicateMode,
   page: number,
 ): Promise<{ groups: DuplicateGroup[]; total: number }> {
-  const skip = (Math.max(1, page) - 1) * GROUPS_PER_PAGE;
-  const rows = await prisma.$queryRaw<{ key: string; n: number; ids: string[]; total: number }[]>`
-    WITH k AS (${keysSql(kind, mode, organizationId)}),
-    g AS (
-      SELECT key, count(DISTINCT id)::int AS n,
-             (array_agg(id ORDER BY "createdAt", id))[1:${SHOWN_PER_GROUP * 3}] AS ids
-        FROM k GROUP BY key HAVING count(DISTINCT id) > 1
-    )
-    SELECT key, n, ids, (count(*) OVER ())::int AS total
-      FROM g ORDER BY n DESC, key
-     LIMIT ${GROUPS_PER_PAGE} OFFSET ${skip}`;
+  const pageOf = (n: number) =>
+    prisma.$queryRaw<{ key: string; n: number; ids: string[]; total: number }[]>`
+      WITH k AS (${keysSql(kind, mode, organizationId)}),
+      g AS (
+        SELECT key, count(DISTINCT id)::int AS n,
+               (array_agg(id ORDER BY "createdAt", id))[1:${SHOWN_PER_GROUP * 3}] AS ids
+          FROM k GROUP BY key HAVING count(DISTINCT id) > 1
+      )
+      SELECT key, n, ids, (count(*) OVER ())::int AS total
+        FROM g ORDER BY n DESC, key
+       LIMIT ${GROUPS_PER_PAGE} OFFSET ${(Math.max(1, n) - 1) * GROUPS_PER_PAGE}`;
+  let rows = await pageOf(page);
+  // Past the last page (audit fix, Nov 10, 2026): merging the only group
+  // on the final page left an empty page, and the count came from that
+  // page, so the finder said "0 groups" while page 1 still had 25. Show
+  // the last page there is instead.
+  if (rows.length === 0 && page > 1) {
+    const first = await pageOf(1);
+    const total = first[0]?.total ?? 0;
+    const last = Math.max(1, Math.ceil(total / GROUPS_PER_PAGE));
+    rows = last === 1 ? first : await pageOf(last);
+  }
   return {
     total: rows[0]?.total ?? 0,
     // A record listed twice under one key (two numbers that match each

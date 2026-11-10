@@ -72,12 +72,17 @@ function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onC
     };
   }, [opportunityId]);
 
+  // Escape closes this dialog only (audit fix, Nov 10, 2026): heard first,
+  // in the capture phase, and stopped there, so the opportunity panel
+  // underneath (and its unsaved changes) stays open.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      onClose();
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   async function copy(value: string, what: string) {
@@ -110,12 +115,18 @@ function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onC
   }
 
   return createPortal(
+    // A portal still passes React events up to the tile it was opened
+    // from, which opened the tile's panel under the dialog on any click
+    // (audit fix, Nov 10, 2026); they stop here.
     <div
       className="modal-backdrop"
       style={{ zIndex: 80 }}
       onClick={(event) => {
+        event.stopPropagation();
         if (event.target === event.currentTarget) onClose();
       }}
+      onDragStart={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
     >
       <div role="dialog" aria-modal="true" aria-label="Follow-up draft" className="card card-lit popover max-h-[92vh] w-full max-w-lg overflow-y-auto p-5" data-testid="follow-up-dialog">
         <div className="mb-3 flex items-start justify-between gap-3">

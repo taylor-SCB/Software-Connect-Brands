@@ -81,6 +81,16 @@ export function MergeButton({
     if (!keepId) setKeepId(hit.id);
   }
 
+  // Picks start from the group as it is shown now (audit fix, Nov 10,
+  // 2026): after a merge the finder refreshes and a group still listed
+  // keeps this component, so the picks made before would name records
+  // the merge just removed.
+  function openDialog() {
+    setPicked(start0);
+    setKeepId(start0[0]?.id ?? null);
+    setOpen(true);
+  }
+
   function close() {
     setOpen(false);
     setQuery("");
@@ -113,7 +123,7 @@ export function MergeButton({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openDialog}
         className={`btn btn-sm ${initial ? "btn-primary" : "btn-ghost"}`}
         data-testid={initial ? "duplicate-merge" : "merge-open"}
       >

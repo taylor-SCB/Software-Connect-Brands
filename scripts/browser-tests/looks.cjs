@@ -21,7 +21,9 @@
  * over it, and someone who never picked inheriting it; the phone width
  * (390px) with no sideways scroll; the workspace's own brand colour
  * still painting the primary buttons; the customer's copy of a quote
- * staying as it was; an old "bright" or a forged value reading Dark.
+ * staying as it was; an old "bright" or a forged value reading Dark; and the
+ * Nov 10 audit fixes (Log out reachable on a 1440x790 laptop, the switch
+ * working for a browser whose person was deleted).
  *
  * Contrast rule: every sampled piece of text must clear 4.5:1 in Light.
  * Dark is the look as it was before this work and is held to 3:1 so the
@@ -502,6 +504,59 @@ async function contrastReport(page, scope) {
     await anon.close();
     await mobile.close();
   }
+
+  log("audit fixes: on a short laptop screen (1440×790) Log out stays reachable at the foot of the sidebar");
+  const laptop = await browser.newContext({ viewport: { width: 1440, height: 790 } });
+  const lp = await laptop.newPage();
+  await login(lp);
+  for (const url of ["/dashboard/settings", "/dashboard/contacts", "/dashboard/settings/account"]) {
+    await lp.goto(`${BASE}${url}`);
+    await lp.evaluate(() => window.scrollTo(0, 1e6));
+    await lp.waitForTimeout(200);
+    const out = await lp.evaluate(() => {
+      const button = Array.from(document.querySelectorAll("aside button")).find((b) => /Log out/.test(b.textContent));
+      const box = button.getBoundingClientRect();
+      return { bottom: Math.round(box.bottom), vh: window.innerHeight };
+    });
+    assert.ok(out.bottom <= out.vh, `${url}: Log out ends at ${out.bottom}px in a ${out.vh}px window`);
+  }
+  // The nav itself scrolls inside the sidebar instead.
+  await lp.goto(`${BASE}/dashboard/settings`);
+  const navScroll = await lp.evaluate(() => {
+    const box = document.querySelector("aside > div");
+    return { scrollable: box.scrollHeight >= box.clientHeight, overflow: getComputedStyle(box).overflowY };
+  });
+  assert.equal(navScroll.overflow, "auto");
+  await laptop.close();
+
+  log("audit fixes: the look switch still works for a browser whose person was deleted while signed in");
+  const goneEmail = "test-looks-gone@example.com";
+  await sql(`DELETE FROM "User" WHERE email = $1`, [goneEmail]);
+  await sql(
+    `INSERT INTO "User" (id, name, email, "passwordHash", role, "organizationId")
+     SELECT 'usr_looks_gone', 'Gone Person', $1, "passwordHash", 'MEMBER', "organizationId" FROM "User" WHERE email = $2`,
+    [goneEmail, EMAIL],
+  );
+  const goneCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  const gp = await goneCtx.newPage();
+  const gpErrors = [];
+  gp.on("pageerror", (err) => gpErrors.push(err.message));
+  await gp.goto(`${BASE}/login`);
+  await gp.fill("#email", goneEmail);
+  await gp.fill("#password", PASSWORD);
+  await gp.click("button[type=submit]");
+  await gp.waitForURL(/\/dashboard$/);
+  await sql(`DELETE FROM "User" WHERE id = 'usr_looks_gone'`);
+  await gp.goto(`${BASE}/dashboard`);
+  await gp.waitForURL(/\/login/);
+  const pressed = gp.locator("[data-testid=look-switch]:visible [data-testid=look-light]");
+  await pressed.click();
+  await gp.waitForFunction((bg) => getComputedStyle(document.documentElement).backgroundColor === bg, PAGE_BG.light);
+  await gp.waitForTimeout(500);
+  assert.equal(await gp.getByText(/Application error/).count(), 0, "no error screen");
+  assert.equal(await pressed.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(gpErrors, [], "nothing thrown in the page");
+  await goneCtx.close();
 
   log("the customer's copy of a quote stays as it was");
   await sql(`UPDATE "User" SET theme = 'light' WHERE email = $1`, [EMAIL]);

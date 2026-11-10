@@ -36,8 +36,12 @@ export default async function DashboardLayout({
       style={{ ["--brand" as string]: organization.primaryColor }}
       data-theme={theme}
     >
+      {/* The nav scrolls inside the sidebar and the account and Log out
+          stay pinned at its foot (audit fix, Nov 10, 2026): on a short
+          laptop screen the look switch had pushed Log out below the
+          window, out of reach. */}
       <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--border)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
-        <div>
+        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
           <div className="mb-6 flex items-center gap-2.5 px-1">
             {organization.logoUrl ? (
               // Tenant-supplied URL; next/image would need per-tenant
@@ -76,7 +80,7 @@ export default async function DashboardLayout({
           <SidebarNav />
         </div>
 
-        <div className="space-y-2">
+        <div className="shrink-0 space-y-2 pt-2">
           <div className="divider" />
           {session.isSuperAdmin && (
             <Link href="/admin" className="nav-item w-full">

@@ -129,9 +129,9 @@ export async function loadClosing(params: ReportParams): Promise<ClosingReport> 
   const headlines: Headline[] = [
     { id: "won-value", label: "Won", value: won.valueCents, previous: previousWon.valueCents, format: "money", hint: `${won.count} ${won.count === 1 ? "deal" : "deals"}` },
     { id: "won-count", label: "Deals won", value: won.count, previous: previousWon.count, format: "count" },
-    { id: "win-rate", label: "Win rate", value: winRate ?? 0, previous: previousWinRate, format: "percent", hint: winRate === null ? "Nothing decided yet" : "Won ÷ (won + lost)" },
-    { id: "avg-deal", label: "Average deal", value: Math.round(averageDealCents ?? 0), previous: previousAverageDealCents === null ? null : Math.round(previousAverageDealCents), format: "money" },
-    { id: "days-to-close", label: "Days to close", value: daysToClose === null ? 0 : Math.round(daysToClose * 10) / 10, previous: previousDaysToClose === null ? null : Math.round(previousDaysToClose * 10) / 10, format: "days", goodWhenUp: false, hint: "First meeting to signed" },
+    { id: "win-rate", label: "Win rate", value: winRate ?? 0, empty: winRate === null, previous: previousWinRate, format: "percent", hint: winRate === null ? "Nothing decided yet" : "Won ÷ (won + lost)" },
+    { id: "avg-deal", label: "Average deal", value: Math.round(averageDealCents ?? 0), empty: averageDealCents === null, previous: previousAverageDealCents === null ? null : Math.round(previousAverageDealCents), format: "money", ...(averageDealCents === null ? { hint: "Nothing won yet" } : {}) },
+    { id: "days-to-close", label: "Days to close", value: daysToClose === null ? 0 : Math.round(daysToClose * 10) / 10, empty: daysToClose === null, previous: previousDaysToClose === null ? null : Math.round(previousDaysToClose * 10) / 10, format: "days", goodWhenUp: false, hint: daysToClose === null ? "Nothing won yet" : "First meeting to signed" },
     { id: "lost-value", label: "Lost", value: lost.valueCents, previous: previousLost.valueCents, format: "money", goodWhenUp: false, hint: `${lost.count} ${lost.count === 1 ? "deal" : "deals"}` },
   ];
 

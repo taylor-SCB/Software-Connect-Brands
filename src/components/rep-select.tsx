@@ -65,6 +65,12 @@ export function RepPicker({ kind, id, ownerId, reps }: { kind: "contact" | "comp
 // On the contact and company forms. Posts `ownerId`, and `ownerOriginal`
 // (what the form was opened with) so the server writes the rep only when
 // it was changed here.
+//
+// Keyed by the saved rep (audit fix, Nov 10, 2026): the edit forms stay
+// open after a save, and React resets the form afterwards. An unkeyed
+// select went back to the rep the page opened with while ownerOriginal
+// moved on to the new one, so the next save quietly put the old rep back.
+// A new key mounts the box on the rep saved now.
 export function RepField({ ownerId, reps }: { ownerId: string | null; reps: RepOption[] }) {
   const current = ownerId ?? "";
   return (
@@ -73,7 +79,7 @@ export function RepField({ ownerId, reps }: { ownerId: string | null; reps: RepO
         Rep
       </label>
       <input type="hidden" name="ownerOriginal" value={current} />
-      <select id="ownerId" name="ownerId" defaultValue={current} className="select" data-testid="rep-field">
+      <select key={current} id="ownerId" name="ownerId" defaultValue={current} className="select" data-testid="rep-field">
         <RepOptions reps={reps} current={current} />
       </select>
     </div>

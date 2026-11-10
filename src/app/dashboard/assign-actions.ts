@@ -27,7 +27,9 @@ const schema = z.object({
   interested: z.boolean().optional(),
 });
 
-export type AssignResult = { error: string } | { assigned: number; matching: number; repName: string | null };
+// `left`: records matching the filter that still don't have this rep after
+// this run, which the next run picks up.
+export type AssignResult = { error: string } | { assigned: number; matching: number; left: number; repName: string | null };
 
 export async function assignRecords(input: z.input<typeof schema>): Promise<AssignResult> {
   const { organizationId, userId } = await requireSession();
@@ -40,6 +42,7 @@ export async function assignRecords(input: z.input<typeof schema>): Promise<Assi
 
   let targets: string[];
   let matching: number;
+  let pending = 0;
   if (ids && ids.length > 0) {
     targets = ids;
     matching = ids.length;
@@ -48,32 +51,43 @@ export async function assignRecords(input: z.input<typeof schema>): Promise<Assi
     for (const [key, value] of new URLSearchParams(query)) (raw[key] ??= []).push(value);
     const params = { ...parseListParams(raw, { interested: Boolean(interested) }), page: 1 };
     const order = [{ updatedAt: "desc" as const }, { id: "asc" as const }];
+    // Only records that don't have this rep yet (audit fix, Nov 10, 2026):
+    // the write leaves updatedAt alone and a filter with no Rep in it
+    // still matches an assigned record, so "run it again for the next
+    // 1,000" kept picking the same 1,000.
+    const notYet = ownerId === null ? { ownerId: { not: null } } : { OR: [{ ownerId: null }, { ownerId: { not: ownerId } }] };
     if (kind === "contacts") {
       const where = await contactWhere(organizationId, { ...params, auto: false }, await companyIdsMatching(organizationId, params.q));
-      [matching, targets] = await Promise.all([
+      const todo = { AND: [where, notYet] };
+      [matching, pending, targets] = await Promise.all([
         prisma.contact.count({ where }),
-        prisma.contact.findMany({ where, orderBy: order, take: MAX_ASSIGN, select: { id: true } }).then((rows) => rows.map((row) => row.id)),
+        prisma.contact.count({ where: todo }),
+        prisma.contact.findMany({ where: todo, orderBy: order, take: MAX_ASSIGN, select: { id: true } }).then((rows) => rows.map((row) => row.id)),
       ]);
     } else {
       const where = await companyWhere(organizationId, params);
-      [matching, targets] = await Promise.all([
+      const todo = { AND: [where, notYet] };
+      [matching, pending, targets] = await Promise.all([
         prisma.company.count({ where }),
-        prisma.company.findMany({ where, orderBy: order, take: MAX_ASSIGN, select: { id: true } }).then((rows) => rows.map((row) => row.id)),
+        prisma.company.count({ where: todo }),
+        prisma.company.findMany({ where: todo, orderBy: order, take: MAX_ASSIGN, select: { id: true } }).then((rows) => rows.map((row) => row.id)),
       ]);
     }
   } else {
     return { error: "Tick some rows first." };
   }
-  if (targets.length === 0) return { assigned: 0, matching, repName: null };
+  const left = Math.max(0, pending - targets.length);
 
   const assigned =
-    kind === "contacts"
+    targets.length === 0
+      ? 0
+      : kind === "contacts"
       ? await prisma.$executeRaw`UPDATE "Contact" SET "ownerId" = ${ownerId} WHERE "organizationId" = ${organizationId} AND id = ANY(${targets})`
       : await prisma.$executeRaw`UPDATE "Company" SET "ownerId" = ${ownerId} WHERE "organizationId" = ${organizationId} AND id = ANY(${targets})`;
   const rep = ownerId ? await prisma.user.findUnique({ where: { id: ownerId }, select: { name: true } }) : null;
 
   revalidatePath(`/dashboard/${kind}`, "layout");
-  return { assigned, matching, repName: rep?.name ?? null };
+  return { assigned, matching, left, repName: rep?.name ?? null };
 }
 
 // The Rep picker on a contact's or company's page: saves as it is changed.

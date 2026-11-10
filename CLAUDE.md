@@ -1269,16 +1269,17 @@ are all blocking before the first paying customer.
   teammate picked, a person already owned by someone else is handed over;
   a company already owned keeps its rep. Unassigned leaves every existing
   rep alone.
-- **Bulk "all matching" takes the first 1,000 in list order.** Past that
-  the bar says how many still match; adding Rep: Unassigned to the
-  filters and running it again works through the rest.
+- **Bulk "all matching" takes 1,000 at a go, in list order, of the ones
+  that don't already have that rep.** Past that the bar says how many are
+  left; running it again does the next 1,000 (before the Nov 10 audit it
+  picked the same 1,000 every time).
 - **The Job title filter matches ignoring case, not spaces.** A title
-  saved with stray spaces (only SQL or very old data can) is its own
-  choice in the filter; the Labels screen groups it with the rest, and a
-  rename or merge there tidies it.
-- **The Overview page's recent-activity list shows marketing sends without
-  the badge.** The Reports track is rebuilding that page; the contact and
-  company feeds carry it.
+  saved with stray spaces ("Sales  Manager", which the form and import
+  allow) is its own choice in the filter; the Labels screen groups it
+  with the rest (outer spaces and inner runs ignored), and a rename or
+  merge there tidies it.
+- **The Overview page's recent-activity list leaves marketing sends out**
+  (Nov 10, 2026); the contact and company feeds show them with the badge.
 - **The Pipeline's Lead Label filter and the opportunity panel no longer
   offer a retired label** (an opportunity carrying one still shows it,
   and the CRM lists can still filter on it).
@@ -1558,6 +1559,31 @@ every controlled `<select>` back on the option the page loaded with —
 tag, unit and distributor showed old values after a save and the next
 Save wrote them back. A form full of controlled selects should do the
 same.
+
+The Nov 10, 2026 audit of the combined CRM release found 22 confirmed
+defects (28 flagged, 23 distinct, 1 refuted); each has an "audit fixes:"
+step in its module's suite. Five lessons worth keeping:
+- **An edit form that stays open after a save needs its uncontrolled
+  selects keyed by the saved value** (`RepField` keys on the rep): React
+  resets the form after the action, and a select goes back to the option
+  it was mounted with while hidden "original" inputs move on.
+- **Prisma's `mode: "insensitive"` applies to `not` as well.**
+  `{ equals: "VIP", mode: "insensitive", not: "vip" }` excludes "VIP" too;
+  compare "everything but this exact spelling" in SQL.
+- **`history.replaceState` must be passed `null`, not
+  `window.history.state`** (Next's own state makes its router skip the
+  sync, and the next server action puts the old address back).
+- **A portal still bubbles React events to the component that rendered
+  it**, so a dialog opened from a clickable tile must stop clicks, and an
+  Escape listener on a dialog above a panel must listen in the capture
+  phase and stop there.
+- **"6am" is a wall-clock time, not midnight plus six hours** — on the
+  spring-forward day that's 7am. Use `zonedHour` in
+  `src/lib/reports/period.ts`.
+Also: a "last touch" stored on the row leaves out activities dated ahead
+(`crm_touch_due` puts them on once their time comes), "gone quiet" never
+includes an opportunity with a meeting still to come, and "all matching"
+bulk Assign only picks records that don't already have that rep.
 
 **Anything that floats over other content must be opaque.** The app's
 look is glass — `.card` is about 4% white with a blur behind it — which

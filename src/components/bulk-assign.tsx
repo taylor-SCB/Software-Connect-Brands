@@ -88,7 +88,7 @@ export function BulkAssign({
         return;
       }
       const who = result.repName ?? "Unassigned";
-      const left = result.matching - result.assigned;
+      const left = result.left;
       setMessage({
         text:
           `${result.assigned.toLocaleString()} ${result.assigned === 1 ? "record" : "records"} → ${who}.` +
