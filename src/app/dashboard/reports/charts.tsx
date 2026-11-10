@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { SERIES_COLORS } from "@/app/dashboard/stats/charts";
+import { useRef, useState } from "react";
+import { SERIES_COLORS, useBoxWidth } from "@/app/dashboard/stats/charts";
 
 // The report charts (Nov 10, 2026), in the Stats charts' system: plain SVG
 // and HTML, thin marks with 2px gaps between segments, one axis, the four
@@ -150,31 +150,14 @@ export function niceTicks(max: number, format: Format, intervals = 4): number[] 
   return Array.from({ length: count + 1 }, (_, i) => i * step * unit);
 }
 
-// The chart box's width in CSS pixels, once the browser has laid it out.
-function useBoxWidth(fallback: number) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(fallback);
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const watcher = new ResizeObserver((entries) => {
-      const next = Math.round(entries[0]?.contentRect.width ?? 0);
-      if (next > 0) setWidth(next);
-    });
-    watcher.observe(element);
-    return () => watcher.disconnect();
-  }, []);
-  return [ref, width] as const;
-}
-
 // Columns over time (days or weeks), stacked by series, with a crosshair
 // that lists every series for the column under the pointer.
 //
-// Drawn at the box's own width, one unit to one screen pixel (UX review,
-// Nov 10, 2026): a fixed 640-wide drawing shrank its labels to about 5px
-// on a phone and blew them and the bars up on a wide screen. Labels are
-// 11px everywhere, bars at most 28px, the axis on round numbers, and the
-// day labels thin out to fit.
+// Drawn at the box's own width (useBoxWidth, in the Stats charts), one
+// unit to one screen pixel (UX review, Nov 10, 2026): a fixed 640-wide
+// drawing shrank its labels to about 5px on a phone and blew them and the
+// bars up on a wide screen. Labels are 11px everywhere, bars at most 28px,
+// the axis on round numbers, and the day labels thin out to fit.
 export function Columns({
   buckets,
   series,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pct } from "@/lib/format";
 
 // The Stats charts: plain SVG, one axis each, thin marks, a hover layer on
@@ -14,6 +14,27 @@ export const SERIES_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500"] as con
 // faint ink on Light. The series colours above are mid-tones
 // that read on both the dark surface and white.
 const GRID = "var(--chart-grid)";
+
+// The chart box's width in CSS pixels, once the browser has laid it out.
+// An SVG drawn at this width is one unit to one screen pixel, so its 11px
+// labels are 11px on a phone and on a wide screen alike; a fixed 640-wide
+// drawing scaled to the box shrank them to about 5px on a phone (UX review,
+// Nov 10, 2026). The report charts use it too.
+export function useBoxWidth(fallback: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(fallback);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const watcher = new ResizeObserver((entries) => {
+      const next = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (next > 0) setWidth(next);
+    });
+    watcher.observe(element);
+    return () => watcher.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
 
 type Tip = { x: number | string; y: number | string; title: string; rows: { label: string; value: string; color?: string }[] } | null;
 
@@ -48,18 +69,19 @@ export function RepActivityBars({
   reps: { name: string; values: number[] }[];
   series: string[];
 }) {
-  const box = useRef<HTMLDivElement>(null);
+  // Drawn at the box's own width (useBoxWidth), so names and totals are
+  // 11px on a phone too.
+  const [box, width] = useBoxWidth(640);
   const [tip, setTip] = useState<Tip>(null);
   const max = Math.max(1, ...reps.map((rep) => rep.values.reduce((a, b) => a + b, 0)));
   const rowH = 30;
   const labelW = 132;
-  const width = 640;
-  const barW = width - labelW - 56;
+  const barW = Math.max(40, width - labelW - 56);
 
   return (
     <div ref={box} className="relative" onPointerLeave={() => setTip(null)}>
       <Legend series={series} />
-      <svg viewBox={`0 0 ${width} ${Math.max(1, reps.length) * rowH + 4}`} className="w-full" role="img" aria-label="Activity by rep">
+      <svg viewBox={`0 0 ${width} ${Math.max(1, reps.length) * rowH + 4}`} className="block w-full" role="img" aria-label="Activity by rep">
         {reps.map((rep, index) => {
           const y = index * rowH + 6;
           const total = rep.values.reduce((a, b) => a + b, 0);
@@ -135,17 +157,22 @@ export function DailyTrend({
   series: string[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const width = 640;
-  const height = 180;
-  const pad = { l: 34, r: 10, t: 10, b: 22 };
+  // Drawn at the box's own width, one unit to one screen pixel (UX review,
+  // Nov 10, 2026): the fixed 640-wide drawing put its labels at about 5px
+  // on a phone. Labels are 11px everywhere and the day labels thin out to
+  // about one per 60px.
+  const [box, width] = useBoxWidth(640);
+  const height = Math.round(Math.min(220, Math.max(160, width * 0.28)));
   const max = Math.max(4, ...days.map((d) => d.total));
-  const step = days.length > 1 ? (width - pad.l - pad.r) / (days.length - 1) : 0;
+  const ticks = [0, Math.round(max / 2), max];
+  const pad = { l: 10 + Math.max(...ticks.map((tick) => String(tick).length)) * 6.5, r: 10, t: 10, b: 24 };
+  const plotW = width - pad.l - pad.r;
+  const step = days.length > 1 ? plotW / (days.length - 1) : 0;
   const xAt = (i: number) => pad.l + i * step;
   const yAt = (v: number) => pad.t + (1 - v / max) * (height - pad.t - pad.b);
   const line = days.map((d, i) => `${i ? "L" : "M"}${xAt(i).toFixed(1)},${yAt(d.total).toFixed(1)}`).join(" ");
   const area = `${line} L${xAt(days.length - 1).toFixed(1)},${yAt(0)} L${xAt(0).toFixed(1)},${yAt(0)} Z`;
-  const ticks = [0, Math.round(max / 2), max];
-  const labelEvery = Math.max(1, Math.ceil(days.length / 6));
+  const labelEvery = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor(plotW / 60))));
   const short = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
   function onMove(event: React.PointerEvent<SVGSVGElement>) {
@@ -161,10 +188,10 @@ export function DailyTrend({
   const tipY = h ? `${(yAt(h.total) / height) * 100}%` : "0%";
 
   return (
-    <div className="relative">
+    <div ref={box} className="relative">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full touch-none"
+        className="block w-full touch-none"
         role="img"
         aria-label="Team activity per day"
         onPointerMove={onMove}
@@ -179,7 +206,7 @@ export function DailyTrend({
         {ticks.map((tick) => (
           <g key={tick}>
             <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} style={{ stroke: GRID }} />
-            <text x={pad.l - 6} y={yAt(tick) + 3} textAnchor="end" className="num fill-[var(--text-faint)] text-[10px]">
+            <text x={pad.l - 6} y={yAt(tick) + 4} textAnchor="end" className="num fill-[var(--text-faint)] text-[11px]">
               {tick}
             </text>
           </g>
@@ -189,14 +216,17 @@ export function DailyTrend({
             others are counted back from it so none crowds it (UX review,
             Nov 10, 2026). */}
         {days.map((d, i) => {
-          const last = i === days.length - 1;
+          const last = i === days.length - 1 && days.length > 1;
+          // The first label starts at the left edge when centring it on
+          // its day would push it out of the chart.
+          const first = !last && xAt(i) - 20 < 0;
           return (days.length - 1 - i) % labelEvery === 0 ? (
             <text
               key={d.day}
-              x={xAt(i)}
-              y={height - 6}
-              textAnchor={last && days.length > 1 ? "end" : "middle"}
-              className="fill-[var(--text-faint)] text-[10px]"
+              x={first ? 1 : xAt(i)}
+              y={height - 7}
+              textAnchor={last ? "end" : first ? "start" : "middle"}
+              className="fill-[var(--text-faint)] text-[11px]"
               data-testid="trend-x-label"
             >
               {short(d.day)}
