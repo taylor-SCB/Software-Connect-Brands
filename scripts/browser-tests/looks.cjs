@@ -25,6 +25,21 @@
  * Nov 10 audit fixes (Log out reachable on a 1440x790 laptop, the switch
  * working for a browser whose person was deleted).
  *
+ * UX review fixes (Nov 10, 2026, "audit fixes (UX review): ..." steps):
+ * Light's outlines on ghost buttons, fields, filter chips and cards clear
+ * 3:1 against themselves and what is around them, and Dark's tokens are
+ * unchanged; a field clicked into (search box, note box, Rep picker) is
+ * outlined at least as strongly as at rest in Light, where the old
+ * see-through brand edge faded it, and Dark's focus edge is as it was;
+ * lines that only separate (a card's divider, a table's header line, the
+ * sidebar's edge and its divider, the phone bar's line) stay the soft
+ * --hairline-3 in Light and as they were in Dark; the Contract Coordinator's disabled "Tick rows to create
+ * contracts" reads at 4.5:1 in Light, not faded as a whole; table footers
+ * carry their rows' padding and a seeded contract's $6,754.00 grand total
+ * ends inside its card at 1440 in both looks; the phone's strip of links
+ * (and the Products tabs) draws no stray bar beside the page you are on,
+ * while the sidebar keeps it.
+ *
  * Contrast rule: every sampled piece of text must clear 4.5:1 in Light.
  * Dark is the look as it was before this work and is held to 3:1 so the
  * suite reports it without failing on the slate "Archived"-style chips
@@ -192,6 +207,78 @@ async function contrastReport(page, scope) {
     }
     return results;
   }, scope);
+}
+
+/* UX review (Nov 10, 2026). The colour maths of contrastReport, for one
+ * element: what is really behind it (its own fill and every see-through
+ * layer under it, down to the page) and the effective opacity it is drawn
+ * at (every ancestor's opacity multiplied). */
+const COLOUR_MATHS = `{
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const rgba = (css) => {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = "rgba(0,0,0,0)";
+    ctx.fillStyle = css;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return [r, g, b, a / 255];
+  };
+  const over = (top, under) => {
+    const a = top[3];
+    return [top[0] * a + under[0] * (1 - a), top[1] * a + under[1] * (1 - a), top[2] * a + under[2] * (1 - a), 1];
+  };
+  const lum = ([r, g, b]) => {
+    const ch = (v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+  };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return +((x + 0.05) / (y + 0.05)).toFixed(2); };
+  const pageBg = rgba(getComputedStyle(document.documentElement).backgroundColor);
+  const behind = (el) => {
+    const out = [];
+    for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+      const s = getComputedStyle(node);
+      let c = rgba(s.backgroundColor);
+      if (c[3] === 0 && s.backgroundImage.startsWith("linear-gradient")) {
+        const first = s.backgroundImage.match(/(rgba?\\([^)]*\\)|color\\([^)]*\\)|#[0-9a-f]{3,8})/i);
+        if (first) c = rgba(first[1]);
+      }
+      if (c[3] > 0) out.push(c);
+      if (c[3] >= 0.999) break;
+    }
+    return out.reverse().reduce((acc, layer) => over(layer, acc), pageBg);
+  };
+  const opacityOf = (el) => { let o = 1; for (let n = el; n; n = n.parentElement) o *= parseFloat(getComputedStyle(n).opacity); return +o.toFixed(2); };
+  window.__uxColour = { rgba, over, ratio, behind, opacityOf };
+}`;
+// An outline against the element's own fill and against what is around it.
+async function outlineContrast(locator) {
+  await locator.page().evaluate(COLOUR_MATHS);
+  return locator.evaluate((el) => {
+    const { rgba, over, ratio, behind } = window.__uxColour;
+    const inside = behind(el);
+    const outside = el.parentElement ? behind(el.parentElement) : inside;
+    const border = getComputedStyle(el).borderTopColor;
+    const line = over(rgba(border), inside);
+    return { inside: ratio(line, inside), outside: ratio(line, outside), border };
+  });
+}
+// An element's words against what is behind them, and its opacity.
+async function textContrast(locator) {
+  await locator.page().evaluate(COLOUR_MATHS);
+  return locator.evaluate((el) => {
+    const { rgba, over, ratio, behind, opacityOf } = window.__uxColour;
+    const bg = behind(el);
+    const opacity = opacityOf(el);
+    // A faded element is drawn over the page at that opacity: blend both
+    // its fill and its words into what is under it.
+    const under = el.parentElement ? behind(el.parentElement) : bg;
+    const shownBg = over([...bg.slice(0, 3), opacity], under);
+    const fg = over(rgba(getComputedStyle(el).color), bg);
+    const shownFg = over([...fg.slice(0, 3), opacity], under);
+    return { ratio: ratio(shownFg, shownBg), opacity };
+  });
 }
 
 (async () => {
@@ -579,6 +666,264 @@ async function contrastReport(page, scope) {
   await fp.goto(`${BASE}/login`);
   assert.equal(await fp.locator("[data-theme]").first().getAttribute("data-theme"), "dark", "a forged cookie reads Dark");
   await forged.close();
+  await sql(`UPDATE "User" SET theme = NULL WHERE email = $1`, [EMAIL]);
+
+  // ---- UX review fixes (Nov 10, 2026) ---------------------------------
+
+  log("audit fixes (UX review): Light outlines on buttons, fields, filter chips and cards clear 3:1; Dark's are unchanged");
+  await sql(`UPDATE "User" SET theme = 'light' WHERE email = $1`, [EMAIL]);
+  const OUTLINED = [
+    ["/dashboard/contacts", "Import CSV button", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
+    ["/dashboard/contacts", "State filter chip", (p) => p.locator("[data-testid=filter-state]")],
+    ["/dashboard/contacts", "search box", (p) => p.getByPlaceholder(/Search contacts/)],
+    ["/dashboard/contacts", "the list's card", (p) => p.locator("main .card").first()],
+    [`/dashboard/contacts/${contactId}`, "Log phone call", (p) => p.getByRole("button", { name: /Log phone call/ })],
+    [`/dashboard/contacts/${contactId}`, "+ Include multiple contacts", (p) => p.getByRole("button", { name: /Include multiple contacts/ }).first()],
+    [`/dashboard/contacts/${contactId}`, "note box", (p) => p.locator("main textarea").first()],
+  ];
+  for (const [url, what, find] of OUTLINED) {
+    if (page.url() !== `${BASE}${url}`) {
+      await page.goto(`${BASE}${url}`);
+      await settle(page);
+    }
+    const c = await outlineContrast(find(page));
+    // The reviewer measured 1.3:1 (--border) and 1.6:1 (--border-strong).
+    assert.ok(c.inside >= 3 && c.outside >= 3, `light ${what}: its outline is ${c.inside}:1 against itself and ${c.outside}:1 against what is around it (${c.border}); needs 3:1`);
+    console.log(`     ${what}: ${c.inside}:1 inside, ${c.outside}:1 outside`);
+  }
+  await page.screenshot({ path: path.join(OUT, "ux-light-outlines-contact.png"), fullPage: true });
+  await sql(`UPDATE "User" SET theme = 'dark' WHERE email = $1`, [EMAIL]);
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await page.evaluate(COLOUR_MATHS);
+  const darkTokens = await page.evaluate(() => {
+    const s = getComputedStyle(document.documentElement);
+    // The build writes these as hex (#ffffff13), so read them as colours.
+    return ["--border", "--border-strong"].map((name) => window.__uxColour.rgba(s.getPropertyValue(name).trim()).map((v) => +v.toFixed(3)));
+  });
+  // rgb(255 255 255 / 0.075) and / 0.15, as before the review.
+  assert.deepEqual(darkTokens.map((c) => c.slice(0, 3)), [[255, 255, 255], [255, 255, 255]], `Dark's outlines are still white (${JSON.stringify(darkTokens)})`);
+  assert.ok(Math.abs(darkTokens[0][3] - 0.075) < 0.006 && Math.abs(darkTokens[1][3] - 0.15) < 0.006, `Dark's outlines are as they were (${JSON.stringify(darkTokens)})`);
+
+  log("audit fixes (UX review): in Light a field you click into is outlined at least as strongly as at rest (it used to fade); Dark's focus is as it was");
+  {
+    const FIELDS = [
+      ["/dashboard/contacts", "search box", (p) => p.getByPlaceholder(/Search contacts/)],
+      [`/dashboard/contacts/${contactId}`, "note box", (p) => p.locator("main textarea").first()],
+      [`/dashboard/contacts/${contactId}`, "Rep picker", (p) => p.locator("main select.select").first()],
+    ];
+    const settleField = async (field) => {
+      await page.waitForTimeout(60);
+      await field.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+    };
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      for (const [url, what, find] of FIELDS) {
+        await page.goto(`${BASE}${url}`);
+        await settle(page);
+        const field = find(page);
+        const rest = await outlineContrast(field);
+        await field.focus();
+        await settleField(field);
+        const focused = await outlineContrast(field);
+        if (look === "dark") {
+          // Dark keeps the see-through brand edge (55%).
+          assert.match(focused.border, /\/ 0\.55\)$|, 0\.55\)$/, `dark ${what}: the focused edge changed (${focused.border})`);
+          console.log(`     dark ${what}: ${rest.inside}:1 at rest, ${focused.inside}:1 focused (unchanged rule)`);
+          continue;
+        }
+        // The old Light focus edge, painted on the same field, reads under
+        // its resting outline: the check below would have caught it.
+        const old = await field.evaluate((el) => {
+          el.style.transition = "none";
+          el.style.borderColor = "color-mix(in srgb, var(--brand) 55%, transparent)";
+          const { rgba, over, ratio, behind } = window.__uxColour;
+          const inside = behind(el);
+          const out = ratio(over(rgba(getComputedStyle(el).borderTopColor), inside), inside);
+          el.style.borderColor = "";
+          el.style.transition = "";
+          return out;
+        });
+        assert.ok(old < rest.inside, `light ${what}: the old focus edge (${old}:1) should read under the resting one (${rest.inside}:1)`);
+        assert.ok(focused.inside >= 3, `light ${what}: the focused outline is ${focused.inside}:1 (${focused.border}); needs 3:1`);
+        assert.ok(focused.inside >= rest.inside, `light ${what}: clicking in fades the outline from ${rest.inside}:1 to ${focused.inside}:1`);
+        console.log(`     light ${what}: ${rest.inside}:1 at rest, ${focused.inside}:1 focused (was ${old}:1)`);
+        if (what === "search box") await field.screenshot({ path: path.join(OUT, "ux-light-focused-search.png") });
+      }
+    }
+  }
+
+  log("audit fixes (UX review): Light lines that only separate (a divider, a table's header line, the sidebar's edge, the phone bar's line) stay soft; Dark's are as they were");
+  {
+    // Each line's colour and its contrast against what is behind it.
+    const lineOf = async (p, js) => {
+      await p.evaluate(COLOUR_MATHS);
+      return p.evaluate(`(() => {
+        const { rgba, over, ratio, behind } = window.__uxColour;
+        const [el, colour] = (${js})();
+        const c = rgba(colour);
+        const bg = behind(el.parentElement || el);
+        return { alpha: +c[3].toFixed(3), rgb: c.slice(0, 3), ratio: ratio(over(c, bg), bg) };
+      })()`);
+    };
+    const DESKTOP = [
+      ["/dashboard/contacts", "the list's header line", `() => { const th = document.querySelector("main .table thead th"); return [th, getComputedStyle(th).borderBottomColor]; }`],
+      ["/dashboard/contacts", "the sidebar's edge", `() => { const a = document.querySelector("aside"); return [a, getComputedStyle(a).borderRightColor]; }`],
+      ["/dashboard/contacts", "the sidebar's divider", `() => { const d = document.querySelector("aside .divider"); return [d, getComputedStyle(d).backgroundColor]; }`],
+      [`/dashboard/contacts/${contactId}`, "a divider in a card", `() => { const d = document.querySelector("main .divider"); return [d, getComputedStyle(d).backgroundColor]; }`],
+    ];
+    // The bar holding the phone's look switch: its first ancestor with a
+    // line along the bottom only (the switch has an outline all round).
+    const PHONE_BAR = `() => { let n = [...document.querySelectorAll("[data-testid=look-switch]")].find((e) => e.offsetParent); n = n.parentElement; while (n && !(getComputedStyle(n).borderBottomWidth === "1px" && getComputedStyle(n).borderTopWidth === "0px")) n = n.parentElement; return [n, getComputedStyle(n).borderBottomColor]; }`;
+    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const phone = await mobile.newPage();
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      const lines = [];
+      for (const [url, what, js] of DESKTOP) {
+        if (page.url() !== `${BASE}${url}`) {
+          await page.goto(`${BASE}${url}`);
+          await settle(page);
+        }
+        lines.push([what, await lineOf(page, js)]);
+      }
+      await phone.goto(`${BASE}/dashboard/contacts`);
+      await settle(phone);
+      lines.push(["the phone bar's line", await lineOf(phone, PHONE_BAR)]);
+      for (const [what, line] of lines) {
+        if (look === "light") {
+          // --hairline-3 (slate at 0.12), about the 0.11 these were before
+          // the review; with --border (0.5) they read 3.1:1, as heavy as a
+          // button's outline.
+          // (A faint colour read back from a canvas can be a shade off in rgb.)
+          const slate = [15, 23, 42].every((v, i) => Math.abs(line.rgb[i] - v) <= 3);
+          assert.ok(Math.abs(line.alpha - 0.12) <= 0.01 && slate, `light ${what}: ${JSON.stringify(line)} is not the soft --hairline-3`);
+          assert.ok(line.ratio < 1.6, `light ${what}: reads ${line.ratio}:1, as heavy as an outline`);
+        } else {
+          // Dark: white at 0.075 (--border) as before, or 0.08 (--hairline-3).
+          assert.ok(line.rgb.join() === "255,255,255" && Math.abs(line.alpha - 0.0775) <= 0.006, `dark ${what}: ${JSON.stringify(line)} changed`);
+        }
+        console.log(`     ${look} ${what}: alpha ${line.alpha}, ${line.ratio}:1`);
+      }
+    }
+    await mobile.close();
+    // The outlines beside them keep their 3:1 (light, checked again here
+    // on the same page as the lines).
+    await sql(`UPDATE "User" SET theme = 'light' WHERE email = $1`, [EMAIL]);
+    await page.goto(`${BASE}/dashboard/contacts`);
+    await settle(page);
+    const card = await outlineContrast(page.locator("main .card").first());
+    assert.ok(card.inside >= 3, `light: the list's card outline fell to ${card.inside}:1`);
+    await page.screenshot({ path: path.join(OUT, "ux-light-soft-lines-contacts.png") });
+  }
+
+  log("audit fixes (UX review): a disabled primary button keeps readable words in Light (Contract Coordinator's \"Tick rows to create contracts\")");
+  const dealId = (await sql(`SELECT "dealId" FROM "Quote" WHERE id = $1 AND "organizationId" = $2`, [quoteId, org])).rows[0].dealId;
+  for (const look of LOOKS) {
+    await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+    await page.goto(`${BASE}/dashboard/deals/tracker?dealId=${dealId}`);
+    await settle(page);
+    const create = page.getByTestId("create-contracts");
+    assert.equal(await create.isDisabled(), true, "nothing is ticked, so Create is disabled");
+    assert.equal((await create.textContent()).trim(), "Tick rows to create contracts");
+    const words = await textContrast(create);
+    if (look === "light") {
+      // Was white at half opacity on a pale brand colour, about 1.9:1.
+      assert.ok(words.opacity >= 0.95, `light: the disabled button is still faded as a whole (opacity ${words.opacity})`);
+      assert.ok(words.ratio >= 4.5, `light: "Tick rows to create contracts" reads at ${words.ratio}:1`);
+      await create.screenshot({ path: path.join(OUT, "ux-light-disabled-create.png") });
+    }
+    console.log(`     ${look}: ${words.ratio}:1 at opacity ${words.opacity}`);
+  }
+
+  log("audit fixes (UX review): table footers are padded like their rows; the contract's grand total sits inside its card");
+  // A contract with two rows ($5,124 + $1,630 = $6,754, the reviewer's
+  // total) and a two-row payment table, seeded in SQL.
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId",number,title,type,body,status,payable,"publicToken","updatedAt")
+     VALUES ('ctr_looks_ux',$1,$2,990101,'Kitchen remodel','Sales Order','Body','DRAFT',false,'tok_ctr_looks_ux_0123456',now())`,
+    [org, contactId],
+  );
+  await sql(
+    `INSERT INTO "ContractLineItem" (id,"contractId",name,quantity,"unitPriceCents",tag,position) VALUES
+       ('cli_looks_ux_1','ctr_looks_ux','Cabinets',1,512400,'MATERIALS',0),
+       ('cli_looks_ux_2','ctr_looks_ux','Install',1,163000,'LABOR',1)`,
+  );
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"contractId","organizationId",label,kind,"amountCents",position) VALUES
+       ('cp_looks_ux_1','ctr_looks_ux',$1,'Deposit — at signature','FIXED',337700,0),
+       ('cp_looks_ux_2','ctr_looks_ux',$1,'Final Pay — at project completion','FIXED',337700,1)`,
+    [org],
+  );
+  await sql(`UPDATE "Organization" SET "nextContractNumber" = GREATEST("nextContractNumber", 990102) WHERE id = $1`, [org]);
+  {
+    const wide = await browser.newContext({ viewport: { width: 1440, height: 900 }, storageState: await context.storageState() });
+    const wp = await wide.newPage();
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      await wp.goto(`${BASE}/dashboard/contracts/ctr_looks_ux`);
+      await settle(wp);
+      const foot = await wp.evaluate(() => {
+        const total = document.querySelector("[data-testid=contract-total]");
+        const row = document.querySelector("[data-testid=contract-line-items] tbody td");
+        const range = document.createRange();
+        range.selectNodeContents(total);
+        const card = total.closest(".card").getBoundingClientRect();
+        const cells = [...document.querySelectorAll(".table:not(.table-tight) tfoot td")].map((td) => {
+          const s = getComputedStyle(td);
+          return { left: s.paddingLeft, right: s.paddingRight, text: td.textContent.trim().slice(0, 30) };
+        });
+        return {
+          text: total.textContent.trim(),
+          right: getComputedStyle(total).paddingRight,
+          rowPad: getComputedStyle(row).paddingRight,
+          inset: Math.round(card.right - range.getBoundingClientRect().right),
+          cells,
+          tables: document.querySelectorAll(".table:not(.table-tight) tfoot").length,
+        };
+      });
+      assert.equal(foot.text, "$6,754.00");
+      assert.equal(foot.right, foot.rowPad, `${look}: the grand total's cell is padded ${foot.right}, its rows ${foot.rowPad}`);
+      // Flush to the card's edge was 0px (and under its rounded corner).
+      assert.ok(foot.inset >= 12, `${look}: the grand total ends ${foot.inset}px from the card's right edge`);
+      assert.ok(foot.tables >= 2, `${look}: the line items and the payment table both have a footer (${foot.tables})`);
+      for (const cell of foot.cells) {
+        assert.equal(cell.left, foot.rowPad, `${look}: footer cell "${cell.text}" has no left padding (${cell.left})`);
+        assert.equal(cell.right, foot.rowPad, `${look}: footer cell "${cell.text}" has no right padding (${cell.right})`);
+      }
+      console.log(`     ${look}: $6,754.00 ends ${foot.inset}px inside its card; ${foot.cells.length} footer cells padded ${foot.rowPad}`);
+      await wp.screenshot({ path: path.join(OUT, `ux-${look}-contract-footers.png`), fullPage: true });
+    }
+    await wide.close();
+  }
+
+  log("audit fixes (UX review): the phone's strip of links has no stray bar beside the page you are on; the sidebar keeps its own");
+  {
+    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const phone = await mobile.newPage();
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      for (const url of ["/dashboard/contacts", "/dashboard/calendar", "/dashboard/deals"]) {
+        await phone.goto(`${BASE}${url}`);
+        await settle(phone);
+        const here = phone.locator("nav a[aria-current=page]:visible");
+        assert.equal(await here.count(), 1, `${look} ${url}: one link in the strip marks the page`);
+        // It was a 3px glowing bar 9px left of the pill, in the gap after
+        // the link before it ("Calendar | Contacts").
+        const bar = await here.evaluate((el) => getComputedStyle(el, "::before").content);
+        assert.equal(bar, "none", `${look} ${url}: the strip still draws the sidebar's bar (${bar})`);
+      }
+      await phone.goto(`${BASE}/dashboard/contacts`);
+      await settle(phone);
+      await phone.screenshot({ path: path.join(OUT, `ux-phone-${look}-nav-strip.png`) });
+    }
+    await mobile.close();
+    // The same rule on the desktop: the sidebar still has its bar, the
+    // Products tabs (another sideways strip) don't.
+    await page.goto(`${BASE}/dashboard/products`);
+    await settle(page);
+    assert.equal(await page.locator("aside a[aria-current=page]").first().evaluate((el) => getComputedStyle(el, "::before").content), '""', "the sidebar keeps its bar");
+    assert.equal(await page.locator("main a[aria-current=page]").first().evaluate((el) => getComputedStyle(el, "::before").content), "none", "the Products tabs draw no bar");
+  }
   await sql(`UPDATE "User" SET theme = NULL WHERE email = $1`, [EMAIL]);
 
   await browser.close();
