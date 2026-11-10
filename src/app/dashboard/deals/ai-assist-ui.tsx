@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { IconCopy, IconSparkles, IconX } from "@/components/icons";
-import { leadLabelStyle } from "@/lib/lead-labels";
+import { leadLabelInk, leadLabelStyle } from "@/lib/lead-labels";
 import { formatCents } from "@/lib/format";
 import { draftFollowUp, logFollowUpSent, suggestFromMeeting, suggestLeadLabel, type FollowUpDraft, type MeetingSuggestions } from "./ai-actions";
 
@@ -216,14 +216,16 @@ export function SuggestedLabel({
   if (dismissed) return null;
   if (shown) {
     const style = leadLabelStyle(shown.label);
+    // Faint by its dashed outline, never by fading the words (UX review:
+    // at 60% opacity "Residential?" was 1.9:1 on white).
     return (
       <span className="inline-flex items-center gap-0.5" data-testid="suggested-label" data-label={shown.label}>
         <button
           type="button"
           onClick={() => onAccept(shown.label)}
           title={`Suggested: ${shown.reason}. Click to use it.`}
-          className="inline-flex items-center gap-1 rounded-full border border-dashed px-1.5 py-px text-[0.62rem] font-semibold opacity-60 hover:opacity-100"
-          style={{ borderColor: style.borderColor, color: style.background === "transparent" ? style.color : style.background }}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed px-1.5 py-px text-[0.62rem] font-semibold hover:bg-[var(--hover)]"
+          style={{ borderColor: style.borderColor, color: leadLabelInk(shown.label) }}
           data-testid="suggested-label-accept"
         >
           {shown.label}?

@@ -118,7 +118,14 @@ export default async function DealsPage({
     opportunities.filter((row) => !row.leadLabel).map((row) => row.id),
   );
 
+  // A meeting booked ahead is the next one, never the "last" one (UX
+  // review, Nov 10, 2026): the tile names the newest meeting that has
+  // happened and the soonest one still to come, on the same clock as
+  // gone quiet (src/lib/gone-quiet.ts).
+  const now = new Date();
   const tiles: BoardTile[] = opportunities.map((row) => {
+    const held = row.meetings.filter((meeting) => meeting.on <= now);
+    const booked = row.meetings.filter((meeting) => meeting.on > now);
     const people = row.contacts
       .map((link) => ({ id: link.contact.id, name: link.contact.name, company: link.contact.company?.name ?? null, primary: link.role === "PRIMARY" }))
       .sort((a, b) => Number(b.primary) - Number(a.primary));
@@ -134,7 +141,10 @@ export default async function DealsPage({
       quietDays: quietById.get(row.id) ?? null,
       suggestedLabel: row.leadLabel ? null : (suggested.get(row.id) ?? null),
       meetingCount: row.meetings.length,
-      lastMeetingOn: row.meetings[0]?.on.toISOString() ?? null,
+      // Meetings come newest first: the first held one is the last that
+      // happened, the last booked one is the soonest still to come.
+      lastMeetingOn: held[0]?.on.toISOString() ?? null,
+      nextMeetingOn: booked.at(-1)?.on.toISOString() ?? null,
       deal: row.deal
         ? {
             id: row.deal.id,
