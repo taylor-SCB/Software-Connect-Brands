@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
 import { getIndustryPickList } from "@/lib/industries";
 import { owingIds } from "@/lib/money";
-import { UNASSIGNED, type ListParams, type Presence } from "@/lib/list-params";
+import { UNASSIGNED, phoneSearchDigits, searchTerms, type ListParams, type Presence } from "@/lib/list-params";
 import { getTimeZone } from "@/lib/organization";
 import { zonedMoment } from "@/lib/calendar-auto";
 import { NO_LEAD_LABEL } from "@/lib/lead-labels";
@@ -73,6 +73,95 @@ function opportunityLabel(labels: string[]): Prisma.OpportunityContactWhereInput
 
 const insensitive = "insensitive" as const;
 
+// ---- The search box (UX review, Nov 10, 2026) --------------------------
+// Every word of the search has to be found somewhere on the row (searchTerms
+// in list-params.ts): "alan delta" is Alan at Delta Door, "howard denise" is
+// Denise Howard, "property manager" finds the job title. On contacts each
+// word is an OR over columns that each have a trigram index (title's and
+// the phone digits' came with this), so Postgres answers it with a
+// BitmapOr per word and a BitmapAnd across them, never a scan of every
+// contact.
+
+// LIKE's own characters, matched as typed. Prisma's `contains` passes them
+// through, so "r%a" would be a wildcard and a trailing backslash an error.
+function likeText(term: string) {
+  return term.replace(/[\\%_]/g, "\\$&");
+}
+
+// A phone number is compared digits-only against every number on the row,
+// because phones are stored however they were typed or imported. Only a
+// search that is a phone number gets here (phoneSearchDigits: seven digits
+// or more, nothing but digits and phone marks). The expressions are the
+// ones the trigram indexes of migration 20261110231500_list_search_phone
+// are built on, character for character, so the match is an index scan
+// at any size. The ids are capped at 1,000 a word, like the company-name
+// matches below; seven digits or more is a number, not a crowd.
+async function contactIdsByPhone(organizationId: string, digits: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Contact"
+    WHERE "organizationId" = ${organizationId}
+      AND regexp_replace(coalesce("phone", '') || '|' || coalesce("phone2", '') || '|' || coalesce("mobile", ''), '[^0-9|]', '', 'g') LIKE ${`%${digits}%`}
+    LIMIT 1000`;
+  return rows.map((row) => row.id);
+}
+async function companyIdsByPhone(organizationId: string, digits: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Company"
+    WHERE "organizationId" = ${organizationId}
+      AND regexp_replace(coalesce("phone", ''), '[^0-9]', '', 'g') LIKE ${`%${digits}%`}
+    LIMIT 1000`;
+  return rows.map((row) => row.id);
+}
+
+async function contactSearch(organizationId: string, q: string, companyIds?: string[]): Promise<Prisma.ContactWhereInput[]> {
+  const terms = searchTerms(q);
+  return Promise.all(
+    terms.map(async (term): Promise<Prisma.ContactWhereInput> => {
+      const text = likeText(term);
+      const digits = phoneSearchDigits(term);
+      const [companies, phones] = await Promise.all([
+        companyIds && terms.length === 1 && term === q ? companyIds : companyIdsMatching(organizationId, term),
+        digits ? contactIdsByPhone(organizationId, digits) : [],
+      ]);
+      return {
+        OR: [
+          { name: { contains: text, mode: insensitive } },
+          { email: { contains: text, mode: insensitive } },
+          { phone: { contains: text } },
+          { email2: { contains: text, mode: insensitive } },
+          { phone2: { contains: text } },
+          { mobile: { contains: text } },
+          { city: { contains: text, mode: insensitive } },
+          { title: { contains: text, mode: insensitive } },
+          ...(companies.length ? [{ companyId: { in: companies } }] : []),
+          ...(phones.length ? [{ id: { in: phones } }] : []),
+        ],
+      };
+    }),
+  );
+}
+
+async function companySearch(organizationId: string, q: string): Promise<Prisma.CompanyWhereInput[]> {
+  const terms = searchTerms(q);
+  return Promise.all(
+    terms.map(async (term): Promise<Prisma.CompanyWhereInput> => {
+      const text = likeText(term);
+      const digits = phoneSearchDigits(term);
+      const phones = digits ? await companyIdsByPhone(organizationId, digits) : [];
+      return {
+        OR: [
+          { name: { contains: text, mode: insensitive } },
+          { city: { contains: text, mode: insensitive } },
+          { state: { contains: text, mode: insensitive } },
+          { email: { contains: text, mode: insensitive } },
+          { phone: { contains: text } },
+          ...(phones.length ? [{ id: { in: phones } }] : []),
+        ],
+      };
+    }),
+  );
+}
+
 // "Owes money" is the net of the rows less the payments against them, so
 // it cannot be a where-clause — see owingIds in src/lib/money.ts, which
 // is the same arithmetic the "Owes you" line prints. Both list builders
@@ -80,17 +169,7 @@ const insensitive = "insensitive" as const;
 
 export async function companyWhere(organizationId: string, p: ListParams): Promise<Prisma.CompanyWhereInput> {
   const and: Prisma.CompanyWhereInput[] = [{ organizationId }];
-  if (p.q) {
-    and.push({
-      OR: [
-        { name: { contains: p.q, mode: insensitive } },
-        { city: { contains: p.q, mode: insensitive } },
-        { state: { contains: p.q, mode: insensitive } },
-        { email: { contains: p.q, mode: insensitive } },
-        { phone: { contains: p.q } },
-      ],
-    });
-  }
+  if (p.q) and.push(...(await companySearch(organizationId, p.q)));
   if (p.states.length) and.push({ state: { in: p.states, mode: insensitive } });
   if (p.industries.length) and.push({ industries: { hasSome: p.industries } });
   if (p.types.length) and.push({ companyTypes: { hasSome: p.types.filter((t) => t !== INDIVIDUAL_COMPANY_TYPE) } });
@@ -131,33 +210,23 @@ const COMPANY_MATCH_CAP = 500;
 export async function companyIdsMatching(organizationId: string, q: string): Promise<string[]> {
   if (!q) return [];
   const rows = await prisma.company.findMany({
-    where: { organizationId, name: { contains: q, mode: insensitive } },
+    where: { organizationId, name: { contains: likeText(q), mode: insensitive } },
     select: { id: true },
     take: COMPANY_MATCH_CAP,
   });
   return rows.map((row) => row.id);
 }
 
+// companyIds: the company-name matches for the whole search, when the
+// caller has already looked them up; a search of several words looks
+// them up word by word.
 export async function contactWhere(
   organizationId: string,
   p: ListParams,
-  companyIds: string[] = [],
+  companyIds?: string[],
 ): Promise<Prisma.ContactWhereInput> {
   const and: Prisma.ContactWhereInput[] = [{ organizationId }];
-  if (p.q) {
-    and.push({
-      OR: [
-        { name: { contains: p.q, mode: insensitive } },
-        { email: { contains: p.q, mode: insensitive } },
-        { phone: { contains: p.q } },
-        { email2: { contains: p.q, mode: insensitive } },
-        { phone2: { contains: p.q } },
-        { mobile: { contains: p.q } },
-        { city: { contains: p.q, mode: insensitive } },
-        ...(companyIds.length ? [{ companyId: { in: companyIds } }] : []),
-      ],
-    });
-  }
+  if (p.q) and.push(...(await contactSearch(organizationId, p.q, companyIds)));
   // A contact's own state, or their company's when theirs is blank.
   if (p.states.length) {
     and.push({

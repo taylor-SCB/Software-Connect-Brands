@@ -17,6 +17,15 @@
  * label renames onto another's capitals, a stray "distributor", job titles
  * with doubled spaces, and a touch dated ahead).
  *
+ * And the UX review fixes (Nov 10, 2026), each an "audit fixes (UX
+ * review):" step: the Rep, Added by, Contact info and Lead Label menus
+ * opening inside a 1440 window with every name whole; on a phone, Contact
+ * info's None buttons on the screen and pressable, and the Pipeline's Lead
+ * Label menu on the screen without widening the board, and worked from the
+ * keyboard (Enter to the first label, Tab, Space, Escape back to the
+ * button); and the search box finding a job title and a person by their
+ * name plus their company.
+ *
  * Needs email switched on like email-marketing-users.cjs, with the catcher
  * on CATCHER_PORT (default 3999): the server's .env carries RESEND_API_KEY,
  * EMAIL_FROM and RESEND_ENDPOINT=http://localhost:<CATCHER_PORT>/emails.
@@ -138,6 +147,28 @@ async function contactsAt(page, query) {
 async function companiesAt(page, query) {
   await page.goto(`${BASE}/dashboard/companies?${query}`);
   return companyNames(page);
+}
+// A filter menu, opened and placed (FloatingMenu draws it hidden until it
+// has measured where it fits).
+async function openMenu(page, id) {
+  await page.getByTestId(id).click();
+  const menu = page.getByTestId(`${id}-menu`);
+  await menu.waitFor();
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return el && getComputedStyle(el).visibility === "visible";
+  }, `[data-testid="${id}-menu"]`);
+  return menu;
+}
+// Inside the window, every choice's name whole, and the page no wider.
+async function assertMenuInside(page, menu, what) {
+  const width = page.viewportSize().width;
+  const box = await menu.boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= width, `${what} spans ${Math.round(box.x)}–${Math.round(box.x + box.width)} in a ${width}px window`);
+  const cut = await menu.evaluate((el) => [...el.querySelectorAll("span.truncate")].filter((span) => span.scrollWidth > span.clientWidth + 1).map((span) => span.textContent));
+  assert.deepEqual(cut, [], `${what} cuts names off`);
+  const wide = await page.evaluate(() => document.documentElement.scrollWidth);
+  assert.ok(wide <= width + 1, `${what} widens the page to ${wide}px`);
 }
 const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: page.locator(`td:nth-child(4) a.link:text-is("${name}")`) });
 
@@ -769,6 +800,86 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.waitForTimeout(4500);
   assert.ok((await contactsAt(page, "act=t7")).includes("Sue Soon"), "once its time has passed it counts");
   assert.notEqual((await sql(`SELECT "lastTouchAt" FROM "Contact" WHERE id=$1`, [sue])).rows[0].lastTouchAt, null);
+
+  // ---------------------------------------------------------------------
+  // UX review fixes (Nov 10, 2026): one step per confirmed defect.
+  log("audit fixes (UX review): Rep, Added by, Contact info and Lead Label open inside a 1440 window, every name whole");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  for (const list of ["contacts", "companies"]) {
+    await page.goto(`${BASE}/dashboard/${list}`);
+    for (const id of ["filter-rep", "filter-added-by", "filter-contact-info", "filter-lead-label"]) {
+      const menu = await openMenu(page, id);
+      await assertMenuInside(page, menu, `${list} ${id}`);
+      if (id === "filter-rep") {
+        const names = (await menu.locator("label span").allTextContents()).map((t) => t.trim());
+        assert.equal(names[0], "Unassigned");
+        assert.deepEqual(names.slice(1).sort(), ["Nic Rivera", "Taylor Test"], "every rep listed by their whole name");
+      }
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+    }
+  }
+  await page.goto(`${BASE}/dashboard/contacts`);
+  const repMenu = await openMenu(page, "filter-rep");
+  await repMenu.getByText("Nic Rivera", { exact: true }).click();
+  await page.waitForURL(new RegExp(`rep=${nicId}`));
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1500, height: 950 });
+
+  log("audit fixes (UX review): the Pipeline's Lead Label menu works from the keyboard — Enter puts the cursor on the first label, Space ticks it, Escape goes back to the button");
+  await page.goto(`${BASE}/dashboard/deals`);
+  await page.getByTestId("filter-lead-label").focus();
+  await page.keyboard.press("Enter");
+  const leadKeys = page.getByTestId("filter-lead-label-menu");
+  await leadKeys.waitFor();
+  await page
+    .waitForFunction(() => document.querySelector('[data-testid="filter-lead-label-menu"]')?.contains(document.activeElement), null, { timeout: 3000 })
+    .catch(() => assert.fail("Enter left the cursor outside the Lead Label menu"));
+  const firstLabel = (await leadKeys.locator("label").first().textContent()).trim();
+  const onLabel = () => page.evaluate(() => (document.activeElement?.closest("label")?.textContent ?? "").trim());
+  assert.equal(await onLabel(), firstLabel, "the cursor is on the first label");
+  await page.keyboard.press("Tab");
+  const secondLabel = (await leadKeys.locator("label").nth(1).textContent()).trim();
+  assert.equal(await onLabel(), secondLabel, "Tab walks to the second label, not the next control");
+  await page.keyboard.press("Space");
+  await page.waitForURL(new RegExp(`label=${encodeURIComponent(secondLabel).replace(/%20/g, "(\\+|%20)")}`));
+  await page.keyboard.press("Escape");
+  await leadKeys.waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "filter-lead-label", "Escape puts the cursor back on the button");
+
+  log("audit fixes (UX review): on a phone, Contact info's None buttons can be pressed and the Pipeline's Lead Label menu stays on the screen");
+  const uxPhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const up = await uxPhone.newPage();
+  await login(up, EMAIL);
+  await up.goto(`${BASE}/dashboard/contacts`);
+  const info = await openMenu(up, "filter-contact-info");
+  await assertMenuInside(up, info, "phone Contact info");
+  for (const field of ["mobile", "email"]) {
+    const none = await up.getByTestId(`presence-${field}-no`).boundingBox();
+    assert.ok(none.x >= 0 && none.x + none.width <= 390, `${field}'s None at ${Math.round(none.x)}–${Math.round(none.x + none.width)}`);
+  }
+  await up.getByTestId("presence-mobile-no").tap();
+  await up.waitForURL(/mobile=no/);
+  await up.locator("[data-testid=active-filters]", { hasText: "No mobile" }).waitFor();
+  await up.keyboard.press("Escape");
+  for (const id of ["filter-rep", "filter-added-by", "filter-lead-label"]) {
+    const menu = await openMenu(up, id);
+    await assertMenuInside(up, menu, `phone ${id}`);
+    await up.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
+  }
+  await up.goto(`${BASE}/dashboard/deals`);
+  const leadMenu = await openMenu(up, "filter-lead-label");
+  await assertMenuInside(up, leadMenu, "phone Pipeline Lead Label");
+  const integration = await leadMenu.locator("label", { hasText: "Software Integration" }).boundingBox();
+  assert.ok(integration.x >= 0 && integration.x + integration.width <= 390, "Software Integration is on the screen");
+  await shot(up, "05-ux-pipeline-lead-label-phone");
+  await uxPhone.close();
+
+  log("audit fixes (UX review): search finds a job title, and a person by their name plus their company");
+  assert.deepEqual(await contactsAt(page, "q=sales%20manager"), ["Sal Spaces", "Sam Spaces", "Sid Short"], "Sales Manager, doubled spaces and all");
+  assert.deepEqual(await contactsAt(page, "q=fay%20tower"), ["Fay Fresh"], "Fay at Tower Living");
+  assert.deepEqual(await contactsAt(page, "q=living%20fay"), ["Fay Fresh"], "either order");
 
   // ---------------------------------------------------------------------
   log("the phone width: lists, Labels and duplicates stay inside the screen");

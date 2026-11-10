@@ -176,6 +176,14 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   await timed(page, "Contacts list, 100 per page", `${BASE}/dashboard/contacts?per=100`, "[data-testid=contact-row]");
   await timed(page, "Contacts search 'rivera'", `${BASE}/dashboard/contacts?q=rivera`, "[data-testid=contact-row]");
   await timed(page, "Contacts search by email fragment", `${BASE}/dashboard/contacts?q=person1234`, "[data-testid=contact-row]");
+  // The search box after the UX review (Nov 10, 2026): a phone number typed
+  // another way than it is stored (digits-only, on its own trigram index),
+  // a first name plus a company, and a job title.
+  await timed(page, "Contacts search a phone typed without its dash", `${BASE}/dashboard/contacts?q=5550007`, "[data-testid=contact-row]");
+  await timed(page, "Contacts search a phone typed with a dot", `${BASE}/dashboard/contacts?q=555.0007`, "[data-testid=contact-row]");
+  await timed(page, "Contacts search a name and a company 'finley granite'", `${BASE}/dashboard/contacts?q=finley%20granite`, "[data-testid=contact-row]");
+  await timed(page, "Contacts search a job title 'office manager'", `${BASE}/dashboard/contacts?q=office%20manager`, "[data-testid=contact-row]");
+  await timed(page, "Companies search a phone typed without its dash", `${BASE}/dashboard/companies?q=5550007`, "[data-testid=company-row]");
   await timed(page, "Contacts filtered State=TX + Industry=MDU", `${BASE}/dashboard/contacts?state=TX&industry=MDU`, "[data-testid=contact-row]");
   await timed(page, "Contacts filtered Company type=Individual / Personal", `${BASE}/dashboard/contacts?type=Individual%20%2F%20Personal`, "[data-testid=contact-row]");
   await timed(page, "Contacts Favorites", `${BASE}/dashboard/contacts/favorites`, "[data-testid=contact-row]");
