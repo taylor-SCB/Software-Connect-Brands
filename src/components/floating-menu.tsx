@@ -10,7 +10,12 @@ type Place = { left: number; width: number; top?: number; bottom?: number; maxHe
 // column, a scrolling board or the sidebar can never cut it off: it opens
 // below the button, or above when there is more room there, and is pulled
 // back inside the window at either edge. Closes on a click elsewhere,
-// Escape, or when its button scrolls out of view.
+// Escape, or when the page is scrolled until its button is out of view.
+//
+// Only a scroll closes it, and never while focus is inside it (Nov 10,
+// 2026): a resize — a phone's keyboard opening for a date box, the window
+// changing size — had closed the status dates panel with the dates typed
+// in it, and a browser scrolling the focused box into view did the same.
 export function FloatingMenu({
   anchor,
   open,
@@ -37,14 +42,15 @@ export function FloatingMenu({
 
   useLayoutEffect(() => {
     if (!open) return;
-    function measure() {
+    function measure(event?: Event) {
       const button = anchor.current;
       if (!button) return;
       const box = button.getBoundingClientRect();
       const viewWidth = document.documentElement.clientWidth;
       const viewHeight = window.innerHeight;
       if (box.bottom < 0 || box.top > viewHeight) {
-        close.current();
+        const inside = panel.current?.contains(document.activeElement) || (event?.target instanceof Node && panel.current?.contains(event.target));
+        if (event?.type === "scroll" && !inside) close.current();
         return;
       }
       const w = Math.min(width, viewWidth - 16);
@@ -62,7 +68,7 @@ export function FloatingMenu({
     measure();
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
-    const watcher = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    const watcher = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => measure()) : null;
     if (panel.current) watcher?.observe(panel.current);
     return () => {
       window.removeEventListener("resize", measure);

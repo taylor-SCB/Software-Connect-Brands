@@ -227,6 +227,18 @@ function isoDaysAgo(n) {
   await dates.locator("[data-testid=status-date-QUOTE_SENT]").fill(isoDaysAgo(4));
   await dates.locator("[data-testid=status-save]").click();
   await dates.getByText("Quote Sent can't be before Meeting Completed").waitFor();
+  log("audit fixes: the dates panel stays open through a window resize, and a scroll while typing in it");
+  // A phone's keyboard opening for a date box is a resize; the browser
+  // then scrolls the box into view. Either closed the panel and the dates.
+  await dates.locator("[data-testid=status-date-QUOTE_SENT]").focus();
+  await page.setViewportSize({ width: 1440, height: 60 });
+  await page.waitForTimeout(300);
+  assert.equal(await dates.count(), 1, "a resize that hides the status button doesn't close it");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => window.scrollBy(0, 600));
+  await page.waitForTimeout(300);
+  assert.equal(await dates.count(), 1, "nor does a scroll while typing in it");
+  await page.evaluate(() => window.scrollTo(0, 0));
   await dates.locator("[data-testid=status-date-QUOTE_SENT]").fill(isoDaysAgo(1));
   await shot(page, "02-skip-dates");
   await dates.locator("[data-testid=status-save]").click();
