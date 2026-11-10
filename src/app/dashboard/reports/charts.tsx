@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SERIES_COLORS } from "@/app/dashboard/stats/charts";
 
 // The report charts (Nov 10, 2026), in the Stats charts' system: plain SVG
@@ -136,8 +136,45 @@ export function HBars({
   );
 }
 
+// Round axis steps — 1, 2, 2.5 or 5 times a power of ten, in whole units
+// (whole dollars for money) — from 0 to the first step at or above `max`.
+export function niceTicks(max: number, format: Format, intervals = 4): number[] {
+  const unit = format === "money" ? 100 : 1;
+  const top = Math.max(1, max / unit);
+  const rough = top / intervals;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const residual = rough / power;
+  const nice = residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 2.5 && power >= 10 ? 2.5 : residual <= 5 ? 5 : 10;
+  const step = Math.max(1, nice * power);
+  const count = Math.max(1, Math.ceil(top / step - 1e-9));
+  return Array.from({ length: count + 1 }, (_, i) => i * step * unit);
+}
+
+// The chart box's width in CSS pixels, once the browser has laid it out.
+function useBoxWidth(fallback: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(fallback);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const watcher = new ResizeObserver((entries) => {
+      const next = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (next > 0) setWidth(next);
+    });
+    watcher.observe(element);
+    return () => watcher.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
+
 // Columns over time (days or weeks), stacked by series, with a crosshair
 // that lists every series for the column under the pointer.
+//
+// Drawn at the box's own width, one unit to one screen pixel (UX review,
+// Nov 10, 2026): a fixed 640-wide drawing shrank its labels to about 5px
+// on a phone and blew them and the bars up on a wide screen. Labels are
+// 11px everywhere, bars at most 28px, the axis on round numbers, and the
+// day labels thin out to fit.
 export function Columns({
   buckets,
   series,
@@ -154,17 +191,20 @@ export function Columns({
   testId?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const width = 640;
-  const height = 170;
-  const pad = { l: 34, r: 8, t: 10, b: 22 };
+  const [box, width] = useBoxWidth(640);
+  const height = Math.round(Math.min(220, Math.max(160, width * 0.28)));
   const totals = buckets.map((bucket) => bucket.parts.reduce((a, b) => a + b, 0));
-  const max = Math.max(format === "count" ? 4 : 100, ...totals);
+  const ticks = niceTicks(Math.max(format === "count" ? 4 : 100, ...totals), format);
+  const max = ticks[ticks.length - 1];
+  const tickText = ticks.map((tick) => compact(tick, format));
+  const pad = { l: 10 + Math.max(...tickText.map((text) => text.length)) * 6.5, r: 8, t: 10, b: 24 };
   const plotW = width - pad.l - pad.r;
   const slot = buckets.length ? plotW / buckets.length : plotW;
   const barW = Math.max(2, Math.min(28, slot - 2));
   const yAt = (v: number) => pad.t + (1 - v / max) * (height - pad.t - pad.b);
-  const ticks = [0, max / 2, max];
-  const labelEvery = Math.max(1, Math.ceil(buckets.length / 7));
+  // About 60px per day label ("Nov 10" at 11px is about 36), counted back
+  // from the last bucket so today always has one and none crowds it.
+  const labelEvery = Math.max(1, Math.ceil(buckets.length / Math.max(2, Math.floor(plotW / 60))));
   const pretty = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
   function onMove(event: React.PointerEvent<SVGSVGElement>) {
@@ -178,47 +218,65 @@ export function Columns({
   return (
     <div className="relative" data-testid={testId}>
       <Legend series={series} />
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full touch-none" role="img" aria-label={label} onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
-        {ticks.map((tick) => (
-          <g key={tick}>
-            <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} stroke="var(--border)" />
-            <text x={pad.l - 6} y={yAt(tick) + 3} textAnchor="end" className="num fill-[var(--text-faint)] text-[10px]">
-              {compact(tick, format)}
-            </text>
-          </g>
-        ))}
-        {buckets.map((bucket, i) => {
-          const x = pad.l + i * slot + (slot - barW) / 2;
-          let y = yAt(0);
-          return (
-            <g key={bucket.label} opacity={hover === null || hover === i ? 1 : 0.55}>
-              {bucket.parts.map((value, part) => {
-                if (value <= 0) return null;
-                const segment = yAt(0) - yAt(value);
-                const top = y - segment;
-                const isTop = bucket.parts.slice(part + 1).every((v) => v <= 0);
-                y = top - 2;
-                return (
-                  <rect
-                    key={part}
-                    x={x}
-                    y={top}
-                    width={barW}
-                    height={Math.max(1, segment)}
-                    rx={isTop ? Math.min(4, barW / 2) : 0}
-                    fill={SERIES_COLORS[part]}
-                  />
-                );
-              })}
-              {(i % labelEvery === 0 || i === buckets.length - 1) && (
-                <text x={x + barW / 2} y={height - 6} textAnchor="middle" className="fill-[var(--text-faint)] text-[10px]">
-                  {pretty(bucket.label)}
-                </text>
-              )}
+      <div ref={box}>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="block w-full touch-none"
+          role="img"
+          aria-label={label}
+          onPointerMove={onMove}
+          onPointerLeave={() => setHover(null)}
+          data-testid="report-columns"
+        >
+          {ticks.map((tick, index) => (
+            <g key={tick}>
+              <line x1={pad.l} x2={width - pad.r} y1={yAt(tick)} y2={yAt(tick)} stroke="var(--border)" />
+              <text x={pad.l - 6} y={yAt(tick) + 4} textAnchor="end" className="num fill-[var(--text-faint)] text-[11px]" data-testid="columns-y-label" data-value={tick}>
+                {tickText[index]}
+              </text>
             </g>
-          );
-        })}
-      </svg>
+          ))}
+          {buckets.map((bucket, i) => {
+            const x = pad.l + i * slot + (slot - barW) / 2;
+            const center = x + barW / 2;
+            const anchor = center + 20 > width ? "end" : center - 20 < 0 ? "start" : "middle";
+            let y = yAt(0);
+            return (
+              <g key={bucket.label} opacity={hover === null || hover === i ? 1 : 0.55}>
+                {bucket.parts.map((value, part) => {
+                  if (value <= 0) return null;
+                  const segment = yAt(0) - yAt(value);
+                  const top = y - segment;
+                  const isTop = bucket.parts.slice(part + 1).every((v) => v <= 0);
+                  y = top - 2;
+                  return (
+                    <rect
+                      key={part}
+                      x={x}
+                      y={top}
+                      width={barW}
+                      height={Math.max(1, segment)}
+                      rx={isTop ? Math.min(4, barW / 2) : 0}
+                      fill={SERIES_COLORS[part]}
+                    />
+                  );
+                })}
+                {(buckets.length - 1 - i) % labelEvery === 0 && (
+                  <text
+                    x={anchor === "end" ? width - 1 : anchor === "start" ? 1 : center}
+                    y={height - 7}
+                    textAnchor={anchor}
+                    className="fill-[var(--text-faint)] text-[11px]"
+                    data-testid="columns-x-label"
+                  >
+                    {pretty(bucket.label)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
       {h && hover !== null && (
         <Tooltip
           tip={{

@@ -184,13 +184,25 @@ export function DailyTrend({
             </text>
           </g>
         ))}
-        {days.map((d, i) =>
-          i % labelEvery === 0 || i === days.length - 1 ? (
-            <text key={d.day} x={xAt(i)} y={height - 6} textAnchor="middle" className="fill-[var(--text-faint)] text-[10px]">
+        {/* The last day's label ends at the right edge rather than
+            centring on it, where half of "Nov 10" was cut off, and the
+            others are counted back from it so none crowds it (UX review,
+            Nov 10, 2026). */}
+        {days.map((d, i) => {
+          const last = i === days.length - 1;
+          return (days.length - 1 - i) % labelEvery === 0 ? (
+            <text
+              key={d.day}
+              x={xAt(i)}
+              y={height - 6}
+              textAnchor={last && days.length > 1 ? "end" : "middle"}
+              className="fill-[var(--text-faint)] text-[10px]"
+              data-testid="trend-x-label"
+            >
               {short(d.day)}
             </text>
-          ) : null,
-        )}
+          ) : null;
+        })}
         <path d={area} fill="url(#trend-fill)" />
         <path d={line} fill="none" stroke={SERIES_COLORS[0]} strokeWidth={2} strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 6px ${SERIES_COLORS[0]}66)` }} />
         {h && hover !== null && (
@@ -263,19 +275,25 @@ export function FunnelBars({ steps }: { steps: { label: string; value: number; r
 }
 
 // Days between hand-offs: one bar each, one colour, the number at the end.
+// One grid for every row, its first column as wide as the longest step
+// name (UX review, Nov 10, 2026: a fixed 11rem cut "Meeting Set → Meeting
+// Compl…" at 1440); it only shortens with "…" when the panel truly can't
+// fit it, on a phone.
 export function VelocityBars({ rows }: { rows: { label: string; days: number | null; samples: number }[] }) {
   const max = Math.max(1, ...rows.map((row) => row.days ?? 0));
   return (
-    <div className="space-y-2" data-testid="stats-velocity">
+    <div className="grid grid-cols-[minmax(0,max-content)_minmax(3rem,1fr)_auto] items-center gap-x-3 gap-y-2 text-xs" data-testid="stats-velocity">
       {rows.map((row) => (
-        <div key={row.label} className="grid grid-cols-[11rem_1fr_4.5rem] items-center gap-2 text-xs" title={`${row.samples} ${row.samples === 1 ? "person" : "people"} measured`}>
-          <span className="truncate text-[var(--text-dim)]">{row.label}</span>
+        <div key={row.label} className="contents" title={`${row.samples} ${row.samples === 1 ? "person" : "people"} measured`}>
+          <span className="truncate text-[var(--text-dim)]" data-testid="velocity-label">
+            {row.label}
+          </span>
           <div className="h-2 rounded bg-[var(--tint-2)]">
             {row.days !== null && (
               <div className="h-2 rounded" style={{ width: `${Math.max(2, (row.days / max) * 100)}%`, background: SERIES_COLORS[2], boxShadow: `0 0 10px ${SERIES_COLORS[2]}55` }} />
             )}
           </div>
-          <span className="num text-right">{row.days === null ? <span className="faint">—</span> : `${row.days.toFixed(1)} d`}</span>
+          <span className="num whitespace-nowrap text-right">{row.days === null ? <span className="faint">—</span> : `${row.days.toFixed(1)} d`}</span>
         </div>
       ))}
     </div>

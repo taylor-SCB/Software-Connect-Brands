@@ -46,10 +46,11 @@ export function HeadlineTiles({ headlines, compareLabel }: { headlines: Headline
             {moved && (
               <p
                 className={`num mt-0.5 text-[0.7rem] ${moved.tone === "flat" ? "faint" : moved.tone === "good" ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+                data-testid="report-tile-change"
                 title={compareLabel ? `Compared with ${compareLabel}: ${formatValue(headline.previous ?? 0, headline.format)}` : undefined}
               >
                 {moved.text}
-                {compareLabel && moved.tone !== "flat" ? <span className="faint"> vs {formatValue(headline.previous ?? 0, headline.format)}</span> : null}
+                {compareLabel && moved.tone !== "flat" && !moved.fromZero ? <span className="faint"> vs {formatValue(headline.previous ?? 0, headline.format)}</span> : null}
               </p>
             )}
             {headline.hint && <p className="faint text-[0.68rem]">{headline.hint}</p>}
@@ -102,6 +103,20 @@ function Table({ table, testId }: { table: SummaryTable; testId?: string }) {
   );
 }
 
+// A chart with its table under it, both drawn from the same rows: with no
+// rows the panel says so once (UX review, Nov 10, 2026: Money Owed's "Owed
+// by rep" stacked the chart's "Nothing to show" over the table's "Nothing
+// here").
+function ChartAndTable({ empty, chart, table }: { empty: boolean; chart: React.ReactNode; table: React.ReactNode }) {
+  if (empty) return <p className="faint text-sm" data-testid="report-empty">Nothing to show for this period.</p>;
+  return (
+    <>
+      {chart}
+      <div className="mt-3">{table}</div>
+    </>
+  );
+}
+
 function Delta({ now, before }: { now: number; before: number }) {
   if (now === before) return <span className="faint">—</span>;
   return <span className={now > before ? "text-[var(--ok)]" : "text-[var(--danger)]"}>{now > before ? `+${now - before}` : now - before}</span>;
@@ -109,11 +124,14 @@ function Delta({ now, before }: { now: number; before: number }) {
 
 /* ------------------------------- Daily ------------------------------- */
 
-function RundownList({ title, sub, empty, children, count, testId, href }: { title: string; sub?: string; empty: string; children: React.ReactNode; count: number; testId: string; href?: string }) {
+// `count` goes in the heading; `listed` (default: count) says whether there
+// are rows to show — the calendar's heading counts only what is still open
+// while its done entries are listed after them.
+function RundownList({ title, sub, empty, children, count, listed = count, testId, href }: { title: string; sub?: string; empty: string; children: React.ReactNode; count: number; listed?: number; testId: string; href?: string }) {
   return (
     <Panel title={`${title}${count ? ` · ${count}` : ""}`} sub={sub} testId={testId}>
-      {count === 0 ? <p className="faint text-sm">{empty}</p> : <ul className="divide-y divide-[var(--border)] text-sm">{children}</ul>}
-      {href && count > 0 && (
+      {listed === 0 ? <p className="faint text-sm">{empty}</p> : <ul className="divide-y divide-[var(--border)] text-sm">{children}</ul>}
+      {href && listed > 0 && (
         <Link href={href} className="link mt-2 inline-block text-xs">
           See all
         </Link>
@@ -125,9 +143,23 @@ function RundownList({ title, sub, empty, children, count, testId, href }: { tit
 function DailyView({ report }: { report: DailyReport }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <RundownList title="On the calendar today" count={report.calendar.count} empty="Nothing on the calendar today." testId="rundown-calendar" href="/dashboard/calendar">
+      <RundownList
+        title="On the calendar today"
+        sub={
+          report.calendar.count > report.calendar.open
+            ? report.calendar.open
+              ? `Still open · ${report.calendar.count - report.calendar.open} already done`
+              : `All ${report.calendar.count} done`
+            : undefined
+        }
+        count={report.calendar.open}
+        listed={report.calendar.count}
+        empty="Nothing on the calendar today."
+        testId="rundown-calendar"
+        href="/dashboard/calendar"
+      >
         {report.calendar.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2">
+          <li key={item.id} className="flex justify-between gap-3 py-2" data-done={item.done ? "true" : undefined}>
             <span className={`min-w-0 truncate ${item.done ? "line-through opacity-60" : ""}`}>
               {item.title}
               <span className="faint block text-[0.7rem]">
@@ -298,29 +330,34 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
         )}
       </Panel>
       <Panel title={`Open pipeline by ${BREAKDOWN_LABELS[by].toLowerCase()}`} testId="pipeline-groups">
-        <HBars
-          rows={report.groups.map((group) => ({ label: group.name, values: [group.quoteCents, group.contractCents], note: `${group.count}` }))}
-          series={["Quotes out", "Contracts out"]}
-          format="money"
-          label={`Open value by ${BREAKDOWN_LABELS[by]}`}
+        <ChartAndTable
+          empty={report.groups.length === 0}
+          chart={
+            <HBars
+              rows={report.groups.map((group) => ({ label: group.name, values: [group.quoteCents, group.contractCents], note: `${group.count}` }))}
+              series={["Quotes out", "Contracts out"]}
+              format="money"
+              label={`Open value by ${BREAKDOWN_LABELS[by]}`}
+            />
+          }
+          table={
+            <Table
+              testId="report-group-table"
+              table={{
+                title: "",
+                columns: [
+                  { label: BREAKDOWN_LABELS[by], format: "text" },
+                  { label: "Open", format: "count" },
+                  { label: "In meetings", format: "count" },
+                  { label: "Quotes $", format: "money" },
+                  { label: "Contracts $", format: "money" },
+                  { label: "Total $", format: "money" },
+                ],
+                rows: report.groups.map((group) => [group.name, group.count, group.meetings, group.quoteCents, group.contractCents, group.valueCents]),
+              }}
+            />
+          }
         />
-        <div className="mt-3">
-          <Table
-            testId="report-group-table"
-            table={{
-              title: "",
-              columns: [
-                { label: BREAKDOWN_LABELS[by], format: "text" },
-                { label: "Open", format: "count" },
-                { label: "In meetings", format: "count" },
-                { label: "Quotes $", format: "money" },
-                { label: "Contracts $", format: "money" },
-                { label: "Total $", format: "money" },
-              ],
-              rows: report.groups.map((group) => [group.name, group.count, group.meetings, group.quoteCents, group.contractCents, group.valueCents]),
-            }}
-          />
-        </div>
       </Panel>
     </div>
   );
@@ -366,15 +403,18 @@ function ClosingView({ report, by }: { report: ClosingReport } & ViewProps) {
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <Panel title={`Won and lost by ${BREAKDOWN_LABELS[by].toLowerCase()}`} sub="Value of deals decided in the period" testId="closing-groups">
-        <HBars
-          rows={report.groups.map((group) => ({ label: group.name, values: [group.won.valueCents, group.lost.valueCents], note: group.winRate === null ? undefined : percent(group.winRate) }))}
-          series={["Won", "Lost"]}
-          format="money"
-          label={`Won and lost by ${BREAKDOWN_LABELS[by]}`}
+        <ChartAndTable
+          empty={report.groups.length === 0}
+          chart={
+            <HBars
+              rows={report.groups.map((group) => ({ label: group.name, values: [group.won.valueCents, group.lost.valueCents], note: group.winRate === null ? undefined : percent(group.winRate) }))}
+              series={["Won", "Lost"]}
+              format="money"
+              label={`Won and lost by ${BREAKDOWN_LABELS[by]}`}
+            />
+          }
+          table={<Table table={report.table} testId="report-group-table" />}
         />
-        <div className="mt-3">
-          <Table table={report.table} testId="report-group-table" />
-        </div>
       </Panel>
       <Panel title="Biggest wins" testId="closing-wins">
         {report.biggestWins.length === 0 ? (
@@ -469,21 +509,24 @@ function MoneyView({ report, by }: { report: MoneyReport } & ViewProps) {
         )}
       </Panel>
       <Panel title={`Owed by ${BREAKDOWN_LABELS[by].toLowerCase()}`} sub={by === "rep" ? "The rep on the deal the paperwork came from" : undefined} testId="money-groups">
-        <HBars rows={report.groups.map((group) => ({ label: group.name, values: [group.owedCents] }))} series={["Owed"]} format="money" label={`Owed by ${BREAKDOWN_LABELS[by]}`} />
-        <div className="mt-3">
-          <Table
-            testId="report-group-table"
-            table={{
-              title: "",
-              columns: [
-                { label: BREAKDOWN_LABELS[by], format: "text" },
-                { label: "Owed", format: "money" },
-                { label: "Past due", format: "money" },
-              ],
-              rows: report.groups.map((group) => [group.name, group.owedCents, group.overdueCents]),
-            }}
-          />
-        </div>
+        <ChartAndTable
+          empty={report.groups.length === 0}
+          chart={<HBars rows={report.groups.map((group) => ({ label: group.name, values: [group.owedCents] }))} series={["Owed"]} format="money" label={`Owed by ${BREAKDOWN_LABELS[by]}`} />}
+          table={
+            <Table
+              testId="report-group-table"
+              table={{
+                title: "",
+                columns: [
+                  { label: BREAKDOWN_LABELS[by], format: "text" },
+                  { label: "Owed", format: "money" },
+                  { label: "Past due", format: "money" },
+                ],
+                rows: report.groups.map((group) => [group.name, group.owedCents, group.overdueCents]),
+              }}
+            />
+          }
+        />
       </Panel>
     </div>
   );

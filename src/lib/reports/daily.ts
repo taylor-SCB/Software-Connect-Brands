@@ -19,7 +19,11 @@ export type DailyReport = {
   kind: "daily";
   today: string;
   yesterday: string;
-  calendar: { count: number; items: { id: string; title: string; type: string; time: string | null; owner: string; who: string | null; done: boolean }[] };
+  // count is every entry today; open is the ones not yet done. items lists
+  // the open ones first, then the done ones (UX review, Nov 10, 2026: by
+  // start time alone a morning of ticked-off calls filled the card and
+  // pushed the afternoon's open entries behind See all).
+  calendar: { count: number; open: number; items: { id: string; title: string; type: string; time: string | null; owner: string; who: string | null; done: boolean }[] };
   overdue: { count: number; items: { id: string; title: string; type: string; on: string; days: number; owner: string; who: string | null }[] };
   quiet: { count: number; quietDays: number; items: { id: string; title: string; days: number; owner: string }[] };
   payments: { cents: number; count: number; previousCents: number; items: { customer: string; cents: number; method: string | null }[] };
@@ -54,15 +58,14 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
   };
   const yesterdayWindow = { gte: yesterdayRange.from, lt: yesterdayRange.to };
 
-  const [team, calendarCount, calendar, overdueCount, overdue, quiet, payments, quotes, contracts, contactCounts, contacts] = await Promise.all([
+  const calendarOrder: Prisma.CalendarEventOrderByWithRelationInput[] = [{ startTime: { sort: "asc", nulls: "last" } }, { title: "asc" }];
+  const calendarSelect = { id: true, title: true, type: true, startTime: true, endTime: true, ownerId: true, doneAt: true, contact: { select: { name: true } }, company: { select: { name: true } } } as const;
+  const [team, calendarCount, calendarOpenCount, calendarOpen, calendarDone, overdueCount, overdue, quiet, payments, quotes, contracts, contactCounts, contacts] = await Promise.all([
     loadTeam(organizationId),
     prisma.calendarEvent.count({ where: calendarWhere }),
-    prisma.calendarEvent.findMany({
-      where: calendarWhere,
-      orderBy: [{ startTime: { sort: "asc", nulls: "last" } }, { title: "asc" }],
-      take: LIST,
-      select: { id: true, title: true, type: true, startTime: true, endTime: true, ownerId: true, doneAt: true, contact: { select: { name: true } }, company: { select: { name: true } } },
-    }),
+    prisma.calendarEvent.count({ where: { ...calendarWhere, doneAt: null } }),
+    prisma.calendarEvent.findMany({ where: { ...calendarWhere, doneAt: null }, orderBy: calendarOrder, take: LIST, select: calendarSelect }),
+    prisma.calendarEvent.findMany({ where: { ...calendarWhere, doneAt: { not: null } }, orderBy: calendarOrder, take: LIST, select: calendarSelect }),
     prisma.calendarEvent.count({ where: overdueWhere }),
     prisma.calendarEvent.findMany({
       where: overdueWhere,
@@ -118,6 +121,7 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
     }),
   ]);
 
+  const calendar = [...calendarOpen, ...calendarDone].slice(0, LIST);
   const paidYesterday = payments.filter((row) => row.day === yesterday);
   const paidBefore = payments.filter((row) => row.day !== yesterday);
   const quoteRows = quotes.map((quote) => ({
@@ -134,6 +138,7 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
     yesterday,
     calendar: {
       count: calendarCount,
+      open: calendarOpenCount,
       items: calendar.map((event) => ({
         id: event.id,
         title: event.title,
@@ -184,7 +189,13 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
   };
 
   const headlines: Headline[] = [
-    { id: "calendar", label: "On today", value: report.calendar.count, format: "count", hint: "Calendar entries" },
+    {
+      id: "calendar",
+      label: "On today",
+      value: report.calendar.open,
+      format: "count",
+      hint: report.calendar.count > report.calendar.open ? `Still open · ${report.calendar.count - report.calendar.open} already done` : "Calendar entries",
+    },
     { id: "overdue", label: "Overdue follow-ups", value: report.overdue.count, format: "count", goodWhenUp: false },
     { id: "quiet", label: "Gone quiet", value: report.quiet.count, format: "count", goodWhenUp: false, hint: `No touch in ${report.quiet.quietDays}+ days` },
     { id: "paid", label: "Paid yesterday", value: report.payments.cents, previous: report.payments.previousCents, format: "money", hint: `${report.payments.count} ${report.payments.count === 1 ? "payment" : "payments"}` },

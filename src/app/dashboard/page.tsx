@@ -197,8 +197,12 @@ async function OverviewSummary({
       </div>
 
       {children}
-      <div className="mt-5 grid gap-5 lg:grid-cols-3">
-        <Card lit className="lg:col-span-2">
+      {/* grid-cols-1 and min-w-0 (UX review, Nov 10, 2026): below lg the
+          grid had one auto column, so the longest activity line set its
+          width and the page panned sideways on a phone instead of the
+          line ending in "…". */}
+      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <Card lit className="min-w-0 lg:col-span-2">
           <CardHeader title="Recent activity" subtitle={repId ? "Logged by this rep" : "Across every contact"} />
           {recentActivity.length === 0 ? (
             <EmptyState
@@ -210,7 +214,7 @@ async function OverviewSummary({
               {recentActivity.map((activity) => {
                 const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue];
                 return (
-                  <li key={activity.id} className="flex gap-3 px-5 py-3">
+                  <li key={activity.id} className="flex min-w-0 gap-3 px-5 py-3">
                     <div
                       className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
                       style={{
@@ -243,7 +247,7 @@ async function OverviewSummary({
           )}
         </Card>
 
-        <Card lit>
+        <Card lit className="min-w-0">
           <CardHeader title="Jump in" />
           <div className="space-y-2 p-5">
             <Link href="/dashboard/products" className="nav-item">
