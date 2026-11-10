@@ -12,6 +12,16 @@
  * printed on the customer's copy, read by the quotes list, the pipeline
  * and {{quote_total}}, and carried onto a money-in contract.
  *
+ * Audit fixes (UX review, Nov 10, 2026), each an "audit fixes (UX
+ * review):" step: Mark as sent refused for a quote with no saved lines and
+ * held off while a line is typed but unsaved; the Qty, Value and Tag boxes
+ * showing their whole value at 1440 and each line stacking on a phone; the
+ * customer's quote on a phone keeping a gap between its number columns
+ * with its header lined up on the left; Delete quote asking first; and on
+ * a contract made from the quote, the payment labels the quote's table
+ * wrote showing whole at 1440 with the Due column still on the card, and
+ * the line and payment totals on screen on a phone.
+ *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
  * up its own workspace, activates it with SQL, and deletes it again on
@@ -613,6 +623,65 @@ let context;
   );
   await shot(page, "08-contract-inherited-schedule");
 
+  log("audit fixes (UX review): the contract's payment labels from the quote show whole at 1440 with Due on the card; on a phone its totals are on screen");
+  {
+    const state = await context.storageState();
+    const wide = await browser.newContext({ viewport: { width: 1440, height: 900 }, storageState: state });
+    const desk = await wide.newPage();
+    await desk.goto(`${BASE}/dashboard/contracts/${madeContract.id}`);
+    await desk.getByTestId("payment-schedule").waitFor();
+    const fit = await desk.evaluate(() => {
+      const wrap = document.querySelector("[data-testid=payment-table]").parentElement.getBoundingClientRect();
+      return {
+        labels: [...document.querySelectorAll("input[aria-label='Payment label']")].map((el) => ({
+          value: el.value,
+          scroll: el.scrollWidth,
+          client: el.clientWidth,
+        })),
+        dueRight: Math.max(...[...document.querySelectorAll("input[aria-label='Due date']")].map((el) => el.getBoundingClientRect().right)),
+        wrapRight: wrap.right,
+      };
+    });
+    // The quote's 50/50 table writes these two; before the fix the box was
+    // 160px and read "Deposit — at signatur" / "Final Pay — at project".
+    assert.deepEqual(fit.labels.map((label) => label.value), ["Deposit — at signature", "Final Pay — at project close"]);
+    for (const label of fit.labels) {
+      assert.ok(label.scroll <= label.client, `"${label.value}" is cut off: ${label.scroll}px of text in a ${label.client}px box`);
+    }
+    assert.ok(fit.dueRight <= fit.wrapRight + 1, `the Due column runs off the card (${fit.dueRight} > ${fit.wrapRight})`);
+    await wide.close();
+
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState: state });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/contracts/${madeContract.id}`);
+    await phone.getByTestId("payment-schedule").waitFor();
+    const onScreen = await phone.evaluate(() => {
+      const box = (el) => {
+        const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, width: r.width, text: el.textContent };
+      };
+      const lines = document.querySelector("[data-testid=contract-line-items]");
+      return {
+        page: document.documentElement.scrollWidth,
+        total: box(document.querySelector("[data-testid=contract-total]")),
+        lineTotals: [...lines.querySelectorAll("tbody tr")].map((tr) => box(tr.lastElementChild)),
+        amounts: [...document.querySelectorAll("[data-testid=payment-amount]")].map(box),
+        dues: [...document.querySelectorAll("input[aria-label='Due date']")].map(box),
+        scheduled: box(document.querySelector("[data-testid=scheduled-total]")),
+      };
+    });
+    assert.ok(onScreen.page <= 390, `the page scrolls sideways (${onScreen.page}px)`);
+    const visible = (item, what) =>
+      assert.ok(item.width > 0 && item.left >= 0 && item.right <= 390, `${what} is off the screen (${Math.round(item.left)}-${Math.round(item.right)}): ${item.text}`);
+    visible(onScreen.total, "the contract's total");
+    onScreen.lineTotals.forEach((item, index) => visible(item, `line ${index + 1}'s total`));
+    onScreen.amounts.forEach((item, index) => visible(item, `payment ${index + 1}'s amount`));
+    onScreen.dues.forEach((item, index) => visible(item, `payment ${index + 1}'s due date`));
+    visible(onScreen.scheduled, "the payment table's total");
+    await shot(phone, "08b-contract-phone");
+    await phoneCtx.close();
+  }
+
   log('changing it stamps "Amended from original quote"');
   await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — revised");
   await page.getByTestId("save-schedule").click();
@@ -946,6 +1015,170 @@ let context;
   assert.notEqual(subtotalAfter, capSubtotal, "the line change moved the subtotal");
   assert.deepEqual(await quoteDiscountRow(), { discountCents: Math.round(subtotalAfter * 0.1), discountPercent: 10 });
   assert.equal(await page.getByTestId("quote-total").textContent(), fmt(subtotalAfter - Math.round(subtotalAfter * 0.1)));
+
+  /* ---------------------------------------------------------------- *
+   * Audit fixes (UX review, Nov 10, 2026). A second quote on the deal,
+   * QUO-1900, so nothing above moves.
+   * ---------------------------------------------------------------- */
+  log("audit fixes (UX review): Mark as sent refuses a quote with no saved lines, and holds off while a typed line is unsaved");
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
+     VALUES ('quo_qi_ux','${org}','ctc_qi','deal_qi',1900,'Option B','DRAFT','tok_quo_qi_ux_0123456789',now())`,
+  );
+  const uxQuote = async () =>
+    (
+      await sql(
+        `SELECT status, (SELECT count(*)::int FROM "QuoteLineItem" WHERE "quoteId"='quo_qi_ux') AS lines FROM "Quote" WHERE id='quo_qi_ux'`,
+      )
+    ).rows[0];
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
+  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("mark-sent-error").waitFor();
+  assert.match(await page.getByTestId("mark-sent-error").innerText(), /Add a line item and save it/);
+  assert.deepEqual(await uxQuote(), { status: "DRAFT", lines: 0 }, "a quote with no lines went out to the customer");
+  // Typed, not saved: before the fix Mark as sent sent the quote without
+  // it, the editor kept showing $23,200.00 and the customer's link $0.00.
+  await page.getByRole("button", { name: "Blank line" }).click();
+  await page.getByLabel("Line 1 product", { exact: true }).fill("NVR 16-channel, 8TB");
+  await page.getByLabel("Line 1 quantity", { exact: true }).fill("16");
+  await page.getByLabel("Line 1 unit value", { exact: true }).fill("1450.00");
+  await page.getByTestId("mark-sent").click();
+  await page.getByText("Save line items first", { exact: false }).waitFor();
+  assert.deepEqual(await uxQuote(), { status: "DRAFT", lines: 0 }, "the quote went out without the line typed into it");
+  assert.equal(await page.getByLabel("Line 1 product", { exact: true }).inputValue(), "NVR 16-channel, 8TB", "the typed line was dropped");
+  await saveLines(page);
+  await page.getByTestId("mark-sent-error").waitFor({ state: "detached" });
+  await page.getByTestId("mark-sent").click();
+  await page.getByRole("button", { name: "Back to draft" }).waitFor();
+  assert.deepEqual(await uxQuote(), { status: "SENT", lines: 1 });
+  const uxCustomer = await context.newPage();
+  await uxCustomer.goto(`${BASE}/q/tok_quo_qi_ux_0123456789`);
+  assert.equal(await uxCustomer.getByTestId("document-total").textContent(), "$23,200.00", "the customer's link shows the saved line");
+  await uxCustomer.close();
+
+  log("audit fixes (UX review): at 1440 the Qty, Value and Tag boxes show their whole value; on a phone each line stacks with its total on screen");
+  {
+    const state = await context.storageState();
+    const wide = await browser.newContext({ viewport: { width: 1440, height: 900 }, storageState: state });
+    const desk = await wide.newPage();
+    await desk.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
+    // The longest tag there is.
+    await desk.getByLabel("Line 1 tag", { exact: true }).selectOption("PROJECT_SERVICES");
+    const fit = await desk.evaluate(() => {
+      const field = (label) => document.querySelector(`[aria-label="${label}"]`);
+      const cut = (el) => ({ value: el.value, scroll: el.scrollWidth, client: el.clientWidth });
+      const tag = field("Line 1 tag");
+      const style = getComputedStyle(tag);
+      const pen = document.createElement("canvas").getContext("2d");
+      pen.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const wrap = document.querySelector("[data-testid=line-items-table]").parentElement;
+      return {
+        qty: cut(field("Line 1 quantity")),
+        value: cut(field("Line 1 unit value")),
+        // The tag's words, its left padding and the arrow drawn at its right.
+        tag: {
+          text: tag.options[tag.selectedIndex].text,
+          need: Math.ceil(pen.measureText(tag.options[tag.selectedIndex].text).width + parseFloat(style.paddingLeft) + 24),
+          client: tag.clientWidth,
+        },
+        table: { scroll: wrap.scrollWidth, client: wrap.clientWidth },
+      };
+    });
+    // Before the fix: Qty 22px ("16" read "1"), Value 38px ("1450.00" read
+    // "145"), the tag 22px ("▾P").
+    for (const box of [fit.qty, fit.value]) {
+      assert.ok(box.scroll <= box.client, `"${box.value}" is cut off: ${box.scroll}px in a ${box.client}px box`);
+    }
+    assert.ok(fit.tag.need <= fit.tag.client, `the tag "${fit.tag.text}" needs ${fit.tag.need}px and has ${fit.tag.client}px`);
+    assert.ok(fit.table.scroll <= fit.table.client + 1, "the line items scroll sideways at 1440");
+    await shot(desk, "21-lines-1440");
+    await wide.close();
+
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState: state });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
+    await phone.getByLabel("Line 1 product", { exact: true }).waitFor();
+    const stacked = await phone.evaluate(() => {
+      const field = (label) => document.querySelector(`[aria-label="${label}"]`).getBoundingClientRect();
+      const total = document.querySelector("[data-testid=line-total]");
+      const t = total.getBoundingClientRect();
+      return {
+        page: document.documentElement.scrollWidth,
+        product: field("Line 1 product").width,
+        qty: field("Line 1 quantity"),
+        value: field("Line 1 unit value"),
+        tag: field("Line 1 tag"),
+        total: { left: t.left, right: t.right, text: total.textContent },
+      };
+    });
+    assert.ok(stacked.page <= 390, `the page scrolls sideways (${stacked.page}px)`);
+    // Before the fix the product box was 60px ("4MP tu") and the total off the screen.
+    assert.ok(stacked.product >= 280, `the product box is ${stacked.product}px wide`);
+    for (const [what, box] of [["quantity", stacked.qty], ["value", stacked.value], ["tag", stacked.tag]]) {
+      assert.ok(box.left >= 0 && box.right <= 390 && box.width >= 100, `the ${what} box is ${Math.round(box.width)}px at ${Math.round(box.left)}-${Math.round(box.right)}`);
+    }
+    assert.ok(stacked.total.left >= 0 && stacked.total.right <= 390, `the line total is off the screen (${stacked.total.left}-${stacked.total.right})`);
+    assert.match(stacked.total.text, /\$23,200\.00/);
+    await shot(phone, "22-lines-phone");
+
+    log("audit fixes (UX review): the customer's quote on a phone keeps a gap between Qty, Value and Total, and its header lines up on the left");
+    const customer = await phoneCtx.newPage();
+    await customer.goto(`${BASE}/q/tok_quo_qi_0123456789`);
+    await customer.getByTestId("document-total").waitFor();
+    const doc = await customer.evaluate(() => {
+      // Where the words themselves sit, not their cells.
+      const ink = (el) => {
+        const range = document.createRange();
+        range.selectNodeContents(el.firstChild);
+        const r = range.getBoundingClientRect();
+        return { left: r.left, right: r.right, text: el.firstChild.textContent };
+      };
+      const rows = [...document.querySelectorAll("tr")].filter((tr) => tr.querySelector("[data-testid=document-line-total]"));
+      const block = (text) => [...document.querySelectorAll("header div, div")].find((el) => el.firstElementChild?.textContent.trim() === text);
+      const number = block(document.querySelector("header p.font-mono").textContent.trim());
+      const project = block("Project");
+      return {
+        page: document.documentElement.scrollWidth,
+        rows: rows.map((tr) => ({
+          qty: ink(tr.querySelector("[data-testid=document-line-qty]")),
+          value: ink(tr.querySelector("[data-testid=document-line-value]")),
+          total: ink(tr.querySelector("[data-testid=document-line-total]")),
+        })),
+        headerLeft: document.querySelector("header").getBoundingClientRect().left,
+        numberAlign: getComputedStyle(number).textAlign,
+        numberLeft: ink(number.firstElementChild).left,
+        projectAlign: getComputedStyle(project).textAlign,
+      };
+    });
+    assert.ok(doc.page <= 390, `the customer's quote scrolls sideways (${doc.page}px)`);
+    assert.ok(doc.rows.length >= 3, "the quote's lines are on the page");
+    // Before the fix they touched: "2$1,450.00$2,900.00".
+    for (const row of doc.rows) {
+      assert.ok(row.value.left - row.qty.right >= 8, `Qty ${row.qty.text} and Value ${row.value.text} run together`);
+      assert.ok(row.total.left - row.value.right >= 8, `Value ${row.value.text} and Total ${row.total.text} run together`);
+    }
+    assert.notEqual(doc.numberAlign, "right", "the QUO number is still right-aligned under the name on a phone");
+    assert.ok(Math.abs(doc.numberLeft - doc.headerLeft) <= 1, `the QUO number is indented (${doc.numberLeft} vs ${doc.headerLeft})`);
+    assert.notEqual(doc.projectAlign, "right", "the Project block is still right-aligned on a phone");
+    await customer.screenshot({ path: path.join(OUT, "23-customer-quote-phone.png"), fullPage: true });
+    await phoneCtx.close();
+  }
+
+  log("audit fixes (UX review): Delete quote asks first; Cancel keeps the quote, Yes, delete removes it");
+  const uxCount = async () => (await sql(`SELECT count(*)::int AS n FROM "Quote" WHERE id='quo_qi_ux'`)).rows[0].n;
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
+  await page.getByTestId("delete-record").click();
+  const confirmDelete = page.getByTestId("delete-record-confirm");
+  await confirmDelete.waitFor();
+  assert.match(await confirmDelete.innerText(), /Delete QUO-1900 for good\? The customer's link stops working\./);
+  assert.equal(await uxCount(), 1, "one tap deleted the quote");
+  await confirmDelete.getByRole("button", { name: "Cancel" }).click();
+  await page.getByTestId("delete-record").waitFor();
+  assert.equal(await uxCount(), 1, "Cancel deleted the quote");
+  await page.getByTestId("delete-record").click();
+  await page.getByTestId("delete-record-yes").click();
+  await page.waitForURL(/\/dashboard\/quotes$/);
+  assert.equal(await uxCount(), 0, "Yes, delete left the quote");
 
   console.log("\nAll steps passed.");
   await context.close();

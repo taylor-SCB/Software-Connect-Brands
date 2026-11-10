@@ -249,7 +249,10 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
             <p className="text-xs text-[#6b7280]">Quotation</p>
           </div>
         </div>
-        <div className="text-right text-xs text-[#6b7280]">
+        {/* Right-aligned beside the name; on a phone, where it wraps
+            under it, it lines up on the left like everything else (it
+            read as oddly indented: UX review, Nov 10, 2026). */}
+        <div className="text-xs text-[#6b7280] sm:text-right">
           <p className="font-mono text-sm font-semibold text-[#111827]">
             QUO-{quote.number}
           </p>
@@ -280,7 +283,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
             <p className="text-sm text-[#4b5563]">{quote.contact.phone}</p>
           )}
         </div>
-        <div className="max-w-sm text-right">
+        <div className="max-w-sm sm:text-right">
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Project
           </p>
@@ -298,9 +301,11 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
         <thead>
           <tr className="border-b border-[#d1d5db] text-left text-[0.65rem] uppercase tracking-widest text-[#6b7280]">
             <th className="pb-2 font-semibold">Item</th>
-            <th className="pb-2 text-right font-semibold">Qty</th>
-            <th className="pb-2 text-right font-semibold">Value</th>
-            <th className="pb-2 text-right font-semibold">Total</th>
+            {/* Each number column keeps a gap on its left: right-aligned
+                with none, a phone ran them together ("2$1,450.00$2,900.00"). */}
+            <th className="pb-2 pl-3 text-right font-semibold">Qty</th>
+            <th className="pb-2 pl-3 text-right font-semibold">Value</th>
+            <th className="pb-2 pl-3 text-right font-semibold">Total</th>
           </tr>
         </thead>
         <tbody>
@@ -340,7 +345,7 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
                 </div>
                 </div>
               </td>
-              <td className="py-3 text-right font-mono tabular-nums">
+              <td className="py-3 pl-3 text-right font-mono tabular-nums" data-testid="document-line-qty">
                 {item.quantity}
                 {item.unitLabel && (
                   <span className="block font-sans text-[0.7rem] text-[#6b7280]" data-testid="document-line-unit">
@@ -348,10 +353,10 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
                   </span>
                 )}
               </td>
-              <td className="py-3 text-right font-mono tabular-nums">
+              <td className="py-3 pl-3 text-right font-mono tabular-nums" data-testid="document-line-value">
                 {formatCents(item.unitPriceCents)}
               </td>
-              <td className="py-3 text-right font-mono font-medium tabular-nums">
+              <td className="py-3 pl-3 text-right font-mono font-medium tabular-nums" data-testid="document-line-total">
                 {formatCents(lineTotalCents(item.quantity, item.unitPriceCents, item.discountCents ?? 0))}
                 {(item.discountCents ?? 0) > 0 && (
                   <span className="block text-xs font-normal text-[#047857]" data-testid="document-line-discount">
@@ -388,7 +393,9 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
           </table>
         </div>
 
-        <div className="min-w-56 text-right">
+        {/* ml-auto: wrapped under the tag totals on a phone, it stays at
+            the right edge under the Total column. */}
+        <div className="ml-auto min-w-56 text-right">
           <TotalsBreakdown totals={totals} discountPercent={quote.discountPercent} />
           <p className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">
             Total
@@ -464,7 +471,7 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
               <p className="text-xs text-white/50">Proposal</p>
             </div>
           </div>
-          <div className="text-right">
+          <div className="sm:text-right">
             <span
               className="badge"
               style={{

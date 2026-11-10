@@ -9,6 +9,11 @@
  * the contract page's Customer Information column, the send restriction
  * being honoured, the New contract page, and the customer's signing page.
  *
+ * Audit fixes (UX review, Nov 10, 2026), an "audit fixes (UX review):"
+ * step: Mark signed (signed on paper) on a contract made from a sent quote
+ * accepts that quote, dated the day it was signed, and takes its open
+ * follow-up off the calendar.
+ *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace, activates it with SQL, and deletes it again
@@ -307,6 +312,35 @@ async function previewChips(page) {
   await page.getByText("Commission Agreement").first().waitFor();
   assert.ok(await page.getByText("Project: Kitchen remodel for $250.00").isVisible());
   await shot(page, "10-public-sign");
+
+  log("audit fixes (UX review): Mark signed on a contract made from a sent quote accepts the quote and takes its follow-up off the calendar");
+  // The quote goes out from its page, so its follow-up is on the calendar.
+  await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
+  await page.getByRole("button", { name: "Back to draft" }).click();
+  await page.getByTestId("mark-sent").click();
+  await page.getByRole("button", { name: "Back to draft" }).waitFor();
+  const openFollowUps = async () =>
+    (
+      await sql(
+        `SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_ct' AND type IN ('Quote follow up','Quote due') AND "doneAt" IS NULL`,
+      )
+    ).rows[0].n;
+  assert.ok((await openFollowUps()) > 0, "marking the quote sent writes its follow-up");
+  await page.goto(contractUrl);
+  await page.locator("[data-testid=mark-signed]").first().click();
+  await page.locator("[data-testid=mark-signed-name]").first().fill("Danny Ortiz");
+  await page.locator("[data-testid=mark-signed-date]").first().fill("2026-11-09");
+  await page.locator("[data-testid=mark-signed-save]").first().click();
+  await page.getByText(/Signed offline/).waitFor();
+  // Before the fix the quote stayed Sent, its follow-up stayed on the
+  // calendar and in Coming up, and the deal's value could fall to a newer
+  // draft.
+  const answered = (await sql(`SELECT status, "respondedAt"::date::text AS day FROM "Quote" WHERE id='quo_ct'`)).rows[0];
+  assert.equal(answered.status, "ACCEPTED", "the quote the signed contract came from is still Sent");
+  assert.equal(answered.day, "2026-11-09", "accepted on the day it was signed");
+  assert.equal(await openFollowUps(), 0, "the signed quote's follow-up is still on the calendar");
+  await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
+  await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
 
   log("New contract: same two columns, template dropdown, preview, residential customer with no deal");
   await page.goto(`${BASE}/dashboard/contracts/new`);
