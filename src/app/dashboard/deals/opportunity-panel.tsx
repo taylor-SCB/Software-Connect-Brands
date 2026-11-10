@@ -39,7 +39,8 @@ export function OpportunityPanel({
   quietDays?: number | null;
   suggestedLabel?: { label: string; reason: string } | null;
   onClose: () => void;
-  onMove: (column: PipelineColumn) => void;
+  // `saved` carries the name when the panel's edits were saved on the way.
+  onMove: (column: PipelineColumn, saved?: { title: string }) => void;
 }) {
   const router = useRouter();
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
@@ -94,8 +95,22 @@ export function OpportunityPanel({
     );
   }
 
-  function save() {
-    if (!detail) return;
+  // Anything changed in the panel since it opened.
+  function unsaved() {
+    if (!detail) return false;
+    const roles = (rows: { contactId: string; role: Role | null }[]) => rows.map((row) => `${row.contactId}:${row.role}`).join(",");
+    return (
+      title !== detail.title ||
+      leadLabel !== detail.leadLabel ||
+      ownerId !== (detail.ownerId ?? "") ||
+      value !== (detail.deal ? (detail.deal.valueCents / 100).toFixed(2) : "") ||
+      roles(people) !== roles(detail.people)
+    );
+  }
+
+  // `then` runs once the save has gone through and the panel is closed.
+  function save(then?: (saved: { title: string }) => void) {
+    if (!detail || pending) return;
     const unset = people.find((row) => row.role === null);
     if (unset) {
       setError(`Tick Primary POC, Associated POC or Do Not List for ${unset.name}`);
@@ -117,7 +132,22 @@ export function OpportunityPanel({
       }
       router.refresh();
       onClose();
+      then?.({ title: title.trim() });
     });
+  }
+
+  // The Stage menu in the panel (UX review, Nov 10, 2026): it used to
+  // close the panel and drop every unsaved edit. Edits made here are saved
+  // first, as Save would; a save that is refused keeps the panel open with
+  // its message and moves nothing. The stage it is already in does nothing.
+  function moveFromPanel(next: PipelineColumn) {
+    if (next === column) return;
+    if (!unsaved()) {
+      onClose();
+      onMove(next);
+      return;
+    }
+    save((saved) => onMove(next, saved));
   }
 
   const column = detail?.column === "ARCHIVED" ? "CONTRACT_SENT" : ((detail?.column ?? "MEETING_SET") as PipelineColumn);
@@ -164,10 +194,7 @@ export function OpportunityPanel({
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
               <span className="flex items-center gap-1.5">
                 <span className="faint">Stage</span>
-                <MoveMenu current={column} archived={detail.column === "ARCHIVED"} locked={isDeal} onMove={(next) => {
-                  onClose();
-                  onMove(next);
-                }} />
+                <MoveMenu current={column} archived={detail.column === "ARCHIVED"} locked={isDeal} onMove={moveFromPanel} />
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="faint">Lead label</span>
@@ -240,7 +267,9 @@ export function OpportunityPanel({
                 <span className="faint text-[0.7rem]">One box each · one Primary</span>
               </div>
               <div className="overflow-x-auto">
-                <table className="table text-xs" data-testid="panel-people">
+                {/* On a phone (UX review, Nov 10, 2026) the headers wrap
+                    and the cells tighten so Do Not List stays on screen. */}
+                <table className="table text-xs max-sm:[&_td]:px-1.5 max-sm:[&_th]:px-1.5 max-sm:[&_th]:tracking-normal max-sm:[&_th]:whitespace-normal" data-testid="panel-people">
                   <thead>
                     <tr>
                       <th>Name</th>
@@ -255,7 +284,7 @@ export function OpportunityPanel({
                     {people.map((row) => (
                       <tr key={row.contactId} data-testid="panel-person" data-name={row.name}>
                         <td className="max-w-[12rem]">
-                          <Link href={`/dashboard/contacts/${row.contactId}`} className="link block truncate">
+                          <Link href={`/dashboard/contacts/${row.contactId}`} className="link block truncate max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">
                             {row.name}
                           </Link>
                           <span className="faint block text-[0.65rem]">
@@ -264,13 +293,16 @@ export function OpportunityPanel({
                         </td>
                         {ROLES.map((item) => (
                           <td key={item.role} className="text-center">
+                            {/* A greyed-out box is the browser's own disabled look,
+                                as everywhere else; an extra 30% fade made it all
+                                but vanish on white (UX review). */}
                             <input
                               type="checkbox"
                               checked={row.role === item.role}
                               disabled={row.role !== null && row.role !== item.role}
                               onChange={() => tick(row.contactId, item.role)}
                               aria-label={`${row.name}: ${item.label}`}
-                              className="h-4 w-4 accent-[var(--brand)] disabled:opacity-30"
+                              className="h-4 w-4 accent-[var(--brand)]"
                               data-testid={`role-${item.role}`}
                             />
                           </td>
@@ -347,7 +379,7 @@ export function OpportunityPanel({
             <button type="button" onClick={onClose} className="btn btn-ghost btn-sm">
               Cancel
             </button>
-            <button type="button" onClick={save} disabled={!detail || pending} className="btn btn-primary btn-sm" data-testid="panel-save">
+            <button type="button" onClick={() => save()} disabled={!detail || pending} className="btn btn-primary btn-sm" data-testid="panel-save">
               {pending ? "Saving…" : "Save"}
             </button>
           </div>

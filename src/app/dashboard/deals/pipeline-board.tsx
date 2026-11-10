@@ -36,7 +36,9 @@ export type BoardTile = {
   // The rules' lead label for a tile with none (src/lib/lead-label-rules.ts).
   suggestedLabel: { label: string; reason: string } | null;
   meetingCount: number;
+  // The newest meeting that has happened, and the soonest one booked ahead.
   lastMeetingOn: string | null;
+  nextMeetingOn: string | null;
   deal: { id: string; stage: string; valueCents: number; quotes: { id: string; number: number; title: string }[] } | null;
 };
 
@@ -245,9 +247,10 @@ export function PipelineBoard({
           suggestedLabel={tiles.find((row) => row.id === panelId)?.suggestedLabel ?? null}
           timeZone={timeZone}
           onClose={() => setPanelId(null)}
-          onMove={(column) => {
+          onMove={(column, saved) => {
             const tile = tiles.find((row) => row.id === panelId);
-            if (tile) move(tile, column);
+            // A name just saved in the panel is the one the convert prompt offers.
+            if (tile) move(saved ? { ...tile, title: saved.title } : tile, column);
           }}
         />
       )}
@@ -344,7 +347,9 @@ function Tile({
 
       {tile.deal ? (
         <div className="mb-1 mt-1.5 flex">
-          <OwnerSelect dealId={tile.deal.id} ownerId={tile.ownerId} users={users} />
+          {/* Keyed by the saved rep: the picker holds its own choice, so a
+              rep saved in the panel has to start it afresh (UX review). */}
+          <OwnerSelect key={tile.ownerId ?? ""} dealId={tile.deal.id} ownerId={tile.ownerId} users={users} />
         </div>
       ) : (
         <p className="mt-1.5 flex items-center gap-1 text-[0.7rem]">
@@ -353,10 +358,17 @@ function Tile({
         </p>
       )}
       {tile.lastMeetingOn && (
-        <p className="faint mt-0.5 flex items-center gap-1 text-[0.7rem]">
+        <p className="faint mt-0.5 flex items-center gap-1 text-[0.7rem]" data-testid="tile-meeting-last">
           <IconCalendar size={11} />
           {tile.meetingCount > 1 ? `${tile.meetingCount} meetings · last ` : "Meeting "}
           {formatDate(tile.lastMeetingOn, timeZone)}
+        </p>
+      )}
+      {tile.nextMeetingOn && (
+        <p className="faint mt-0.5 flex items-center gap-1 text-[0.7rem]" data-testid="tile-meeting-next">
+          <IconCalendar size={11} />
+          {!tile.lastMeetingOn && tile.meetingCount > 1 ? `${tile.meetingCount} meetings · next ` : "Next meeting "}
+          {formatDate(tile.nextMeetingOn, timeZone)}
         </p>
       )}
 
