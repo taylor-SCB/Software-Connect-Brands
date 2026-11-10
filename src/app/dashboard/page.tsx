@@ -9,6 +9,17 @@ import { computeQuoteTotals } from "@/lib/quote-math";
 import { ACTIVITY_LABELS, OPEN_DEAL_STAGES, OPEN_PROJECT_STAGES, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PageHeader, Card, CardHeader, StatTile, EmptyState } from "@/components/ui";
+import { getOrganization } from "@/lib/organization";
+import { isEmailConfigured } from "@/lib/email";
+import { loadTeam, nameOf, REPORT_BREAKDOWNS, REPORT_CODES, REPORT_KEYS, REPORT_LABELS, BREAKDOWN_LABELS } from "@/lib/reports/common";
+import { loadReport, paramsFor, readChoice, reportHref, type ReportChoice } from "@/lib/reports/index";
+import { readNarrative } from "@/lib/reports/narrative";
+import { PERIOD_KEYS, PERIOD_LABELS } from "@/lib/reports/period";
+import { CADENCE_LABELS, cadencesFor, isCadence } from "@/lib/reports/subscriptions";
+import { ReportControls } from "./reports/report-controls";
+import { NarrativeCard } from "./reports/narrative-card";
+import { EmailMe } from "./reports/email-me";
+import { HeadlineTiles, ReportBody } from "./reports/report-views";
 import {
   IconPlus,
   IconFileText,
@@ -26,10 +37,23 @@ const ACTIVITY_ICONS = {
   MEETING: IconCalendar,
 } as const;
 
-export default async function DashboardPage() {
-  const { organizationId, name } = await requireSession();
-
-  const timeZone = await getTimeZone();
+// What Overview showed before the report bar (Nov 10, 2026) — welcome,
+// the money and pipeline tiles, recent activity, the shortcuts — now the
+// frame of the Daily Rundown: its write-up goes under the welcome
+// (`intro`) and its lists under the tiles (`children`).
+async function OverviewSummary({
+  organizationId,
+  name,
+  timeZone,
+  intro,
+  children,
+}: {
+  organizationId: string;
+  name: string | null;
+  timeZone: string;
+  intro: React.ReactNode;
+  children: React.ReactNode;
+}) {
 
   const [
     contactCount,
@@ -100,6 +124,7 @@ export default async function DashboardPage() {
           </>
         }
       />
+      {intro}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {/* The tile counts homeowners as well as companies, so it says
@@ -159,6 +184,7 @@ export default async function DashboardPage() {
         />
       </div>
 
+      {children}
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
         <Card lit className="lg:col-span-2">
           <CardHeader title="Recent activity" subtitle="Across every contact" />
@@ -228,5 +254,134 @@ export default async function DashboardPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+type Search = Promise<{ report?: string; period?: string; rep?: string; by?: string }>;
+
+// Overview (/dashboard) with the report bar across the top (Nov 10, 2026):
+// Daily Rundown (the default, wrapped in what Overview always showed),
+// Pipeline, Activity, Closing and Money Owed. What is picked lives in the
+// address bar; the numbers come from src/lib/reports/, the same functions
+// the 6am email and the write-up read.
+export default async function DashboardPage({ searchParams }: { searchParams: Search }) {
+  const session = await requireSession();
+  const { organizationId, userId } = session;
+  const params = await searchParams;
+  const [team, timeZone, organization] = await Promise.all([loadTeam(organizationId), getTimeZone(), getOrganization()]);
+  const choice = readChoice(params, team.map((member) => member.id));
+  const isAdmin = session.role === "OWNER" || session.role === "ADMIN";
+  const reportParams = paramsFor(choice, { organizationId, timeZone, now: new Date() });
+  const repName = choice.repId ? nameOf(team, choice.repId) : null;
+
+  const [report, subscriptions] = await Promise.all([
+    loadReport(choice.report, reportParams),
+    prisma.reportSubscription.findMany({
+      where: { organizationId, report: REPORT_CODES[choice.report], ...(isAdmin ? {} : { recipientId: userId }) },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, report: true, cadence: true, repId: true, recipient: { select: { name: true } } },
+    }),
+  ]);
+  const narrative = await readNarrative({
+    organizationId,
+    report,
+    ctx: { choice, range: reportParams.range, repName, businessName: organization.name },
+  });
+  const range = reportParams.range;
+  const label = REPORT_LABELS[choice.report];
+
+  const head = (
+    <div className="mb-5 space-y-4" data-testid="report" data-report={choice.report}>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="faint text-xs" data-testid="report-scope">
+            {choice.report === "daily" ? `Daily Rundown · ${range.span}` : `${label} · ${range.label} · ${range.span}`} · {repName ?? "Whole team"}
+            {choice.report !== "daily" && ` · compared with ${range.compareLabel}`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <ReportControls
+            base={{ report: choice.report }}
+            period={choice.report === "daily" ? null : choice.period}
+            periods={PERIOD_KEYS.map((key) => ({ value: key, label: PERIOD_LABELS[key] }))}
+            rep={choice.repId ?? ""}
+            reps={[
+              { value: "", label: "Whole team" },
+              ...team.filter((member) => !member.removed || member.id === choice.repId).map((member) => ({ value: member.id, label: nameOf(team, member.id) })),
+            ]}
+            by={REPORT_BREAKDOWNS[choice.report].length ? choice.by : null}
+            breakdowns={REPORT_BREAKDOWNS[choice.report].map((key) => ({ value: key, label: BREAKDOWN_LABELS[key] }))}
+          />
+          <EmailMe
+            report={choice.report}
+            reportLabel={label}
+            cadences={cadencesFor(choice.report).map((cadence) => ({ value: cadence, label: CADENCE_LABELS[cadence] }))}
+            meId={userId}
+            isAdmin={isAdmin}
+            teammates={team.filter((member) => !member.removed).map((member) => ({ id: member.id, name: member.name }))}
+            repId={choice.repId ?? ""}
+            repName={repName ?? "Whole team"}
+            subscriptions={subscriptions.map((sub) => ({
+              id: sub.id,
+              recipient: sub.recipient.name,
+              cadence: isCadence(sub.cadence) ? CADENCE_LABELS[sub.cadence] : sub.cadence,
+              about: sub.repId ? nameOf(team, sub.repId) : "Whole team",
+            }))}
+            emailOn={isEmailConfigured()}
+          />
+        </div>
+      </div>
+      <NarrativeCard
+        key={narrative.key}
+        body={narrative.body}
+        source={narrative.source}
+        pending={narrative.pending}
+        choice={{ report: choice.report, period: choice.period, rep: choice.repId ?? "", by: choice.by }}
+      />
+      {choice.report !== "daily" && <HeadlineTiles headlines={report.headlines} compareLabel={range.compareLabel} />}
+    </div>
+  );
+  const body = <ReportBody report={report} range={range} by={choice.by} />;
+
+  return (
+    <div>
+      <ReportBar choice={choice} />
+      {choice.report === "daily" ? (
+        <OverviewSummary organizationId={organizationId} name={session.name} timeZone={timeZone} intro={head}>
+          <div className="mt-5">{body}</div>
+        </OverviewSummary>
+      ) : (
+        <>
+          <PageHeader eyebrow="Overview" title={label} />
+          {head}
+          {body}
+        </>
+      )}
+    </div>
+  );
+}
+
+// The five reports as tabs. Switching keeps the rep; the period and the
+// breakdown go back to each report's own default.
+function ReportBar({ choice }: { choice: ReportChoice }) {
+  return (
+    <nav className="mb-6 flex flex-wrap gap-1.5 border-b border-[var(--border)] pb-3" aria-label="Reports" data-testid="report-bar">
+      {REPORT_KEYS.map((key) => {
+        const active = key === choice.report;
+        const target: ReportChoice = { report: key, period: "today", repId: choice.repId, by: REPORT_BREAKDOWNS[key][0] ?? "rep" };
+        return (
+          <Link
+            key={key}
+            href={reportHref({ ...target, period: key === "daily" ? "today" : (readChoice({ report: key }, []).period) })}
+            className={`btn btn-sm ${active ? "btn-primary" : "btn-ghost"}`}
+            aria-current={active ? "page" : undefined}
+            data-testid="report-tab"
+            data-report={key}
+          >
+            {REPORT_LABELS[key]}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }

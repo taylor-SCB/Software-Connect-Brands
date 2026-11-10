@@ -367,3 +367,25 @@ export async function loadBalance(
     }),
   };
 }
+
+/* ------------------------ The owed rows, for reports ------------------------ */
+
+// The rows every "owed" figure above is summed from — signed Money-in
+// paperwork's payment rows, each with what has been paid against it — as a
+// FROM / WHERE block, so the Money Owed report (src/lib/reports/money.ts)
+// ages and groups exactly the money owedTotals adds up rather than a
+// second definition of it. Aliases: c (the contract), cp (its row), paid
+// (paid.total, what came in against the row).
+// `joins` go in before the WHERE, for a report's own lookups.
+export function owedRowsSql(organizationId: string, joins: Prisma.Sql = Prisma.empty): Prisma.Sql {
+  return Prisma.sql`
+      FROM "Contract" c
+      JOIN "ContractPayment" cp ON cp."contractId" = c.id
+      LEFT JOIN LATERAL (
+             SELECT SUM(p."amountCents") AS total FROM "Payment" p WHERE p."contractPaymentId" = cp.id
+           ) paid ON true
+      ${joins}
+     WHERE c."organizationId" = ${organizationId}
+       AND c.payable = false
+       AND c.status = 'SIGNED'`;
+}

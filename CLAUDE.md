@@ -741,6 +741,57 @@ applies in both. The customer's documents (/q, /c, /i, /r, /u, /p, the
 PDFs) carry no `data-theme` and stay as they were. Proven by `looks.cjs`;
 `overlay-readability.cjs` checks every overlay in both looks.
 
+**Reports on Overview (Nov 10, 2026).** Overview (`/dashboard`) has a
+report bar across the top: **Daily Rundown** (the default; it is the old
+Overview — welcome, the Owed to you / pipeline tiles, recent activity, Jump
+in — with today's calendar for the team, overdue follow-ups, gone-quiet
+opportunities, payments in yesterday, quotes and contracts sent yesterday
+and new contacts yesterday inside it), **Pipeline** (open value and count by
+stage as the board reads it, days in stage, what moved in the period from
+`StatusChange` — people for the meeting steps, deals for the paperwork —
+conversions, new opportunities, the oldest open items), **Activity**
+(touches by day / week, kind and rep, marketing sends as their own series
+and never a touch, people and companies touched, who nobody touched by
+contact owner / industry / job title / state), **Closing** (won and lost
+value and count, win rate, average win, days from first meeting to signed,
+biggest wins) and **Money Owed** (owed aged Not due / 0–30 / 31–60 / 61–90 /
+90+ days late, top debtors, contracts waiting on a signature, collected in
+the period; "owed" is `owedRowsSql` in `src/lib/money.ts`, the very rows
+the Owed to you tile adds up). The report, period (Today … This year, plus
+Yesterday and Last year), rep and "Break down by" (Rep, Industry — a
+company's first one —, Job title, State, Lead label, where it makes sense)
+are in the address bar; "this" periods are compared with the same days of
+the period before, finished ones with the whole period before. The
+numbers are pure functions in `src/lib/reports/` (one module per report,
+aggregated in SQL; a deal's value is `dealValueCte`, `dealValueCents` in
+SQL), read by the page, the email and the write-up alike. **The write-up**
+(`src/lib/reports/narrative.ts`): with `ANTHROPIC_API_KEY` set, Claude
+(`REPORT_NARRATIVE`, 60 a day per workspace) is given only the formatted
+numbers as JSON and every number in its answer must be in them ("$12k" for
+$12,345 is fine) or the answer is thrown out; without AI, over the
+allowance, on any error or a failed check it is written by rules from the
+numbers (biggest change, who's ahead and behind, what needs attention).
+Stored in `ReportNarrative` by report, period with its dates, rep,
+breakdown and a fingerprint of the numbers, so it is written once until the
+numbers move; Rewrite asks again. The page never waits on the AI: it shows
+the rules version and swaps the AI one in. **Email me this** on every report
+(`ReportSubscription`; yourself, or any teammate for an Owner or Admin;
+Daily / Weekly on Mondays for last week / Monthly on the 1st / Quarterly /
+Yearly on Jan 1; the Daily Rundown is daily only) and **My report emails**
+with Remove in Settings → My Account. **The clock**: `vercel.json` runs
+`/api/cron/reports` every hour (Vercel Pro); each run sends, for every
+active workspace whose clock has reached 6am, the subscriptions due today
+not yet sent since 6am (claimed through `lastSentAt` before sending and put
+back if the send fails, so a double fire sends nothing twice and a run that
+runs out of time is finished the next hour; one made after 6am waits for
+the next morning). **The route refuses everything unless `CRON_SECRET` is
+set in Vercel** (Vercel then sends it as the Bearer header itself) — until
+Taylor adds it, no report email goes out. Email uses `sendEmail` as the
+business's name; with email off nothing is claimed. `reports.cjs` (33
+steps) covers it; measured through the slow proxy every report opens in
+0.25–0.7 s, and at 200,000 contacts in 0.45–0.7 s (Activity broken down by
+industry, title or state over a whole year about 1 s).
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -762,6 +813,26 @@ The same clock applies to the gaps below. They are not urgent this week; they
 are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
+
+- **Report emails need `CRON_SECRET` in Vercel.** The hourly clock is
+  refused without it, by design. Add it (any long random value) under
+  Settings → Environment Variables, all environments, then redeploy. Email
+  itself (`RESEND_API_KEY`, `EMAIL_FROM`) must be on too.
+- **Report write-ups are rules-written until `ANTHROPIC_API_KEY` is set.**
+  They are still useful prose; AI ones cost about a cent each and are
+  written only when a report's numbers change, capped at 60 a workspace a
+  day.
+- **Reports count from what is recorded.** A deal's win or loss is dated
+  by `Deal.stageChangedAt` (a deal won and then moved out of Won is not a
+  win); the Pipeline's "what moved" only knows `StatusChange` rows (from
+  Sept 30, 2026); an opportunity lost before any deal has no date and is
+  left out of Closing; a company in two industries counts under its first.
+- **A report email that fails to send is retried at the next hourly run
+  that day**, not after midnight: a workspace whose send fails all day
+  misses that day's email.
+- **The Daily Rundown is always today and yesterday** in the workspace's
+  zone; its period picker is hidden. The gone-quiet list uses the real
+  clock, so the cron's test clock does not move it.
 
 - **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel** (`DEPLOY.md`).
   Without it the button simply isn't shown. It sends the agreement's
@@ -1066,7 +1137,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-six** (plus `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
+suite, and the delete-confirmation suite. **Thirty-seven** (plus `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1221,6 +1292,17 @@ it ever holds more than 5. **`calendar.cjs` no longer assumes November
 2026 is in the future** (Nov 4, 2026): it clears the Contract sent /
 closed entries its seed contract writes on the real today, and paging
 into its month may land on today.
+`reports.cjs` (Nov 10, 2026, 33 steps: the five reports' numbers against
+the seed and SQL, the pickers, the write-up and its cache, a stand-in Claude
+on :3994 through a second server it starts itself on :3113, Email me this,
+My report emails, the cron's secret and a forced Monday-6am run caught on
+:3993, the phone; `LOAD=200000` adds the at-scale timings) **needs, in
+`.env`, `RESEND_API_KEY`, `EMAIL_FROM`,
+`RESEND_ENDPOINT=http://localhost:3993/emails`, `CRON_SECRET=test-cron-secret`,
+`REPORTS_TEST_CLOCK=1` and `APP_URL` set to the server's own address**, and
+no `ANTHROPIC_API_KEY`. `REPORTS_TEST_CLOCK=1` lets the cron take a `now`
+for the test (never honoured on Vercel's production, and only with the
+secret).
 `overlay-readability.cjs` step 6 (the deal picker on a new quote) used
 to pass one run in three: it photographed the panel while the page was
 still fading in. It waits for the fade now (Oct 25, 2026); **a pixel
