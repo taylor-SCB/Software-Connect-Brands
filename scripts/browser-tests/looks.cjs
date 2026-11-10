@@ -28,7 +28,12 @@
  * UX review fixes (Nov 10, 2026, "audit fixes (UX review): ..." steps):
  * Light's outlines on ghost buttons, fields, filter chips and cards clear
  * 3:1 against themselves and what is around them, and Dark's tokens are
- * unchanged; the Contract Coordinator's disabled "Tick rows to create
+ * unchanged; a field clicked into (search box, note box, Rep picker) is
+ * outlined at least as strongly as at rest in Light, where the old
+ * see-through brand edge faded it, and Dark's focus edge is as it was;
+ * lines that only separate (a card's divider, a table's header line, the
+ * sidebar's edge and its divider, the phone bar's line) stay the soft
+ * --hairline-3 in Light and as they were in Dark; the Contract Coordinator's disabled "Tick rows to create
  * contracts" reads at 4.5:1 in Light, not faded as a whole; table footers
  * carry their rows' padding and a seeded contract's $6,754.00 grand total
  * ends inside its card at 1440 in both looks; the phone's strip of links
@@ -698,6 +703,118 @@ async function textContrast(locator) {
   // rgb(255 255 255 / 0.075) and / 0.15, as before the review.
   assert.deepEqual(darkTokens.map((c) => c.slice(0, 3)), [[255, 255, 255], [255, 255, 255]], `Dark's outlines are still white (${JSON.stringify(darkTokens)})`);
   assert.ok(Math.abs(darkTokens[0][3] - 0.075) < 0.006 && Math.abs(darkTokens[1][3] - 0.15) < 0.006, `Dark's outlines are as they were (${JSON.stringify(darkTokens)})`);
+
+  log("audit fixes (UX review): in Light a field you click into is outlined at least as strongly as at rest (it used to fade); Dark's focus is as it was");
+  {
+    const FIELDS = [
+      ["/dashboard/contacts", "search box", (p) => p.getByPlaceholder(/Search contacts/)],
+      [`/dashboard/contacts/${contactId}`, "note box", (p) => p.locator("main textarea").first()],
+      [`/dashboard/contacts/${contactId}`, "Rep picker", (p) => p.locator("main select.select").first()],
+    ];
+    const settleField = async (field) => {
+      await page.waitForTimeout(60);
+      await field.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+    };
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      for (const [url, what, find] of FIELDS) {
+        await page.goto(`${BASE}${url}`);
+        await settle(page);
+        const field = find(page);
+        const rest = await outlineContrast(field);
+        await field.focus();
+        await settleField(field);
+        const focused = await outlineContrast(field);
+        if (look === "dark") {
+          // Dark keeps the see-through brand edge (55%).
+          assert.match(focused.border, /\/ 0\.55\)$|, 0\.55\)$/, `dark ${what}: the focused edge changed (${focused.border})`);
+          console.log(`     dark ${what}: ${rest.inside}:1 at rest, ${focused.inside}:1 focused (unchanged rule)`);
+          continue;
+        }
+        // The old Light focus edge, painted on the same field, reads under
+        // its resting outline: the check below would have caught it.
+        const old = await field.evaluate((el) => {
+          el.style.transition = "none";
+          el.style.borderColor = "color-mix(in srgb, var(--brand) 55%, transparent)";
+          const { rgba, over, ratio, behind } = window.__uxColour;
+          const inside = behind(el);
+          const out = ratio(over(rgba(getComputedStyle(el).borderTopColor), inside), inside);
+          el.style.borderColor = "";
+          el.style.transition = "";
+          return out;
+        });
+        assert.ok(old < rest.inside, `light ${what}: the old focus edge (${old}:1) should read under the resting one (${rest.inside}:1)`);
+        assert.ok(focused.inside >= 3, `light ${what}: the focused outline is ${focused.inside}:1 (${focused.border}); needs 3:1`);
+        assert.ok(focused.inside >= rest.inside, `light ${what}: clicking in fades the outline from ${rest.inside}:1 to ${focused.inside}:1`);
+        console.log(`     light ${what}: ${rest.inside}:1 at rest, ${focused.inside}:1 focused (was ${old}:1)`);
+        if (what === "search box") await field.screenshot({ path: path.join(OUT, "ux-light-focused-search.png") });
+      }
+    }
+  }
+
+  log("audit fixes (UX review): Light lines that only separate (a divider, a table's header line, the sidebar's edge, the phone bar's line) stay soft; Dark's are as they were");
+  {
+    // Each line's colour and its contrast against what is behind it.
+    const lineOf = async (p, js) => {
+      await p.evaluate(COLOUR_MATHS);
+      return p.evaluate(`(() => {
+        const { rgba, over, ratio, behind } = window.__uxColour;
+        const [el, colour] = (${js})();
+        const c = rgba(colour);
+        const bg = behind(el.parentElement || el);
+        return { alpha: +c[3].toFixed(3), rgb: c.slice(0, 3), ratio: ratio(over(c, bg), bg) };
+      })()`);
+    };
+    const DESKTOP = [
+      ["/dashboard/contacts", "the list's header line", `() => { const th = document.querySelector("main .table thead th"); return [th, getComputedStyle(th).borderBottomColor]; }`],
+      ["/dashboard/contacts", "the sidebar's edge", `() => { const a = document.querySelector("aside"); return [a, getComputedStyle(a).borderRightColor]; }`],
+      ["/dashboard/contacts", "the sidebar's divider", `() => { const d = document.querySelector("aside .divider"); return [d, getComputedStyle(d).backgroundColor]; }`],
+      [`/dashboard/contacts/${contactId}`, "a divider in a card", `() => { const d = document.querySelector("main .divider"); return [d, getComputedStyle(d).backgroundColor]; }`],
+    ];
+    // The bar holding the phone's look switch: its first ancestor with a
+    // line along the bottom only (the switch has an outline all round).
+    const PHONE_BAR = `() => { let n = [...document.querySelectorAll("[data-testid=look-switch]")].find((e) => e.offsetParent); n = n.parentElement; while (n && !(getComputedStyle(n).borderBottomWidth === "1px" && getComputedStyle(n).borderTopWidth === "0px")) n = n.parentElement; return [n, getComputedStyle(n).borderBottomColor]; }`;
+    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const phone = await mobile.newPage();
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      const lines = [];
+      for (const [url, what, js] of DESKTOP) {
+        if (page.url() !== `${BASE}${url}`) {
+          await page.goto(`${BASE}${url}`);
+          await settle(page);
+        }
+        lines.push([what, await lineOf(page, js)]);
+      }
+      await phone.goto(`${BASE}/dashboard/contacts`);
+      await settle(phone);
+      lines.push(["the phone bar's line", await lineOf(phone, PHONE_BAR)]);
+      for (const [what, line] of lines) {
+        if (look === "light") {
+          // --hairline-3 (slate at 0.12), about the 0.11 these were before
+          // the review; with --border (0.5) they read 3.1:1, as heavy as a
+          // button's outline.
+          // (A faint colour read back from a canvas can be a shade off in rgb.)
+          const slate = [15, 23, 42].every((v, i) => Math.abs(line.rgb[i] - v) <= 3);
+          assert.ok(Math.abs(line.alpha - 0.12) <= 0.01 && slate, `light ${what}: ${JSON.stringify(line)} is not the soft --hairline-3`);
+          assert.ok(line.ratio < 1.6, `light ${what}: reads ${line.ratio}:1, as heavy as an outline`);
+        } else {
+          // Dark: white at 0.075 (--border) as before, or 0.08 (--hairline-3).
+          assert.ok(line.rgb.join() === "255,255,255" && Math.abs(line.alpha - 0.0775) <= 0.006, `dark ${what}: ${JSON.stringify(line)} changed`);
+        }
+        console.log(`     ${look} ${what}: alpha ${line.alpha}, ${line.ratio}:1`);
+      }
+    }
+    await mobile.close();
+    // The outlines beside them keep their 3:1 (light, checked again here
+    // on the same page as the lines).
+    await sql(`UPDATE "User" SET theme = 'light' WHERE email = $1`, [EMAIL]);
+    await page.goto(`${BASE}/dashboard/contacts`);
+    await settle(page);
+    const card = await outlineContrast(page.locator("main .card").first());
+    assert.ok(card.inside >= 3, `light: the list's card outline fell to ${card.inside}:1`);
+    await page.screenshot({ path: path.join(OUT, "ux-light-soft-lines-contacts.png") });
+  }
 
   log("audit fixes (UX review): a disabled primary button keeps readable words in Light (Contract Coordinator's \"Tick rows to create contracts\")");
   const dealId = (await sql(`SELECT "dealId" FROM "Quote" WHERE id = $1 AND "organizationId" = $2`, [quoteId, org])).rows[0].dealId;

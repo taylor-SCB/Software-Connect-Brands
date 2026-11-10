@@ -39,8 +39,11 @@ export default async function DashboardLayout({
       {/* The nav scrolls inside the sidebar and the account and Log out
           stay pinned at its foot (audit fix, Nov 10, 2026): on a short
           laptop screen the look switch had pushed Log out below the
-          window, out of reach. */}
-      <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--border)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
+          window, out of reach. Its right edge, like the phone bar's
+          bottom line, is a --hairline-3 line: it separates, it isn't
+          the outline of something to click, so it stayed soft when
+          Light's --border was darkened for outlines (UX review). */}
+      <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--hairline-3)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
         <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
           <div className="mb-6 flex items-center gap-2.5 px-1">
             {organization.logoUrl ? (
@@ -104,7 +107,7 @@ export default async function DashboardLayout({
         </div>
       </aside>
 
-      <div className="border-b border-[var(--border)] p-3 lg:hidden">
+      <div className="border-b border-[var(--hairline-3)] p-3 lg:hidden">
         <div className="mb-2 flex items-center justify-between">
           <p className="min-w-0 truncate text-sm font-semibold">{organization.name}</p>
           <LookSwitch key={theme} theme={theme} className="ml-auto mr-2 inline-flex shrink-0" />

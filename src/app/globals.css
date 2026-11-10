@@ -105,7 +105,10 @@
      Nov 10, 2026: at 0.11 / 0.22 they measured 1.3:1 and 1.6:1, and in
      sunlight "Log phone call", the filter chips and the fields read as
      plain words). --border is 3.4:1 on a card and 3.1:1 on the page;
-     --border-strong, on every field, 4.7:1. Dark is unchanged. */
+     --border-strong, on every field, 4.7:1. Dark is unchanged. A line
+     that only separates rows or sections (a divider, a table's header
+     line, the sidebar's edge) uses --hairline-3, and a chart's gridlines
+     --chart-grid, so they stay as soft as they were before this. */
   --border: rgb(15 23 42 / 0.5);
   --border-strong: rgb(15 23 42 / 0.6);
   --overlay: #ffffff;
@@ -487,6 +490,15 @@
     background-color: var(--input-bg-focus);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
   }
+  /* Light: the field you are typing in is outlined in the brand colour,
+     darkened the way Light darkens a brand-coloured .link. The
+     see-through brand above (55%) was paler than a resting field's
+     outline (--border-strong, 4.7:1), so clicking into a field made its
+     outline fade instead of stand out (UX review follow-up, Nov 10,
+     2026). Dark keeps the rule above. */
+  :root:has([data-theme="light"]) :is(.input, .select, .textarea):focus {
+    border-color: color-mix(in srgb, var(--brand) 75%, var(--link-mix));
+  }
   .select {
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23a4adc0'%3E%3Cpath d='M4.5 6.5 8 10l3.5-3.5z'/%3E%3C/svg%3E");
@@ -549,6 +561,14 @@
     padding: 0.6rem 0.85rem;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
+  }
+  /* Light: the line under a table's headings only separates them from
+     the rows, so it keeps the soft grey it had before --border was
+     darkened for outlines (UX review follow-up, Nov 10, 2026). The 3:1
+     grey is for the outline of something you find and click: a button,
+     a field, a chip, a card. */
+  :root:has([data-theme="light"]) .table thead th {
+    border-bottom-color: var(--hairline-3);
   }
   .table tbody td {
     padding: 0.7rem 0.85rem;
@@ -788,6 +808,11 @@
   .divider {
     height: 1px;
     background: var(--border);
+  }
+  /* Light: a divider separates two parts of a card, so it stays the soft
+     grey it was, not the 3:1 outline grey (UX review follow-up). */
+  :root:has([data-theme="light"]) .divider {
+    background: var(--hairline-3);
   }
 
   .link {
