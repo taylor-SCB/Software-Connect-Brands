@@ -25,6 +25,7 @@ import { SupplierCell, type SupplierOption } from "./supplier-cell";
 import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
 import { MeetingDraftButton } from "./meeting-draft";
+import { useReportUnsavedLines } from "./mark-sent";
 import type { DraftedLine } from "../ai-actions";
 import {
   customUnitIdOf,
@@ -232,6 +233,30 @@ function rowDiscount(row: Row) {
   return resolveDiscount({ percent: null, cents: dollarsToCents(row.discountInput) }, gross);
 }
 
+// UX review, Nov 10, 2026. At 1440 the Qty, Value and Tag boxes were
+// squeezed to 24-40px ("16" read "1", $1,450 read "145", the tag "▾A"):
+// the table's automatic layout shrinks a column to its controls' smallest
+// width, and these had none of their own. They carry a minimum now, and
+// the cells' sides are a little tighter so the row still fits the card.
+// On a phone (below `sm`) each line is a block of its own — the product
+// across the top, then Qty / Value, Discount / Total, Tag / Supplier, each
+// with its name above it — instead of a table squeezed sideways with the
+// product names cut to six letters and the totals off the screen.
+const PHONE_CELL = "max-sm:border-0 max-sm:p-0";
+// Review follow-up: at 1280 those minimums left the product 126px beside
+// a picture ("4MP turret camera, white" cut off) and the row 22px past
+// the card. Tag, Supplier / Contractor and Service type now share one
+// column, one above the other below 2xl (a line's product, description
+// and notes already make it about that tall) and side by side from 2xl,
+// which hands the product name the width of a column. The name box keeps
+// 12rem, so on a tablet, where the table scrolls inside its card anyway,
+// a name is still readable.
+const TAG_BOX = "min-w-0 2xl:w-[8.5rem] 2xl:shrink-0";
+const SIDE_BOX = "min-w-0 2xl:w-40 2xl:shrink-0";
+function PhoneLabel({ children }: { children: React.ReactNode }) {
+  return <span className="label font-sans sm:hidden">{children}</span>;
+}
+
 export function LineItemsEditor({
   quoteId,
   initialLines,
@@ -303,6 +328,8 @@ export function LineItemsEditor({
   // Saved with the lines, and worked out on the server against them.
   const [quoteDiscount, setQuoteDiscount] = useState<DiscountState>(() => discountStateOf(initialDiscount));
   const [dirty, setDirty] = useState(false);
+  // Mark as sent in the header holds off while this is set.
+  useReportUnsavedLines(dirty);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
   // Set by any edit made while a save is in flight, so finishing that save
@@ -705,25 +732,31 @@ export function LineItemsEditor({
         </label>
       )}
       <div className="overflow-x-auto">
-        <table className="table">
-          <thead>
+        <table className="table max-sm:block [&_td]:px-2 [&_th]:px-2" data-testid="line-items-table">
+          <thead className="max-sm:hidden">
             <tr>
               <th className="w-[42%]">Product</th>
               <th className="w-24 text-right">Qty</th>
               <th className="w-32 text-right">Value</th>
               <th className="w-36 text-right">Discount</th>
-              <th className="w-32 text-right">Total</th>
-              <th className="w-44">Tag</th>
-              {/* Internal. Never rendered on the customer's copy. */}
-              <th className="w-44">Supplier / Contractor</th>
-              {splitByService && <th className="w-44">Service type</th>}
+              <th className="w-24 text-right">Total</th>
+              {/* Tag, Supplier / Contractor (internal, never on the
+                  customer's copy) and Service type share a column: side
+                  by side from 2xl, one above the other below it. */}
+              <th className={`w-44 ${splitByService ? "2xl:w-[30.5rem]" : "2xl:w-80"}`} data-testid="line-pickers-head">
+                <span className="flex flex-col gap-0.5 2xl:flex-row 2xl:gap-2">
+                  <span className={TAG_BOX}>Tag</span>
+                  <span className={SIDE_BOX}>Supplier / Contractor</span>
+                  {splitByService && <span className={SIDE_BOX}>Service type</span>}
+                </span>
+              </th>
               {!readOnly && <th className="w-10" />}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="max-sm:block">
             {rows.length === 0 && (
-              <tr>
-                <td colSpan={(readOnly ? 7 : 8) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
+              <tr className="max-sm:block">
+                <td colSpan={readOnly ? 6 : 7} className="faint py-8 text-center text-xs max-sm:block">
                   No line items yet. Add one from your catalog or start a blank line.
                 </td>
               </tr>
@@ -742,8 +775,12 @@ export function LineItemsEditor({
                     )
                   : null;
               return (
-                <tr key={row.uid} className="align-top">
-                  <td>
+                <tr
+                  key={row.uid}
+                  className="align-top max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:border-b max-sm:border-[var(--hairline)] max-sm:py-4"
+                  data-testid="line-row"
+                >
+                  <td className={`${PHONE_CELL} max-sm:col-span-2`}>
                     <div className="flex items-start gap-2">
                     {(() => {
                       const token = rowPicture(row);
@@ -759,7 +796,7 @@ export function LineItemsEditor({
                         />
                       ) : null;
                     })()}
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 sm:min-w-[12rem]">
                     <input
                       value={row.name}
                       onChange={(event) =>
@@ -950,7 +987,8 @@ export function LineItemsEditor({
                     </div>
                     </div>
                   </td>
-                  <td>
+                  <td className={PHONE_CELL}>
+                    <PhoneLabel>Qty</PhoneLabel>
                     <input
                       value={row.quantityInput}
                       onChange={(event) =>
@@ -959,10 +997,11 @@ export function LineItemsEditor({
                       inputMode="decimal"
                       aria-label={`Line ${index + 1} quantity`}
                       disabled={readOnly}
-                      className="input input-sm num text-right"
+                      className="input input-sm num min-w-[4rem] text-right"
                     />
                   </td>
-                  <td>
+                  <td className={PHONE_CELL}>
+                    <PhoneLabel>Value</PhoneLabel>
                     <input
                       value={row.unitPriceInput}
                       onChange={(event) =>
@@ -971,7 +1010,7 @@ export function LineItemsEditor({
                       inputMode="decimal"
                       aria-label={`Line ${index + 1} unit value`}
                       disabled={readOnly}
-                      className="input input-sm num text-right"
+                      className="input input-sm num min-w-[6rem] text-right"
                     />
                     {row.priceNeeded && rowUnitCents(row) === 0 && (
                       <p className="mt-0.5 text-right text-[0.65rem] font-semibold text-[var(--danger)]" data-testid="line-price-needed">
@@ -997,8 +1036,9 @@ export function LineItemsEditor({
                         </p>
                       )}
                   </td>
-                  <td>
-                    <div className="flex items-center justify-end gap-1">
+                  <td className={PHONE_CELL}>
+                    <PhoneLabel>Discount</PhoneLabel>
+                    <div className="flex items-center gap-1 sm:justify-end">
                       <input
                         value={row.discountInput}
                         onChange={(event) => updateRow(row.uid, { discountInput: event.target.value })}
@@ -1026,7 +1066,8 @@ export function LineItemsEditor({
                       </p>
                     )}
                   </td>
-                  <td className="num pt-3 text-right font-medium">
+                  <td className={`num pt-3 text-right font-medium ${PHONE_CELL}`} data-testid="line-total">
+                    <PhoneLabel>Total</PhoneLabel>
                     {formatCents(total)}
                     {/* What the line comes to over its whole term, so the
                         unit, the billing period and the term can be checked
@@ -1040,13 +1081,16 @@ export function LineItemsEditor({
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td className={`${PHONE_CELL} max-sm:col-span-2`} data-testid="line-pickers">
+                    <div className="flex flex-col gap-1.5 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 2xl:flex-row 2xl:gap-2">
+                    <div className={TAG_BOX}>
+                    <PhoneLabel>Tag</PhoneLabel>
                     <select
                       value={row.tag}
                       onChange={(event) => changeTag(row.uid, event.target.value as LineItemTagValue)}
                       aria-label={`Line ${index + 1} tag`}
                       disabled={readOnly}
-                      className="select input-sm"
+                      className="select input-sm min-w-[8.5rem]"
                       style={{ color: ink(TAG_COLORS[row.tag]) }}
                     >
                       {LINE_ITEM_TAGS.map((tag) => (
@@ -1055,8 +1099,9 @@ export function LineItemsEditor({
                         </option>
                       ))}
                     </select>
-                  </td>
-                  <td>
+                    </div>
+                    <div className={SIDE_BOX}>
+                    <PhoneLabel>Supplier / Contractor</PhoneLabel>
                     <SupplierCell
                       value={row.supplierCompanyId}
                       options={supplierOptions}
@@ -1067,9 +1112,10 @@ export function LineItemsEditor({
                       label={`Line ${index + 1} supplier`}
                       disabled={readOnly}
                     />
-                  </td>
+                    </div>
                   {splitByService && (
-                    <td>
+                    <div className={`${SIDE_BOX} max-sm:col-span-2`}>
+                      <PhoneLabel>Service type</PhoneLabel>
                       <select
                         value={row.serviceType}
                         onChange={(event) => updateRow(row.uid, { serviceType: event.target.value })}
@@ -1083,10 +1129,12 @@ export function LineItemsEditor({
                           <option key={name} value={name}>{name}</option>
                         ))}
                       </select>
-                    </td>
+                    </div>
                   )}
+                    </div>
+                  </td>
                   {!readOnly && (
-                    <td className="pt-2.5">
+                    <td className={`pt-2.5 ${PHONE_CELL} max-sm:col-span-2 max-sm:text-right`}>
                       <button
                         type="button"
                         onClick={() => removeRow(row.uid)}

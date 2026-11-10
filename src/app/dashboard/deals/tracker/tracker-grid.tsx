@@ -557,7 +557,9 @@ export function TrackerGrid({
         <table className="table" data-testid="tracker-lines">
           <thead>
             <tr>
-              <th className="whitespace-normal align-bottom" style={{ minWidth: 260 }}>
+              {/* Narrower on a phone, so the Contract tick boxes are a
+                  shorter swipe away inside the table's own scroll. */}
+              <th className="min-w-[10rem] whitespace-normal align-bottom sm:min-w-[260px]">
                 <span className="block">Line items on QUO-{quote.number}</span>
                 <span className="faint mt-1 block font-normal normal-case tracking-normal">
                   Change a quantity, price or discount here and it saves to the quote.
@@ -900,8 +902,12 @@ function ContractCard({
   const selectedRows = column.selected.map((lineId) => rows.find((row) => row.id === lineId)).filter((row) => row !== undefined);
 
   return (
+    // min-w-0: a grid item is otherwise as wide as its widest content —
+    // the payment schedule's table — and on a phone that made the card,
+    // and the whole page, 675px wide (UX review, Nov 10, 2026). Held to
+    // the column, the schedule scrolls inside its own box instead.
     <div
-      className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4"
+      className="min-w-0 space-y-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4"
       data-testid="column-header"
       data-column={letter(index)}
     >

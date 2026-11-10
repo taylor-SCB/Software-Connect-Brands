@@ -17,7 +17,7 @@ import { getTimeZone } from "@/lib/organization";
 import { NEW_TYPE_VALUE, canUserSend } from "@/lib/contracts";
 import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
 import { awardFromContract, reverseAward, refreshProjectTotals } from "@/lib/projects";
-import { syncContractEvents } from "@/lib/calendar-auto";
+import { syncContractEvents, syncQuoteEvents } from "@/lib/calendar-auto";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -547,6 +547,30 @@ export async function deleteContract(_prev: ActionState, formData: FormData): Pr
 
 /* ---------------------------- Mark signed ---------------------------- */
 
+// A customer signing a contract made from a quote has said yes to that
+// quote (UX review, Nov 10, 2026): it becomes Accepted, so the won deal
+// keeps its value (pickPrimaryQuote pins an accepted quote; before this a
+// newer $0 draft on the deal became the value), it stops counting as out
+// with the customer, and its open follow-up and due date come off the
+// calendar and Coming up. Only a quote still Sent is moved: one already
+// answered, or pulled back to Draft, is left as it is.
+async function acceptSourceQuote(
+  organizationId: string,
+  quoteId: string | null,
+  respondedAt: Date,
+  actorId: string | null,
+) {
+  if (!quoteId) return;
+  const accepted = await prisma.quote.updateMany({
+    where: { id: quoteId, organizationId, status: "SENT" },
+    data: { status: "ACCEPTED", respondedAt },
+  });
+  if (accepted.count === 0) return;
+  await syncQuoteEvents(organizationId, quoteId, actorId);
+  revalidatePath(`/dashboard/quotes/${quoteId}`);
+  revalidatePath("/dashboard/quotes");
+}
+
 const markSignedSchema = z.object({
   contractId: idSchema,
   signerName: z.string().trim().min(2, "Who signed it?").max(120),
@@ -567,18 +591,27 @@ export async function markContractSigned(
 
   const contract = await prisma.contract.findFirst({
     where: { id: parsed.data.contractId, organizationId },
-    select: { id: true, status: true, payable: true, dealId: true, publicToken: true, contact: { select: { email: true } } },
+    select: {
+      id: true,
+      status: true,
+      payable: true,
+      dealId: true,
+      quoteId: true,
+      publicToken: true,
+      contact: { select: { email: true } },
+    },
   });
   if (!contract) return { error: "Contract not found" };
   if (contract.status === "SIGNED") return { error: "This contract is already signed" };
   if (contract.status !== "SENT") return { error: "Send the contract first, then mark it signed" };
 
   const timeZone = await getTimeZone();
+  const signedAt = zonedNoon(parsed.data.signedOn, timeZone);
   const result = await prisma.contract.updateMany({
     where: { id: contract.id, organizationId, status: "SENT" },
     data: {
       status: "SIGNED",
-      signedAt: zonedNoon(parsed.data.signedOn, timeZone),
+      signedAt,
       signerName: parsed.data.signerName,
       signerEmail: contract.contact.email,
       signedOffline: true,
@@ -594,6 +627,7 @@ export async function markContractSigned(
     // A signed agreement is a job won: it becomes a project with the
     // budget this contract just set.
     await awardFromContract(organizationId, contract.id);
+    await acceptSourceQuote(organizationId, contract.quoteId, signedAt, userId);
   }
   // "Contract closed" on the calendar, on the day it was signed.
   await syncContractEvents(organizationId, contract.id, userId);
@@ -627,6 +661,7 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
       payable: true,
       organizationId: true,
       dealId: true,
+      quoteId: true,
       publicToken: true,
       contact: { select: { email: true } },
     },
@@ -636,11 +671,12 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
   if (!contract || contract.status === "DRAFT") return { error: "This contract isn't available" };
   if (contract.status === "SIGNED") return { error: "This contract has already been signed" };
 
+  const signedAt = new Date();
   await prisma.contract.update({
     where: { id: contract.id },
     data: {
       status: "SIGNED",
-      signedAt: new Date(),
+      signedAt,
       signerName: parsed.data.signerName,
       signerEmail: contract.contact.email,
     },
@@ -651,6 +687,8 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
   if (!contract.payable) {
     await advanceDealStage(contract.dealId, contract.organizationId, "WON");
     await awardFromContract(contract.organizationId, contract.id);
+    // Nobody is logged in: the quote's milestones keep the owner they have.
+    await acceptSourceQuote(contract.organizationId, contract.quoteId, signedAt, null);
   }
   // Nobody is logged in here — the customer is signing — so the closed
   // milestone goes to whoever sent the contract.

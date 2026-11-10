@@ -128,8 +128,9 @@ export function PaymentScheduleEditor({
           isSettled: (rowId) => (rowId ? moneyByRow[rowId]?.settled ?? false : false),
           onTogglePaid: togglePaid,
           renderMoneyRow: (row, amountCents) => (
-            <tr className="border-t-0" data-testid="payment-money">
-              <td colSpan={7} className="pt-0 text-xs">
+            <tr className="border-t-0 max-sm:block" data-testid="payment-money">
+              {/* A block of its own on a phone, under its payment. */}
+              <td colSpan={7} className="pt-0 text-xs max-sm:block max-sm:border-0 max-sm:px-0 max-sm:pb-3">
                 <MoneyLine
                   label={row.label}
                   rowId={row.id!}
