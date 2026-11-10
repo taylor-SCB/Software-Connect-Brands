@@ -7,7 +7,7 @@ import { UNASSIGNED_USER } from "@/lib/calendar-filters";
 import { Card } from "@/components/ui";
 import { IconHardHat, IconUsers } from "@/components/icons";
 import type { EventChoices } from "./event-form";
-import { DayPanel, type EventView } from "./calendar-views";
+import { DayPanel, readableDay, type EventView } from "./calendar-views";
 
 // The team's week: one row per teammate and per crew, seven day columns,
 // with how loaded each row is. Where the week view answers "what is on
@@ -172,7 +172,7 @@ export function TeamView({
           events={(cells.get(openRow.key)?.get(open.day) ?? []).sort(byTimeThenTitle)}
           choices={choices}
           onClose={() => setOpen(null)}
-          title={`${openRow.name} · ${open.day}`}
+          title={`${openRow.name} · ${readableDay(open.day)}`}
         />
       )}
     </>

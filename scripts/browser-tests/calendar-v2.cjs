@@ -17,6 +17,19 @@
  * the filter menus painting the opaque overlay colour; and the phone
  * layout.
  *
+ * "audit fixes (UX review):" steps (Nov 10, 2026, phone-in-a-truck):
+ * unticking a row that was ticked with How did it go? asks first, says
+ * whose history loses the line, and Cancel keeps it (a call logged from
+ * the form is still unticked without a question, since nothing is lost);
+ * on a 390px touch phone the log row's tick / Edit / trash and the day
+ * card's Done / Edit / Move / trash are 44px square with 8px between them,
+ * and both trashes ask "Take this off the calendar?" before deleting; a
+ * month square shows a count instead of chips cut to "8:3…" (the desktop
+ * keeps its chips); tapping a day scrolls its list on screen, titled
+ * "Tue, Nov 10, 2026" rather than the ISO date, closed with Close; the
+ * Team view's day list is titled "Taylor Test (me) · Tue, Nov 10, 2026"
+ * the same way.
+ *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
  * up its own workspace, activates it with SQL, and deletes it again on
@@ -95,6 +108,14 @@ const TODAY = dayInZone(new Date());
 const daysAgo = (n) => shift(TODAY, -n);
 const daysOn = (n) => shift(TODAY, n);
 const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10));
+// How the app titles a day's list: "Tue, Nov 10, 2026" (readableDay).
+const readableDay = (iso) =>
+  `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${iso}T12:00:00Z`).getUTCDay()]}, ${new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${iso}T12:00:00Z`))}`;
 
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
@@ -575,12 +596,31 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
   await page.goto(`${BASE}/dashboard/contacts/ctc_calv2`);
   await page.getByText("Spoke to Dana, deposit is coming Friday").waitFor();
 
-  log("unticking it takes that history line back out");
+  log("audit fixes (UX review): unticking a row ticked with How did it go? asks first, and Cancel keeps its history line");
+  // One mis-tap on the green tick used to untick it and delete what was
+  // logged in the contact's history, with no word said.
   await page.goto(`${BASE}/dashboard/calendar?layout=log`);
   // Two calls with Dana are in Previous now (the one logged from the form
   // and this one), so pick it by id.
   const doneRow = page.locator(`[data-testid=log-previous] [data-testid=log-row][data-event-id="${scheduledId}"]`);
   await doneRow.locator("[data-testid=log-done]").click();
+  const untickAsk = doneRow.locator("[data-testid=log-confirm][data-kind=untick]");
+  await untickAsk.waitFor();
+  assert.match(await untickAsk.textContent(), /Mark it not done\?/);
+  assert.match(await untickAsk.textContent(), /Dana Ruiz's history/, "it says whose history loses the line");
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE id=$1`, [logged.id])).rows[0].n, 1, "the tap alone deleted nothing");
+  assert.ok((await sql(`SELECT "doneAt" FROM "CalendarEvent" WHERE id=$1`, [scheduledId])).rows[0].doneAt !== null, "and it is still done");
+  await untickAsk.locator("[data-testid=log-confirm-no]").click();
+  await untickAsk.waitFor({ state: "detached" });
+  await doneRow.locator("[data-testid=log-title].line-through").waitFor();
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE id=$1`, [logged.id])).rows[0].n, 1, "Cancel kept the line");
+  const kept = (await sql(`SELECT "doneAt", "activityId" FROM "CalendarEvent" WHERE id=$1`, [scheduledId])).rows[0];
+  assert.ok(kept.doneAt !== null, "and the tick");
+  assert.equal(kept.activityId, logged.id, "and the link to the line");
+
+  log("unticking it takes that history line back out");
+  await doneRow.locator("[data-testid=log-done]").click();
+  await untickAsk.locator("[data-testid=log-confirm-yes]").click();
   await page.waitForFunction(
     (id) => !document.querySelector(`[data-testid=log-row][data-event-id="${id}"] [data-testid=log-title].line-through`),
     scheduledId,
@@ -595,6 +635,8 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
   await page.goto(`${BASE}/dashboard/calendar?layout=log`);
   const loggedRow = page.locator("[data-testid=log-previous] [data-testid=log-row]").filter({ hasText: "Meeting · Dana Ruiz" });
   await loggedRow.locator("[data-testid=log-done]").click();
+  // Nothing is lost by unticking this one, so it is not asked about.
+  assert.equal(await loggedRow.locator("[data-testid=log-confirm]").count(), 0, "no question when the history keeps its line");
   await page.waitForFunction(
     (id) => !document.querySelector(`[data-testid=log-row][data-event-id="${id}"] [data-testid=log-title].line-through`),
     meeting[0].id,
@@ -622,9 +664,15 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
   await myRow.locator(`[data-testid=team-cell][data-day="${TODAY}"]`).click();
   const teamPanel = page.locator("[data-testid=day-panel]");
   await teamPanel.waitFor();
-  assert.match(await page.locator("h2", { hasText: "Taylor Test (me)" }).textContent(), new RegExp(TODAY));
   assert.match(await teamPanel.textContent(), /Contract sent · Dana Ruiz/);
   await shot(page, "06-team");
+
+  log("audit fixes (UX review): the Team view's day list is titled with whose it is and a readable date, not the ISO date");
+  // It read "Taylor Test (me) · 2026-11-10" after the Month view's list
+  // had been fixed to read "Tue, Nov 10, 2026".
+  const teamHeading = (await page.locator("h2", { hasText: "Taylor Test (me)" }).textContent()).trim();
+  assert.equal(teamHeading, `Taylor Test (me) · ${readableDay(TODAY)}`, `the Team view's day title reads like a date; got "${teamHeading}"`);
+  assert.doesNotMatch(teamHeading, /\d{4}-\d{2}-\d{2}/, "not 2026-11-10");
 
   /* --------------------------------- The form --------------------------------- */
 
@@ -713,6 +761,133 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
   assert.ok(overflow <= 1, `the page does not scroll sideways (${overflow}px over)`);
   await shot(small, "04-phone");
   await phone.close();
+
+  /* ---------------------- UX review fixes (Nov 10, 2026) ---------------------- */
+
+  // A phone held in a truck: 390 wide, touch, the way the review drove it.
+  const truck = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const thumb = await truck.newPage();
+  thumb.on("pageerror", (err) => console.error("PAGE ERROR:", err.message));
+  await thumb.goto(`${BASE}/login`);
+  await thumb.fill("#email", EMAIL);
+  await thumb.fill("#password", PASSWORD);
+  await thumb.click("button[type=submit]");
+  await thumb.waitForURL(/\/dashboard$/);
+  // Two throwaway entries on today, with titles as long as real ones.
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","updatedAt")
+     VALUES ('evt_calv2_ux_row',$1,'UX throwaway row · Nicole Ramirez','Call',$2,'08:30',$3,now()),
+            ('evt_calv2_ux_card',$1,'UX throwaway card · Nicole Ramirez','Meeting',$2,'10:00',$3,now())`,
+    [org, TODAY, me.id],
+  );
+  const stillThere = async (id) => (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE id=$1`, [id])).rows[0].n;
+  // Each button's box, and the gap to the next one in the row.
+  const thumbSizes = (locator, ids) =>
+    locator.evaluate((root, testIds) => {
+      const boxes = testIds.map((id) => root.querySelector(`[data-testid=${id}]`).getBoundingClientRect());
+      return {
+        sizes: boxes.map((box) => [Math.round(box.width), Math.round(box.height)]),
+        gaps: boxes.slice(1).map((box, index) => Math.round(box.left - boxes[index].right)),
+      };
+    }, ids);
+
+  log("audit fixes (UX review): on a phone the log row's tick, Edit and trash are thumb-sized and apart, and the trash asks before it deletes");
+  // The trash deleted on one tap, and was 26x24 sitting 2px from Edit.
+  await thumb.goto(`${BASE}/dashboard/calendar?layout=log`, { waitUntil: "networkidle" });
+  const throwRow = thumb.locator('[data-testid=log-row][data-event-id="evt_calv2_ux_row"]');
+  await throwRow.scrollIntoViewIfNeeded();
+  const rowButtons = await thumbSizes(throwRow, ["log-done", "log-edit", "log-delete"]);
+  for (const [width, height] of rowButtons.sizes) {
+    assert.ok(width >= 44 && height >= 44, `each row button is at least 44px square on a phone: ${JSON.stringify(rowButtons)}`);
+  }
+  for (const gap of rowButtons.gaps) assert.ok(gap >= 8, `with at least 8px between them: ${JSON.stringify(rowButtons)}`);
+  await throwRow.locator("[data-testid=log-delete]").tap();
+  const deleteAsk = throwRow.locator("[data-testid=log-confirm][data-kind=delete]");
+  await deleteAsk.waitFor();
+  assert.match(await deleteAsk.textContent(), /Take this off the calendar\?/);
+  await thumb.waitForTimeout(500);
+  assert.equal(await stillThere("evt_calv2_ux_row"), 1, "one tap on the trash deletes nothing");
+  await deleteAsk.locator("[data-testid=log-confirm-no]").tap();
+  await deleteAsk.waitFor({ state: "detached" });
+  assert.equal(await stillThere("evt_calv2_ux_row"), 1, "Cancel keeps it");
+  await throwRow.locator("[data-testid=log-delete]").tap();
+  await deleteAsk.locator("[data-testid=log-confirm-yes]").tap();
+  await throwRow.waitFor({ state: "detached" });
+  assert.equal(await stillThere("evt_calv2_ux_row"), 0, "Yes, delete takes it off");
+  await shot(thumb, "07-phone-log-confirmed");
+
+  log("audit fixes (UX review): on a phone a month square shows how many things are on, not chips cut to 8:3…; the desktop keeps its chips");
+  await thumb.goto(`${BASE}/dashboard/calendar?on=${TODAY}`, { waitUntil: "networkidle" });
+  const phoneToday = thumb.locator(`[data-testid=month-day][data-day="${TODAY}"]`);
+  const todayCount = Number(await phoneToday.getAttribute("data-count"));
+  assert.ok(todayCount >= 3, `today has enough on it to have needed chips (${todayCount})`);
+  const grid = await thumb.evaluate((day) => {
+    const shown = (el) => el.getClientRects().length > 0;
+    const clipped = [...document.querySelectorAll("[data-testid=month-chip], [data-testid=month-count]")]
+      .filter((el) => shown(el) && el.scrollWidth > el.clientWidth + 1)
+      .map((el) => `${el.textContent} (${el.clientWidth} of ${el.scrollWidth}px)`);
+    const cell = document.querySelector(`[data-testid=month-day][data-day="${day}"]`);
+    const count = cell.querySelector("[data-testid=month-count]");
+    const cellBox = cell.getBoundingClientRect();
+    const countBox = count && shown(count) ? count.getBoundingClientRect() : null;
+    return {
+      clipped,
+      chipsShown: [...cell.querySelectorAll("[data-testid=month-chip]")].filter(shown).length,
+      count: countBox ? count.textContent : null,
+      inside: countBox ? countBox.left >= cellBox.left && countBox.right <= cellBox.right + 0.5 : false,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    };
+  }, TODAY);
+  assert.deepEqual(grid.clipped, [], `nothing on the phone's grid is cut off: ${grid.clipped.join(" | ")}`);
+  assert.equal(grid.chipsShown, 0, "the cut-off chips are not drawn on a phone");
+  assert.equal(grid.count, String(todayCount), "today's square says how many things are on");
+  assert.ok(grid.inside, "and the count fits inside the square");
+  assert.ok(grid.overflow <= 1, `the month does not scroll sideways (${grid.overflow}px over)`);
+  await page.goto(`${BASE}/dashboard/calendar?on=${TODAY}`);
+  const deskToday = page.locator(`[data-testid=month-day][data-day="${TODAY}"]`);
+  assert.equal(await deskToday.locator("[data-testid=month-chip]").first().isVisible(), true, "the desktop still shows its chips");
+  assert.equal(await deskToday.locator("[data-testid=month-count]").isVisible(), false, "and no count");
+  assert.match(await deskToday.locator("[data-testid=month-chip]").first().textContent(), /\S{4,}/, "with words in them");
+
+  log("audit fixes (UX review): on a phone tapping a day brings its list on screen, under a readable date, closed with Close; its trash asks first");
+  // The list opened at y=1,071 on an 844px screen, so the tap looked
+  // dead; it was titled 2026-11-10 and closed with a button called Done.
+  await phoneToday.scrollIntoViewIfNeeded();
+  await phoneToday.tap();
+  const panelCard = thumb.locator("[data-testid=day-panel-card]");
+  await panelCard.waitFor();
+  await thumb.waitForFunction(() => {
+    const top = document.querySelector("[data-testid=day-panel-card]").getBoundingClientRect().top;
+    return top >= -1 && top <= window.innerHeight - 80;
+  }, null, { timeout: 5000 });
+  const panelTop = await panelCard.evaluate((el) => Math.round(el.getBoundingClientRect().top));
+  const readable = readableDay(TODAY);
+  const heading = (await panelCard.locator("h2").first().textContent()).trim();
+  assert.equal(heading, readable, `the day's title reads like a date (top at ${panelTop}px)`);
+  assert.doesNotMatch(heading, /\d{4}-\d{2}-\d{2}/, "not 2026-11-10");
+  const headerButtons = await panelCard.evaluate((el) =>
+    [...el.querySelectorAll("button")].filter((b) => !b.closest("[data-testid=day-panel]")).map((b) => b.textContent.trim()),
+  );
+  assert.deepEqual(headerButtons, ["+ Event", "Close"], `the panel closes with Close, not Done: ${headerButtons.join(", ")}`);
+  const throwCard = panelCard.locator('[data-testid=event-card][data-event-id="evt_calv2_ux_card"]');
+  await throwCard.scrollIntoViewIfNeeded();
+  const cardButtons = await thumbSizes(throwCard, ["event-done", "event-edit", "event-move", "event-delete"]);
+  for (const [width, height] of cardButtons.sizes) {
+    assert.ok(width >= 44 && height >= 44, `each card button is at least 44px square on a phone: ${JSON.stringify(cardButtons)}`);
+  }
+  for (const gap of cardButtons.gaps) assert.ok(gap >= 8, `with at least 8px between them: ${JSON.stringify(cardButtons)}`);
+  await throwCard.locator("[data-testid=event-delete]").tap();
+  const cardAsk = throwCard.locator("[data-testid=event-confirm][data-kind=delete]");
+  await cardAsk.waitFor();
+  await thumb.waitForTimeout(500);
+  assert.equal(await stillThere("evt_calv2_ux_card"), 1, "one tap on the card's trash deletes nothing");
+  await shot(thumb, "08-phone-day-panel");
+  await cardAsk.locator("[data-testid=event-confirm-yes]").tap();
+  await throwCard.waitFor({ state: "detached" });
+  assert.equal(await stillThere("evt_calv2_ux_card"), 0, "Yes, delete takes it off");
+  await panelCard.locator("[data-testid=day-close]").tap();
+  await panelCard.waitFor({ state: "detached" });
+  await truck.close();
 
   await browser.close();
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);

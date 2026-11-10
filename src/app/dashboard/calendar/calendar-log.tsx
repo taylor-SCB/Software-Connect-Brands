@@ -7,7 +7,7 @@ import { colorForType, eventDays } from "@/lib/calendar";
 import { Card, CardHeader, Badge, FormError, EmptyState } from "@/components/ui";
 import { IconCalendar, IconCheck, IconTrash } from "@/components/icons";
 import { EventForm, type EventChoices } from "./event-form";
-import { EventSourceLink, timeLabel, type EventView } from "./calendar-views";
+import { EventSourceLink, ROW_BUTTON, RowConfirm, timeLabel, untickDeletesHistory, type EventView } from "./calendar-views";
 import { deleteEvent, setEventDone } from "./actions";
 import { DoneBox, canLogOnDone } from "./done-box";
 
@@ -138,10 +138,13 @@ function LogColumn({
 }
 
 // One line of the log. Time, what it was, who it was with, whose it is;
-// tick it done, open it to edit, or take it off.
+// tick it done, open it to edit, or take it off. The trash, and an
+// untick that would delete a history line, ask first (UX review, Nov 10,
+// 2026: one stray tap from a truck deleted a row outright).
 function LogRow({ event, choices, overdue = false }: { event: EventView; choices: EventChoices; overdue?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [ticking, setTicking] = useState(false);
+  const [confirming, setConfirming] = useState<"delete" | "untick" | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
   const color = overdue ? "var(--danger)" : colorForType(event.type);
@@ -153,6 +156,7 @@ function LogRow({ event, choices, overdue = false }: { event: EventView; choices
       setError(undefined);
       const result = await action();
       if (result?.error) setError(result.error);
+      setConfirming(null);
     });
 
   if (editing) {
@@ -228,28 +232,49 @@ function LogRow({ event, choices, overdue = false }: { event: EventView; choices
         </p>
         {event.notes && <p className="faint mt-0.5 line-clamp-2 whitespace-pre-wrap text-xs">{event.notes}</p>}
         {ticking && <DoneBox event={event} onClose={() => setTicking(false)} />}
+        {confirming && (
+          <RowConfirm
+            kind={confirming}
+            event={event}
+            pending={pending}
+            onYes={() =>
+              run(() => (confirming === "delete" ? deleteEvent(event.id) : setEventDone(event.id, false)))
+            }
+            onCancel={() => setConfirming(null)}
+            testId="log-confirm"
+          />
+        )}
         <FormError message={error} />
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+      {/* 44px targets with 8px between them on a phone; the old tight
+          row from sm up. */}
+      <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-0.5">
         <button
           type="button"
           disabled={pending}
-          onClick={() => (canLogOnDone(event) ? setTicking(!ticking) : run(() => setEventDone(event.id, !event.doneAt)))}
+          onClick={() =>
+            canLogOnDone(event)
+              ? setTicking(!ticking)
+              : untickDeletesHistory(event)
+                ? setConfirming(confirming === "untick" ? null : "untick")
+                : run(() => setEventDone(event.id, !event.doneAt))
+          }
           aria-label={event.doneAt ? `Mark ${event.title} not done` : `Mark ${event.title} done`}
-          className={`btn btn-ghost btn-sm !px-1.5 ${event.doneAt ? "text-[var(--ok)]" : ""}`}
+          className={`btn btn-ghost btn-sm !px-1.5 ${ROW_BUTTON} ${event.doneAt ? "text-[var(--ok)]" : ""}`}
           data-testid="log-done"
         >
           <IconCheck size={12} />
         </button>
-        <button type="button" onClick={() => setEditing(true)} className="btn btn-ghost btn-sm" data-testid="log-edit">
+        <button type="button" onClick={() => setEditing(true)} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} data-testid="log-edit">
           Edit
         </button>
         <button
           type="button"
           disabled={pending}
-          onClick={() => run(() => deleteEvent(event.id))}
+          onClick={() => setConfirming(confirming === "delete" ? null : "delete")}
           aria-label={`Take ${event.title} off the calendar`}
-          className="btn btn-ghost btn-sm !px-1.5"
+          aria-expanded={confirming === "delete"}
+          className={`btn btn-ghost btn-sm !px-1.5 ${ROW_BUTTON}`}
           data-testid="log-delete"
         >
           <IconTrash size={12} />
