@@ -73,7 +73,12 @@ export function factsFor(report: AnyReport, ctx: NarrativeContext): Facts {
     case "daily":
       return {
         ...base,
-        calendarToday: report.calendar.items.map((item) => ({ title: item.title, time: item.time ?? "no time set", whose: item.owner, with: item.who })),
+        // Open entries first, each marked done or open (UX review, Nov 10,
+        // 2026), so a call already made is never "next up".
+        calendarEntries: report.calendar.count,
+        calendarStillOpen: report.calendar.open,
+        calendarAlreadyDone: report.calendar.count - report.calendar.open,
+        calendarToday: report.calendar.items.map((item) => ({ title: item.title, time: item.time ?? "no time set", whose: item.owner, with: item.who, done: item.done })),
         overdueFollowUps: report.overdue.items.map((item) => ({ title: item.title, with: item.who, whose: item.owner, daysLate: item.days })),
         goneQuiet: report.quiet.items.map((item) => ({ title: item.title, daysQuiet: item.days, rep: item.owner })),
         paymentsYesterday: report.payments.items.map((item) => ({ customer: item.customer, amount: money(item.cents) })),
@@ -202,12 +207,17 @@ export function rulesNarrative(report: AnyReport, ctx: NarrativeContext): string
   const range = ctx.range;
   switch (report.kind) {
     case "daily": {
-      const first = report.calendar.items[0];
+      // "Starting with" is the first entry still open, never one already
+      // done (UX review, Nov 10, 2026).
+      const first = report.calendar.items.find((item) => !item.done);
+      const done = report.calendar.count - report.calendar.open;
       const oldest = report.overdue.items[0];
       const quiet = report.quiet.items[0];
       const p1 = sentence([
         report.calendar.count
-          ? `${ctx.repName ? `${ctx.repName} has` : "The team has"} ${plural(report.calendar.count, "thing")} on the calendar today${first ? `, starting with “${first.title}”${first.time ? ` at ${first.time}` : ""}` : ""}.`
+          ? `${ctx.repName ? `${ctx.repName} has` : "The team has"} ${plural(report.calendar.count, "thing")} on the calendar today${
+              !report.calendar.open ? ", all done" : done ? `, ${report.calendar.open} still open` : ""
+            }${first ? `, starting with “${first.title}”${first.time ? ` at ${first.time}` : ""}` : ""}.`
           : `Nothing is on the calendar today${ctx.repName ? ` for ${ctx.repName}` : ""}.`,
         oldest
           ? `${plural(report.overdue.count, "follow-up")} ${report.overdue.count === 1 ? "is" : "are"} overdue — the oldest, “${oldest.title}”${oldest.who ? ` with ${oldest.who}` : ""}, is ${plural(oldest.days, "day")} late.`

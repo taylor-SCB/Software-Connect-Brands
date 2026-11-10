@@ -38,16 +38,25 @@ export function headlineValue(headline: Headline) {
   return headline.empty ? "—" : formatValue(headline.value, headline.format);
 }
 
-export function changeText(headline: Headline): { text: string; tone: "good" | "bad" | "flat" } | null {
+// How far a number moved, as "▲ 20%", "▼ 3 pts" or, from nothing,
+// "▲ up from 0" / "▲ up from $0". One rule for every screen (UX review,
+// Nov 10, 2026): a percent change from 0 can't be worked out, so a rise
+// from nothing is never "100%" (Stats said so) and the tile adds no
+// "vs 0" after it (the reports said "from 0 vs 0"). `fromZero` tells the
+// caller to leave its "vs …" off. Only for now !== before.
+export function changeSize(now: number, before: number, format: Headline["format"]): { text: string; fromZero: boolean } {
+  const arrow = now > before ? "▲" : "▼";
+  if (format === "percent") return { text: `${arrow} ${Math.abs(Math.round((now - before) * 100))} pts`, fromZero: false };
+  if (before === 0) return { text: `${arrow} ${now > before ? "up" : "down"} from ${formatValue(0, format)}`, fromZero: true };
+  return { text: `${arrow} ${Math.abs(Math.round(((now - before) / before) * 100))}%`, fromZero: false };
+}
+
+export function changeText(headline: Headline): { text: string; tone: "good" | "bad" | "flat"; fromZero: boolean } | null {
   if (headline.empty || headline.previous === undefined || headline.previous === null) return null;
   const now = headline.value;
   const before = headline.previous;
-  if (now === before) return { text: "same as before", tone: "flat" };
+  if (now === before) return { text: "same as before", tone: "flat", fromZero: false };
   const up = now > before;
   const good = headline.goodWhenUp === false ? !up : up;
-  let size: string;
-  if (headline.format === "percent") size = `${Math.abs(Math.round((now - before) * 100))} pts`;
-  else if (before === 0) size = `from ${formatValue(0, headline.format)}`;
-  else size = `${Math.abs(Math.round(((now - before) / before) * 100))}%`;
-  return { text: `${up ? "▲" : "▼"} ${size}`, tone: good ? "good" : "bad" };
+  return { ...changeSize(now, before, headline.format), tone: good ? "good" : "bad" };
 }

@@ -20,7 +20,15 @@
  * Overview tiles and activity, Closing's empty tiles, one email on the
  * spring-forward Sunday, invented numbers as words or near the year); each report's open time (budget
  * 2 s — run the server through slow-db-proxy.cjs to measure it the way the
- * live database answers); and the phone width.
+ * live database answers); and the phone width. The UX review fixes (Nov
+ * 10, 2026), each an "audit fixes (UX review)" step: the calendar card
+ * listing open entries first with the heading counting only those and the
+ * write-up starting with the first open one (and the AI told which are
+ * done); a rise from 0 reading "▲ up from 0", never "from 0 vs 0"; Owed by
+ * rep with nothing in it saying so once; Overview on an isMobile phone
+ * staying 390px wide with a long activity line cut with …; and the
+ * Activity chart's labels at 11px on a phone and at 1440, bars at most
+ * 28px, and the axis on round numbers.
  *
  * The server on BASE needs, in .env: RESEND_API_KEY (any), EMAIL_FROM,
  * RESEND_ENDPOINT=http://localhost:3993/emails, CRON_SECRET=test-cron-secret,
@@ -410,6 +418,39 @@ async function narrativeText(page) {
     await pick(page, "report-rep", "", "daily");
     assert.equal(await statValue("Contacts"), String(allContacts), "Whole team again");
 
+    log("audit fixes (UX review): open calendar entries come first, the heading counts what is still open, and the write-up starts with the first open one");
+    // Nine calls this morning already ticked done, all before the 09:00
+    // site walk: by start time alone they took the card's eight rows, the
+    // heading said 11 and the write-up started with a call already made.
+    for (let i = 0; i < 9; i += 1) {
+      await sql(
+        `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","doneAt","updatedAt") VALUES ($1,$2,$3,'Call',$4::date,$5,$6,now(),now())`,
+        [`ev_rpt_done_${i}`, org, `Done call ${i + 1}`, today, `0${7 + Math.floor(i / 5)}:${String((i % 5) * 10).padStart(2, "0")}`, T],
+      );
+    }
+    const calendarRows = () =>
+      page.locator("[data-testid=rundown-calendar] li").evaluateAll((rows) => rows.map((row) => ({ text: row.textContent, done: row.dataset.done === "true" })));
+    await open(page, `${BASE}/dashboard`, "daily");
+    assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today · 2", "2 still open, not 11");
+    assert.match(await page.locator("[data-testid=rundown-calendar]").textContent(), /Still open · 9 already done/);
+    let calRows = await calendarRows();
+    assert.equal(calRows.length, 8);
+    assert.deepEqual(calRows.map((row) => row.done), [false, false, true, true, true, true, true, true], "open first, the done calls after");
+    assert.match(calRows[0].text, /Site walk at Acme.*09:00/s);
+    assert.match(calRows[1].text, /Call Bob/);
+    assert.match(await narrativeText(page), /The team has 11 things on the calendar today, 2 still open, starting with “Site walk at Acme” at 09:00\./);
+    await sql(`UPDATE "CalendarEvent" SET "doneAt"=now() WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
+    await open(page, `${BASE}/dashboard`, "daily");
+    assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today", "nothing open, no count");
+    assert.match(await page.locator("[data-testid=rundown-calendar]").textContent(), /All 11 done/);
+    calRows = await calendarRows();
+    assert.ok(calRows.length === 8 && calRows.every((row) => row.done), "the done entries are still listed");
+    words = await narrativeText(page);
+    assert.match(words, /The team has 11 things on the calendar today, all done\./);
+    assert.doesNotMatch(words, /starting with/);
+    await sql(`UPDATE "CalendarEvent" SET "doneAt"=NULL WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
+    await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_rpt_done_%'`);
+
     log("Pipeline: open value by stage, from opportunities and deals, matches the seed and SQL");
     timings.pipeline = await open(page, `${BASE}/dashboard?report=pipeline`, "pipeline");
     assert.equal(await tile(page, "open-value"), 866000, "$2,160 + $3,000 + $3,500");
@@ -514,6 +555,15 @@ async function narrativeText(page) {
     assert.match(words, /3 of 5 people \(60%\) had no touch this week, the most under Nic Rivera \(2\)\./);
     assert.match(words, /3 marketing emails went out as well, counted on their own\./);
     await shot(page, "03-activity");
+    log("audit fixes (UX review): a rise from nothing reads 'up from 0', never '100%' or 'from 0 vs 0'");
+    const meetingsTile = page.locator("[data-testid=report-tile][data-id=meetings]");
+    assert.equal(Number(await meetingsTile.getAttribute("data-value")), 1, "one meeting this week, none the same days last week");
+    assert.equal((await meetingsTile.getByTestId("report-tile-change").textContent()).trim(), "▲ up from 0");
+    assert.equal(
+      (await page.locator("[data-testid=report-tile][data-id=touches]").getByTestId("report-tile-change").textContent()).trim(),
+      "▲ 400% vs 1",
+      "a real baseline still gets its percent and its 'vs'",
+    );
     log("Activity: Break down by Job title and by State");
     await pick(page, "report-by", "title", "activity");
     const titles = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[6]]]));
@@ -622,6 +672,12 @@ async function narrativeText(page) {
         ["Unassigned", "$1,200", "$1,200"],
       ],
     );
+    log("audit fixes (UX review): Owed by rep with nothing in it says so once, not once for the chart and again for the table");
+    await pick(page, "report-rep", N, "money");
+    const owedBy = page.locator("[data-testid=money-groups]");
+    const owedByText = await owedBy.textContent();
+    assert.equal((owedByText.match(/Nothing (to show|here)/g) ?? []).length, 1, owedByText);
+    assert.equal(await owedBy.locator("table").count(), 0);
     await pick(page, "report-rep", T, "money");
     assert.equal(await tile(page, "owed"), 425000);
 
@@ -859,6 +915,36 @@ async function narrativeText(page) {
       assert.equal((await sql(`SELECT source FROM "ReportNarrative" WHERE "organizationId"=$1 AND key LIKE 'MONEY|%'`, [org])).rows[0].source, "RULES");
     }
 
+    log("audit fixes (UX review): the AI write-up of the Daily Rundown is told which calendar entries are done, open ones first");
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","doneAt","updatedAt") VALUES ('ev_rpt_ai_done',$1,'Early call','Call',$2::date,'07:00',$3,now(),now())`,
+      [org, today, T],
+    );
+    claudeReply = { paragraphs: ["The team has 3 things on the calendar today."] };
+    const asksBefore = claudeRequests.length;
+    await page.goto(`${AI_BASE}/dashboard`);
+    for (let i = 0; claudeRequests.length === asksBefore; i += 1) {
+      if (i > 100) throw new Error("Claude was not asked for the Daily Rundown");
+      await page.waitForTimeout(200);
+    }
+    const dailyAsk = claudeRequests.at(-1).body.messages.at(-1);
+    const dailyPrompt = typeof dailyAsk.content === "string" ? dailyAsk.content : dailyAsk.content.map((part) => part.text ?? "").join("");
+    const dailyFacts = JSON.parse(dailyPrompt.slice(dailyPrompt.indexOf("{"), dailyPrompt.lastIndexOf("}") + 1));
+    assert.equal(dailyFacts.report, "daily");
+    assert.equal(dailyFacts.calendarEntries, 3);
+    assert.equal(dailyFacts.calendarStillOpen, 2);
+    assert.equal(dailyFacts.calendarAlreadyDone, 1);
+    assert.deepEqual(
+      dailyFacts.calendarToday.map((item) => [item.title, item.done]),
+      [
+        ["Site walk at Acme", false],
+        ["Call Bob", false],
+        ["Early call", true],
+      ],
+    );
+    await page.waitForFunction(() => !document.querySelector("[data-testid=report-narrative]")?.getAttribute("aria-busy")?.includes("true"));
+    await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_rpt_ai_done'`);
+
     log("each report opens inside its time budget");
     for (const [name, ms] of Object.entries(timings)) {
       console.log(`     ${name.padEnd(9)} ${ms} ms`);
@@ -936,6 +1022,76 @@ async function narrativeText(page) {
         assert.ok(ms < BUDGET_MS, `${name} took ${ms} ms at ${rows} contacts`);
       }
     }
+
+    log("audit fixes (UX review): on a phone a long Recent activity line ends in …, and Overview stays the phone's width");
+    await sql(`INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,"occurredAt") VALUES ('a_rpt_long',$1,'ct_rpt_ann',$2,'PHONE_CALL',$3,false,now())`, [
+      org,
+      T,
+      `${"Walked the whole building with the facilities manager and ".repeat(6)}end`,
+    ]);
+    // isMobile as a real phone browser: a page wider than the screen widens
+    // the layout instead of scrolling, and the whole page is drawn smaller.
+    const truck = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, storageState: await context.storageState() });
+    const thumb = await truck.newPage();
+    await thumb.goto(`${BASE}/dashboard`);
+    await thumb.locator("[data-testid=report][data-report=daily]").waitFor();
+    const fit = await thumb.evaluate(() => {
+      const line = [...document.querySelectorAll("p.truncate")].find((p) => p.textContent.startsWith("Walked the whole building"));
+      return {
+        inner: window.innerWidth,
+        doc: document.documentElement.scrollWidth,
+        card: Math.round(line.closest(".card").getBoundingClientRect().right),
+        cut: line.scrollWidth > line.clientWidth,
+      };
+    });
+    assert.equal(fit.inner, 390, `Overview lays out ${fit.inner}px wide on a 390px phone`);
+    assert.ok(fit.doc <= 390, `Overview is ${fit.doc}px wide`);
+    assert.ok(fit.card <= 390, `Recent activity reaches ${fit.card}px`);
+    assert.ok(fit.cut, "the long line is cut with … inside its card");
+    await sql(`DELETE FROM "Activity" WHERE id='a_rpt_long'`);
+
+    log("audit fixes (UX review): the Activity chart's labels are 11px on a phone and on a wide screen, its bars at most 28px, its axis on round numbers");
+    const chart = async (p) => {
+      await p.goto(`${BASE}/dashboard?report=activity&period=this-month`);
+      await p.locator("[data-testid=report][data-report=activity]").waitFor();
+      const selector = "[data-testid=activity-daily] svg[role=img]";
+      await p.locator(selector).waitFor();
+      // Drawn at the box's own width once the browser has measured it.
+      await p
+        .waitForFunction((sel) => {
+          const svg = document.querySelector(sel);
+          return svg && Math.abs(svg.viewBox.baseVal.width - svg.getBoundingClientRect().width) < 1;
+        }, selector, { timeout: 5000 })
+        .catch(() => {});
+      return p.locator(selector).evaluate((svg) => {
+        const box = svg.getBoundingClientRect();
+        const scale = box.width / svg.viewBox.baseVal.width;
+        const texts = [...svg.querySelectorAll("text")];
+        const days = texts.filter((t) => /^[A-Z][a-z]{2} \d{1,2}$/.test(t.textContent)).map((t) => t.getBoundingClientRect());
+        return {
+          sizes: texts.map((t) => Math.round(parseFloat(getComputedStyle(t).fontSize) * scale * 10) / 10),
+          ticks: texts.filter((t) => !/^[A-Z]/.test(t.textContent)).map((t) => Number(t.textContent.replace(/[$,]/g, ""))),
+          inside: days.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+          apart: days.every((r, i) => i === 0 || r.left >= days[i - 1].right + 2),
+          days: days.length,
+          spans: `${Math.round(box.left)}..${Math.round(box.right)}: ${days.map((r) => `${Math.round(r.left)}-${Math.round(r.right)}`).join(" ")}`,
+          bar: Math.max(0, ...[...svg.querySelectorAll("rect")].map((r) => r.getBoundingClientRect().width)),
+        };
+      });
+    };
+    const truckChart = await chart(thumb);
+    const deskChart = await chart(page);
+    for (const [where, c] of [["phone", truckChart], ["1440", deskChart]]) {
+      assert.ok(c.sizes.length && c.sizes.every((px) => px >= 10.5 && px <= 11.5), `${where}: labels drawn at ${c.sizes.join(", ")}px`);
+      assert.ok(c.bar > 0 && c.bar <= 28.5, `${where}: a bar ${c.bar}px wide`);
+      assert.ok(c.days >= 1 && c.inside && c.apart, `${where}: day labels inside the chart and apart (${c.spans})`);
+      const step = c.ticks[1];
+      const lead = step / 10 ** Math.floor(Math.log10(step));
+      assert.ok([1, 2, 2.5, 5].includes(lead), `${where}: ticks ${c.ticks.join(", ")}`);
+      assert.ok(c.ticks.every((tick, i) => tick === i * step), `${where}: ticks ${c.ticks.join(", ")} evenly spaced from 0`);
+      assert.ok(c.ticks.at(-1) >= 5, `${where}: the top tick covers today's 5 touches`);
+    }
+    await truck.close();
 
     log("every report fits a phone");
     const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState: await context.storageState() });

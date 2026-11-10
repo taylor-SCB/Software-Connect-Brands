@@ -11,7 +11,16 @@
  * a deal moved on its tile asks the day and carries its contact with it;
  * the 90 / 180-day contract rule (Archived, then Lost); the edit forms no
  * longer offering Status; and the Stats page — tiles, funnel, close rate,
- * leaderboard, rep filter and periods.
+ * leaderboard, rep filter and periods. Three "audit fixes (UX review)"
+ * steps (Nov 10, 2026): a tile whose period before had none reads "▲ up
+ * from 0" (never "▲ 100% vs before"); at 1440 nothing on Stats is cut off
+ * or wrapped — every Time between steps name in full, the last day under
+ * Touches per day inside the chart, each leaderboard name on one line
+ * with the table not scrolling sideways; and on a phone (isMobile, 390)
+ * the Touches per day and Activity by rep charts are drawn at the phone's
+ * width, so every label measures 11px (the fixed 640-wide drawing put
+ * them at about 5px) and sits inside its chart, day labels apart, the
+ * same measured again at 1440.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
@@ -314,6 +323,45 @@ function isoDaysAgo(n) {
   assert.equal(cells[6], "1", "Nic set one meeting");
   assert.equal(cells[11], "$5,000.00", "Cara's deal is Nic's");
 
+  log("audit fixes (UX review): a tile whose period before had none reads 'up from 0', never '▲ 100% vs before'");
+  const change = async (label) => (await tiles.filter({ hasText: label }).locator("[data-testid=stats-tile-change]").textContent()).trim();
+  assert.equal(await change("Meetings set"), "▲ up from 0", "2 against none in the 30 days before");
+  assert.equal(await change("Signed / Won"), "▲ up from $0");
+  for (const text of await tiles.locator("[data-testid=stats-tile-change]").allTextContents()) assert.doesNotMatch(text, /100%/, text);
+
+  log("audit fixes (UX review): at 1440 no Stats label is cut off — each step name, the last day under Touches per day, every rep's name on one line");
+  const today = new Date(`${isoDaysAgo(0)}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const layout = await page.evaluate(() => {
+    const steps = [...document.querySelectorAll("[data-testid=stats-velocity] > div > span:first-child")]
+      .filter((el) => el.textContent.includes("→"))
+      .map((el) => ({ text: el.textContent, cut: el.scrollWidth > el.clientWidth + 0.5 }));
+    const svg = document.querySelector("svg[aria-label='Team activity per day']");
+    const box = svg.getBoundingClientRect();
+    const days = [...svg.querySelectorAll("text")].filter((t) => /^[A-Z][a-z]{2} \d{1,2}$/.test(t.textContent));
+    const last = days.at(-1);
+    const names = [...document.querySelectorAll("[data-testid=stats-rep-row] td:first-child")].map((td) => {
+      const range = document.createRange();
+      range.selectNodeContents(td);
+      return { name: td.textContent.trim(), lines: new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size };
+    });
+    const wrap = document.querySelector("[data-testid=stats-leaderboard]").parentElement;
+    return {
+      steps,
+      last: last.textContent,
+      lastRight: last.getBoundingClientRect().right,
+      svgRight: box.right,
+      names,
+      sideways: wrap.scrollWidth - wrap.clientWidth,
+    };
+  });
+  assert.equal(layout.steps.length, 5, JSON.stringify(layout.steps));
+  for (const s of layout.steps) assert.ok(!s.cut, `"${s.text}" is cut off`);
+  assert.equal(layout.last, today, "the last label is today");
+  assert.ok(layout.lastRight <= layout.svgRight + 0.5, `"${layout.last}" runs ${Math.round(layout.lastRight - layout.svgRight)}px past the chart`);
+  assert.ok(layout.names.length >= 2);
+  for (const n of layout.names) assert.equal(n.lines, 1, `${n.name} wraps onto ${n.lines} lines`);
+  assert.ok(layout.sideways <= 0, `the leaderboard scrolls sideways by ${layout.sideways}px at 1440`);
+
   log("the rep filter narrows every number to Nic");
   await page.locator("[data-testid=stats-rep]", { hasText: "Nic Rivera" }).click();
   await page.waitForURL(/reps=usr_pipestats_nic/);
@@ -333,6 +381,56 @@ function isoDaysAgo(n) {
   const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);
   await shot(mobile, "05-stats-phone");
+
+  log("audit fixes (UX review): on a phone the Stats charts' labels are 11px, not shrunk to about 5px — Touches per day and Activity by rep are drawn at the phone's width");
+  const truck = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const thumb = await truck.newPage();
+  await login(thumb, EMAIL);
+  const statsCharts = async (p) => {
+    await p.goto(`${BASE}/dashboard/stats`);
+    await p.locator("[data-testid=stats-page]").waitFor();
+    const out = {};
+    for (const label of ["Team activity per day", "Activity by rep"]) {
+      const selector = `svg[aria-label='${label}']`;
+      await p.locator(selector).waitFor();
+      // Drawn at the box's own width once the browser has measured it.
+      await p
+        .waitForFunction((sel) => {
+          const svg = document.querySelector(sel);
+          return svg && Math.abs(svg.viewBox.baseVal.width - svg.getBoundingClientRect().width) < 1;
+        }, selector, { timeout: 5000 })
+        .catch(() => {});
+      out[label] = await p.locator(selector).evaluate((svg) => {
+        const box = svg.getBoundingClientRect();
+        const scale = box.width / svg.viewBox.baseVal.width;
+        const texts = [...svg.querySelectorAll("text")];
+        const rects = texts.map((t) => t.getBoundingClientRect());
+        const days = texts.filter((t) => /^[A-Z][a-z]{2} \d{1,2}$/.test(t.textContent)).map((t) => t.getBoundingClientRect());
+        return {
+          inner: window.innerWidth,
+          sizes: texts.map((t) => Math.round(parseFloat(getComputedStyle(t).fontSize) * scale * 10) / 10),
+          inside: rects.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+          apart: days.every((r, i) => i === 0 || r.left >= days[i - 1].right + 2),
+          days: days.length,
+          spans: `${Math.round(box.left)}..${Math.round(box.right)}: ${texts.map((t, i) => `${t.textContent} ${Math.round(rects[i].left)}-${Math.round(rects[i].right)}`).join(" | ")}`,
+        };
+      });
+    }
+    return out;
+  };
+  const truckCharts = await statsCharts(thumb);
+  const deskCharts = await statsCharts(page);
+  assert.equal(truckCharts["Activity by rep"].inner, 390, "Stats lays out at the phone's own width");
+  for (const [where, charts] of [["phone", truckCharts], ["1440", deskCharts]]) {
+    for (const [label, c] of Object.entries(charts)) {
+      assert.ok(c.sizes.length && c.sizes.every((px) => px >= 10.5 && px <= 11.5), `${where} ${label}: labels drawn at ${c.sizes.join(", ")}px`);
+      assert.ok(c.inside, `${where} ${label}: a label runs out of the chart (${c.spans})`);
+      assert.ok(c.apart, `${where} ${label}: day labels overlap (${c.spans})`);
+    }
+    assert.ok(charts["Team activity per day"].days >= 2, `${where}: Touches per day labels its days`);
+  }
+  await shot(thumb, "06-stats-phone-charts");
+  await truck.close();
 
   await browser.close();
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);
