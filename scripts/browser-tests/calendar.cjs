@@ -501,6 +501,8 @@ function daysAgo(n) {
   // Already been, below the later booking in Coming up.
   const firstInstall = page.locator(`[data-testid=event-card][data-start="${day(2)}"]`).filter({ hasText: "Roofing — " }).first();
   await firstInstall.locator("[data-testid=event-delete]").click();
+  // The trash asks first (UX review, Nov 10, 2026).
+  await firstInstall.locator("[data-testid=event-confirm-yes]").click();
   // "Coming up" is already on the screen, so wait for the list to
   // actually shrink rather than for a heading that never moved.
   await page
