@@ -425,7 +425,16 @@ export default async function ContactDetailPage({
           <UpcomingCard
             events={upcoming}
             choices={eventChoices}
-            defaults={{ contactId: contact.id, companyId: contact.companyId ?? undefined, startOn: today }}
+            // What gets booked from a person's page is a meeting with them,
+            // and only a Meeting sets Meeting Set, so the form starts on the
+            // workspace's Meeting rather than the first type on its list
+            // (Install).
+            defaults={{
+              contactId: contact.id,
+              companyId: contact.companyId ?? undefined,
+              startOn: today,
+              type: eventChoices.eventTypes.find((name) => name.toLowerCase() === "meeting"),
+            }}
             label={contact.name}
           />
 

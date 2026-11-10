@@ -108,9 +108,30 @@ export const TIME_ZONES = [
   { value: "UTC", label: "UTC" },
 ] as const;
 
-// Whole days between a moment and now, for "last touch 3 days ago".
-export function daysSince(date: Date) {
-  return Math.floor((Date.now() - date.getTime()) / 86_400_000);
+const dayPartsCache = new Map<string, Intl.DateTimeFormat>();
+
+// The calendar day a moment falls on in a zone, counted in whole days
+// since 1970, so two of them are always a whole number of days apart —
+// a daylight-saving change in between does not make one 23 hours.
+function dayNumber(date: Date, timeZone: string) {
+  let formatter = dayPartsCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+    dayPartsCache.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  return Date.UTC(get("year"), get("month") - 1, get("day")) / 86_400_000;
+}
+
+// Calendar days between a moment and now, for "last touch 3 days ago",
+// counted on the workspace's own calendar (Nov 10, 2026). It used to count
+// 24-hour blocks, so a call at 9pm yesterday read "Today" at 8am, beside a
+// date that said yesterday's. The zone is required so every caller says
+// whose calendar it means.
+export function daysSince(date: Date, timeZone: string | null | undefined, now: Date = new Date()) {
+  const zone = safeZone(timeZone);
+  return dayNumber(now, zone) - dayNumber(date, zone);
 }
 
 // The largest amount a cents column can hold: Postgres integer. Anything

@@ -13,6 +13,13 @@
  * added on the spot; Merge Contacts and Merge Companies moving everything
  * onto the one kept.
  *
+ * "audit fixes (UX review):" steps (Nov 10, 2026): the company's People
+ * card showing a mobile-only person's number and both numbers of someone
+ * with two, each a tel: link a tap on which lands on the number, not the
+ * row's link, while the rest of the row still opens the person; and on a
+ * 390px phone the Add person panel (header and People card) opening
+ * inside the screen with the search box ready to type in.
+ *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
  * up its own workspace and deletes it again on the next run. Never point
@@ -204,6 +211,57 @@ async function until(fn, what) {
     (await sql(`SELECT "companyId" FROM "Contact" WHERE "organizationId"=$1 AND name='Robin Hale'`, [org])).rows[0].companyId,
     "cmp_acc_dallas",
   );
+
+  log("audit fixes (UX review): the People card shows a mobile-only person's number, each number a tap to call that doesn't open the row");
+  await sql(`UPDATE "Contact" SET mobile='555-4100' WHERE "organizationId"=$1 AND name='Robin Hale'`, [org]);
+  await sql(`UPDATE "Contact" SET mobile='555-2001' WHERE id='ctc_acc_jordan'`);
+  await page.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
+  const personRow = (name) => people.locator("[data-testid=person-row]", { hasText: name });
+  const calls = (row) => row.locator("a[href^='tel:']").evaluateAll((links) => links.map((a) => `${a.getAttribute("href")} ${a.textContent}`));
+  await personRow("Robin Hale").waitFor();
+  assert.deepEqual(await calls(personRow("Robin Hale")), ["tel:555-4100 Mobile 555-4100"], "only a mobile on file, and it shows");
+  assert.deepEqual(await calls(personRow("Jordan Blake")), ["tel:555-2000 555-2000", "tel:555-2001 Mobile 555-2001"], "a phone and a mobile, both");
+  await personRow("Robin Hale").scrollIntoViewIfNeeded();
+  const tapLands = await personRow("Robin Hale")
+    .locator("a[href^='tel:']")
+    .evaluate((a) => {
+      const box = a.getBoundingClientRect();
+      return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest("a")?.getAttribute("href");
+    });
+  assert.equal(tapLands, "tel:555-4100", "a tap on the number is the number's, not the row link's");
+  const robinBox = await personRow("Robin Hale").boundingBox();
+  await personRow("Robin Hale").click({ position: { x: robinBox.width - 40, y: robinBox.height / 2 } });
+  await page.waitForURL(/\/dashboard\/contacts\/[a-z0-9]+$/);
+  await page.getByRole("heading", { name: "Robin Hale" }).waitFor();
+
+  log("audit fixes (UX review): on a phone the Add person panel opens inside the screen, ready to type in");
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const phonePage = await phoneContext.newPage();
+  await phonePage.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
+  for (const button of ["add-person", "add-person-compact"]) {
+    await phonePage.locator(`[data-testid=${button}]`).scrollIntoViewIfNeeded();
+    await phonePage.locator(`[data-testid=${button}]`).tap();
+    const panel = phonePage.locator("[data-testid=add-person-panel]");
+    await panel.waitFor();
+    const box = await panel.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= 390, `${button}: the panel spans ${Math.round(box.x)}–${Math.round(box.x + box.width)} on a 390px screen`);
+    await until(async () => (await phonePage.evaluate(() => document.activeElement?.getAttribute("data-testid"))) === "add-person-input", `${button}: the search box to have the cursor`);
+    const addNew = panel.locator("[data-testid=add-person-new]");
+    const fits = await addNew.evaluate((link) => {
+      const own = link.getBoundingClientRect();
+      const outer = link.closest("[data-testid=add-person-panel]").getBoundingClientRect();
+      return link.scrollWidth <= link.clientWidth && own.right <= outer.right;
+    });
+    assert.ok(fits, `${button}: "Add a new person to Acme Roofing" is whole`);
+    await phonePage.keyboard.type("Robin");
+    await panel.locator("[data-testid=add-person-hit]", { hasText: "Robin Hale" }).waitFor();
+    assert.ok((await phonePage.evaluate(() => document.documentElement.scrollWidth)) <= 390, `${button}: nothing panned sideways`);
+    if (button === "add-person") await phonePage.screenshot({ path: path.join(OUT, "02b-add-person-phone.png") });
+    await phonePage.keyboard.press("Escape");
+    await panel.waitFor({ state: "detached" });
+  }
+  await phoneContext.close();
+
   log("the company box's dropdown tells the two apart by City, State");
   await page.goto(`${BASE}/dashboard/contacts/new`);
   await page.fill("#companyName", "Acme");
