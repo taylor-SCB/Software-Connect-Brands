@@ -93,7 +93,7 @@ export function LabelsManager({ sections, titleQuery, canManage }: { sections: L
               {rows.length === 0 ? (
                 <p className="faint px-5 pb-5 text-sm">None yet.</p>
               ) : (
-                <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+                <ul className="divide-y divide-[var(--hairline)]">
                   {rows.map((row) => (
                     <Row
                       key={row.name}

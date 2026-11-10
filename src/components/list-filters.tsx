@@ -559,7 +559,7 @@ function ActivitySelect({ value, onPick }: { value: ActivityWindow | ""; onPick:
         <ul role="listbox" aria-label="Activity" className="max-h-72 overflow-y-auto">
           {ACTIVITY_WINDOWS.map((window) => (
             <li key={window}>
-              <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+              <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                 <input
                   type="radio"
                   name="activity-window"
@@ -619,7 +619,7 @@ function TitleSelect({ values, onToggle, onClear }: { values: string[]; onToggle
           <ul role="listbox" aria-label="Job title" aria-multiselectable="true" className="max-h-64 overflow-y-auto">
             {rows.map((row) => (
               <li key={row.name}>
-                <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                   <input type="checkbox" checked={ticked(row.name)} onChange={() => onToggle(row.name)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
                   <span className="min-w-0 flex-1 truncate">{row.name}</span>
                   {row.count !== null && <span className="faint num text-xs">{row.count.toLocaleString()}</span>}

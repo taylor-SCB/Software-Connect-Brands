@@ -82,8 +82,10 @@ async function OverviewSummary({
     }),
     prisma.contract.count({ where: { organizationId, status: "SENT" } }),
     prisma.contract.count({ where: { organizationId, status: "SIGNED" } }),
+    // Real touches only (Nov 10, 2026): a marketing blast would fill the
+    // box; it has its own column on the lists and its own chart in Activity.
     prisma.activity.findMany({
-      where: { organizationId },
+      where: { organizationId, marketing: false },
       orderBy: { occurredAt: "desc" },
       take: 8,
       include: {

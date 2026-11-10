@@ -111,7 +111,7 @@ export async function DuplicatesView({
         {groups.length === 0 ? (
           <EmptyState title="No duplicates found" body={`Nothing shares ${DUPLICATE_LABELS[kind][by]?.toLowerCase().replace("same ", "a ")}.`} />
         ) : (
-          <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+          <ul className="divide-y divide-[var(--hairline)]">
             {groups.map((group) => {
               const members = group.ids.map((id) => records.get(id)).filter((row): row is NonNullable<typeof row> => Boolean(row));
               const shown = by === "name" && kind === "contacts" ? group.key.slice(group.key.indexOf("|") + 1) : group.key;
