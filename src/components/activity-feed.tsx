@@ -1,4 +1,5 @@
 import { ink } from "@/lib/ink";
+import { Fragment } from "react";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui";
 import {
@@ -33,7 +34,10 @@ export type ActivityItem = {
   userName: string;
   when: string;
   others: number;
-  via?: { id: string; name: string } | null;
+  // Who it was with, on a company page. Several people when one touch was
+  // logged on them at once: the company page shows that batch as one line
+  // naming each of them (Nov 10, 2026).
+  via?: { id: string; name: string } | { id: string; name: string }[] | null;
   // On a company page: logged on the company with nobody linked, by this
   // teammate, who ticked "I'm choosing not to link a contact". Reads
   // "Nic Steffl Bypassed" where the person's name would be, until the
@@ -97,6 +101,7 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             </li>
           );
         }
+        const via = activity.via ? [activity.via].flat() : [];
         return (
           <li key={activity.id} className="flex gap-3 px-5 py-3" data-testid="activity-line" data-marketing={activity.marketing ? "1" : undefined}>
             <div
@@ -114,15 +119,15 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
                 {ACTIVITY_LABELS[activity.type as ActivityTypeValue]}
                 {activity.marketing && <MarketingBadge />} · {activity.userName} ·{" "}
                 {activity.when}
-                {activity.via && (
-                  <>
-                    {" · "}
-                    <Link href={`/dashboard/contacts/${activity.via.id}`} className="link">
-                      {activity.via.name}
+                {via.map((person, index) => (
+                  <Fragment key={person.id}>
+                    {index === 0 ? " · " : ", "}
+                    <Link href={`/dashboard/contacts/${person.id}`} className="link">
+                      {person.name}
                     </Link>
-                  </>
-                )}
-                {!activity.via && activity.bypassedBy && (
+                  </Fragment>
+                ))}
+                {via.length === 0 && activity.bypassedBy && (
                   <>
                     {" · "}
                     <span className="badge border-[var(--border)] text-[0.62rem] text-[var(--text-faint)]" data-testid="activity-bypassed">

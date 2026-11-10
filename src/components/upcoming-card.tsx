@@ -32,7 +32,7 @@ export function UpcomingCard({
 }: {
   events: UpcomingEvent[];
   choices: EventChoices;
-  defaults: { contactId?: string; companyId?: string; startOn: string };
+  defaults: { contactId?: string; companyId?: string; startOn: string; type?: string };
   label: string;
 }) {
   const [adding, setAdding] = useState(false);

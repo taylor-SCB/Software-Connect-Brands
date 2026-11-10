@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
@@ -84,7 +85,7 @@ export default async function CompanyDetailPage({
     orderBy: [{ favorite: "desc" }, { name: "asc" }],
     skip: (peoplePage - 1) * PEOPLE_PER_PAGE,
     take: PEOPLE_PER_PAGE,
-    select: { id: true, name: true, title: true, email: true, phone: true, status: true, favorite: true, companyId: true },
+    select: { id: true, name: true, title: true, email: true, phone: true, mobile: true, status: true, favorite: true, companyId: true },
   });
 
   // Everything logged on the company itself, plus everything logged on
@@ -141,9 +142,12 @@ export default async function CompanyDetailPage({
       batchOthers("activity", activities.map((activity) => activity.batchId)),
       prisma.note.count({ where: { organizationId, OR: [{ companyId: company.id }, viaPeople] } }),
       prisma.note.count({ where: { organizationId, label: { in: [...PERSONAL_NOTE_LABELS] }, OR: [{ companyId: company.id }, viaPeople] } }),
-      // Touches only: marketing sends are on the feed, never counted.
+      // Touches only: marketing sends are on the feed, never counted. One
+      // touch logged on several people at once is one row each sharing a
+      // batchId, and counts once (Nov 10, 2026): grouped by batch too, a
+      // batch is one group and the rows with none are counted as they are.
       prisma.activity.groupBy({
-        by: ["type"],
+        by: ["type", "batchId"],
         where: { organizationId, marketing: false, OR: [{ companyId: company.id }, viaPeople] },
         _count: { _all: true },
       }),
@@ -203,11 +207,31 @@ export default async function CompanyDetailPage({
     },
   });
 
-  const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone }));
+  // The pickers' hover line shows a number; someone with only a mobile
+  // on file has that one.
+  const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone ?? person.mobile }));
+
+  // The feed shows a touch logged on several people here once, naming
+  // each of them (Nov 10, 2026); it had listed one copy per person. The
+  // newest row of a batch stands for the rest.
+  const feed: (typeof activities[number] & { people: { id: string; name: string }[] })[] = [];
+  const byBatch = new Map<string, (typeof feed)[number]>();
+  for (const activity of activities) {
+    const shown = activity.batchId ? byBatch.get(activity.batchId) : undefined;
+    if (shown) {
+      if (activity.contact) shown.people.push(activity.contact);
+      continue;
+    }
+    const entry = { ...activity, people: activity.contact ? [activity.contact] : [] };
+    feed.push(entry);
+    if (activity.batchId) byBatch.set(activity.batchId, entry);
+  }
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
-      acc[type] = activityByType.find((row) => row.type === type)?._count._all ?? 0;
+      acc[type] = activityByType
+        .filter((row) => row.type === type)
+        .reduce((sum, row) => sum + (row.batchId ? 1 : row._count._all), 0);
       return acc;
     },
     {} as Record<ActivityTypeValue, number>,
@@ -251,8 +275,11 @@ export default async function CompanyDetailPage({
         }
       />
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
+      {/* One column below lg that is never wider than the screen
+          (Nov 10, 2026): a grid's lone implicit column grew to its widest
+          content and the whole page panned sideways on a phone. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div className="min-w-0 space-y-5 lg:col-span-2">
           <Card lit id="activity">
             <CardHeader
               title="Log activity"
@@ -266,14 +293,16 @@ export default async function CompanyDetailPage({
             />
             <div className="divider" />
             <ActivityFeed
-              items={activities.map((activity) => ({
+              items={feed.map((activity) => ({
                 id: activity.id,
                 type: activity.type,
                 body: activity.body,
                 userName: activity.user.name,
                 when: formatDateTime(activity.occurredAt, timeZone),
-                others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
-                via: activity.contact,
+                // Copies on people not on this page (another company's,
+                // or past the feed's last row) are still "also on N".
+                others: activity.batchId ? Math.max(0, (activityOthers.get(activity.batchId) ?? 0) + 1 - activity.people.length) : 0,
+                via: activity.people.length ? activity.people : null,
                 bypassedBy: activity.contact ? null : activity.user.name,
                 marketing: activity.marketing,
               }))}
@@ -302,7 +331,7 @@ export default async function CompanyDetailPage({
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <Card lit>
             <CardHeader
               title="Details"
@@ -410,16 +439,33 @@ export default async function CompanyDetailPage({
               />
             ) : (
               <ul className="divide-y divide-[var(--hairline)]">
-                {people.map((person) => (
-                  <li key={person.id} className="px-5 py-3">
-                    <Link
-                      href={`/dashboard/contacts/${person.id}`}
-                      className="flex items-center justify-between gap-3"
-                    >
+                {people.map((person) => {
+                  // Their numbers, each one a tap to call (Nov 10, 2026): a
+                  // person with only a mobile on file showed no number.
+                  const numbers = [
+                    person.phone ? { label: "", number: person.phone } : null,
+                    person.mobile ? { label: "Mobile ", number: person.mobile } : null,
+                  ].filter((entry) => entry !== null);
+                  const parts = [
+                    person.title,
+                    ...numbers.map(({ label, number }) => (
+                      <a key={`${label}${number}`} href={`tel:${number}`} className="link num relative z-10" data-testid="person-call">
+                        {label}
+                        {number}
+                      </a>
+                    )),
+                    person.email,
+                  ].filter(Boolean);
+                  return (
+                    // The name's link covers the whole row, as the row link
+                    // did; the numbers sit above it so a tap on one calls.
+                    <li key={person.id} className="relative flex items-center justify-between gap-3 px-5 py-3" data-testid="person-row">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium hover:underline">
-                          {person.favorite && <span className="mr-1 text-[var(--warn)]">★</span>}
-                          {person.name}
+                        <p className="truncate text-sm font-medium">
+                          <Link href={`/dashboard/contacts/${person.id}`} className="after:absolute after:inset-0 hover:underline">
+                            {person.favorite && <span className="mr-1 text-[var(--warn)]">★</span>}
+                            {person.name}
+                          </Link>
                           {person.companyId !== company.id && (
                             <span className="badge ml-2 border-[var(--border)] text-[0.62rem] text-[var(--text-faint)]" data-testid="linked-person">
                               Additional account
@@ -427,13 +473,20 @@ export default async function CompanyDetailPage({
                           )}
                         </p>
                         <p className="faint truncate text-xs">
-                          {[person.title, person.phone, person.email].filter(Boolean).join(" · ") || "—"}
+                          {parts.length
+                            ? parts.map((part, index) => (
+                                <Fragment key={index}>
+                                  {index > 0 && " · "}
+                                  {part}
+                                </Fragment>
+                              ))
+                            : "—"}
                         </p>
                       </div>
                       <StatusBadge status={person.status} />
-                    </Link>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <OtherContacts companyId={company.id} people={companyPeople} groups={bypassGroups} />

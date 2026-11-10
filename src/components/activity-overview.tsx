@@ -35,7 +35,9 @@ export function ActivityOverview({
   timeZone: string;
 }) {
   const touches = activity.TEXT + activity.EMAIL + activity.PHONE_CALL + activity.MEETING;
-  const daysSince = lastTouchAt ? daysSinceDate(lastTouchAt) : null;
+  // Days on the workspace's calendar, the same calendar the date beside
+  // it is written in — not 24-hour blocks.
+  const daysSince = lastTouchAt ? daysSinceDate(lastTouchAt, timeZone) : null;
 
   const tiles: { label: string; value: number; Icon: typeof IconNote; href: string }[] = [
     { label: "Calls", value: activity.PHONE_CALL, Icon: IconPhone, href: "#activity" },
