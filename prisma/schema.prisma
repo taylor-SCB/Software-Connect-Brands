@@ -118,6 +118,10 @@ model Organization {
   contacts              Contact[]
   deals                 Deal[]
   opportunities         Opportunity[]
+  reportSubscriptions   ReportSubscription[]
+  reportNarratives      ReportNarrative[]
+  // An open opportunity untouched this many days reads "gone quiet".
+  quietDays             Int                    @default(8)
   leadLabelOptions      LeadLabelOption[]
   notes                 Note[]
   activities            Activity[]
@@ -245,6 +249,13 @@ model User {
   ratesheetImportIssues RatesheetImportIssue[]
   ownedDeals            Deal[]                 @relation("DealOwner")
   ownedOpportunities    Opportunity[]          @relation("OpportunityOwner")
+  ownedContacts         Contact[]              @relation("ContactOwner")
+  createdContacts       Contact[]              @relation("ContactCreator")
+  ownedCompanies        Company[]              @relation("CompanyOwner")
+  createdCompanies      Company[]              @relation("CompanyCreator")
+  reportSubscriptions   ReportSubscription[]   @relation("ReportRecipient")
+  // "dark" (the original look), "light" or "bright"; null reads dark.
+  theme                 String?
   opportunityLogs       OpportunityLog[]
   statusChanges         StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
@@ -314,6 +325,11 @@ model Company {
   id             String        @id @default(cuid())
   organizationId String
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Who owns the account and who added it (Nov 10, 2026), as on Contact.
+  ownerId        String?
+  owner          User?         @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdById    String?
+  createdBy      User?         @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: SetNull)
   name           String
   phone          String?
   email          String?
@@ -406,6 +422,14 @@ model Contact {
   phoneLabel     ChannelLabel  @default(WORK)
   phone2         String?
   phone2Label    ChannelLabel  @default(PERSONAL)
+  // Who owns this person (Nov 10, 2026, Taylor): null reads Unassigned and
+  // nobody is given one automatically; an import can assign a whole file,
+  // and the list assigns up to 1,000 at a time.
+  ownerId        String?
+  owner          User?         @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  // Who added it, by hand or by import. createdAt is when.
+  createdById    String?
+  createdBy      User?         @relation("ContactCreator", fields: [createdById], references: [id], onDelete: SetNull)
   // Their cell (Oct 27, 2026). Its own field because an import file
   // carries Mobile beside Phone, and one never stands in for the other:
   // a mobile is never copied to the company's phone.
@@ -632,6 +656,10 @@ model Activity {
   type           ActivityType
   body           String
   batchId        String?
+  // An email marketing send (Nov 10, 2026, Taylor): on the person's log and
+  // counted in its own column, never as a touch (Last Contacted, the
+  // Contacted step, activity filters and reports leave it out).
+  marketing      Boolean      @default(false)
   occurredAt     DateTime     @default(now())
   createdAt      DateTime     @default(now())
 
@@ -642,6 +670,7 @@ model Activity {
   @@index([organizationId])
   @@index([contactId])
   @@index([contactId, type])
+  @@index([organizationId, marketing, occurredAt])
   @@index([companyId])
   @@index([projectId])
   @@index([batchId])
@@ -2529,4 +2558,44 @@ model LeadLabelOption {
   createdAt      DateTime     @default(now())
 
   @@unique([organizationId, name])
+}
+
+// ---------------------------------------------------------------------
+// Reports (Nov 10, 2026). The five on the Overview page's report bar:
+// DAILY, PIPELINE, ACTIVITY, CLOSING, MONEY (src/lib/reports/). A
+// subscription emails one to one teammate on a cadence; the hourly clock
+// (/api/cron/reports) sends what is due at 6am in the workspace's zone.
+model ReportSubscription {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recipientId    String
+  recipient      User         @relation("ReportRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  report         String
+  // DAILY, WEEKLY (Mondays), MONTHLY (the 1st), QUARTERLY, YEARLY.
+  cadence        String
+  // The rep it is about; null is the whole team.
+  repId          String?
+  createdById    String?
+  lastSentAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@unique([recipientId, report, cadence, repId])
+  @@index([organizationId])
+}
+
+// A report's plain-words write-up, written once per report, period and
+// filters and reused, so opening a report twice costs one write-up.
+model ReportNarrative {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // report + period + filters, e.g. "PIPELINE|2026-W46|rep:all".
+  key            String
+  body           String
+  // CLAUDE when written by AI, RULES when written from the numbers alone.
+  source         String
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, key])
 }
