@@ -15,9 +15,11 @@
  * Audit fixes (UX review, Nov 10, 2026), each an "audit fixes (UX
  * review):" step: Mark as sent refused for a quote with no saved lines and
  * held off while a line is typed but unsaved; the Qty, Value and Tag boxes
- * showing their whole value at 1440 and each line stacking on a phone; the
+ * showing their whole value at 1440 and 1280, with a catalog line's name
+ * whole beside its picture, and each line stacking on a phone; the
  * customer's quote on a phone keeping a gap between its number columns
- * with its header lined up on the left; Delete quote asking first; and on
+ * with its header lined up on the left; Delete quote asking first (Cancel
+ * and Escape keep it); and on
  * a contract made from the quote, the payment labels the quote's table
  * wrote showing whole at 1440 with the Due column still on the card, and
  * the line and payment totals on screen on a phone.
@@ -1056,14 +1058,29 @@ let context;
   assert.equal(await uxCustomer.getByTestId("document-total").textContent(), "$23,200.00", "the customer's link shows the saved line");
   await uxCustomer.close();
 
-  log("audit fixes (UX review): at 1440 the Qty, Value and Tag boxes show their whole value; on a phone each line stacks with its total on screen");
-  {
+  log("audit fixes (UX review): at 1440 and 1280 the Qty, Value and Tag boxes show their whole value and a pictured catalog line's name shows whole; on a phone each line stacks with its total on screen");
+  // A catalog product with a picture, on the sent quote the way Mark as
+  // sent leaves it (the line holds the picture it went out with).
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,"unitPriceCents","defaultTag","updatedAt")
+     VALUES ('prd_qi_cam','${org}','4MP turret camera, white',18900,'MATERIALS',now())`,
+  );
+  await sql(
+    `INSERT INTO "ProductImage" (id,"organizationId","productId",position,"storageKey","thumbKey","docKey","contentType","sizeBytes","publicToken")
+     VALUES ('img_qi_cam','${org}','prd_qi_cam',0,'qi/cam.webp','qi/cam-thumb.webp','qi/cam-doc.jpg','image/webp',100,'tok_img_qi_cam_0123456789')`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,description,quantity,"unitPriceCents",tag,position,"productId","imageId")
+     VALUES ('qli_qi_cam','quo_qi_ux','4MP turret camera, white','Fixed lens, IR 30m',16,18900,'MATERIALS',1,'prd_qi_cam','img_qi_cam')`,
+  );
+  for (const width of [1440, 1280]) {
     const state = await context.storageState();
-    const wide = await browser.newContext({ viewport: { width: 1440, height: 900 }, storageState: state });
+    const wide = await browser.newContext({ viewport: { width, height: 900 }, storageState: state });
     const desk = await wide.newPage();
     await desk.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
     // The longest tag there is.
     await desk.getByLabel("Line 1 tag", { exact: true }).selectOption("PROJECT_SERVICES");
+    await desk.getByTestId("line-picture").first().waitFor();
     const fit = await desk.evaluate(() => {
       const field = (label) => document.querySelector(`[aria-label="${label}"]`);
       const cut = (el) => ({ value: el.value, scroll: el.scrollWidth, client: el.clientWidth });
@@ -1082,18 +1099,25 @@ let context;
           client: tag.clientWidth,
         },
         table: { scroll: wrap.scrollWidth, client: wrap.clientWidth },
+        // The catalog line, its picture beside the name.
+        pictured: cut(field("Line 2 product")),
       };
     });
     // Before the fix: Qty 22px ("16" read "1"), Value 38px ("1450.00" read
-    // "145"), the tag 22px ("▾P").
-    for (const box of [fit.qty, fit.value]) {
-      assert.ok(box.scroll <= box.client, `"${box.value}" is cut off: ${box.scroll}px in a ${box.client}px box`);
+    // "145"), the tag 22px ("▾P"). After the first fix, at 1280 the
+    // pictured name had 126px for its 168px ("4MP turret camera, whi") and
+    // the row ran 22px past the card.
+    for (const box of [fit.qty, fit.value, fit.pictured]) {
+      assert.ok(box.scroll <= box.client, `at ${width}, "${box.value}" is cut off: ${box.scroll}px in a ${box.client}px box`);
     }
-    assert.ok(fit.tag.need <= fit.tag.client, `the tag "${fit.tag.text}" needs ${fit.tag.need}px and has ${fit.tag.client}px`);
-    assert.ok(fit.table.scroll <= fit.table.client + 1, "the line items scroll sideways at 1440");
-    await shot(desk, "21-lines-1440");
+    assert.ok(fit.pictured.client >= 240, `at ${width} the pictured product's name box is ${fit.pictured.client}px`);
+    assert.ok(fit.tag.need <= fit.tag.client, `at ${width} the tag "${fit.tag.text}" needs ${fit.tag.need}px and has ${fit.tag.client}px`);
+    assert.ok(fit.table.scroll <= fit.table.client + 1, `the line items scroll sideways at ${width} (${fit.table.scroll}px in ${fit.table.client}px)`);
+    await shot(desk, `21-lines-${width}`);
     await wide.close();
-
+  }
+  {
+    const state = await context.storageState();
     const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState: state });
     const phone = await phoneCtx.newPage();
     await phone.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
@@ -1108,13 +1132,14 @@ let context;
         qty: field("Line 1 quantity"),
         value: field("Line 1 unit value"),
         tag: field("Line 1 tag"),
+        supplier: field("Line 1 supplier"),
         total: { left: t.left, right: t.right, text: total.textContent },
       };
     });
     assert.ok(stacked.page <= 390, `the page scrolls sideways (${stacked.page}px)`);
     // Before the fix the product box was 60px ("4MP tu") and the total off the screen.
     assert.ok(stacked.product >= 280, `the product box is ${stacked.product}px wide`);
-    for (const [what, box] of [["quantity", stacked.qty], ["value", stacked.value], ["tag", stacked.tag]]) {
+    for (const [what, box] of [["quantity", stacked.qty], ["value", stacked.value], ["tag", stacked.tag], ["supplier", stacked.supplier]]) {
       assert.ok(box.left >= 0 && box.right <= 390 && box.width >= 100, `the ${what} box is ${Math.round(box.width)}px at ${Math.round(box.left)}-${Math.round(box.right)}`);
     }
     assert.ok(stacked.total.left >= 0 && stacked.total.right <= 390, `the line total is off the screen (${stacked.total.left}-${stacked.total.right})`);
@@ -1167,16 +1192,22 @@ let context;
   log("audit fixes (UX review): Delete quote asks first; Cancel keeps the quote, Yes, delete removes it");
   const uxCount = async () => (await sql(`SELECT count(*)::int AS n FROM "Quote" WHERE id='quo_qi_ux'`)).rows[0].n;
   await page.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
-  await page.getByTestId("delete-record").click();
-  const confirmDelete = page.getByTestId("delete-record-confirm");
+  await page.getByTestId("delete-quote").click();
+  const confirmDelete = page.getByTestId("delete-quote-confirm");
   await confirmDelete.waitFor();
   assert.match(await confirmDelete.innerText(), /Delete QUO-1900 for good\? The customer's link stops working\./);
   assert.equal(await uxCount(), 1, "one tap deleted the quote");
   await confirmDelete.getByRole("button", { name: "Cancel" }).click();
-  await page.getByTestId("delete-record").waitFor();
+  await page.getByTestId("delete-quote").waitFor();
   assert.equal(await uxCount(), 1, "Cancel deleted the quote");
-  await page.getByTestId("delete-record").click();
-  await page.getByTestId("delete-record-yes").click();
+  // Escape backs out the same way.
+  await page.getByTestId("delete-quote").click();
+  await confirmDelete.waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("delete-quote").waitFor();
+  assert.equal(await uxCount(), 1, "Escape deleted the quote");
+  await page.getByTestId("delete-quote").click();
+  await page.getByTestId("delete-quote-yes").click();
   await page.waitForURL(/\/dashboard\/quotes$/);
   assert.equal(await uxCount(), 0, "Yes, delete left the quote");
 

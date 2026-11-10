@@ -885,7 +885,7 @@ async function changeQuoteStatus(formData: FormData): Promise<ActionState> {
   return { success: status === "SENT" ? "Marked sent" : "Saved" };
 }
 
-// The Danger zone's DeleteRecordForm, behind an "are you sure" (UX review,
+// The Danger zone's DeleteQuoteButton, behind an "are you sure" (UX review,
 // Nov 10, 2026: one tap used to delete it, a sent quote included).
 export async function deleteQuote(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();

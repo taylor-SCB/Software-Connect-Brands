@@ -17,15 +17,15 @@ import {
 } from "@/components/ui";
 import { IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
-import { DeleteRecordForm } from "@/components/delete-record-form";
 import { LineItemsEditor } from "./line-items-editor";
 import { MarkSentButton, QuoteUnsavedProvider } from "./mark-sent";
+import { DeleteQuoteButton } from "./delete-quote";
 import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
 import { QuotePaymentTable } from "./quote-payment-table";
 import { QuoteMetaForm } from "./quote-meta-form";
 import { dateToIso, todayIso, quoteBaselineRows } from "@/lib/payments";
 import { computeQuoteTotals } from "@/lib/quote-math";
-import { setQuoteStatus, deleteQuote } from "../actions";
+import { setQuoteStatus } from "../actions";
 import { lineLabelsFor } from "@/lib/line-labels";
 import { getCustomUnits } from "@/lib/variations";
 import { readSnapshot } from "@/lib/variation-shared";
@@ -290,11 +290,8 @@ export default async function QuoteBuilderPage({
 
         <Card className="border-[rgb(251_113_133/0.25)]">
           <CardHeader title="Danger zone" subtitle="Deleting a quote can't be undone." />
-          <DeleteRecordForm
-            action={deleteQuote}
-            hiddenName="quoteId"
-            hiddenValue={quote.id}
-            label="Delete quote"
+          <DeleteQuoteButton
+            quoteId={quote.id}
             question={
               quote.status === "DRAFT"
                 ? `Delete QUO-${quote.number} for good?`

@@ -243,6 +243,16 @@ function rowDiscount(row: Row) {
 // with its name above it — instead of a table squeezed sideways with the
 // product names cut to six letters and the totals off the screen.
 const PHONE_CELL = "max-sm:border-0 max-sm:p-0";
+// Review follow-up: at 1280 those minimums left the product 126px beside
+// a picture ("4MP turret camera, white" cut off) and the row 22px past
+// the card. Tag, Supplier / Contractor and Service type now share one
+// column, one above the other below 2xl (a line's product, description
+// and notes already make it about that tall) and side by side from 2xl,
+// which hands the product name the width of a column. The name box keeps
+// 12rem, so on a tablet, where the table scrolls inside its card anyway,
+// a name is still readable.
+const TAG_BOX = "min-w-0 2xl:w-[8.5rem] 2xl:shrink-0";
+const SIDE_BOX = "min-w-0 2xl:w-40 2xl:shrink-0";
 function PhoneLabel({ children }: { children: React.ReactNode }) {
   return <span className="label font-sans sm:hidden">{children}</span>;
 }
@@ -730,17 +740,23 @@ export function LineItemsEditor({
               <th className="w-32 text-right">Value</th>
               <th className="w-36 text-right">Discount</th>
               <th className="w-24 text-right">Total</th>
-              <th className="w-44">Tag</th>
-              {/* Internal. Never rendered on the customer's copy. */}
-              <th className="w-44">Supplier / Contractor</th>
-              {splitByService && <th className="w-44">Service type</th>}
+              {/* Tag, Supplier / Contractor (internal, never on the
+                  customer's copy) and Service type share a column: side
+                  by side from 2xl, one above the other below it. */}
+              <th className={`w-44 ${splitByService ? "2xl:w-[30.5rem]" : "2xl:w-80"}`} data-testid="line-pickers-head">
+                <span className="flex flex-col gap-0.5 2xl:flex-row 2xl:gap-2">
+                  <span className={TAG_BOX}>Tag</span>
+                  <span className={SIDE_BOX}>Supplier / Contractor</span>
+                  {splitByService && <span className={SIDE_BOX}>Service type</span>}
+                </span>
+              </th>
               {!readOnly && <th className="w-10" />}
             </tr>
           </thead>
           <tbody className="max-sm:block">
             {rows.length === 0 && (
               <tr className="max-sm:block">
-                <td colSpan={(readOnly ? 7 : 8) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs max-sm:block">
+                <td colSpan={readOnly ? 6 : 7} className="faint py-8 text-center text-xs max-sm:block">
                   No line items yet. Add one from your catalog or start a blank line.
                 </td>
               </tr>
@@ -780,7 +796,7 @@ export function LineItemsEditor({
                         />
                       ) : null;
                     })()}
-                    <div className="min-w-0 flex-1 sm:min-w-[8rem]">
+                    <div className="min-w-0 flex-1 sm:min-w-[12rem]">
                     <input
                       value={row.name}
                       onChange={(event) =>
@@ -1065,7 +1081,9 @@ export function LineItemsEditor({
                       </span>
                     )}
                   </td>
-                  <td className={PHONE_CELL}>
+                  <td className={`${PHONE_CELL} max-sm:col-span-2`} data-testid="line-pickers">
+                    <div className="flex flex-col gap-1.5 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 2xl:flex-row 2xl:gap-2">
+                    <div className={TAG_BOX}>
                     <PhoneLabel>Tag</PhoneLabel>
                     <select
                       value={row.tag}
@@ -1081,8 +1099,8 @@ export function LineItemsEditor({
                         </option>
                       ))}
                     </select>
-                  </td>
-                  <td className={PHONE_CELL}>
+                    </div>
+                    <div className={SIDE_BOX}>
                     <PhoneLabel>Supplier / Contractor</PhoneLabel>
                     <SupplierCell
                       value={row.supplierCompanyId}
@@ -1094,9 +1112,9 @@ export function LineItemsEditor({
                       label={`Line ${index + 1} supplier`}
                       disabled={readOnly}
                     />
-                  </td>
+                    </div>
                   {splitByService && (
-                    <td className={`${PHONE_CELL} max-sm:col-span-2`}>
+                    <div className={`${SIDE_BOX} max-sm:col-span-2`}>
                       <PhoneLabel>Service type</PhoneLabel>
                       <select
                         value={row.serviceType}
@@ -1111,8 +1129,10 @@ export function LineItemsEditor({
                           <option key={name} value={name}>{name}</option>
                         ))}
                       </select>
-                    </td>
+                    </div>
                   )}
+                    </div>
+                  </td>
                   {!readOnly && (
                     <td className={`pt-2.5 ${PHONE_CELL} max-sm:col-span-2 max-sm:text-right`}>
                       <button

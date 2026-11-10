@@ -12,7 +12,9 @@
  * Audit fixes (UX review, Nov 10, 2026), an "audit fixes (UX review):"
  * step: Mark signed (signed on paper) on a contract made from a sent quote
  * accepts that quote, dated the day it was signed, and takes its open
- * follow-up off the calendar.
+ * follow-up off the calendar; and a contract signed before that fix, its
+ * quote still Sent, is caught up by `scripts/accept-signed-quotes.ts`
+ * (--check lists it and changes nothing; a second run finds nothing).
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -26,6 +28,7 @@
  */
 /* eslint-disable @typescript-eslint/no-require-imports -- CommonJS on purpose: NODE_PATH only resolves the global playwright for require() */
 const os = require("node:os");
+const { execFileSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const { Client } = require("pg");
 const fs = require("node:fs");
@@ -341,6 +344,35 @@ async function previewChips(page) {
   assert.equal(await openFollowUps(), 0, "the signed quote's follow-up is still on the calendar");
   await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
   await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
+
+  log("audit fixes (UX review): a contract signed before the fix is caught up by scripts/accept-signed-quotes.ts, once");
+  // The state the review found in the live data: the contract signed, its
+  // quote still Sent with its follow-up open. The quote goes out again
+  // from its page while the contract stays signed.
+  await page.getByRole("button", { name: "Back to draft" }).click();
+  await page.getByTestId("mark-sent").click();
+  await page.getByRole("button", { name: "Back to draft" }).waitFor();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT");
+  assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [contractId])).rows[0].status, "SIGNED");
+  assert.ok((await openFollowUps()) > 0, "the quote's follow-up is back on the calendar");
+  const backfill = (...flags) =>
+    execFileSync("npx", ["tsx", "scripts/accept-signed-quotes.ts", `--org=${org}`, ...flags], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, DATABASE_URL: DB },
+    });
+  const checked = backfill("--check");
+  assert.match(checked, /would accept QUO-\d+ \(Danny Ortiz\), signed on CON-\d+ 2026-11-09/, checked);
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "--check changed the quote");
+  const caughtUp = backfill();
+  assert.match(caughtUp, /1 quote accepted\./, caughtUp);
+  const backfilled = (await sql(`SELECT status, "respondedAt"::date::text AS day FROM "Quote" WHERE id='quo_ct'`)).rows[0];
+  assert.deepEqual(backfilled, { status: "ACCEPTED", day: "2026-11-09" }, "accepted, dated the day the contract was signed");
+  assert.equal(await openFollowUps(), 0, "the follow-up is still on the calendar after the catch-up");
+  await page.reload();
+  await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
+  // A second run finds nothing to do.
+  assert.match(backfill(), /already answered/);
 
   log("New contract: same two columns, template dropdown, preview, residential customer with no deal");
   await page.goto(`${BASE}/dashboard/contracts/new`);
