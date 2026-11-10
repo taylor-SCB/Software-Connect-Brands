@@ -10,6 +10,7 @@ import { LeadLabelPicker } from "@/components/lead-label-chip";
 import { IconCalendar, IconClock, IconFileText, IconPlus, IconX } from "@/components/icons";
 import { loadOpportunity, saveOpportunity, type OpportunityDetail, type OpportunityPerson } from "./opportunity-actions";
 import { MoveMenu } from "./move-menu";
+import { FollowUpButton, MeetingSuggest, QuietBadge, SuggestedLabel } from "./ai-assist-ui";
 
 type Role = OpportunityPerson["role"];
 const ROLES: { role: Role; label: string }[] = [
@@ -27,9 +28,16 @@ export function OpportunityPanel({
   timeZone,
   onClose,
   onMove,
+  ai = false,
+  quietDays = null,
+  suggestedLabel = null,
 }: {
   id: string;
   timeZone: string;
+  // The AI helpers and the gone-quiet badge (Nov 10, 2026).
+  ai?: boolean;
+  quietDays?: number | null;
+  suggestedLabel?: { label: string; reason: string } | null;
   onClose: () => void;
   onMove: (column: PipelineColumn) => void;
 }) {
@@ -164,6 +172,7 @@ export function OpportunityPanel({
               <span className="flex items-center gap-1.5">
                 <span className="faint">Lead label</span>
                 <LeadLabelPicker value={leadLabel} customLabels={detail.customLabels} onChange={setLeadLabel} />
+                {!leadLabel && <SuggestedLabel opportunityId={detail.id} rule={suggestedLabel} ai={ai} onAccept={setLeadLabel} />}
               </span>
               <label className="flex items-center gap-1.5">
                 <span className="faint">Rep</span>
@@ -177,6 +186,36 @@ export function OpportunityPanel({
                 </select>
               </label>
             </div>
+
+            {(quietDays !== null || ai) && (
+              <div className="flex flex-wrap items-center gap-2" data-testid="panel-quiet">
+                {quietDays !== null && <QuietBadge days={quietDays} />}
+                {ai && <FollowUpButton opportunityId={detail.id} />}
+              </div>
+            )}
+
+            {ai && (
+              <MeetingSuggest
+                opportunityId={detail.id}
+                canSetValue={Boolean(detail.deal && isDeal && !detail.deal.hasQuotes)}
+                onPrimary={(contactId) => {
+                  const row = people.find((person) => person.contactId === contactId);
+                  if (row && row.role !== "PRIMARY") {
+                    setPeople((rows) =>
+                      rows.map((person) =>
+                        person.contactId === contactId
+                          ? { ...person, role: "PRIMARY" }
+                          : person.role === "PRIMARY"
+                            ? { ...person, role: "ASSOCIATED" }
+                            : person,
+                      ),
+                    );
+                  }
+                }}
+                onLabel={setLeadLabel}
+                onValue={(cents) => setValue((cents / 100).toFixed(2))}
+              />
+            )}
 
             {detail.deal && isDeal && (
               <label className="flex items-center justify-between gap-3 text-xs">

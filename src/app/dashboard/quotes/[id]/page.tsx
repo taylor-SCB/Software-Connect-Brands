@@ -27,6 +27,7 @@ import { setQuoteStatus, deleteQuote } from "../actions";
 import { lineLabelsFor } from "@/lib/line-labels";
 import { getCustomUnits } from "@/lib/variations";
 import { readSnapshot } from "@/lib/variation-shared";
+import { aiConfigured } from "@/lib/ai";
 
 // yyyy-mm-dd for <input type="date">, which only accepts that shape.
 function toDateInput(date: Date | null) {
@@ -35,10 +36,13 @@ function toDateInput(date: Date | null) {
 
 export default async function QuoteBuilderPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ draft?: string }>;
 }) {
   const { id } = await params;
+  const { draft: draftParam } = await searchParams;
   const { organizationId } = await requireSession();
 
   const timeZone = await getTimeZone();
@@ -68,6 +72,14 @@ export default async function QuoteBuilderPage({
   const users = await loadWorkspaceUsers(organizationId);
 
   if (!quote) notFound();
+
+  // "Draft lines from the meeting" (Nov 10, 2026): AI on, a draft, and a
+  // deal that came from a Pipeline opportunity. Build Quote can ask for it
+  // to run on arrival (?draft=meeting).
+  const fromOpportunity =
+    aiConfigured() && quote.status === "DRAFT"
+      ? await prisma.opportunity.findFirst({ where: { organizationId, dealId: quote.dealId }, select: { id: true } })
+      : null;
 
   // Suppliers already on a line are fetched back even if they have since
   // stopped being distributors, so the picker can offer the linked one.
@@ -217,6 +229,7 @@ export default async function QuoteBuilderPage({
             serviceTypes={serviceTypes}
             suppliers={suppliers}
             platformSuppliers={platformSuppliers}
+            meetingDraft={fromOpportunity ? { auto: draftParam === "meeting" } : null}
           />
         </Card>
 

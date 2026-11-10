@@ -17,6 +17,7 @@ import { OwnerSelect } from "./owner-select";
 import { ConvertDialog } from "./convert-dialog";
 import { MoveMenu, isMeetingColumn } from "./move-menu";
 import { OpportunityPanel } from "./opportunity-panel";
+import { FollowUpButton, QuietBadge, SuggestedLabel } from "./ai-assist-ui";
 
 export type BoardTile = {
   id: string;
@@ -29,6 +30,11 @@ export type BoardTile = {
   people: { id: string; name: string; company: string | null; primary: boolean }[];
   ownerId: string | null;
   ownerName: string | null;
+  // Days since anyone touched it, when that is past the workspace's
+  // quietDays (src/lib/gone-quiet.ts); null when it isn't quiet.
+  quietDays: number | null;
+  // The rules' lead label for a tile with none (src/lib/lead-label-rules.ts).
+  suggestedLabel: { label: string; reason: string } | null;
   meetingCount: number;
   lastMeetingOn: string | null;
   deal: { id: string; stage: string; valueCents: number; quotes: { id: string; number: number; title: string }[] } | null;
@@ -50,12 +56,15 @@ export function PipelineBoard({
   customLabels,
   timeZone,
   today,
+  ai = false,
 }: {
   tiles: BoardTile[];
   users: { id: string; name: string }[];
   customLabels: string[];
   timeZone: string;
   today: string;
+  // ANTHROPIC_API_KEY is set: the AI helpers show.
+  ai?: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -185,6 +194,7 @@ export function PipelineBoard({
                       users={users}
                       customLabels={customLabels}
                       timeZone={timeZone}
+                      ai={ai}
                       onOpen={() => setPanelId(tile.id)}
                       onMove={(next) => move(tile, next)}
                       onLabel={(next) => label(tile, next)}
@@ -217,6 +227,7 @@ export function PipelineBoard({
           tile={converting.tile}
           stage={converting.stage}
           today={today}
+          ai={ai}
           onClose={() => setConverting(null)}
           onDone={(quoteUrl) => {
             setConverting(null);
@@ -229,6 +240,9 @@ export function PipelineBoard({
       {panelId && (
         <OpportunityPanel
           id={panelId}
+          ai={ai}
+          quietDays={tiles.find((row) => row.id === panelId)?.quietDays ?? null}
+          suggestedLabel={tiles.find((row) => row.id === panelId)?.suggestedLabel ?? null}
           timeZone={timeZone}
           onClose={() => setPanelId(null)}
           onMove={(column) => {
@@ -260,6 +274,7 @@ function Tile({
   users,
   customLabels,
   timeZone,
+  ai,
   onOpen,
   onMove,
   onLabel,
@@ -272,6 +287,7 @@ function Tile({
   users: { id: string; name: string }[];
   customLabels: string[];
   timeZone: string;
+  ai: boolean;
   onOpen: () => void;
   onMove: (column: PipelineColumn) => void;
   onLabel: (label: string | null) => void;
@@ -304,6 +320,12 @@ function Tile({
         </button>
         <LeadLabelPicker value={label} customLabels={customLabels} onChange={onLabel} />
       </div>
+      {(tile.quietDays !== null || !label) && (
+        <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5">
+          {!label && <SuggestedLabel opportunityId={tile.id} rule={tile.suggestedLabel} ai={ai} onAccept={(next) => onLabel(next)} />}
+          {tile.quietDays !== null && <QuietBadge days={tile.quietDays} />}
+        </div>
+      )}
 
       <ul className="mt-1.5 space-y-0.5" data-testid="tile-people">
         {shown.map((person) => (
@@ -357,6 +379,11 @@ function Tile({
         {tile.deal ? <span className="num text-xs font-medium">{formatCents(tile.deal.valueCents)}</span> : <span />}
         <MoveMenu current={column} archived={tile.column === "ARCHIVED"} locked={isDeal(tile)} onMove={onMove} />
       </div>
+      {ai && tile.quietDays !== null && (
+        <div className="mt-2">
+          <FollowUpButton opportunityId={tile.id} compact />
+        </div>
+      )}
       {tile.deal && (
         <Link href={`/dashboard/deals/tracker?dealId=${tile.deal.id}`} className="faint mt-2 flex items-center gap-1 text-[0.7rem] hover:text-[var(--text)]">
           <IconClock size={11} />

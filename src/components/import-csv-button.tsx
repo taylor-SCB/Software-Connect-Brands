@@ -13,10 +13,12 @@ import {
   CONTACT_CSV_COLUMNS,
   CONTACT_CSV_LABELS,
   type ContactImportPlan,
+  type ContactCsvColumn,
   type ImportBatchResult,
 } from "@/lib/contacts-csv";
 import { importContactsBatch } from "@/app/dashboard/contacts/import-actions";
 import { describeFilled } from "@/lib/enrich";
+import { ImportCleanup } from "@/components/import-cleanup";
 
 // "Import CSV" on the Contacts and Companies lists. The browser reads the
 // whole file (any size), shows what it found, then sends the rows up in
@@ -51,7 +53,9 @@ async function readCsvText(file: File) {
 type Phase =
   | { step: "pick" }
   | { step: "reading" }
-  | { step: "preview"; plan: ContactImportPlan }
+  // text and mapped: the file as read and any columns placed by hand from
+  // the clean-up's suggestions, so the preview can be planned again.
+  | { step: "preview"; plan: ContactImportPlan; text?: string; mapped?: Partial<Record<ContactCsvColumn, number>> }
   | { step: "running"; plan: ContactImportPlan; done: number; totals: ImportBatchResult }
   | { step: "finished"; plan: ContactImportPlan; done: number; totals: ImportBatchResult; stopped: boolean; error?: string };
 
@@ -78,8 +82,9 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
     // Let the "Reading…" state paint before the parse takes the thread.
     await new Promise((resolve) => window.setTimeout(resolve, 30));
     try {
-      const planned = planContactImport(await readCsvText(file));
-      if (planned.ok) setPhase({ step: "preview", plan: planned.plan });
+      const text = await readCsvText(file);
+      const planned = planContactImport(text);
+      if (planned.ok) setPhase({ step: "preview", plan: planned.plan, text });
       else {
         setPlanError(planned.error);
         setPhase({ step: "pick" });
@@ -176,6 +181,18 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
           )}
 
           {phase.step === "preview" && <Preview plan={phase.plan} />}
+          {phase.step === "preview" && phase.text !== undefined && (
+            <div className="mt-3">
+              <ImportCleanup
+                plan={phase.plan}
+                onMap={(more) => {
+                  const mapped = { ...phase.mapped, ...more };
+                  const planned = planContactImport(phase.text!, mapped);
+                  if (planned.ok) setPhase({ step: "preview", plan: planned.plan, text: phase.text, mapped });
+                }}
+              />
+            </div>
+          )}
 
           {(phase.step === "running" || phase.step === "finished") && (
             <Progress

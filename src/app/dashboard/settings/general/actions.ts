@@ -116,3 +116,21 @@ export async function cancelAccountTypeRequest(): Promise<ActionState> {
   if (cancelled.count === 0) return { error: "There was nothing waiting. It may have just been answered." };
   return { success: "Request cancelled." };
 }
+
+// "Gone quiet after N days" (Nov 10, 2026): how long an open opportunity
+// can go without a call, text, email or meeting before the Pipeline marks
+// it quiet. Owners and admins only, like the rest of this page.
+export async function updateQuietDays(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const kept = keepFields(formData, ["quietDays"]);
+  const session = await requireAdminSession();
+  if (!session.allowed) return { error: "Only owners and admins can change this.", kept };
+  const parsed = parseForm(
+    z.object({ quietDays: z.coerce.number().int("Use a whole number of days").min(1, "At least 1 day").max(365, "At most 365 days") }),
+    { quietDays: formData.get("quietDays") },
+  );
+  if (!parsed.ok) return { error: parsed.error, kept };
+  await prisma.organization.update({ where: { id: session.organizationId }, data: { quietDays: parsed.data.quietDays } });
+  revalidatePath(PATH);
+  revalidatePath("/dashboard/deals");
+  return { success: `Saved: quiet after ${parsed.data.quietDays} ${parsed.data.quietDays === 1 ? "day" : "days"}` };
+}

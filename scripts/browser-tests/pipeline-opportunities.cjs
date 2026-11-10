@@ -412,6 +412,9 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.reload();
   const top = page.locator("[data-testid=pipeline-top-scroll]");
+  // The bar is sized once the page has hydrated; scrolling it before that
+  // does nothing (Nov 10, 2026: the board's extra controls made this a race).
+  await until(async () => (await top.evaluate((el) => el.scrollWidth - el.clientWidth)) > 250, "the top bar is sized");
   await top.evaluate((el) => {
     el.scrollLeft = 300;
     el.dispatchEvent(new Event("scroll"));

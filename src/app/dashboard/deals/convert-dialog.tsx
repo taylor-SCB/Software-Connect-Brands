@@ -27,10 +27,13 @@ export function ConvertDialog({
   today,
   onClose,
   onDone,
+  ai = false,
 }: {
   tile: { id: string; title: string };
   stage: PipelineColumn;
   today: string;
+  // AI on: Build Quote can draft the new quote's lines from the meeting.
+  ai?: boolean;
   onClose: () => void;
   onDone: (quoteUrl?: string) => void;
 }) {
@@ -39,6 +42,7 @@ export function ConvertDialog({
   const [title, setTitle] = useState(tile.title);
   const [value, setValue] = useState("");
   const [on, setOn] = useState(today);
+  const [draftLines, setDraftLines] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
 
@@ -58,7 +62,7 @@ export function ConvertDialog({
         setError(result.error);
         return;
       }
-      onDone(result.quoteUrl);
+      onDone(result.quoteUrl && ai && draftLines ? `${result.quoteUrl}&draft=meeting` : result.quoteUrl);
     });
   }
 
@@ -167,6 +171,18 @@ export function ConvertDialog({
                           />
                         </label>
                         {mode === "quote" && <p className="faint text-[0.7rem]">A new quote on this deal opens after you save.</p>}
+                        {mode === "quote" && ai && (
+                          <label className="flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={draftLines}
+                              onChange={(event) => setDraftLines(event.target.checked)}
+                              className="accent-[var(--brand)]"
+                              data-testid="convert-draft-lines"
+                            />
+                            Draft lines from the meeting notes (AI, prices from your catalog; you review them before saving)
+                          </label>
+                        )}
                       </div>
                     )}
                   </div>

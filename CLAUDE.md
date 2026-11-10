@@ -792,6 +792,54 @@ steps) covers it; measured through the slow proxy every report opens in
 0.25–0.7 s, and at 200,000 contacts in 0.45–0.7 s (Activity broken down by
 industry, title or state over a whole year about 1 s).
 
+**AI assist and gone quiet (Nov 10, 2026; the five AI items from the CTO
+Think Tank plus "gone quiet").** Every AI answer is a suggestion a person
+accepts; nothing is saved or sent on its own, and every AI control is
+hidden while `ANTHROPIC_API_KEY` is unset. All calls go through
+`askClaude` (`src/lib/ai.ts`) with a per-kind daily allowance per
+workspace (`AI_DAILY_CAPS` in `src/lib/ai-assist.ts`: FOLLOW_UP_DRAFT 200,
+MEETING_TO_OPPORTUNITY 150, QUOTE_DRAFT 100, IMPORT_HEADERS 50, LEAD_LABEL
+200); meeting notes go in fenced as data. **Gone quiet** (no AI): a "Quiet
+N days" badge on Pipeline tiles and in the panel from
+`goneQuietOpportunities`, a **Gone quiet** toggle on the filter bar
+(`?quiet=1`), and the day count (`Organization.quietDays`, 1–365) on
+Settings → General for Owners and Admins. **Draft a follow-up** on quiet
+tiles and in every panel: a text and an email (subject + body) to the
+Primary POC from the latest meeting notes, the deal and its quote, shown
+to edit and Copy; **Log as sent** writes a one-to-one TEXT or EMAIL
+Activity on the person (a real touch: calendar entry, Contacted, the
+badge goes). Nothing is emailed from the site. **Suggest from meeting
+notes** in the panel: Primary POC (people on it only), Lead Label (the
+built-ins and the workspace's own only), an estimated value and a next
+step, as chips to Use or dismiss; Use fills the panel's form and nothing
+is saved until Save (the value only fills a deal's value box; the next
+step is copy-only — there is no field for it). **Draft lines from the
+meeting** on a draft quote whose deal came from an opportunity, and run
+on arrival when Build Quote is converted with its box ticked (`?draft=
+meeting`, dropped from the address once run): the catalog is searched
+for candidates from the notes' words (`catalogCandidates`, 40 at most),
+Claude sees only those, each line must name a candidate's id with a
+quantity (any other id is left out and counted) or be a typed line at $0
+marked **Price needed**, which the save refuses until priced; lines land
+in the editor unsaved and the quote stays a Draft; the AI's reason is
+shown in the editor only, never in the line's project notes (those print
+for the customer). **The contacts import cleans the file first**
+(`src/components/import-cleanup.tsx`): likely duplicates inside the file
+(same phone/mobile digits, same name at the same company;
+`src/lib/import-duplicates.ts`) and against contacts on file (same email
+— which the import updates — same phone digits, or same name at the same
+company; `checkImportDuplicates`), counted and listed; with AI, "Suggest
+where they go" for the headers the planner left out (header + 3 sample
+values), ticked suggestions re-plan the preview through
+`planContactImport(text, mapped)`; nothing saved until Import. **Lead
+Label suggestion**: a faint dashed chip on tiles and the panel with no
+label, from rules first (`src/lib/lead-label-rules.ts`: company type
+Distributor/Manufacturer → Vendor; no company and a personal email domain
+→ Residential; a WON deal under one of its people → Client), and "Suggest
+label" asking Claude only when the rules say nothing; accepting calls
+`setOpportunityLabel`. `ai-assist.cjs` (19 steps) covers all of it with
+a stand-in Claude on :3995.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -841,6 +889,27 @@ are all blocking before the first paying customer.
   60,000-character one, on the site's own key. 20 a day per workspace
   caps it at roughly $8 a workspace a day; a spend limit on the
   Anthropic account is the backstop.
+- **The Pipeline, quote and import AI helpers wait on `ANTHROPIC_API_KEY`
+  in Vercel too** (Nov 10, 2026). Until it is set, Draft a follow-up,
+  Suggest from meeting notes, Draft lines from the meeting, the import's
+  "Suggest where they go" and "Suggest label" don't show; Gone quiet, the
+  import's duplicate flags and the rule-based label chips need no key.
+  Roughly 2 cents a follow-up or meeting read, 5 cents a quote draft and
+  under a cent a label or header guess, on the site's own key, capped per
+  workspace per day (200 / 150 / 100 / 200 / 50). The import's header
+  suggestions send the headers and three sample values of the unplaced
+  columns to Claude, which can be personal data.
+- **A drafted quote's prices are only as good as the catalog search.** It
+  matches words from the notes against product names, SKUs and
+  descriptions; a product the notes describe in other words isn't a
+  candidate, so it comes back as a typed "Price needed" line. A catalog
+  of tens of thousands narrows to the 300 first word matches before the
+  best 40 are picked.
+- **The meeting suggestion's next step is copy-only**, and its value only
+  fills a deal's value box: an opportunity with no deal has nowhere to
+  keep either until it is converted.
+- **Gone quiet counts a logged touch with anyone on the opportunity**,
+  so a call with the Associated POC about something else still resets it.
 - **A booby-trapped Word or PDF file can still freeze the uploader's own
   tab.** It is read in their browser, so nobody else is affected and the
   limits above stop the common ones, but one page of a PDF built to
@@ -1315,6 +1384,13 @@ seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
+
+`ai-assist.cjs` (Nov 10, 2026) answers as Claude on :3995 (set
+`ANTHROPIC_API_KEY=test-key` and `ANTHROPIC_ENDPOINT=http://localhost:3995`
+in `.env`); its "AI off" step needs a second server started with an empty
+`ANTHROPIC_API_KEY=` passed as `NOAI_BASE`, and is skipped without one.
+`quotes-improvement.cjs` step 25 picks the rep straight after a reload and
+can beat hydration on `next dev`; it passes on a production build.
 
 **The local database is too fast to show timing bugs.** An 1,800-row
 import stopped after 500 on the live site (Sept 27, 2026) because one
