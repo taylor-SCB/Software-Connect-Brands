@@ -24,8 +24,8 @@
  * `background` shorthand, which reset background-image and wiped the
  * arrow the moment you clicked the field).
  *
- * From Nov 10, 2026 the same checks run again in the Light and Bright
- * looks (each repaints --overlay and the page behind it).
+ * From Nov 10, 2026 the same checks run again in the Light look, which
+ * repaints --overlay and the page behind it.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -397,13 +397,13 @@ async function withOldGlass(page, selector, body) {
   );
   console.log(`     ${surfaces.length} overlays, all rgb(${distinct[0]})`);
 
-  // The three looks (Nov 10, 2026). Everything above ran in Dark, the
-  // look a new person starts on. Light and Bright repaint --overlay and
-  // the page behind it, so each floating panel is checked again in both:
+  // The two looks (Nov 10, 2026). Everything above ran in Dark, the look
+  // a new person starts on. Light repaints --overlay and the page behind
+  // it, so each floating panel is checked again there:
   // opaque, nothing bleeding through, one shared colour per look, the old
   // glass still caught, borders findable and faint text readable on that
   // look's own page.
-  for (const look of ["light", "bright"]) {
+  for (const look of ["light"]) {
     log(`${look}: every overlay is opaque, one colour, and the old glass still fails`);
     await sql(`UPDATE "User" SET theme = $2 WHERE email = $1 AND "organizationId" = $3`, [EMAIL, look, org]);
     const lookSurfaces = surfaces.length;
@@ -414,6 +414,13 @@ async function withOldGlass(page, selector, body) {
     await page.fill("#title", "Owner");
     await page.fill("#companyName", "a");
     await companyPanel.waitFor();
+    // Blanking the page for the second photo takes focus off the box, which
+    // closes the picker a moment later; keep that from it while measuring,
+    // as step 6 does for the deal picker.
+    await page.waitForFunction(() =>
+      document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getTiming().iterations === Infinity),
+    );
+    await page.locator("#companyName").evaluate((el) => el.addEventListener("focusout", (event) => event.stopPropagation()));
     await assertOpaqueSurface(companyPanel, `${look} company picker dropdown`);
     const lookSolid = await bleedThrough(page, companyPanel, `${look}-01-company-panel`);
     assert.equal(lookSolid, 0, `${look}: company picker is see-through: ${pct(lookSolid)}`);

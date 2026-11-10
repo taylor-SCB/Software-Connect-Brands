@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LoginForm } from "./form";
 import { isEmailConfigured } from "@/lib/email";
+import { SignedOutLook } from "@/components/signed-out-look";
 
 // Set when a signed-in session is turned away mid-visit — the workspace was
 // paused or removed while they were using it, so they land back here
@@ -20,6 +21,7 @@ export default async function LoginPage({
 
   return (
     <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-12">
+      <SignedOutLook />
       <div className="fade-up w-full max-w-sm">
         <div className="card card-lit p-6">
           <h1 className="page-title !text-2xl">Log in</h1>

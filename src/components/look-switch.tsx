@@ -1,17 +1,24 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { setTheme } from "@/app/dashboard/theme-actions";
-import { THEMES, THEME_LABELS, type Theme } from "@/lib/theme-names";
+import { THEMES, THEME_COOKIE, THEME_COOKIE_MAX_AGE, THEME_LABELS, type Theme } from "@/lib/theme-names";
 
-// Dark / Light / Bright, top right of every signed-in page. The look
-// changes the moment it is tapped (the attribute on the shell is set
-// here), and is saved to the person so it is the same on their phone.
+// Dark / Light. In the sidebar under the workspace name, in the phone's
+// top bar, and top right of the signed-out pages. The look changes the
+// moment it is tapped (the data-theme attribute is set here) and is saved
+// — to the person when signed in, and to this browser either way.
 // The caller sets the display (inline-flex, or hidden lg:inline-flex): a
 // "hidden" passed in would lose to a built-in inline-flex.
 export function LookSwitch({ theme, className = "" }: { theme: Theme; className?: string }) {
   const [current, setCurrent] = useState<Theme>(theme);
   const [, start] = useTransition();
+
+  // Keep this browser's cookie on the look being shown, so the login page
+  // after Log out matches what the person last saw.
+  useEffect(() => {
+    document.cookie = `${THEME_COOKIE}=${current}; path=/; max-age=${THEME_COOKIE_MAX_AGE}; samesite=lax`;
+  }, [current]);
 
   function pick(next: Theme) {
     if (next === current) return;

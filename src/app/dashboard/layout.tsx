@@ -19,7 +19,7 @@ export default async function DashboardLayout({
     where: { id: session.organizationId },
   });
   // The person's look, rendered into the server's HTML (data-theme below)
-  // so the page never flashes Dark before turning Light or Bright.
+  // so the page never flashes Dark before turning Light.
   const theme = await themeFor(session.userId);
 
   const initials = organization.name
@@ -67,6 +67,12 @@ export default async function DashboardLayout({
             </div>
           </div>
 
+          {/* Dark / Light, under the workspace name so the page itself
+              never moves to make room for it. */}
+          <div className="-mt-3 mb-5 px-1">
+            <LookSwitch key={theme} theme={theme} className="inline-flex" />
+          </div>
+
           <SidebarNav />
         </div>
 
@@ -108,9 +114,8 @@ export default async function DashboardLayout({
         <MobileNav />
       </div>
 
-      <main className="relative min-w-0 flex-1 p-5 sm:p-8 lg:pt-14">
+      <main className="min-w-0 flex-1 p-5 sm:p-8">
         <PageTrail />
-        <LookSwitch key={theme} theme={theme} className="absolute right-8 top-3 z-20 hidden lg:inline-flex" />
         <div className="fade-up mx-auto max-w-[1400px]">{children}</div>
       </main>
     </div>

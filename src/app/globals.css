@@ -40,7 +40,7 @@
 
   /* Faint fills and hairlines that used to be written as white-at-n% in
      each file (bg-[var(--tint-1)] and friends). One token per
-     strength so the dark look is unchanged and Light / Bright can swap
+     strength so the dark look is unchanged and Light can swap
      every one of them at once. */
   --tint-1: rgb(255 255 255 / 0.02);
   --tint-2: rgb(255 255 255 / 0.03);
@@ -79,7 +79,7 @@
   /* How much of a status / tag colour is used as-is when it is the colour
      of WORDS (a badge, a coloured label). The app's pastel status colours
      were picked for a dark page; on white they are unreadable, so the
-     light looks mix them toward the text colour. See src/lib/ink.ts. */
+     Light look mixes them toward the text colour. See src/lib/ink.ts. */
   --ink: 100%;
   /* A custom Lead Label's letters: neon yellow on dark. */
   --lead-custom: #e8ff3a;
@@ -87,13 +87,14 @@
   color-scheme: dark;
 }
 
-/* ---------- The three looks (Nov 10, 2026) ----------
-   Dark is the :root above. The signed-in shell (src/app/dashboard/layout.tsx)
-   carries data-theme="light" or "bright"; :has() lifts the tokens onto
-   <html> so the page background and the menus and dialogs drawn on
-   document.body follow too, and because the attribute is in the server's
-   HTML there is no flash of the dark look on load. Signed-out pages and
-   the customer's documents (/q, /c, /i, /r, /u, /p) never carry it. */
+/* ---------- The two looks (Nov 10, 2026) ----------
+   Dark is the :root above; Light is the same layout on white. The
+   signed-in shells (dashboard, /admin) and the signed-out pages (login,
+   signup, password reset) carry data-theme="dark" or "light"; :has()
+   lifts the tokens onto <html> so the page background and the menus and
+   dialogs drawn on document.body follow too, and because the attribute is
+   in the server's HTML there is no flash of the dark look on load. The
+   customer's documents (/q, /c, /i, /r, /u, /p, the PDFs) never carry it. */
 :root:has([data-theme="light"]) {
   --bg: #f4f5f8;
   --bg-elev: #ffffff;
@@ -146,64 +147,6 @@
   --lead-custom: #5b6b00;
 
   color-scheme: light;
-}
-
-/* Bright: a phone in a truck in full sun. Pure white, near-black words,
-   solid dark borders, nothing see-through, and everything a size up. */
-:root:has([data-theme="bright"]) {
-  --bg: #ffffff;
-  --bg-elev: #ffffff;
-  --surface: #ffffff;
-  --surface-2: #e5e7eb;
-  --border: #52525b;
-  --border-strong: #18181b;
-  --overlay: #ffffff;
-  --overlay-border: #000000;
-
-  --text: #000000;
-  --text-dim: #1f2937;
-  --text-faint: #374151;
-
-  --ok: #065f46;
-  --warn: #854d0e;
-  --danger: #9f1239;
-
-  --tint-1: rgb(0 0 0 / 0.04);
-  --tint-2: rgb(0 0 0 / 0.05);
-  --hover: rgb(0 0 0 / 0.08);
-  --hover-strong: rgb(0 0 0 / 0.1);
-  --tint-3: rgb(0 0 0 / 0.08);
-  --tint-4: rgb(0 0 0 / 0.12);
-  --tint-5: rgb(0 0 0 / 0.3);
-  --hairline: #a1a1aa;
-  --hairline-2: #71717a;
-  --hairline-3: #52525b;
-  --grid-line: transparent;
-  --chart-grid: rgb(0 0 0 / 0.22);
-  --chart-cursor: #000000;
-
-  --card-bg: #ffffff;
-  --card-shadow: none;
-  --glass-blur: none;
-  --input-bg: #ffffff;
-  --input-bg-focus: #ffffff;
-  --title-from: #000000;
-  --title-to: #000000;
-  --text-strong: #000000;
-  --link-mix: black;
-  --body-glow: 0%;
-  --body-glow-2: transparent;
-  --popover-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.45);
-  --scrim: rgb(0 0 0 / 0.6);
-  --scrollbar: rgb(0 0 0 / 0.4);
-  --scrollbar-hover: rgb(0 0 0 / 0.6);
-
-  --ink: 30%;
-  --lead-custom: #4d5a00;
-
-  color-scheme: light;
-  /* Every rem in the app grows with this: text, padding, buttons. */
-  font-size: 112.5%;
 }
 
 @layer base {
@@ -900,22 +843,11 @@
 }
 
 
-/* Light and Bright: the silver divider's glow is for a dark page. */
+/* Light: the silver divider's glow is for a dark page. */
 :root:has([data-theme="light"]) .divider-silver,
-:root:has([data-theme="light"]) .divider-silver-h,
-:root:has([data-theme="bright"]) .divider-silver,
-:root:has([data-theme="bright"]) .divider-silver-h {
+:root:has([data-theme="light"]) .divider-silver-h {
   background: var(--border-strong);
   box-shadow: none;
-}
-/* Bright: borders you can find in sunlight, and no faint grid. */
-:root:has([data-theme="bright"]) .card,
-:root:has([data-theme="bright"]) .glass {
-  border-width: 1.5px;
-}
-:root:has([data-theme="bright"]) body::before,
-:root:has([data-theme="bright"]) .stats-root::before {
-  display: none;
 }
 
 /* Stats / Reporting (Sept 30, 2026): the command-center look — a faint

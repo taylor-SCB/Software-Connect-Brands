@@ -707,29 +707,39 @@ flipping up when there's more room — the status picker was cut off by
 the first column and the sidebar. `pipeline-opportunities.cjs` (22
 steps) covers it; `crm-pipeline-stats.cjs` was moved onto the tiles.
 
-**Three looks (Nov 10, 2026).** Dark (the original glass, the default),
-Light (white and clean) and Bright (black on white, solid borders, no
-glass, everything 12.5% larger — a phone in a truck in sunlight), picked
-from the Dark / Light / Bright switch at the top right of every signed-in
-page (`src/components/look-switch.tsx`; on a phone it sits in the top bar
-beside Log out) and saved per person on `User.theme` by `setTheme` in
-`src/app/dashboard/theme-actions.ts`, so it follows them to the phone.
-The dashboard and /admin shells carry `data-theme` in the server's HTML
-(`themeFor` in `src/lib/theme.ts`), and `:root:has([data-theme=…])` in
-`src/app/globals.css` lifts that look's tokens onto `<html>`, so there is
-no flash and menus drawn on `document.body` follow. **Every colour is a
-token in `globals.css`** — the three blocks at the top: `--bg`,
-`--surface`, `--overlay`, `--text*`, `--ok/--warn/--danger`, the
-`--tint-1..5` / `--hover` fills and `--hairline` / `-2` / `-3` lines that replaced
-the `rgb(255_255_255/0.0x)` classes, `--card-bg`, `--title-from/to`,
+**Two looks: Dark and Light (Nov 10, 2026).** Taylor: "same layout and
+design but one is a black backdrop and the other white." Dark is the
+original glass and the default; Light is the same page on white. The
+Dark / Light switch (`src/components/look-switch.tsx`) sits under the
+workspace name in the sidebar (in the top bar on a phone) and in the top
+right corner of the signed-out pages (home, login, signup and its
+submitted page, forgot and reset password; `src/components/signed-out-look.tsx`,
+rendered by `src/app/signup/layout.tsx` for the signup pages because the
+signup page is a client component). It is fixed or in the sidebar on
+purpose: **nothing in a page moves for it** — `looks.cjs` checks the
+header lands where it always did. `setTheme` in
+`src/app/dashboard/theme-actions.ts` remembers the pick in this browser
+(the `scb-look` cookie) and, when signed in, saves it on `User.theme`, so
+it follows the person to their phone. A saved look wins over the
+browser's; someone who never picked inherits the browser's
+(`themeFor` in `src/lib/theme.ts`); anything stored but "dark" or "light"
+(an old "bright") reads Dark. The dashboard, /admin and the signed-out
+pages carry `data-theme` in the server's HTML, and
+`:root:has([data-theme="light"])` in `src/app/globals.css` lifts the Light
+tokens onto `<html>`, so there is no flash and menus drawn on
+`document.body` follow. **Every colour is a token in `globals.css`** — the
+`:root` block (Dark) and the Light block under it: `--bg`, `--surface`,
+`--overlay`, `--text*`, `--ok/--warn/--danger`, the `--tint-1..5` /
+`--hover` fills and `--hairline` / `-2` / `-3` lines that replaced the
+`rgb(255_255_255/0.0x)` classes, `--card-bg`, `--title-from/to`,
 `--chart-grid`. A new screen uses those, never a white-at-n% class. A
 status, tag or stage hue used as the colour of *words* goes through
 `ink()` (`src/lib/ink.ts`; `Badge` does it), which mixes it toward the
-text colour by `--ink` (100% Dark, 40% Light, 30% Bright) — the pastels
-were unreadable on white. The tenant's brand colour applies in all three.
-Signed-out pages and the customer's documents (/q, /c, /i, /r, /u, /p,
-the PDFs) carry no `data-theme` and stay as they were. Proven by
-`looks.cjs`; `overlay-readability.cjs` checks every overlay in all three.
+text colour by `--ink` (100% in Dark, so Dark is unchanged; 40% in
+Light, where the pastels were unreadable). The tenant's brand colour
+applies in both. The customer's documents (/q, /c, /i, /r, /u, /p, the
+PDFs) carry no `data-theme` and stay as they were. Proven by `looks.cjs`;
+`overlay-readability.cjs` checks every overlay in both looks.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
@@ -1056,7 +1066,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-six** (plus `looks.cjs`, 17 steps, Nov 10, 2026: the three looks from the header, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the phone, the brand colour, the customer's copy untouched) are checked in at
+suite, and the delete-confirmation suite. **Thirty-six** (plus `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the

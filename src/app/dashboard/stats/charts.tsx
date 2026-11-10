@@ -11,8 +11,8 @@ import { pct } from "@/lib/format";
 
 export const SERIES_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500"] as const;
 // Grid and hover line follow the look (globals.css): faint white on Dark,
-// faint ink on Light and Bright. The series colours above are mid-tones
-// that hold 3:1 on both the dark surface and white.
+// faint ink on Light. The series colours above are mid-tones
+// that read on both the dark surface and white.
 const GRID = "var(--chart-grid)";
 
 type Tip = { x: number | string; y: number | string; title: string; rows: { label: string; value: string; color?: string }[] } | null;
