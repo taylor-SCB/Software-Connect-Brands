@@ -675,9 +675,10 @@ export async function orderFromSupplier(
   });
   const owner = await prisma.user.findFirst({ where: { id: userId }, select: { name: true } });
 
-  const lines = await prisma.contractLineItem.findMany({
+  const found = await prisma.contractLineItem.findMany({
     where: { id: { in: mine.lines.map((line) => line.id) } },
     select: {
+      id: true,
       name: true,
       description: true,
       quantity: true,
@@ -701,6 +702,12 @@ export async function orderFromSupplier(
       },
     },
   });
+
+  // In the contract's own order (Nov 10, 2026): an "id in" read comes back
+  // in whatever order the database likes, which shuffled a purchase
+  // order's rows now and then.
+  const order = new Map(mine.lines.map((line, index) => [line.id, index]));
+  const lines = found.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 
   // Priced at what the material costs, which is what a purchase order
   // is: the sell price is the customer's business, not the supplier's.
