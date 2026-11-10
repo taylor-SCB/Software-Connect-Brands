@@ -16,11 +16,15 @@
  * review):" step: the search box finding a phone number however it is
  * typed (phone, second phone, mobile, a company's phone; digits-only, never
  * across two numbers), matching word by word (a name and a company, a name
- * in either order, a job title) with % _ and \ as plain characters; every
- * filter menu on Contacts and Companies opening inside a phone's screen and
- * a 1440 window, its names whole; and the Companies list keeping a phone
- * number on one line with its last columns reached by scrolling the table,
- * as on Contacts.
+ * in either order, a job title) with % _ and \ as plain characters, and a
+ * word of only punctuation ("&", "-") left out, so a company's full name
+ * finds its people past 500 "&" companies; every filter menu on Contacts
+ * and Companies opening inside a phone's screen and a 1440 window, its
+ * names whole, and worked from the keyboard (Enter to the first choice, Tab
+ * through it and on to the next filter, Shift+Tab and Escape back to the
+ * button, Tab into a clicked-open menu, a date box's parts); and the
+ * Companies list keeping a phone number on one line with its last columns
+ * reached by scrolling the table, as on Contacts.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -568,6 +572,32 @@ async function assertMenuInside(page, menu, what) {
   }
   assert.deepEqual(await found("contacts", "sam rivera"), ["Sam Rivera"], "a plain two-word name still finds one person");
 
+  log("audit fixes (UX review): a word that is only punctuation ('&', '-') is left out of the search, so a company's full name finds its people however many '&' companies there are");
+  // 600 companies with & in the name, then Zeta Gate & Fence and Gina at it.
+  // The & word used to need a company-name match of its own, and those stop
+  // at 500, so Gina could be left out of a search for her company's name.
+  await sql(
+    `INSERT INTO "Company" (id, "organizationId", name, "updatedAt")
+     SELECT 'cif_ux_amp_' || n, $1, 'Filler & Sons ' || n, now() FROM generate_series(1, 600) AS n`,
+    [org],
+  );
+  await sql(`INSERT INTO "Company" (id, "organizationId", name, "updatedAt") VALUES ('cif_ux_zeta', $1, 'Zeta Gate & Fence', now())`, [org]);
+  await sql(`INSERT INTO "Contact" (id, "organizationId", "companyId", name, "updatedAt") VALUES ('cif_ux_gina', $1, 'cif_ux_zeta', 'Gina Gatewood', now())`, [org]);
+  const amps = (await sql(`SELECT count(*)::int AS n FROM "Company" WHERE "organizationId"=$1 AND name LIKE '%&%'`, [org])).rows[0].n;
+  assert.ok(amps > 500, `${amps} companies carry an & — more than the 500 a word's company matches stop at`);
+  const capped = (await sql(`SELECT id FROM "Company" WHERE "organizationId"=$1 AND name ILIKE '%&%' LIMIT 500`, [org])).rows.map((r) => r.id);
+  console.log(`     (the old 500-company lookup for "&" ${capped.includes("cif_ux_zeta") ? "happened to include" : "left out"} Zeta Gate & Fence)`);
+  assert.deepEqual(await found("contacts", "Zeta Gate & Fence"), ["Gina Gatewood"], "the full company name, & and all");
+  assert.deepEqual(await found("contacts", "gina & zeta"), ["Gina Gatewood"]);
+  assert.deepEqual(await found("contacts", "Delta Door & Hardware"), ["Alan Osborne"]);
+  assert.deepEqual(await found("contacts", "alan - delta"), ["Alan Osborne"], "a dash between words");
+  assert.deepEqual(await found("companies", "Zeta Gate & Fence"), ["Zeta Gate & Fence"]);
+  // Only marks: matched as typed, and the chip reads what was typed.
+  await found("contacts", "&");
+  assert.ok((await page.getByTestId("active-filters").textContent()).includes("“&”"), "a search of just & still runs");
+  await sql(`DELETE FROM "Contact" WHERE id='cif_ux_gina'`);
+  await sql(`DELETE FROM "Company" WHERE id='cif_ux_zeta' OR id LIKE 'cif_ux_amp_%'`);
+
   log("audit fixes (UX review): every filter menu on Contacts and Companies opens inside a phone's screen and a 1440 window, names whole, the page no wider");
   const menus = {
     contacts: ["filter-state", "filter-industry", "filter-company-type", "filter-company", "filter-status", "filter-activity", "filter-job-title", "filter-rep", "filter-added-by", "filter-added", "filter-contact-info", "filter-lead-label"],
@@ -609,6 +639,88 @@ async function assertMenuInside(page, menu, what) {
   await page.getByTestId("presence-email-no").click();
   await page.waitForURL(/email=no/);
   await page.keyboard.press("Escape");
+
+  log("audit fixes (UX review): the filter menus work from the keyboard — Enter puts the cursor on the first choice, Tab walks the choices and past the last moves on to the next filter, Shift+Tab and Escape go back to the button, Tab from a clicked-open button goes in");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // Where the cursor is: the element's testid, its label's words, and the
+  // menu it sits in (the menus are drawn at the end of the page).
+  const cursor = () =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      return { id: el?.getAttribute("data-testid") ?? "", label: (el?.closest("label")?.textContent ?? "").trim(), menu: el?.closest("[data-testid$='-menu']")?.getAttribute("data-testid") ?? "" };
+    });
+  const keyOpen = async (id) => {
+    await page.getByTestId(id).focus();
+    await page.keyboard.press("Enter");
+    const menu = page.getByTestId(`${id}-menu`);
+    await menu.waitFor();
+    await page
+      .waitForFunction((m) => document.querySelector(`[data-testid="${m}"]`)?.contains(document.activeElement), `${id}-menu`, { timeout: 3000 })
+      .catch(() => assert.fail(`${id}: Enter left the cursor outside its menu`));
+    return menu;
+  };
+  for (const list of ["contacts", "companies"]) {
+    await page.goto(`${BASE}/dashboard/${list}`);
+    for (const id of menus[list]) {
+      const menu = await keyOpen(id);
+      // The first choice (Company's and Job title's search box), on screen in its menu.
+      const first = await menu.evaluate((el) => {
+        const active = document.activeElement;
+        const box = active.getBoundingClientRect();
+        const panel = el.getBoundingClientRect();
+        return { inside: box.top >= panel.top - 1 && box.bottom <= panel.bottom + 1 && box.width > 0, firstInput: el.querySelector("input, button") === active };
+      });
+      assert.ok(first.inside && first.firstInput, `${list} ${id}: the cursor is on the first choice (${JSON.stringify(first)})`);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
+      assert.equal((await cursor()).id, id, `${list} ${id}: Escape puts the cursor back on the button`);
+    }
+  }
+  await page.goto(`${BASE}/dashboard/contacts`);
+  const state = await keyOpen("filter-state");
+  const states = (await state.locator("label").allTextContents()).map((t) => t.trim());
+  assert.ok(states.length >= 2, `states listed: ${states}`);
+  assert.equal((await cursor()).label, states[0]);
+  await page.keyboard.press("Tab");
+  assert.deepEqual(await cursor(), { id: "", label: states[1], menu: "filter-state-menu" }, "Tab walks to the second state, not the next filter");
+  await page.keyboard.press("Space");
+  await page.waitForURL(new RegExp(`state=${states[1]}`));
+  assert.equal((await cursor()).label, states[1], "the cursor stays on the ticked state");
+  await page.keyboard.press("Escape");
+  assert.equal((await cursor()).id, "filter-state");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await keyOpen("filter-state");
+  await page.keyboard.press("Shift+Tab");
+  await page.getByTestId("filter-state-menu").waitFor({ state: "detached" });
+  assert.equal((await cursor()).id, "filter-state", "Shift+Tab before the first state closes the menu onto its button");
+  // Activity is one radio group, so one stop: Tab past it moves on to the
+  // filter after Activity, as if the menu sat beside its button.
+  await keyOpen("filter-activity");
+  assert.equal((await cursor()).label, "Touched in the last 7 days");
+  await page.keyboard.press("Tab");
+  await page.getByTestId("filter-activity-menu").waitFor({ state: "detached" });
+  assert.equal((await cursor()).id, "filter-job-title", "Tab past the last choice moves on to the next filter");
+  // A date box's month / day / year are walked by the browser, inside the menu.
+  await keyOpen("filter-added");
+  assert.equal((await cursor()).id, "added-from");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  assert.deepEqual(await cursor(), { id: "added-from", label: "From", menu: "filter-added-menu" }, "Shift+Tab inside the From date stays in it");
+  await page.keyboard.press("Shift+Tab");
+  await page.getByTestId("filter-added-menu").waitFor({ state: "detached" });
+  assert.equal((await cursor()).id, "filter-added");
+  // Opened with a click the cursor stays on the button, as before; Tab goes in.
+  await page.getByTestId("filter-rep").click();
+  await page.getByTestId("filter-rep-menu").waitFor();
+  await page.waitForTimeout(100);
+  assert.equal((await cursor()).id, "filter-rep", "a click leaves the cursor on the button");
+  await page.keyboard.press("Tab");
+  assert.deepEqual(await cursor(), { id: "", label: "Unassigned", menu: "filter-rep-menu" }, "Tab from the clicked-open button goes into its menu");
+  await page.keyboard.press("Space");
+  await page.waitForURL(/rep=none/);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("filter-rep-menu").waitFor({ state: "detached" });
+  assert.equal((await cursor()).id, "filter-rep");
 
   log("audit fixes (UX review): Companies list phone numbers stay on one line; its last columns are reached by scrolling the table, as on Contacts");
   for (const width of [1440, 390]) {

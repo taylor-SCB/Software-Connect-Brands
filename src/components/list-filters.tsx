@@ -354,6 +354,34 @@ export function Chip({ children, onRemove }: { children: React.ReactNode; onRemo
 // any button in the right half of a wrapped filter row — Rep, Added by,
 // Contact info, Status on a phone, Lead Label on the Pipeline — opened a
 // menu that ran off the screen, cut its names and widened the page.
+//
+// Drawn at the end of the page, the menu is no longer next to its button
+// in the Tab order, so the keyboard is walked through it by hand. Opened
+// with Enter or Space (or a screen reader), the cursor goes to its first
+// choice; opened with a click it stays on the button, as it always did,
+// and Tab from the button goes into the menu. Tab past the last choice
+// closes it and moves on to the filter after the button, Shift+Tab before
+// the first closes it back onto the button, and Escape or a pick that
+// closes the menu puts the cursor back on the button. A search box marked
+// data-autofocus takes the cursor however the menu was opened. The edges
+// are two empty stops either side of the choices (FocusGuard), so the
+// browser still walks a date box's month / day / year and a radio group.
+const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]';
+function tabStops(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => {
+    if (el.tabIndex < 0 || (el as HTMLInputElement).disabled || el.hasAttribute("data-focus-guard") || el.getClientRects().length === 0) return false;
+    // A radio group is one stop: its ticked radio, or its first.
+    if (el instanceof HTMLInputElement && el.type === "radio" && el.name) {
+      const group = Array.from(root.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(el.name)}"]`));
+      return (group.find((radio) => radio.checked) ?? group[0]) === el;
+    }
+    return true;
+  });
+}
+function FocusGuard({ onFocus }: { onFocus: () => void }) {
+  return <span tabIndex={0} data-focus-guard="" className="sr-only" onFocus={onFocus} />;
+}
+
 function Dropdown({
   label,
   count,
@@ -379,21 +407,71 @@ function Dropdown({
   );
   const close = useCallback(() => setOpen(false), [setOpen]);
 
+  // Where the cursor goes in: the search box, else the first choice.
+  const firstStop = () => panel.current?.querySelector<HTMLElement>("[data-autofocus]") ?? (panel.current ? tabStops(panel.current)[0] : undefined);
+  // Opened from the keyboard: a click with no click count (Enter, Space,
+  // a screen reader's press).
+  const fromKeys = useRef(false);
+
   // The menu is drawn hidden until it has measured where it fits, and a
-  // hidden box can't take focus, so a search box marked data-autofocus is
-  // focused on the next frame, once the menu is on screen.
+  // hidden box can't take focus, so the cursor goes in on the next frame,
+  // once the menu is on screen.
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => panel.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true }));
+    const frame = requestAnimationFrame(() => {
+      const box = panel.current;
+      if (!box || box.contains(document.activeElement)) return;
+      const target = fromKeys.current ? firstStop() : box.querySelector<HTMLElement>("[data-autofocus]");
+      target?.focus({ preventScroll: true });
+    });
     return () => cancelAnimationFrame(frame);
   }, [open]);
+
+  // Closed while the cursor was inside (Escape, a pick that closes it):
+  // the box it was in has gone, so it goes back to the button. Only when it
+  // was left on nothing; a click on something else keeps it there.
+  const inside = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      const left = inside.current;
+      inside.current = false;
+      if (left && (!document.activeElement || document.activeElement === document.body)) button.current?.focus({ preventScroll: true });
+      return;
+    }
+    const track = () => {
+      inside.current = !!panel.current?.contains(document.activeElement);
+    };
+    document.addEventListener("focusin", track);
+    return () => document.removeEventListener("focusin", track);
+  }, [open]);
+
+  // Tabbed off either end of the menu: back to the button, or on to the
+  // next thing after it on the page.
+  function leave(forward: boolean) {
+    const anchor = button.current;
+    const next = forward && anchor
+      ? tabStops(document.body).find((el) => !panel.current?.contains(el) && !!(anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))
+      : null;
+    (next ?? anchor)?.focus();
+    close();
+  }
 
   return (
     <>
       <button
         ref={button}
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={(event) => {
+          fromKeys.current = event.detail === 0;
+          setOpen(!open);
+        }}
+        onKeyDown={(event) => {
+          if (!open || event.key !== "Tab" || event.shiftKey) return;
+          const target = firstStop();
+          if (!target) return;
+          event.preventDefault();
+          target.focus({ preventScroll: true });
+        }}
         aria-expanded={open}
         aria-haspopup="listbox"
         data-testid={testId}
@@ -404,9 +482,11 @@ function Dropdown({
         <IconChevronDown size={12} className="opacity-70" />
       </button>
       <FloatingMenu anchor={button} open={open} onClose={close} width={256} testId={`${testId}-menu`} label={label}>
+        <FocusGuard onFocus={() => leave(false)} />
         <div ref={panel} className="py-1">
           {children(close)}
         </div>
+        <FocusGuard onFocus={() => leave(true)} />
       </FloatingMenu>
     </>
   );

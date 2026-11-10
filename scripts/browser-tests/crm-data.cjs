@@ -21,8 +21,10 @@
  * review):" step: the Rep, Added by, Contact info and Lead Label menus
  * opening inside a 1440 window with every name whole; on a phone, Contact
  * info's None buttons on the screen and pressable, and the Pipeline's Lead
- * Label menu on the screen without widening the board; and the search box
- * finding a job title and a person by their name plus their company.
+ * Label menu on the screen without widening the board, and worked from the
+ * keyboard (Enter to the first label, Tab, Space, Escape back to the
+ * button); and the search box finding a job title and a person by their
+ * name plus their company.
  *
  * Needs email switched on like email-marketing-users.cjs, with the catcher
  * on CATCHER_PORT (default 3999): the server's .env carries RESEND_API_KEY,
@@ -823,6 +825,27 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.waitForURL(new RegExp(`rep=${nicId}`));
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1500, height: 950 });
+
+  log("audit fixes (UX review): the Pipeline's Lead Label menu works from the keyboard — Enter puts the cursor on the first label, Space ticks it, Escape goes back to the button");
+  await page.goto(`${BASE}/dashboard/deals`);
+  await page.getByTestId("filter-lead-label").focus();
+  await page.keyboard.press("Enter");
+  const leadKeys = page.getByTestId("filter-lead-label-menu");
+  await leadKeys.waitFor();
+  await page
+    .waitForFunction(() => document.querySelector('[data-testid="filter-lead-label-menu"]')?.contains(document.activeElement), null, { timeout: 3000 })
+    .catch(() => assert.fail("Enter left the cursor outside the Lead Label menu"));
+  const firstLabel = (await leadKeys.locator("label").first().textContent()).trim();
+  const onLabel = () => page.evaluate(() => (document.activeElement?.closest("label")?.textContent ?? "").trim());
+  assert.equal(await onLabel(), firstLabel, "the cursor is on the first label");
+  await page.keyboard.press("Tab");
+  const secondLabel = (await leadKeys.locator("label").nth(1).textContent()).trim();
+  assert.equal(await onLabel(), secondLabel, "Tab walks to the second label, not the next control");
+  await page.keyboard.press("Space");
+  await page.waitForURL(new RegExp(`label=${encodeURIComponent(secondLabel).replace(/%20/g, "(\\+|%20)")}`));
+  await page.keyboard.press("Escape");
+  await leadKeys.waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "filter-lead-label", "Escape puts the cursor back on the button");
 
   log("audit fixes (UX review): on a phone, Contact info's None buttons can be pressed and the Pipeline's Lead Label menu stays on the screen");
   const uxPhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });

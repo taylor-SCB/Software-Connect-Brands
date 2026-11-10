@@ -131,6 +131,13 @@ export function phoneSearchDigits(term: string): string | null {
 // row (UX review, Nov 10, 2026): "alan delta" is Alan at Delta Door and
 // "howard denise" is Denise Howard. A phone number stays one term, and
 // past six words the rest are left out, as on Products.
+//
+// A word with no letter or digit in it ("&" in "Delta Door & Hardware",
+// "-" in "Smith - Jones") is left out: on its own it matches almost any
+// company, and a contact's company-name matches stop at 500, so in a
+// workspace with more than 500 "&" companies the full name could miss the
+// people at that one. A search of nothing but such marks ("&") is matched
+// as typed.
 export const MAX_SEARCH_WORDS = 6;
 export function searchTerms(q: string): string[] {
   const text = q.trim();
@@ -140,11 +147,11 @@ export function searchTerms(q: string): string[] {
   const terms: string[] = [];
   for (const word of text.split(" ")) {
     const key = word.toLowerCase();
-    if (!word || seen.has(key)) continue;
+    if (!word || seen.has(key) || !/[\p{L}\p{N}]/u.test(word)) continue;
     seen.add(key);
     terms.push(word);
   }
-  return terms.slice(0, MAX_SEARCH_WORDS);
+  return terms.length ? terms.slice(0, MAX_SEARCH_WORDS) : [text];
 }
 
 export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams {
