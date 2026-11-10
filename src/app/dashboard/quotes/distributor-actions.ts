@@ -12,13 +12,13 @@ import { linkPlatformSupplier } from "@/lib/platform-suppliers";
 export async function addDistributorCompany(
   name: string,
 ): Promise<{ error?: string; company?: { id: string; name: string } }> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const typed = typeof name === "string" ? name.trim() : "";
   if (!typed) return { error: "Type the supplier's name" };
   if (typed.length > 160) return { error: "That name is too long" };
 
-  const linked = await linkDistributorCompany(organizationId, typed);
+  const linked = await linkDistributorCompany(organizationId, typed, userId);
   if (!linked) return { error: "Type the supplier's name" };
 
   revalidatePath("/dashboard/companies");
@@ -33,12 +33,12 @@ export async function addDistributorCompany(
 export async function addPlatformSupplier(
   platformOrganizationId: string,
 ): Promise<{ error?: string; company?: { id: string; name: string } }> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   if (typeof platformOrganizationId !== "string" || platformOrganizationId.length > 60) {
     return { error: "Pick the supplier again." };
   }
 
-  const linked = await linkPlatformSupplier(organizationId, platformOrganizationId);
+  const linked = await linkPlatformSupplier(organizationId, platformOrganizationId, userId);
   if (!linked.ok) return { error: linked.error };
 
   revalidatePath("/dashboard/companies");

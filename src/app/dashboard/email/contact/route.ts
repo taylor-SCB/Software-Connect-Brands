@@ -12,7 +12,7 @@ const schema = z.object({
 // enough to send to someone. If a contact already has that address, that
 // one is handed back instead of making a twin.
 export async function POST(request: Request) {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Check the name and email." }, { status: 400 });
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   const contact =
     existing ??
     (await prisma.contact.create({
-      data: { organizationId, name: parsed.data.name, email },
+      data: { organizationId, name: parsed.data.name, email, createdById: userId },
       select: { id: true, name: true, email: true, emailOptOutAt: true, company: { select: { name: true } } },
     }));
 

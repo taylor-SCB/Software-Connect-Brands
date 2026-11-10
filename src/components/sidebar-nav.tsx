@@ -18,6 +18,7 @@ import {
   IconStar,
   IconFlame,
   IconChart,
+  IconTag,
   IconUsers as IconAccount,
 } from "@/components/icons";
 
@@ -64,6 +65,9 @@ const NAV: NavEntry[] = [
           { href: "/dashboard/companies/with-deals", label: "Companies with Deals", Icon: IconTrending },
         ],
       },
+      // Industry, Company Type, Lead Label and Job Title values with
+      // Rename / Merge into / Retire (Nov 10, 2026).
+      { href: "/dashboard/labels", label: "Labels", Icon: IconTag },
     ],
   },
   {

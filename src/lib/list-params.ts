@@ -28,7 +28,55 @@ export type ListParams = {
   owed: boolean;
   // Only ever set by a sub-pane's lock, never from the address bar.
   interested: boolean;
+  // Clean CRM data (Nov 10, 2026). Touched in / not touched in the last
+  // 7, 30 or 90 days, or never: a touch is a call, text, email or meeting
+  // anybody logged — never a marketing send — and for a company one on it
+  // or on any of its people.
+  act: ActivityWindow | "";
+  // Contacts only: job titles, matched ignoring case.
+  titles: string[];
+  // Rep (Contact / Company ownerId); UNASSIGNED stands for nobody.
+  reps: string[];
+  // Who added it (createdById).
+  addedBy: string[];
+  // Added between these days (YYYY-MM-DD, the workspace's clock), either
+  // end optional.
+  from: string;
+  to: string;
+  // Has / has no mobile (contacts), email (both), phone (companies).
+  mobile: Presence;
+  email: Presence;
+  phone: Presence;
+  // On an opportunity with this Lead Label (a company: any of its people).
+  labels: string[];
 };
+
+export const ACTIVITY_WINDOWS = ["t7", "t30", "t90", "n7", "n30", "n90", "never"] as const;
+export type ActivityWindow = (typeof ACTIVITY_WINDOWS)[number];
+export const ACTIVITY_WINDOW_LABELS: Record<ActivityWindow, string> = {
+  t7: "Touched in the last 7 days",
+  t30: "Touched in the last 30 days",
+  t90: "Touched in the last 90 days",
+  n7: "Not touched in the last 7 days",
+  n30: "Not touched in the last 30 days",
+  n90: "Not touched in the last 90 days",
+  never: "Never touched",
+};
+export type Presence = "" | "yes" | "no";
+// Bulk Assign on the lists takes at most this many records a go.
+export const MAX_ASSIGN = 1000;
+// The Rep filter's choice for records nobody owns.
+export const UNASSIGNED = "none";
+
+function presence(value: string | string[] | undefined): Presence {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v === "yes" || v === "no" ? v : "";
+}
+
+function day(value: string | string[] | undefined) {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? v : "";
+}
 
 // The sub-panes ("Favorite Contacts", "Companies with Deals") are the same
 // list with one toggle held on; the bar hides that toggle there.
@@ -75,6 +123,16 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     auto: raw.auto === "1",
     owed: raw.owed === "1",
     interested: Boolean(lock.interested),
+    act: (ACTIVITY_WINDOWS as readonly string[]).includes(String(raw.act)) ? (raw.act as ActivityWindow) : "",
+    titles: list(raw.title),
+    reps: list(raw.rep),
+    addedBy: list(raw.by),
+    from: day(raw.from),
+    to: day(raw.to),
+    mobile: presence(raw.mobile),
+    email: presence(raw.email),
+    phone: presence(raw.phone),
+    labels: list(raw.label),
   };
 }
 
@@ -98,6 +156,16 @@ export function listHref(basePath: string, params: ListParams, overrides: Partia
   if (next.attn) search.set("attn", "1");
   if (next.auto) search.set("auto", "1");
   if (next.owed) search.set("owed", "1");
+  if (next.act) search.set("act", next.act);
+  for (const title of next.titles) search.append("title", title);
+  for (const rep of next.reps) search.append("rep", rep);
+  for (const by of next.addedBy) search.append("by", by);
+  if (next.from) search.set("from", next.from);
+  if (next.to) search.set("to", next.to);
+  if (next.mobile) search.set("mobile", next.mobile);
+  if (next.email) search.set("email", next.email);
+  if (next.phone) search.set("phone", next.phone);
+  for (const label of next.labels) search.append("label", label);
   const query = search.toString();
   return query ? `${basePath}?${query}` : basePath;
 }
@@ -113,9 +181,43 @@ export function activeFilterCount(params: ListParams, lock: ListLock = {}) {
     (params.deals && !lock.deals ? 1 : 0) +
     (params.attn ? 1 : 0) +
     (params.auto ? 1 : 0) +
-    (params.owed ? 1 : 0)
+    (params.owed ? 1 : 0) +
+    (params.act ? 1 : 0) +
+    params.titles.length +
+    params.reps.length +
+    params.addedBy.length +
+    (params.from || params.to ? 1 : 0) +
+    (params.mobile ? 1 : 0) +
+    (params.email ? 1 : 0) +
+    (params.phone ? 1 : 0) +
+    params.labels.length
   );
 }
+
+// Every filter off (the bar's Clear all); the search box and paging are
+// the caller's.
+export const NO_FILTERS = {
+  states: [],
+  industries: [],
+  types: [],
+  companies: [],
+  statuses: [],
+  fav: false,
+  deals: false,
+  attn: false,
+  auto: false,
+  owed: false,
+  act: "",
+  titles: [],
+  reps: [],
+  addedBy: [],
+  from: "",
+  to: "",
+  mobile: "",
+  email: "",
+  phone: "",
+  labels: [],
+} satisfies Partial<ListParams>;
 
 export function pageWindow(total: number, per: number, page: number) {
   const pages = Math.max(1, Math.ceil(total / per));

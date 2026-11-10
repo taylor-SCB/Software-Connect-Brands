@@ -7,7 +7,7 @@ import { FormError } from "@/components/ui";
 import { useSearch } from "@/lib/use-search";
 import { mergeCompaniesAction, mergeContactsAction } from "@/app/dashboard/merge-actions";
 
-type Hit = {
+export type Hit = {
   id: string;
   name: string;
   // Contacts
@@ -30,12 +30,27 @@ function detail(kind: "contacts" | "companies", hit: Hit) {
 // shown with what tells them apart), pick the one to keep, and everything
 // on the others moves onto it. The kept record's details win; its blanks
 // are filled from the others.
-export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
+//
+// The duplicate finder (Nov 10, 2026) opens it on one group: `initial` is
+// that group pre-picked (the first one to keep), `label` the button's
+// words, and `stay` keeps the person on the finder after the merge.
+export function MergeButton({
+  kind,
+  initial,
+  label,
+  stay = false,
+}: {
+  kind: "contacts" | "companies";
+  initial?: Hit[];
+  label?: string;
+  stay?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<Hit[]>([]);
-  const [keepId, setKeepId] = useState<string | null>(null);
+  const start0 = (initial ?? []).slice(0, MAX);
+  const [picked, setPicked] = useState<Hit[]>(start0);
+  const [keepId, setKeepId] = useState<string | null>(start0[0]?.id ?? null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
@@ -69,8 +84,8 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
   function close() {
     setOpen(false);
     setQuery("");
-    setPicked([]);
-    setKeepId(null);
+    setPicked(start0);
+    setKeepId(start0[0]?.id ?? null);
     setConfirming(false);
     setError(undefined);
   }
@@ -87,7 +102,8 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
         return;
       }
       close();
-      router.push(`/dashboard/${kind}/${result.keptId}`);
+      if (stay) router.refresh();
+      else router.push(`/dashboard/${kind}/${result.keptId}`);
     });
   }
 
@@ -95,9 +111,14 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost btn-sm" data-testid="merge-open">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={`btn btn-sm ${initial ? "btn-primary" : "btn-ghost"}`}
+        data-testid={initial ? "duplicate-merge" : "merge-open"}
+      >
         <IconMerge size={13} />
-        Merge {kind === "contacts" ? "Contacts" : "Companies"}
+        {label ?? `Merge ${kind === "contacts" ? "Contacts" : "Companies"}`}
       </button>
 
       {open && (

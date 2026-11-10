@@ -4,6 +4,7 @@ import { getIndustryPickList } from "@/lib/industries";
 import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
 import { ContactForm } from "../contact-form";
 import { createContact } from "../actions";
+import { loadRepChoices } from "@/lib/reps";
 
 export default async function NewContactPage({
   searchParams,
@@ -14,7 +15,7 @@ export default async function NewContactPage({
   const { companyId, name } = await searchParams;
 
   // "+ Add person" on a company page lands here with the company filled in.
-  const [preset, pickList] = await Promise.all([
+  const [preset, pickList, reps] = await Promise.all([
     companyId
       ? prisma.company.findFirst({
           where: { id: companyId, organizationId },
@@ -22,6 +23,7 @@ export default async function NewContactPage({
         })
       : null,
     getIndustryPickList(organizationId),
+    loadRepChoices(organizationId),
   ]);
 
   return (
@@ -36,6 +38,7 @@ export default async function NewContactPage({
         <ContactForm
           action={createContact}
           pickList={pickList}
+          reps={reps}
           defaults={{ companyName: preset?.name ?? "", company: preset, name: (name ?? "").slice(0, 120) }}
           submitLabel="Save contact"
         />

@@ -707,6 +707,79 @@ flipping up when there's more room — the status picker was cut off by
 the first column and the sidebar. `pipeline-opportunities.cjs` (22
 steps) covers it; `crm-pipeline-stats.cjs` was moved onto the tiles.
 
+**Clean CRM data and sharper filters (Nov 10, 2026; Taylor's three
+calls: marketing email is not a touch, no auto-assigning, everyone sees
+everyone).** **Marketing** sends (`Activity.marketing`) stay on the
+person's log with a Marketing badge and sit in their own **Marketing**
+column on both lists (how many, the last one; a company's is its
+people's, `marketingContacts` / `marketingCompanies` in
+`src/lib/last-contacted.ts`); Last Contacted By, the lists' Activity
+counts, the Activity overview box and Last touch on both pages, Stats
+(`src/lib/stats.ts`) and the Activity filter all leave them out (the
+filter reads `lastTouchAt` on Contact and Company, kept by statement
+triggers on Activity and Contact in the migration — a company's is its
+own and its people's — because "on it or its people" from Activity was
+3.4 s a page at 200,000) (the
+status ladder already did, from the base branch). **Rep** (`ownerId`) and
+**Added by** (`createdById`) on contacts and companies: a Rep column on
+both lists; on the pages a Rep picker that saves as it changes and "Added
+by <name> · <date>"; a Rep box on the new and edit forms, Unassigned
+first, that writes only when changed from what the form opened with
+(`ownerOriginal`, `readRepField` in `src/lib/reps.ts`), and a removed
+teammate stays offered, labelled, while they are the one saved. Every
+place that makes a contact or company sets `createdById` (the forms,
+`findOrCreateCompany`, Add person / + Add new contact, the Email window,
+the Contract Coordinator, Order materials, crew/photo invites, supplier
+companies from products, quotes, Import Ratesheet and On Software Connect
+Brands) and nothing sets a rep on its own. **Import**: "Assign everyone in
+this file to: Unassigned / <teammate>" (`AssignToSelect` in
+`import-csv-button.tsx`, passed with every batch): picking a teammate
+gives them every person in the file, new or already here, and every
+company in it nobody owns yet; Unassigned leaves anyone already here with
+the rep they have — an import never takes a rep away. **Bulk Assign** on
+both lists (`src/components/bulk-assign.tsx`, `assignRecords` in
+`src/app/dashboard/assign-actions.ts`): tick rows (the box sits in the
+star's cell so the columns didn't move) or tick the page and "Select all
+N matching these filters"; Assign to me / Assign to… / Unassign; "all
+matching" re-reads the filter on the server from the list's own address
+and takes the first 1,000 in list order in one UPDATE that leaves
+`updatedAt` alone, and says how many still match. **Filters** (address
+bar, stacking): Activity (touched / not touched in 7 / 30 / 90 days,
+never; a company counts its people), Job title (contacts; a searchable
+list with counts from `/dashboard/contacts/titles`, matched ignoring
+case), Rep with Unassigned, Added by, Added (a date range in the
+workspace's clock), Contact info (has / no mobile and email on contacts,
+email and phone on companies), Lead Label (people on an opportunity with
+it, not Do Not List; companies through their people). **CRM → Labels**
+(`/dashboard/labels`, `src/lib/crm-labels.ts`): Industry, Company Type,
+Lead Label and Job Title, every value in use or on the pick list with its
+count, and for Owners and Admins Rename, Merge into… and Retire / Restore
+(a Member reads it). A merge rewrites every record (company arrays keep
+one of each ignoring case, in order), takes A off the pick list, and an
+industry's company types move under the target; renaming onto a name in
+use is refused with "use Merge into…". Retire is `retiredAt` on
+IndustryOption / CompanyTypeOption / LeadLabelOption: off the pick lists
+(`getIndustryPickList` hides it unless `includeRetired`; a company's own
+edit form keeps the retired values it carries, `keep`), still offered by
+the list filters, records keep it. Company types are one value however
+many industries offer them, since a company stores the bare name. The
+built-in lead labels can be merged into only; **Distributor** is locked
+(the supplier pickers find suppliers by it); Job Title has no pick list,
+so no Retire. **Find duplicates** on both lists
+(`/dashboard/{contacts,companies}/duplicates`, `src/lib/duplicates.ts`,
+`DuplicatesView`): contacts by the same email (either one, ignoring
+case), the same phone (phone, second phone or mobile, last 10 digits)
+or the same name at the same company; companies by name ignoring case
+and punctuation, website domain, or phone; 25 groups a page from one
+grouped statement; "Merge these" opens Merge Contacts / Companies with
+the group picked, oldest kept by default, and stays on the finder. A
+merge keeps the keeper's rep and Added by, filling them from the others
+when blank. Migration `20261110171000_crm_data` (retiredAt columns,
+`lastTouchAt` with its backfill and triggers, and indexes for Rep, Added
+by, Added and last touch). `crm-data.cjs` (27 steps) covers it; `load-test.cjs` now seeds 110,000
+activities, reps and 500 Client opportunities and times every new filter,
+the Labels screen, the duplicate finder and a 1,000-record assign.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -1017,6 +1090,26 @@ are all blocking before the first paying customer.
 - **The 90 / 180-day contract rule runs when the Pipeline or Stats is
   opened.** A workspace nobody opens for a month catches up on the next
   visit, all at once.
+- **An import never unassigns, and an explicit assignee takes everyone in
+  the file** (Nov 10, 2026, Claude's call, to check with Taylor): with a
+  teammate picked, a person already owned by someone else is handed over;
+  a company already owned keeps its rep. Unassigned leaves every existing
+  rep alone.
+- **Bulk "all matching" takes the first 1,000 in list order.** Past that
+  the bar says how many still match; adding Rep: Unassigned to the
+  filters and running it again works through the rest.
+- **The Job title filter matches ignoring case, not spaces.** A title
+  saved with stray spaces (only SQL or very old data can) is its own
+  choice in the filter; the Labels screen groups it with the rest, and a
+  rename or merge there tidies it.
+- **The Overview page's recent-activity list shows marketing sends without
+  the badge.** The Reports track is rebuilding that page; the contact and
+  company feeds carry it.
+- **The Pipeline's Lead Label filter and the opportunity panel no longer
+  offer a retired label** (an opportunity carrying one still shows it,
+  and the CRM lists can still filter on it).
+- **The duplicate finder looks at one rule at a time** (email, phone or
+  name), shows ten records a group and merges five at a go, as Merge does.
 - **A person linked to a second company is not rolled up there.** Their
   deals, quotes and notes stay with their main company; the linked one
   lists them under People with an "Additional account" tag only.
@@ -1032,7 +1125,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-six** are checked in at
+suite, and the delete-confirmation suite. **Thirty-seven** are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1210,6 +1303,16 @@ adds 8 ms each way (run instructions at the top of each). Anything that
 loops over hundreds of rows against the database gets run that way too,
 and never goes in one `$transaction` unless it truly must be
 all-or-nothing.
+
+`crm-data.cjs` (Nov 10, 2026) is the thirty-seventh: marketing never a
+touch, reps and Added by, the import's assign-to, bulk assign with the
+1,000 cap, every new list filter, the CRM Labels screen, the duplicate
+finder and the phone. It needs email switched on like
+`email-marketing-users.cjs`; both now take `CATCHER_PORT` so two
+sessions can each catch their own mail. **`crm-pipeline-stats.cjs` step
+13 is flaky** (Nov 10, 2026, seen on the base branch too): the
+full-page screenshot right before the second Save sometimes closes the
+status dates panel; a rerun passes.
 
 `password-reset.cjs` and `email-marketing-users.cjs` are the suites that need more than a database:
 the login screen only offers the link when email is switched on, so the

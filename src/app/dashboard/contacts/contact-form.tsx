@@ -8,6 +8,7 @@ import { ImageUploadField } from "@/components/image-upload-field";
 import { ContactNameField } from "@/components/contact-name-field";
 import type { ActionState } from "@/lib/forms";
 import { CHANNEL_LABELS, CHANNEL_LABEL_NAMES, CONTACT_STATUS_LABELS, START_STATUSES } from "@/lib/constants";
+import { RepField, type RepOption } from "@/components/rep-select";
 
 type ContactDefaults = {
   id?: string;
@@ -31,6 +32,7 @@ type ContactDefaults = {
   birthday?: string | null;
   imageUrl?: string | null;
   status?: string;
+  ownerId?: string | null;
 };
 
 export function ContactForm({
@@ -38,11 +40,13 @@ export function ContactForm({
   pickList,
   defaults = {},
   submitLabel,
+  reps = [],
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   pickList: IndustryPickList;
   defaults?: ContactDefaults;
   submitLabel: string;
+  reps?: RepOption[];
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
   // Which company the Company box currently names: an existing one (its
@@ -142,6 +146,7 @@ export function ContactForm({
           defaultValue={defaults.website ?? ""}
           hint="https:// is added automatically."
         />
+        <RepField ownerId={defaults.ownerId ?? null} reps={reps} />
         {/* Status is chosen here only when the record is new; after that
             it is the status button on its page, which dates skipped steps. */}
         {!defaults.id && (

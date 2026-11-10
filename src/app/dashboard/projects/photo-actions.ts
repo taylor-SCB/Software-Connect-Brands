@@ -337,6 +337,7 @@ export async function grantPhotoAccess(
           organizationId: actor.organizationId,
           name: person.name?.trim() || person.email.split("@")[0],
           email: person.email,
+          createdById: actor.userId,
         },
         select: { id: true, name: true, email: true },
       }));

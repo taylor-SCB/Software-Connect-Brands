@@ -96,7 +96,7 @@ export default async function DealsPage({
       },
     }),
     loadWorkspaceUsers(organizationId),
-    prisma.leadLabelOption.findMany({ where: { organizationId }, orderBy: { name: "asc" }, select: { name: true } }),
+    prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, orderBy: { name: "asc" }, select: { name: true } }),
     showArchived ? 0 : prisma.deal.count({ where: { organizationId, stage: "ARCHIVED" } }),
     prisma.opportunity.count({ where: { organizationId }, take: 1 }),
   ]);

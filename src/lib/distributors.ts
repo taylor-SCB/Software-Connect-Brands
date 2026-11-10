@@ -126,6 +126,9 @@ export async function backfillDistributorCompanies(organizationId: string): Prom
 export async function linkDistributorCompany(
   organizationId: string,
   rawName: string,
+  // Who is adding it, for "Added by" (Nov 10, 2026); null when the app
+  // backfills on its own.
+  createdById: string | null = null,
 ): Promise<{ companyId: string; distributorId: string; name: string } | null> {
   const name = rawName.trim().replace(/\s+/g, " ").slice(0, 160);
   if (!name) return null;
@@ -208,6 +211,7 @@ export async function linkDistributorCompany(
         name,
         industries: [SERVICE_PROVIDER_INDUSTRY],
         companyTypes: [typeName],
+        createdById,
       },
       select: { id: true, name: true },
     });
@@ -266,7 +270,7 @@ export async function linkDistributorCompany(
 // different supplier's pair — it is for one particular record, such as a
 // supplier linked to Software Connect Brands whose company was merged
 // away. Returns the company id, or null when the record isn't there.
-export async function bridgeDistributor(organizationId: string, distributorId: string): Promise<string | null> {
+export async function bridgeDistributor(organizationId: string, distributorId: string, createdById: string | null = null): Promise<string | null> {
   const row = await prisma.distributor.findFirst({
     where: { id: distributorId, organizationId },
     select: { name: true, companyId: true },
@@ -299,7 +303,7 @@ export async function bridgeDistributor(organizationId: string, distributorId: s
   } else {
     companyId = (
       await prisma.company.create({
-        data: { organizationId, name: row.name, industries: [SERVICE_PROVIDER_INDUSTRY], companyTypes: [typeName] },
+        data: { organizationId, name: row.name, industries: [SERVICE_PROVIDER_INDUSTRY], companyTypes: [typeName], createdById },
         select: { id: true },
       })
     ).id;

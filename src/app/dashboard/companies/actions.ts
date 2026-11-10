@@ -13,6 +13,7 @@ import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads"
 import { sameTags, withoutAuto, type AutoField } from "@/lib/enrich";
 import { moneyHold, moneyHoldMessage } from "@/lib/money";
 import { markContacted, markMeetingSet } from "@/lib/status";
+import { readRepField } from "@/lib/reps";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -79,7 +80,7 @@ async function nameTaken(name: string, organizationId: string, exceptId?: string
 }
 
 export async function createCompany(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(companySchema, readCompanyForm(formData));
   if (!parsed.ok) return { error: parsed.error };
@@ -92,8 +93,11 @@ export async function createCompany(_prev: ActionState, formData: FormData): Pro
     return { error: "A company with that name already exists" };
   }
 
+  // Unassigned unless a rep was picked on the form (Nov 10, 2026).
+  const rep = await readRepField(organizationId, formData);
+  if ("error" in rep) return { error: rep.error };
   const company = await prisma.company.create({
-    data: { organizationId, ...data, ...((await tagData(formData, organizationId)) ?? {}) },
+    data: { organizationId, createdById: userId, ...rep, ...data, ...((await tagData(formData, organizationId)) ?? {}) },
   });
   if (hasFile(logoFile)) {
     const logoUrl = await replaceImage({ organizationId, kind: "COMPANY_LOGO", file: logoFile, companyId: company.id });
@@ -126,6 +130,8 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
     select: { id: true, phone: true, website: true, industries: true, companyTypes: true, autoFilled: true },
   });
   if (!existing) return { error: "Company not found" };
+  const rep = await readRepField(organizationId, formData);
+  if ("error" in rep) return { error: rep.error };
 
   const logo: { logoUrl?: string | null } = {};
   if (hasFile(logoFile)) {
@@ -149,7 +155,7 @@ export async function updateCompany(_prev: ActionState, formData: FormData): Pro
 
   const result = await prisma.company.updateMany({
     where: { id: id.data, organizationId },
-    data: { ...data, ...logo, ...(tags ?? {}), ...marks },
+    data: { ...data, ...logo, ...(tags ?? {}), ...marks, ...rep },
   });
   if (result.count === 0) return { error: "Company not found" };
 

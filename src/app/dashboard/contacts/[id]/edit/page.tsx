@@ -6,6 +6,7 @@ import { Card, CardHeader, BackLink, PageHeader } from "@/components/ui";
 import { DeleteRecordForm } from "@/components/delete-record-form";
 import { ContactForm } from "../../contact-form";
 import { updateContact, deleteContact } from "../../actions";
+import { loadRepChoices } from "@/lib/reps";
 
 export default async function EditContactPage({
   params,
@@ -15,14 +16,17 @@ export default async function EditContactPage({
   const { id } = await params;
   const { organizationId } = await requireSession();
 
-  const [contact, pickList] = await Promise.all([
+  const [contact, reps] = await Promise.all([
     prisma.contact.findFirst({
       where: { id, organizationId },
       include: { company: { select: { id: true, name: true, industries: true, companyTypes: true } } },
     }),
-    getIndustryPickList(organizationId),
+    loadRepChoices(organizationId),
   ]);
   if (!contact) notFound();
+  const pickList = await getIndustryPickList(organizationId, {
+    keep: { industries: contact.company?.industries ?? [], types: contact.company?.companyTypes ?? [] },
+  });
 
   return (
     <div className="max-w-3xl">
@@ -34,6 +38,7 @@ export default async function EditContactPage({
         <ContactForm
           action={updateContact}
           pickList={pickList}
+          reps={reps}
           submitLabel="Save changes"
           defaults={{
             imageUrl: contact.imageUrl,
@@ -56,6 +61,7 @@ export default async function EditContactPage({
             state: contact.state,
             birthday: contact.birthday ? contact.birthday.toISOString().slice(0, 10) : "",
             status: contact.status,
+            ownerId: contact.ownerId,
           }}
         />
       </Card>

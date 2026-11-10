@@ -23,7 +23,7 @@ import { describeFilled } from "@/lib/enrich";
 // batches of a few hundred with a running count. Closing the tab stops
 // it; re-uploading the same file carries on without doubling anything,
 // because rows that already exist are updated, not added again.
-export function ImportCsvButton({ kind }: { kind: "contacts" | "companies" }) {
+export function ImportCsvButton({ kind, reps = [] }: { kind: "contacts" | "companies"; reps?: { id: string; name: string; removed?: boolean }[] }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -31,7 +31,7 @@ export function ImportCsvButton({ kind }: { kind: "contacts" | "companies" }) {
         <IconUpload size={14} />
         Import CSV
       </button>
-      {open && <ImportDialog kind={kind} onClose={() => setOpen(false)} />}
+      {open && <ImportDialog kind={kind} reps={reps} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -55,8 +55,18 @@ type Phase =
   | { step: "running"; plan: ContactImportPlan; done: number; totals: ImportBatchResult }
   | { step: "finished"; plan: ContactImportPlan; done: number; totals: ImportBatchResult; stopped: boolean; error?: string };
 
-function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClose: () => void }) {
+function ImportDialog({
+  kind,
+  reps,
+  onClose,
+}: {
+  kind: "contacts" | "companies";
+  reps: { id: string; name: string; removed?: boolean }[];
+  onClose: () => void;
+}) {
   const router = useRouter();
+  // "Assign everyone in this file to" (Nov 10, 2026): Unassigned unless picked.
+  const [assignTo, setAssignTo] = useState("");
   const [phase, setPhase] = useState<Phase>({ step: "pick" });
   const [planError, setPlanError] = useState("");
   const stopRef = useRef(false);
@@ -104,7 +114,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
       let result: Awaited<ReturnType<typeof importContactsBatch>> | undefined;
       for (let attempt = 0; attempt < 2 && !(result && !("error" in result)); attempt += 1) {
         try {
-          result = await importContactsBatch(batch);
+          result = await importContactsBatch(batch, { assignTo });
         } catch {
           result = {
             error: `Rows ${(start + 1).toLocaleString()}–${Math.min(plan.rows.length, start + IMPORT_BATCH_SIZE).toLocaleString()} didn't go through. Re-upload the same file to carry on; rows already in are updated, not doubled.`,
@@ -175,7 +185,12 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
             </div>
           )}
 
-          {phase.step === "preview" && <Preview plan={phase.plan} />}
+          {phase.step === "preview" && (
+            <>
+              <Preview plan={phase.plan} />
+              <AssignToSelect reps={reps} value={assignTo} onChange={setAssignTo} />
+            </>
+          )}
 
           {(phase.step === "running" || phase.step === "finished") && (
             <Progress
@@ -226,6 +241,37 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
         </div>
       </div>
     </div>
+  );
+}
+
+// Who the file's people and new companies go to. Self-contained so the
+// dialog's other steps stay as they were.
+function AssignToSelect({
+  reps,
+  value,
+  onChange,
+}: {
+  reps: { id: string; name: string; removed?: boolean }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+      <span className="font-medium">Assign everyone in this file to:</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="select input-sm w-56" data-testid="import-assign">
+        <option value="">Unassigned</option>
+        {reps
+          .filter((rep) => !rep.removed)
+          .map((rep) => (
+            <option key={rep.id} value={rep.id}>
+              {rep.name}
+            </option>
+          ))}
+      </select>
+      <span className="faint w-full text-xs">
+        Unassigned leaves anyone already here with the rep they have. Picking a teammate gives every person in the file to them, and any company in it nobody owns yet.
+      </span>
+    </label>
   );
 }
 

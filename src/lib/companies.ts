@@ -3,7 +3,9 @@ import { prisma } from "@/lib/prisma";
 // The Company box on a contact form is free text backed by a search, so
 // saving a contact resolves the name here: an existing company (matched
 // without caring about case or stray spaces) or a brand new one.
-export async function findOrCreateCompany(rawName: string, organizationId: string) {
+// A company made here is added by `createdById` (Nov 10, 2026) and starts
+// Unassigned, like every new record.
+export async function findOrCreateCompany(rawName: string, organizationId: string, createdById: string | null = null) {
   const name = rawName.trim().replace(/\s+/g, " ");
   const existing = await prisma.company.findFirst({
     where: { organizationId, name: { equals: name, mode: "insensitive" } },
@@ -11,7 +13,7 @@ export async function findOrCreateCompany(rawName: string, organizationId: strin
   });
   if (existing) return existing;
   return prisma.company.create({
-    data: { organizationId, name },
+    data: { organizationId, name, createdById },
     select: { id: true, name: true },
   });
 }

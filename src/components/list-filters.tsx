@@ -4,7 +4,18 @@ import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition 
 import { useRouter } from "next/navigation";
 import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles, IconFileText } from "@/components/icons";
 import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES, type ContactStatusValue } from "@/lib/constants";
-import { listHref, activeFilterCount, type ListParams, type ListLock } from "@/lib/list-params";
+import {
+  listHref,
+  activeFilterCount,
+  ACTIVITY_WINDOWS,
+  ACTIVITY_WINDOW_LABELS,
+  NO_FILTERS,
+  UNASSIGNED,
+  type ActivityWindow,
+  type ListParams,
+  type ListLock,
+  type Presence,
+} from "@/lib/list-params";
 import { useSearch } from "@/lib/use-search";
 
 export type FilterBarOptions = {
@@ -25,6 +36,8 @@ export function ListFilters({
   kind,
   selectedCompanies = [],
   placeholder,
+  reps = [],
+  leadLabels = [],
 }: {
   basePath: string;
   params: ListParams;
@@ -33,6 +46,10 @@ export function ListFilters({
   kind: "contacts" | "companies";
   selectedCompanies?: { id: string; name: string }[];
   placeholder: string;
+  // Clean CRM data filters (Nov 10, 2026): the workspace's people for Rep
+  // and Added by, and the Lead Labels on offer.
+  reps?: { id: string; name: string }[];
+  leadLabels?: string[];
 }) {
   const router = useRouter();
   // The bar shows the new choice the instant it is clicked and holds it
@@ -59,6 +76,9 @@ export function ListFilters({
   if (kind === "contacts") typeNames.push(INDIVIDUAL_COMPANY_TYPE);
 
   const active = activeFilterCount(params, lock);
+  const repNames: Record<string, string> = Object.fromEntries(reps.map((rep) => [rep.id, rep.name]));
+  const repLabels: Record<string, string> = { [UNASSIGNED]: "Unassigned", ...repNames };
+  const presenceLabel = (field: string, value: Presence) => `${value === "yes" ? "Has" : "No"} ${field}`;
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
@@ -135,6 +155,49 @@ export function ListFilters({
             empty="No statuses."
           />
         )}
+
+        <ActivitySelect value={params.act} onPick={(act) => go({ act })} />
+        {kind === "contacts" && (
+          <TitleSelect
+            values={params.titles}
+            onToggle={(title) =>
+              go({ titles: params.titles.some((t) => t.toLowerCase() === title.toLowerCase()) ? params.titles.filter((t) => t.toLowerCase() !== title.toLowerCase()) : [...params.titles, title] })
+            }
+            onClear={() => go({ titles: [] })}
+          />
+        )}
+        <MultiSelect
+          label="Rep"
+          values={params.reps}
+          choices={[UNASSIGNED, ...reps.map((rep) => rep.id)]}
+          labels={repLabels}
+          onToggle={(value) => go({ reps: toggle(params.reps, value) })}
+          onClear={() => go({ reps: [] })}
+          empty="No teammates."
+        />
+        <MultiSelect
+          label="Added by"
+          values={params.addedBy}
+          choices={reps.map((rep) => rep.id)}
+          labels={repNames}
+          onToggle={(value) => go({ addedBy: toggle(params.addedBy, value) })}
+          onClear={() => go({ addedBy: [] })}
+          empty="No teammates."
+        />
+        <AddedSelect from={params.from} to={params.to} onApply={(from, to) => go({ from, to })} />
+        <PresenceSelect
+          fields={kind === "contacts" ? (["mobile", "email"] as const) : (["email", "phone"] as const)}
+          params={params}
+          onPick={(field, value) => go({ [field]: value })}
+        />
+        <MultiSelect
+          label="Lead Label"
+          values={params.labels}
+          choices={leadLabels}
+          onToggle={(value) => go({ labels: toggle(params.labels, value) })}
+          onClear={() => go({ labels: [] })}
+          empty="No lead labels yet."
+        />
 
         {!lock.fav && (
           <Toggle on={params.fav} onClick={() => go({ fav: !params.fav })} testId="filter-fav">
@@ -214,11 +277,38 @@ export function ListFilters({
           {params.attn && <Chip onRemove={() => go({ attn: false })}>Needs attention</Chip>}
           {params.owed && <Chip onRemove={() => go({ owed: false })}>Owes money</Chip>}
           {kind === "companies" && params.auto && <Chip onRemove={() => go({ auto: false })}>Auto-filled</Chip>}
+          {params.act && <Chip onRemove={() => go({ act: "" })}>{ACTIVITY_WINDOW_LABELS[params.act]}</Chip>}
+          {params.titles.map((title) => (
+            <Chip key={`ti-${title}`} onRemove={() => go({ titles: params.titles.filter((t) => t !== title) })}>
+              Title: {title}
+            </Chip>
+          ))}
+          {params.reps.map((rep) => (
+            <Chip key={`r-${rep}`} onRemove={() => go({ reps: toggle(params.reps, rep) })}>
+              Rep: {repLabels[rep] ?? "…"}
+            </Chip>
+          ))}
+          {params.addedBy.map((by) => (
+            <Chip key={`b-${by}`} onRemove={() => go({ addedBy: toggle(params.addedBy, by) })}>
+              Added by: {repNames[by] ?? "…"}
+            </Chip>
+          ))}
+          {(params.from || params.to) && (
+            <Chip onRemove={() => go({ from: "", to: "" })}>
+              Added {params.from && params.to ? `${params.from} to ${params.to}` : params.from ? `from ${params.from}` : `up to ${params.to}`}
+            </Chip>
+          )}
+          {params.mobile && <Chip onRemove={() => go({ mobile: "" })}>{presenceLabel("mobile", params.mobile)}</Chip>}
+          {params.email && <Chip onRemove={() => go({ email: "" })}>{presenceLabel("email", params.email)}</Chip>}
+          {params.phone && <Chip onRemove={() => go({ phone: "" })}>{presenceLabel("phone", params.phone)}</Chip>}
+          {params.labels.map((label) => (
+            <Chip key={`l-${label}`} onRemove={() => go({ labels: toggle(params.labels, label) })}>
+              Lead Label: {label}
+            </Chip>
+          ))}
           <button
             type="button"
-            onClick={() =>
-              go({ q: "", states: [], industries: [], types: [], companies: [], statuses: [], fav: false, deals: false, attn: false, auto: false, owed: false })
-            }
+            onClick={() => go({ q: "", ...NO_FILTERS })}
             className="btn btn-ghost btn-sm"
           >
             Clear all
@@ -456,6 +546,188 @@ function CompanySelect({
           </>
         );
       }}
+    </Dropdown>
+  );
+}
+
+// Activity (Nov 10, 2026): one window at a time — touched in, not touched
+// in, or never touched. A touch never includes a marketing send.
+function ActivitySelect({ value, onPick }: { value: ActivityWindow | ""; onPick: (value: ActivityWindow | "") => void }) {
+  return (
+    <Dropdown label="Activity" count={value ? 1 : 0} testId="filter-activity">
+      {(close) => (
+        <ul role="listbox" aria-label="Activity" className="max-h-72 overflow-y-auto">
+          {ACTIVITY_WINDOWS.map((window) => (
+            <li key={window}>
+              <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                <input
+                  type="radio"
+                  name="activity-window"
+                  checked={value === window}
+                  onChange={() => {
+                    onPick(window);
+                    close();
+                  }}
+                  className="h-3.5 w-3.5 accent-[var(--brand)]"
+                />
+                <span>{ACTIVITY_WINDOW_LABELS[window]}</span>
+              </label>
+            </li>
+          ))}
+          {value && (
+            <li className="border-t border-[var(--border)] px-3 py-1.5">
+              <button type="button" onClick={() => (onPick(""), close())} className="link text-xs">
+                Clear activity
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </Dropdown>
+  );
+}
+
+// Job title (contacts): the workspace's distinct titles with how many
+// people carry each, searched on the server since a CRM can hold
+// thousands; ticked titles match ignoring case.
+function TitleSelect({ values, onToggle, onClear }: { values: string[]; onToggle: (title: string) => void; onClear: () => void }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const { results, loading } = useSearch<{ name: string; count: number }>(
+    open ? `/dashboard/contacts/titles?q=${encodeURIComponent(query.trim())}` : null,
+  );
+  const ticked = (name: string) => values.some((value) => value.toLowerCase() === name.toLowerCase());
+  const rows = [
+    ...values.filter((value) => !results.some((row) => row.name.toLowerCase() === value.toLowerCase())).map((name) => ({ name, count: null as number | null })),
+    ...results,
+  ];
+  return (
+    <Dropdown label="Job title" count={values.length} testId="filter-job-title" onOpenChange={setOpen}>
+      {() => (
+        <>
+          <div className="border-b border-[var(--border)] p-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search job titles…"
+              aria-label="Search job titles"
+              autoFocus
+              className="input input-sm"
+            />
+          </div>
+          <ul role="listbox" aria-label="Job title" aria-multiselectable="true" className="max-h-64 overflow-y-auto">
+            {rows.map((row) => (
+              <li key={row.name}>
+                <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                  <input type="checkbox" checked={ticked(row.name)} onChange={() => onToggle(row.name)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
+                  <span className="min-w-0 flex-1 truncate">{row.name}</span>
+                  {row.count !== null && <span className="faint num text-xs">{row.count.toLocaleString()}</span>}
+                </label>
+              </li>
+            ))}
+            {!loading && rows.length === 0 && <li className="faint px-3 py-3 text-xs">{query.trim() ? "No titles match." : "No job titles on file yet."}</li>}
+          </ul>
+          {values.length > 0 && (
+            <div className="border-t border-[var(--border)] px-3 py-1.5">
+              <button type="button" onClick={onClear} className="link text-xs">
+                Clear job title
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Dropdown>
+  );
+}
+
+// Added: a date range, either end optional, in the workspace's clock.
+function AddedSelect({ from, to, onApply }: { from: string; to: string; onApply: (from: string, to: string) => void }) {
+  const [draftFrom, setDraftFrom] = useState(from);
+  const [draftTo, setDraftTo] = useState(to);
+  return (
+    <Dropdown
+      label="Added"
+      count={from || to ? 1 : 0}
+      testId="filter-added"
+      onOpenChange={(open) => {
+        if (open) {
+          setDraftFrom(from);
+          setDraftTo(to);
+        }
+      }}
+    >
+      {(close) => (
+        <div className="space-y-2 p-3 text-sm">
+          <label className="block">
+            <span className="faint text-xs">From</span>
+            <input type="date" value={draftFrom} onChange={(event) => setDraftFrom(event.target.value)} className="input input-sm" data-testid="added-from" />
+          </label>
+          <label className="block">
+            <span className="faint text-xs">To</span>
+            <input type="date" value={draftTo} onChange={(event) => setDraftTo(event.target.value)} className="input input-sm" data-testid="added-to" />
+          </label>
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => {
+                onApply(draftFrom, draftTo);
+                close();
+              }}
+              className="btn btn-primary btn-sm"
+              data-testid="added-apply"
+            >
+              Apply
+            </button>
+            {(from || to) && (
+              <button type="button" onClick={() => (onApply("", ""), close())} className="link text-xs">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </Dropdown>
+  );
+}
+
+// Has / has no: mobile and email on contacts, email and phone on companies.
+function PresenceSelect({
+  fields,
+  params,
+  onPick,
+}: {
+  fields: readonly ("mobile" | "email" | "phone")[];
+  params: ListParams;
+  onPick: (field: "mobile" | "email" | "phone", value: Presence) => void;
+}) {
+  const count = fields.filter((field) => params[field]).length;
+  return (
+    <Dropdown label="Contact info" count={count} testId="filter-contact-info">
+      {() => (
+        <div className="space-y-2 p-3 text-sm">
+          {fields.map((field) => (
+            <fieldset key={field} className="flex items-center justify-between gap-2">
+              <legend className="sr-only">{field}</legend>
+              <span className="capitalize">{field}</span>
+              <span className="flex gap-1">
+                {(["", "yes", "no"] as const).map((value) => (
+                  <button
+                    key={value || "any"}
+                    type="button"
+                    aria-pressed={params[field] === value}
+                    onClick={() => onPick(field, value)}
+                    data-testid={`presence-${field}-${value || "any"}`}
+                    className={`btn btn-sm !px-2 ${params[field] === value ? "btn-primary" : "btn-ghost"}`}
+                  >
+                    {value === "" ? "Any" : value === "yes" ? "Has" : "None"}
+                  </button>
+                ))}
+              </span>
+            </fieldset>
+          ))}
+        </div>
+      )}
     </Dropdown>
   );
 }
