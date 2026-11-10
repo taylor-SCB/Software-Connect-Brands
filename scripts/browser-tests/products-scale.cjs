@@ -406,6 +406,10 @@ async function signAs(browser, token, name) {
     const box = list.getBoundingClientRect();
     const rows = [...list.querySelectorAll("[role=option]")].filter((row) => row.getBoundingClientRect().bottom <= box.bottom);
     const row = rows[rows.length - 1];
+    // The quote's line rows are taller since the UX review (Tag, Supplier
+    // and Service type stack below 2xl), so the list can reach past the
+    // window: bring the row into view before asking what is on top of it.
+    row.scrollIntoView({ block: "nearest" });
     const rect = row.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     return { name: row.querySelector("p")?.textContent, onTop: Boolean(hit && hit.closest("[data-testid=catalog-results]")) };

@@ -725,14 +725,14 @@ async function pixelContrast(page, png) {
 
   log("audit fixes (UX review): a long label never covers a short title, and a long name stays inside its tile");
   await sql(
-    `INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_long',$1,'Maximiliana Featherstonehaugh-Wolfeschlegelsteinhausen','MEETING_SET',now())`,
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_longtile',$1,'Maximiliana Featherstonehaugh-Wolfeschlegelsteinhausen','MEETING_SET',now())`,
     [org],
   );
   await sql(
     `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"leadLabel","createdAt","updatedAt") VALUES ('op_opp_long',$1,'Lab Soft','MEETING_SET','Software Integration',now(),now())`,
     [org],
   );
-  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_oc_long','op_opp_long','op_long','PRIMARY',true)`);
+  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_oc_longtile','op_opp_long','op_longtile','PRIMARY',true)`);
   await page.goto(`${BASE}/dashboard/deals`);
   const longTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_long']");
   await longTile.waitFor();

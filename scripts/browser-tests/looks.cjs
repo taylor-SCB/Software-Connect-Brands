@@ -798,8 +798,9 @@ async function textContrast(locator) {
     for (const look of LOOKS) {
       await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
       const lines = [];
-      for (const [url, what, js] of DESKTOP) {
-        if (page.url() !== `${BASE}${url}`) {
+      for (const [i, [url, what, js]] of DESKTOP.entries()) {
+        // Always load the first page afresh, so the new look applies.
+        if (i === 0 || page.url() !== `${BASE}${url}`) {
           await page.goto(`${BASE}${url}`);
           await settle(page);
         }
@@ -898,13 +899,17 @@ async function textContrast(locator) {
           inset: Math.round(card.right - range.getBoundingClientRect().right),
           cells,
           tables: document.querySelectorAll(".table:not(.table-tight) tfoot").length,
+          // The payment table became .table-tight in the same review (its
+          // phone layout); it pads its own footer, a little less.
+          tight: [...document.querySelectorAll(".table-tight tfoot td")].map((td) => parseFloat(getComputedStyle(td).paddingRight)),
         };
       });
       assert.equal(foot.text, "$6,754.00");
       assert.equal(foot.right, foot.rowPad, `${look}: the grand total's cell is padded ${foot.right}, its rows ${foot.rowPad}`);
       // Flush to the card's edge was 0px (and under its rounded corner).
       assert.ok(foot.inset >= 12, `${look}: the grand total ends ${foot.inset}px from the card's right edge`);
-      assert.ok(foot.tables >= 2, `${look}: the line items and the payment table both have a footer (${foot.tables})`);
+      assert.ok(foot.tables >= 1, `${look}: the line items have a footer (${foot.tables})`);
+      assert.ok(foot.tight.length > 0 && foot.tight.every((pad) => pad >= 6), `${look}: the payment table's footer cells are padded (${foot.tight.join(", ")})`);
       for (const cell of foot.cells) {
         assert.equal(cell.left, foot.rowPad, `${look}: footer cell "${cell.text}" has no left padding (${cell.left})`);
         assert.equal(cell.right, foot.rowPad, `${look}: footer cell "${cell.text}" has no right padding (${cell.right})`);
