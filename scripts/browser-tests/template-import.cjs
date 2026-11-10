@@ -89,7 +89,9 @@ const fakeClaude = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (chunk) => (raw += chunk));
   req.on("end", () => {
-    requests.push({ url: req.url, body: JSON.parse(raw || "{}") });
+    // Only Suggest fields' own calls count (Nov 10, 2026): signing in lands
+    // on Overview, whose report write-up asks Claude too.
+    if (raw.includes("<agreement>")) requests.push({ url: req.url, body: JSON.parse(raw || "{}") });
     res.setHeader("content-type", "application/json");
     res.end(
       JSON.stringify({
@@ -340,7 +342,7 @@ function makePdf(pages) {
   await page.click("[data-testid=template-suggest]");
   await page.locator("[data-testid=template-import-error]").getByText("used 20 times in your workspace").waitFor();
   assert.equal(requests.length, asked);
-  assert.equal((await sql(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1`, [org])).rows[0].n, 20, "the refused one isn't counted");
+  assert.equal((await sql(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='SUGGEST_FIELDS'`, [org])).rows[0].n, 20, "the refused one isn't counted");
   await sql(`UPDATE "AiRequest" SET "createdAt" = now() - interval '25 hours' WHERE "organizationId"=$1`, [org]);
   // A day later it opens again. (The fields are already placed, so there
   // is nothing left to suggest; what matters is that Claude is asked.)

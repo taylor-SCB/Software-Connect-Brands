@@ -1436,8 +1436,10 @@ staying that way on the purchase order, per-product counts; **it needs
 `STORAGE_DRIVER=local`** like `job-photos.cjs`). **`calendar.cjs` steps
 29 and 30 read the Coming up card and pick the roofing day by its date**
 (Nov 6, 2026): a seeded November day now behind us sits under Already
-been. The suite is built around November 2026; once that month is past,
-its fixed days need moving to a month still ahead.
+been. Since Nov 10, 2026 the suite is built around **August 2027** (moved
+from November 2026 once that month was no longer ahead; both start on a
+Sunday and the months before them line up). Move it again, keeping that
+alignment, before August 2027.
 `products-load-test.cjs` also opens, searches, clears and re-ticks the
 25,000-line sheet through the slow proxy (open 1.2 s, all off 25 s, all
 back 81 s; the 25,000-row import is 26 s, up from 9 s, for the supplier

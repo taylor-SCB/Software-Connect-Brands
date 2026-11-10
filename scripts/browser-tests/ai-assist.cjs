@@ -314,7 +314,10 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   assert.equal(logged.body, "Hi Pat, it's Taylor. Still want the Cat6 run done this month?");
   assert.equal(logged.marketing, false);
   assert.equal((await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "activityId"=$1`, [logged.id])).n, 1);
-  await dialog.getByTestId("follow-up-close").click();
+  // Logging refreshes the board, and a tile that stops being quiet loses its
+  // Draft button and the dialog with it; close it if it is still there.
+  await dialog.getByTestId("follow-up-close").click({ timeout: 3000 }).catch(() => {});
+  await dialog.waitFor({ state: "detached" });
   await page.goto(`${BASE}/dashboard/deals`);
   await tile("Pat Quiet").waitFor();
   assert.equal(await tile("Pat Quiet").locator("[data-testid=quiet-badge]").count(), 0, "a logged text is a touch");
