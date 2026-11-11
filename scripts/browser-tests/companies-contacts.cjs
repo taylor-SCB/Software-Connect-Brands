@@ -307,7 +307,7 @@ function backLink(page) {
   await fiberTile.getByTestId("tile-open").click();
   const fiberPanel = page.getByTestId("opportunity-panel");
   await fiberPanel.getByText("QUO-1000").waitFor(); // quotes listed in the deal's panel
-  await fiberPanel.getByRole("link", { name: "Danny Ortiz" }).click();
+  await fiberPanel.getByRole("link", { name: "Danny Ortiz", exact: true }).click();
   await page.waitForURL(dannyUrl);
   await backLink(page).getByText("Pipeline").waitFor();
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "open pipeline on the contact reads the quote");
