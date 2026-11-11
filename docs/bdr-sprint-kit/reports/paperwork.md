@@ -110,7 +110,19 @@ with the DealJourney strip (BDR redesign, Release 8).
 
 ## Suite results
 
-SUITE_RESULTS
+Last full run (`plain:quotes-improvement,contracts,deal-tracker,money-payments,projects-core,project-money`),
+after `npx tsc --noEmit -p .` and `npx next build`, both green:
+
+- PASS quotes-improvement (50 steps; new: "Sprint: the quote page's DealJourney strip; Send quote's Copy link…")
+- PASS contracts (23 steps; the catch-up step now runs the migration's SQL against seeded rows: a sent contract, a purchase order and another workspace's contract are left alone, the signed one is caught up dated the day it was signed, its open follow-up goes, and a second run changes nothing)
+- PASS deal-tracker (45 steps; new: the pre-ticked first contract, Change, the text-link award, the strip on the Coordinator and the contract page, Send deposit invoice, and the phone strip pinned at the foot)
+- PASS money-payments (28), PASS projects-core (26), PASS project-money (23)
+
+Not run here: `calendar-v2`, `companies-contacts`, `variations-pictures` and
+`looks`, which I edited only for the moved controls (see below).
+`project-money` step 22 failed once in a database reused across runs: its
+setup checked where Postgres physically stores a moved row. It compacts the
+table first now (`VACUUM FULL "ContractLineItem"`); the app was not at fault.
 
 ## Files touched outside yours
 
@@ -119,6 +131,11 @@ SUITE_RESULTS
   hand with no logged meeting doesn't show "Meeting" as the current step on
   its own quote page.
 - `src/lib/deal-journey-load.ts`: new file (the loader above).
+- `src/app/globals.css` (foundation): under 640px, a strip with a pinned
+  Next stops being a size container and collapses by the media query
+  instead. `container-type` made the strip the box its position:fixed Next
+  was placed against, so the button sat inside the strip, not at the foot
+  of the screen.
 - `prisma/migrations/20261111140000_paperwork_accept_signed_quotes/`: new.
 - `scripts/accept-signed-quotes.ts`: deleted.
 - Browser suites changed for the moved controls, without weakening a check:
@@ -149,3 +166,9 @@ SUITE_RESULTS
   glass blur makes the card its containing block. The DealJourney's sticky
   Next on the Coordinator sits outside the card for that reason.
 - The Coordinator's Outstanding leaves unsent drafts out.
+- **A size container (`container-type`) also traps position:fixed
+  children**, like transform and backdrop-filter do. So does the page's
+  `.fade-up` while it is still running: a suite that measures a pinned
+  button waits for `document.getAnimations()` first.
+- `project-money` compacts `ContractLineItem` before the step that relies on
+  the table's physical row order.
