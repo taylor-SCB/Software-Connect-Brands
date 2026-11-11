@@ -653,11 +653,16 @@ async function logWith(page, fields, { body = "", type } = {}) {
   assert.deepEqual(labels.slice(0, 4), ["Not Actioned", "Attempted", "Connected", "Not Interested"]);
   await page.keyboard.press("Escape");
 
-  log("Sprint: the Stats funnel has Connected between Attempted and Interested");
+  // The Stats redesign (approved plan, Nov 11, 2026) runs the funnel
+  // Attempted → Connected → Meeting Set → … → Won; Interested is still
+  // counted but sits outside the funnel.
+  log("Sprint: the Stats funnel has Connected between Attempted and Meeting Set");
   await page.goto(`${BASE}/dashboard/stats`);
   await page.locator("[data-testid=stats-page]").waitFor();
-  const funnelText = await page.locator("[data-testid=stats-page]").textContent();
-  assert.match(funnelText, /Attempted[\s\S]*Connected[\s\S]*Interested[\s\S]*Meeting Set/);
+  const funnelKeys = await page.locator("[data-testid=funnel-step]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-step")));
+  assert.deepEqual(funnelKeys.slice(0, 3), ["CONTACTED", "CONNECTED", "MEETING_SET"], "Connected is the step after Attempted");
+  const funnelText = await page.locator("[data-testid=stats-funnel]").first().textContent();
+  assert.match(funnelText, /Attempted[\s\S]*Connected[\s\S]*Meeting Set/);
   await shot(page, "03-stats");
 
   await nicContext.close();

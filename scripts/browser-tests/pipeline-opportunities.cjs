@@ -1356,7 +1356,9 @@ async function openAddDeal(p) {
     const phonePanel = journeyPhone.getByTestId("opportunity-panel");
     const summary = phonePanel.getByTestId("deal-journey-summary");
     await summary.waitFor();
-    await journeyPhone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    // Every animation that ends has ended; the header meter's current
+    // segment breathes forever, and its "finished" never settles.
+    await settle(journeyPhone);
     assert.match(await summary.textContent(), /^Step 3 of 5 · Quote/);
     assert.equal(await summary.locator(".health-dot").count(), 5);
     assert.equal(await phonePanel.getByTestId("deal-journey").locator(".dj-steps").isVisible(), false, "the five labelled steps fold to dots");

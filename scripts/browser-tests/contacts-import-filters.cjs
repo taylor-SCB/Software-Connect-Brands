@@ -78,6 +78,37 @@ async function login(page) {
   await page.click("button[type=submit]");
   await page.waitForURL(/\/dashboard$/);
 }
+// The company page's Details card (folded unless the app filled values in),
+// opened when it is closed.
+async function companyDetails(page) {
+  const card = page.locator("[data-testid=company-details]");
+  await card.waitFor();
+  if ((await card.getAttribute("data-open")) === null) await card.getByTestId("company-details-toggle").click();
+  const list = card.locator("dl");
+  await list.waitFor();
+  return list;
+}
+// Add deal: in the Paperwork card's ⋯ from Meeting Completed on, else under
+// the header's ⋯ More (BDR redesign, Nov 11, 2026).
+async function openAddDeal(p) {
+  await p.locator("[data-testid=contact-header]").waitFor();
+  if (await p.locator("[data-testid=paperwork-more]").count()) {
+    await p.locator("[data-testid=paperwork-more]").click();
+    await p.locator("[data-testid=paperwork-add-deal-open]").click();
+  } else {
+    await p.locator("[data-testid=record-more]").click();
+    await p.locator("[data-testid=more-add-deal]").click();
+  }
+  await p.locator("#deal-title").waitFor();
+}
+// The contact page's Reach card → More details, opened.
+async function contactDetails(page) {
+  const reach = page.locator("[data-testid=reach]");
+  const list = reach.locator("[data-testid=more-details-list]");
+  if (!(await list.isVisible())) await reach.locator("[data-testid=more-details]").click();
+  await list.waitFor();
+  return list;
+}
 function chip(page, name) {
   return page.getByRole("checkbox", { name, exact: true });
 }
@@ -160,7 +191,8 @@ async function assertMenuInside(page, menu, what) {
   await page.getByRole("button", { name: "Save company" }).click();
   await page.waitForURL(/\/dashboard\/companies\/(?!new$)[a-z0-9]+$/);
   const acmeUrl = page.url();
-  const acmeDetails = page.locator("dl").first();
+  // The company page's Details card is folded (BDR redesign, Nov 11, 2026).
+  const acmeDetails = await companyDetails(page);
   for (const tag of ["MDU", "Hospitality", "Owner", "REIT"]) assert.ok(await acmeDetails.getByText(tag, { exact: true }).isVisible(), `${tag} on company page`);
   assert.ok(await acmeDetails.getByText("TX", { exact: true }).isVisible(), "'texas' saved as TX");
   const opts = await sql(
@@ -198,7 +230,8 @@ async function assertMenuInside(page, menu, what) {
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
   const danaUrl = page.url();
-  const danaDetails = page.locator("dl").first();
+  // The contact page's tags sit in Reach → More details (BDR redesign).
+  const danaDetails = await contactDetails(page);
   assert.ok(await danaDetails.getByText("Developer", { exact: true }).isVisible(), "tag added from the contact form shows on the contact");
   const acmeTypes = (await sql(`SELECT "companyTypes" FROM "Company" WHERE name='Acme Towers' AND "organizationId"=$1`, [org])).rows[0].companyTypes;
   assert.ok(acmeTypes.includes("Developer"), "saving the contact tagged the company");
@@ -209,7 +242,7 @@ async function assertMenuInside(page, menu, what) {
   await page.fill("#phone", "512-555-0199");
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
-  assert.ok(await page.locator("dl").first().getByText("Individual / Personal").isVisible());
+  assert.ok(await (await contactDetails(page)).getByText("Individual / Personal").isVisible());
 
   log("template download has the system's field names, contact first then company");
   const template = await page.request.get(`${BASE}/dashboard/contacts/import-template`);
@@ -352,8 +385,9 @@ async function assertMenuInside(page, menu, what) {
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 contacts", "needs attention: Ivy has no email and no phone");
   // Give Dana a deal, then the deal views light up.
   await page.goto(danaUrl);
-  await page.fill("[name=title]", "Lobby access control");
-  await page.fill("[name=value]", "2500");
+  await openAddDeal(page);
+  await page.fill("#deal-title", "Lobby access control");
+  await page.fill("#deal-value", "2500");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByText("Lobby access control").first().waitFor();
   await page.goto(`${BASE}/dashboard/contacts?deals=1`);
@@ -388,12 +422,17 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/companies`);
   await page.locator("tr", { hasText: "Big Co" }).getByRole("link", { name: "Big Co" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
-  await page.getByText("60 at this company").waitFor();
-  await page.getByText("Page 1 of 2").waitFor();
+  // The company page's people are "Who to call" since the BDR redesign
+  // (Nov 11, 2026): the first few, then Show all with the pages.
+  const people = page.locator("#people");
+  await people.getByText("60 people here").waitFor();
+  await people.getByTestId("who-show-all").click();
+  await people.getByText("Page 1 of 2").waitFor();
+  assert.equal(await people.getByTestId("person-row").count(), 50, "fifty to a page");
   await page.getByRole("link", { name: "Next people" }).click();
   await page.waitForURL(/people=2/);
-  await page.getByText("Page 2 of 2").waitFor();
-  assert.equal(await page.locator("#people li").count(), 10);
+  await people.getByText("Page 2 of 2").waitFor();
+  assert.equal(await people.getByTestId("person-row").count(), 10);
   await shot(page, "08-company-people-paged");
 
   log("audit fixes: Enter-key save with a typed company name keeps the company's tags; an untouched edit keeps them too");

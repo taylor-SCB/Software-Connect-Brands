@@ -518,6 +518,8 @@ async function login(page) {
   await page.fill("#name", "Quote Customer");
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new)[^/]+$/);
+  // New quote sits under the contact page's ⋯ More (BDR redesign, Nov 11, 2026).
+  await page.locator("[data-testid=record-more]").click();
   await page.getByRole("link", { name: "New quote" }).click();
   await page.waitForURL(/\/dashboard\/quotes\/new/);
   // Every quote lives on a deal now; type a new one.
