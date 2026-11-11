@@ -794,6 +794,55 @@ async function closeFilters(page) {
     "and it says so where the button is",
   );
 
+  log("audit fixes: the Agenda draws 60 a day with Showing 60 of N · Show all, and folds the day's done behind n done");
+  // Perf fix (Nov 11, 2026): a team's Agenda at 200,000 contacts drew
+  // 2,204 rows for today (1,144 open, 1,000 done) and took the browser past
+  // two seconds. A day reads 60 open entries, says how many more there are
+  // with a way to the day in Week, and folds its done ones.
+  {
+    const agendaToday = (
+      await sql(`SELECT to_char((now() AT TIME ZONE "timeZone")::date, 'YYYY-MM-DD') AS d FROM "Organization" WHERE id = $1`, [org])
+    ).rows[0].d;
+    const owner = (await sql(`SELECT id FROM "User" WHERE "organizationId" = $1 LIMIT 1`, [org])).rows[0].id;
+    await sql(
+      `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "startTime", "ownerId", "doneAt", "updatedAt")
+       SELECT 'evt_cap_' || g, $1, 'Call · Cap ' || lpad(g::text, 3, '0'), 'Call', $2::date,
+              lpad((7 + g / 12)::text, 2, '0') || ':' || lpad(((g % 12) * 5)::text, 2, '0'), $3,
+              CASE WHEN g > 70 THEN now() END, now()
+         FROM generate_series(1, 75) g`,
+      [org, agendaToday, owner],
+    );
+    await page.goto(`${BASE}/dashboard/calendar?view=agenda&scope=team`);
+    const todaySection = page.locator("[data-testid=agenda-today]");
+    await todaySection.waitFor();
+    const capRows = todaySection.locator('[data-testid=agenda-row][data-event-id^="evt_cap_"]');
+    assert.equal(await capRows.count(), 60, "60 of the 70 open ones are drawn");
+    assert.ok(Number(await todaySection.getAttribute("data-count")) >= 75, "the header counts every entry, drawn or not");
+    const firstIds = await capRows.evaluateAll((rows) => rows.slice(0, 2).map((row) => row.dataset.eventId));
+    assert.deepEqual(firstIds, ["evt_cap_1", "evt_cap_2"], "soonest first");
+    assert.equal(await capRows.locator("[data-testid=agenda-done-mark]").count(), 0, "no done row is drawn while folded");
+    const more = todaySection.locator("[data-testid=agenda-day-more]");
+    assert.match(await more.textContent(), /Showing 60 of \d+ · Show all/);
+    assert.ok(Number(await more.getAttribute("data-total")) >= 70);
+    const fold = todaySection.locator("[data-testid=agenda-done-fold]");
+    assert.match(await fold.textContent(), /\b5 done\b/);
+    assert.equal(await fold.getAttribute("aria-expanded"), "false");
+    await fold.click();
+    assert.equal(await fold.getAttribute("aria-expanded"), "true");
+    assert.equal(await todaySection.locator("[data-testid=agenda-row] [data-testid=agenda-done-mark]").count(), 5, "the 5 done open under the fold");
+    assert.equal(await todaySection.locator("[data-testid=agenda-done-more]").count(), 0, "5 is under the cap: no Show all for done");
+    await fold.click();
+    assert.equal(await todaySection.locator("[data-testid=agenda-done-mark]").count(), 0, "and fold away again");
+    // The rest of the Agenda is as it was: Today's Done button, the count.
+    assert.ok((await capRows.first().locator("[data-testid=agenda-done]").count()) === 1, "an open row still has Done");
+    await more.locator("[data-testid=agenda-day-more-all]").click();
+    await page.waitForURL((url) => url.searchParams.get("view") === "week" && url.searchParams.get("on") === agendaToday);
+    assert.equal(new URL(page.url()).searchParams.get("scope"), "team", "Show all keeps the filters");
+    await page.getByText("Call · Cap 070").first().waitFor(); // past the Agenda's 60
+    await shot(page, "agenda-cap-week");
+    await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND id LIKE 'evt_cap_%'`, [org]);
+  }
+
   log("cross-tenant: another workspace's event is not on this calendar");
   await sql(
     `INSERT INTO "Organization" (id,name,slug,status,"updatedAt")
