@@ -4,13 +4,32 @@ import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import type { PipelineColumn } from "@/lib/constants";
-import { dollarsToCents, formatCents, formatDate } from "@/lib/format";
+import {
+  ACTIVITY_OUTCOME_LABELS,
+  OUTCOMES_BY_TYPE,
+  type ActivityOutcomeValue,
+  type ActivityTypeValue,
+  type PipelineColumn,
+} from "@/lib/constants";
+import { dollarsToCents, formatCents } from "@/lib/format";
+import { shortDay, time12 } from "@/lib/health";
+import { LifecycleMeter } from "@/components/lifecycle-meter";
 import { LeadLabelPicker } from "@/components/lead-label-chip";
-import { IconCalendar, IconClock, IconFileText, IconPlus, IconX } from "@/components/icons";
-import { loadOpportunity, saveOpportunity, type OpportunityDetail, type OpportunityPerson } from "./opportunity-actions";
+import { IconCalendar, IconClock, IconFileText, IconMail, IconMessage, IconNote, IconPhone, IconPlus, IconX } from "@/components/icons";
+import { bookMeeting, logActivity } from "../contacts/actions";
+import {
+  loadOpportunity,
+  markMeetingHeld,
+  markMeetingNoShow,
+  rescheduleMeeting,
+  saveOpportunity,
+  type OpportunityDetail,
+  type OpportunityPerson,
+  type PanelMeeting,
+} from "./opportunity-actions";
 import { MoveMenu } from "./move-menu";
 import { FollowUpButton, MeetingSuggest, QuietBadge, SuggestedLabel } from "./ai-assist-ui";
+import { dayChips, TIMES, timeWords } from "./tile-line";
 
 type Role = OpportunityPerson["role"];
 const ROLES: { role: Role; label: string }[] = [
@@ -19,15 +38,22 @@ const ROLES: { role: Role; label: string }[] = [
   { role: "HIDDEN", label: "Do Not List" },
 ];
 
-// A tile opened (Oct 27, 2026): its name, lead label, rep, value, every
-// meeting date, and who is on it — Primary POC, Associated POC or Do Not
-// List, one each, with anyone else added from the contacts. Nothing is
-// written until Save.
+// A tile opened (Oct 27, 2026; BDR redesign, Nov 11, 2026). On top: the
+// full lifecycle meter with its reason and the one next step. Then its
+// name, stage, lead label and rep; the People, each with Call / Text /
+// Email / Log and the Primary POC / Associated POC / Do Not List switch
+// (one each, the other two grey out, one Primary); the meetings with their
+// time and note, upcoming first, each answerable (Held / No-show /
+// Reschedule) and + Book a meeting; the quotes. Nothing in the form is
+// written until Save, which shows only once something changed; the Stage
+// menu saves first. Logging, booking and the meeting answers save on
+// their own, each with Undo.
 export function OpportunityPanel({
   id,
   timeZone,
   onClose,
   onMove,
+  onSaved,
   ai = false,
   quietDays = null,
   suggestedLabel = null,
@@ -41,10 +67,13 @@ export function OpportunityPanel({
   onClose: () => void;
   // `saved` carries the name when the panel's edits were saved on the way.
   onMove: (column: PipelineColumn, saved?: { title: string }) => void;
+  // Something saved from inside the panel: "Saved · Undo" on the board.
+  onSaved?: (text: string, batchId?: string) => void;
 }) {
   const router = useRouter();
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
   const [title, setTitle] = useState("");
   const [leadLabel, setLeadLabel] = useState<string | null>(null);
   const [ownerId, setOwnerId] = useState("");
@@ -52,6 +81,8 @@ export function OpportunityPanel({
   // Each person's role; null is "nothing ticked yet" for someone just added.
   const [people, setPeople] = useState<(Omit<OpportunityPerson, "role"> & { role: Role | null })[]>([]);
   const [error, setError] = useState<string | undefined>();
+  const [logFor, setLogFor] = useState<{ contactId: string; type: ActivityTypeValue } | null>(null);
+  const [booking, setBooking] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -63,6 +94,8 @@ export function OpportunityPanel({
         return;
       }
       setDetail(result);
+      // A reload after a log or a meeting answer keeps what is being typed.
+      if (version > 0) return;
       setTitle(result.title);
       setLeadLabel(result.leadLabel);
       setOwnerId(result.ownerId ?? "");
@@ -72,7 +105,7 @@ export function OpportunityPanel({
     return () => {
       live = false;
     };
-  }, [id]);
+  }, [id, version]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -81,6 +114,13 @@ export function OpportunityPanel({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Something saved from inside: tell the board (with Undo), refresh both.
+  function saved(text: string, batchId?: string) {
+    onSaved?.(text, batchId);
+    router.refresh();
+    setVersion((n) => n + 1);
+  }
 
   // Ticking one of a person's three boxes greys the other two; unticking
   // frees them. There is one Primary: ticking it on someone moves the old
@@ -153,6 +193,42 @@ export function OpportunityPanel({
   const column = detail?.column === "ARCHIVED" ? "CONTRACT_SENT" : ((detail?.column ?? "MEETING_SET") as PipelineColumn);
   const isDeal = Boolean(detail?.deal && !["LEAD", "CONTACTED"].includes(detail.deal.stage));
   const primary = people.find((row) => row.role === "PRIMARY");
+  const dirty = unsaved();
+  const health = detail?.health ?? null;
+  const action = health?.meter.action ?? null;
+  // The meeting "Mark held" means: the latest one gone by with no answer,
+  // else the soonest still ahead.
+  const toHold =
+    detail?.meetings.filter((row) => !row.ahead && !row.outcome)[0] ?? detail?.meetings.find((row) => row.ahead) ?? null;
+  const latestQuote = detail?.deal?.quotes[0] ?? null;
+  const nextHref =
+    action?.key === "quote-yes" && latestQuote
+      ? `/dashboard/quotes/${latestQuote.id}`
+      : (action?.key === "signing-link" || action?.key === "deposit") && detail?.deal
+        ? `/dashboard/deals/tracker?dealId=${detail.deal.id}`
+        : undefined;
+  function runNext() {
+    if (!detail || !action) return;
+    if (action.key === "call" && primary) setLogFor({ contactId: primary.contactId, type: "PHONE_CALL" });
+    else if (action.key === "book") setBooking(true);
+    else if (action.key === "mark-held" && toHold) answerHeld(toHold.id);
+    else if (action.key === "start-quote") moveFromPanel("QUOTE_SENT");
+  }
+  const runnable = action && (["call", "book", "mark-held", "start-quote"].includes(action.key) || nextHref);
+
+  const [early, setEarly] = useState<{ meetingId: string; text: string } | null>(null);
+  function answerHeld(meetingId: string, isEarly = false) {
+    start(async () => {
+      const result = await markMeetingHeld(meetingId, { early: isEarly });
+      if (result.confirmEarly) {
+        setEarly({ meetingId, text: result.error ?? "Did it happen early?" });
+        return;
+      }
+      setEarly(null);
+      if (result.error) return setError(result.error);
+      saved(result.success ?? "Held", result.batchId);
+    });
+  }
 
   return createPortal(
     <div
@@ -184,25 +260,53 @@ export function OpportunityPanel({
               <p className="faint text-sm">{loadError ?? "Loading…"}</p>
             )}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm !px-1.5" data-testid="panel-close">
+          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm min-h-9 min-w-9 justify-center !px-1.5" data-testid="panel-close">
             <IconX size={14} />
           </button>
         </div>
 
         {detail && (
           <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+            {health && (
+              <section className="space-y-2.5" data-testid="panel-health">
+                <LifecycleMeter health={health} size="header" onNext={runnable ? runNext : undefined} nextHref={nextHref} testId="panel-meter" />
+                {action && runnable && (
+                  nextHref ? (
+                    <Link href={nextHref} className="btn btn-primary btn-sm min-h-11 w-full justify-center sm:w-auto" data-testid="panel-next">
+                      {action.label}
+                    </Link>
+                  ) : (
+                    <button type="button" onClick={runNext} disabled={pending} className="btn btn-primary btn-sm min-h-11 w-full justify-center sm:w-auto" data-testid="panel-next">
+                      {action.label}
+                    </button>
+                  )
+                )}
+                {early && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] p-2.5 text-sm" role="alert" data-testid="panel-early">
+                    <span className="min-w-0 flex-1">{early.text}</span>
+                    <button type="button" onClick={() => setEarly(null)} className="btn btn-ghost btn-sm min-h-9">
+                      No
+                    </button>
+                    <button type="button" onClick={() => answerHeld(early.meetingId, true)} className="btn btn-primary btn-sm min-h-9" data-testid="panel-early-yes">
+                      Yes, it happened
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
+
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
               <span className="flex items-center gap-1.5">
-                <span className="faint">Stage</span>
+                <span className="text-[var(--text-dim)]">Stage</span>
                 <MoveMenu current={column} archived={detail.column === "ARCHIVED"} locked={isDeal} onMove={moveFromPanel} />
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="faint">Lead label</span>
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[var(--text-dim)]">Lead label</span>
                 <LeadLabelPicker value={leadLabel} customLabels={detail.customLabels} onChange={setLeadLabel} />
                 {!leadLabel && <SuggestedLabel opportunityId={detail.id} rule={suggestedLabel} ai={ai} onAccept={setLeadLabel} />}
               </span>
               <label className="flex items-center gap-1.5">
-                <span className="faint">Rep</span>
+                <span className="text-[var(--text-dim)]">Rep</span>
                 <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)} className="select input-sm w-44" data-testid="panel-rep">
                   <option value="">Unassigned</option>
                   {detail.users.map((user) => (
@@ -246,7 +350,7 @@ export function OpportunityPanel({
 
             {detail.deal && isDeal && (
               <label className="flex items-center justify-between gap-3 text-xs">
-                <span className="faint">Value{detail.deal.hasQuotes ? " (from its quotes)" : ""}</span>
+                <span className="text-[var(--text-dim)]">Value{detail.deal.hasQuotes ? " (from its quotes)" : ""}</span>
                 {detail.deal.hasQuotes ? (
                   <span className="num text-sm font-medium">{formatCents(detail.deal.valueCents)}</span>
                 ) : (
@@ -264,54 +368,59 @@ export function OpportunityPanel({
             <section>
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-sm font-semibold">People</h3>
-                <span className="faint text-[0.7rem]">One box each · one Primary</span>
+                <span className="text-xs text-[var(--text-dim)]">One box each · one Primary</span>
               </div>
-              <div className="overflow-x-auto">
-                {/* On a phone (UX review, Nov 10, 2026) the headers wrap
-                    and the cells tighten so Do Not List stays on screen. */}
-                <table className="table text-xs max-sm:[&_td]:px-1.5 max-sm:[&_th]:px-1.5 max-sm:[&_th]:tracking-normal max-sm:[&_th]:whitespace-normal" data-testid="panel-people">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
+              <ul className="divide-y divide-[var(--hairline-3)]" data-testid="panel-people">
+                {people.map((row) => (
+                  <li key={row.contactId} className="min-w-0 py-2.5" data-testid="panel-person" data-name={row.name}>
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+                      <div className="min-w-0 flex-1">
+                        <Link href={`/dashboard/contacts/${row.contactId}`} className="link block text-sm font-medium [overflow-wrap:anywhere]">
+                          {row.name}
+                        </Link>
+                        <span className="block text-xs text-[var(--text-dim)] [overflow-wrap:anywhere]">
+                          {[row.company, row.phone, row.fromMeeting ? "from the meeting" : "added"].filter(Boolean).join(" · ")}
+                        </span>
+                      </div>
+                      <ReachButtons
+                        person={row}
+                        onLog={() => setLogFor(logFor?.contactId === row.contactId ? null : { contactId: row.contactId, type: "PHONE_CALL" })}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" role="group" aria-label={`${row.name}: role on this opportunity`}>
                       {ROLES.map((item) => (
-                        <th key={item.role} className="text-center">
+                        <label key={item.role} className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 text-xs">
+                          {/* A greyed-out box is the browser's own disabled look,
+                              as everywhere else; an extra 30% fade made it all
+                              but vanish on white (UX review). */}
+                          <input
+                            type="checkbox"
+                            checked={row.role === item.role}
+                            disabled={row.role !== null && row.role !== item.role}
+                            onChange={() => tick(row.contactId, item.role)}
+                            aria-label={`${row.name}: ${item.label}`}
+                            className="h-4 w-4 accent-[var(--brand)]"
+                            data-testid={`role-${item.role}`}
+                          />
                           {item.label}
-                        </th>
+                        </label>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {people.map((row) => (
-                      <tr key={row.contactId} data-testid="panel-person" data-name={row.name}>
-                        <td className="max-w-[12rem]">
-                          <Link href={`/dashboard/contacts/${row.contactId}`} className="link block truncate max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">
-                            {row.name}
-                          </Link>
-                          <span className="faint block text-[0.65rem]">
-                            {[row.company, row.fromMeeting ? "from the meeting" : "added"].filter(Boolean).join(" · ")}
-                          </span>
-                        </td>
-                        {ROLES.map((item) => (
-                          <td key={item.role} className="text-center">
-                            {/* A greyed-out box is the browser's own disabled look,
-                                as everywhere else; an extra 30% fade made it all
-                                but vanish on white (UX review). */}
-                            <input
-                              type="checkbox"
-                              checked={row.role === item.role}
-                              disabled={row.role !== null && row.role !== item.role}
-                              onChange={() => tick(row.contactId, item.role)}
-                              aria-label={`${row.name}: ${item.label}`}
-                              className="h-4 w-4 accent-[var(--brand)]"
-                              data-testid={`role-${item.role}`}
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </div>
+                    {logFor?.contactId === row.contactId && (
+                      <PanelLog
+                        contactId={row.contactId}
+                        name={row.name}
+                        type={logFor.type}
+                        onDone={(text, batchId) => {
+                          setLogFor(null);
+                          saved(text, batchId);
+                        }}
+                        onCancel={() => setLogFor(null)}
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
               <AddPerson
                 exclude={people.map((row) => row.contactId)}
                 onAdd={(person) => setPeople((rows) => [...rows, { ...person, role: "ASSOCIATED", fromMeeting: false }])}
@@ -319,16 +428,52 @@ export function OpportunityPanel({
             </section>
 
             <section>
-              <h3 className="mb-2 text-sm font-semibold">Meetings</h3>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Meetings</h3>
+                {primary && !booking && (
+                  <button type="button" onClick={() => setBooking(true)} className="link inline-flex min-h-9 items-center gap-1 text-xs" data-testid="panel-book">
+                    <IconPlus size={12} />
+                    Book a meeting
+                  </button>
+                )}
+              </div>
+              {booking && primary && (
+                <BookForm
+                  today={detail.today}
+                  primary={primary}
+                  others={people.filter((row) => row.contactId !== primary.contactId && row.role !== "HIDDEN")}
+                  opportunityId={detail.id}
+                  onDone={(text, batchId) => {
+                    setBooking(false);
+                    saved(text, batchId);
+                  }}
+                  onCancel={() => setBooking(false)}
+                />
+              )}
               {detail.meetings.length === 0 ? (
-                <p className="faint text-xs">No meeting logged on this one.</p>
+                <p className="text-xs text-[var(--text-dim)]">No meeting logged on this one.</p>
               ) : (
-                <ul className="space-y-1 text-xs" data-testid="panel-meetings">
+                <ul className="space-y-2" data-testid="panel-meetings">
                   {detail.meetings.map((meeting) => (
-                    <li key={meeting.id} className="flex items-center gap-1.5">
-                      <IconCalendar size={12} className="faint" />
-                      {formatDate(meeting.on, timeZone)}
-                    </li>
+                    <MeetingRow
+                      key={meeting.id}
+                      meeting={meeting}
+                      today={detail.today}
+                      onHeld={() => answerHeld(meeting.id)}
+                      onNoShow={() =>
+                        start(async () => {
+                          const result = await markMeetingNoShow(meeting.id);
+                          if (result.error) return setError(result.error);
+                          saved(result.success ?? "No-show", result.batchId);
+                        })
+                      }
+                      onReschedule={async (on, time) => {
+                        const result = await rescheduleMeeting(meeting.id, { on, time });
+                        if (result.error) return result.error;
+                        saved(result.success ?? "Rescheduled", result.batchId);
+                        return null;
+                      }}
+                    />
                   ))}
                 </ul>
               )}
@@ -354,17 +499,21 @@ export function OpportunityPanel({
                     <li key={quote.id}>
                       <Link href={`/dashboard/quotes/${quote.id}`} className="link flex items-center gap-1.5">
                         <IconFileText size={12} />
-                        <span className="num">QUO-{quote.number}</span>
+                        <span className="docnum">QUO-{quote.number}</span>
                         <span className="truncate">{quote.title}</span>
                       </Link>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="faint text-xs">No quotes yet.</p>
+                <p className="text-xs text-[var(--text-dim)]">No quotes yet.</p>
               )}
               {detail.deal && (
-                <Link href={`/dashboard/deals/tracker?dealId=${detail.deal.id}`} className="faint mt-2 flex items-center gap-1 text-xs hover:text-[var(--text)]">
+                <Link
+                  href={`/dashboard/deals/tracker?dealId=${detail.deal.id}`}
+                  className="mt-2 flex items-center gap-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)]"
+                  data-testid="panel-coordinator"
+                >
                   <IconClock size={12} />
                   Contract Coordinator
                 </Link>
@@ -374,19 +523,388 @@ export function OpportunityPanel({
         )}
 
         <div className="border-t border-[var(--hairline-3)] px-5 py-3">
-          {error && <p className="mb-2 text-xs text-[var(--danger)]" data-testid="panel-error">{error}</p>}
+          {error && (
+            <p className="mb-2 text-xs text-[var(--danger)]" data-testid="panel-error">
+              {error}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="btn btn-ghost btn-sm">
-              Cancel
+            <button type="button" onClick={onClose} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-cancel">
+              {dirty ? "Cancel" : "Close"}
             </button>
-            <button type="button" onClick={() => save()} disabled={!detail || pending} className="btn btn-primary btn-sm" data-testid="panel-save">
-              {pending ? "Saving…" : "Save"}
-            </button>
+            {dirty && (
+              <button type="button" onClick={() => save()} disabled={!detail || pending} className="btn btn-primary btn-sm min-h-9" data-testid="panel-save">
+                {pending ? "Saving…" : "Save"}
+              </button>
+            )}
           </div>
         </div>
       </aside>
     </div>,
     document.body,
+  );
+}
+
+/* ------------------------------ People rows ------------------------------ */
+
+function ReachButtons({ person, onLog }: { person: { name: string; phone: string | null; email: string | null }; onLog: () => void }) {
+  const button = "btn btn-ghost btn-sm min-h-9 min-w-9 justify-center !px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+  const digits = person.phone?.replace(/[^\d+]/g, "") ?? "";
+  return (
+    <div className="flex shrink-0 items-center gap-1" data-testid="panel-reach">
+      {digits ? (
+        <>
+          <a href={`tel:${digits}`} className={button} aria-label={`Call ${person.name}`} title={`Call ${person.phone}`} data-testid="panel-call">
+            <IconPhone size={13} />
+            <span className="max-sm:sr-only">Call</span>
+          </a>
+          <a href={`sms:${digits}`} className={button} aria-label={`Text ${person.name}`} data-testid="panel-text">
+            <IconMessage size={13} />
+            <span className="max-sm:sr-only">Text</span>
+          </a>
+        </>
+      ) : null}
+      {person.email && (
+        <a href={`mailto:${person.email}`} className={button} aria-label={`Email ${person.name}`} title={person.email} data-testid="panel-email">
+          <IconMail size={13} />
+          <span className="max-sm:sr-only">Email</span>
+        </a>
+      )}
+      <button type="button" onClick={onLog} className={button} aria-label={`Log a touch with ${person.name}`} data-testid="panel-log">
+        <IconNote size={13} />
+        <span className="max-sm:sr-only">Log</span>
+      </button>
+    </div>
+  );
+}
+
+const LOG_TYPES: { type: ActivityTypeValue; label: string }[] = [
+  { type: "PHONE_CALL", label: "Call" },
+  { type: "TEXT", label: "Text" },
+  { type: "EMAIL", label: "Email" },
+  { type: "MEETING", label: "Meeting" },
+];
+
+// "How did it go?" in the panel: the kind, one outcome chip, an optional
+// note. logActivity does the rest (Connected on a talk, a reply or a held
+// meeting; Meeting Completed on a held one) and hands back Undo.
+function PanelLog({
+  contactId,
+  name,
+  type: initial,
+  onDone,
+  onCancel,
+}: {
+  contactId: string;
+  name: string;
+  type: ActivityTypeValue;
+  onDone: (text: string, batchId?: string) => void;
+  onCancel: () => void;
+}) {
+  const [type, setType] = useState<ActivityTypeValue>(initial);
+  const [outcome, setOutcome] = useState<ActivityOutcomeValue | null>(null);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const chip = (active: boolean) =>
+    `min-h-9 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
+      active ? "border-[var(--brand)] bg-[var(--hover)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
+    }`;
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-[var(--border)] p-2.5" data-testid="panel-log-form">
+      <p className="text-xs font-semibold">How did it go with {name}?</p>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="What kind">
+        {LOG_TYPES.map((row) => (
+          <button
+            key={row.type}
+            type="button"
+            role="radio"
+            aria-checked={type === row.type}
+            onClick={() => {
+              setType(row.type);
+              setOutcome(null);
+            }}
+            className={chip(type === row.type)}
+            data-testid={`panel-log-type-${row.type}`}
+          >
+            {row.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="How it went">
+        {OUTCOMES_BY_TYPE[type].map((value) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={outcome === value}
+            onClick={() => setOutcome(outcome === value ? null : value)}
+            className={chip(outcome === value)}
+            data-testid={`panel-log-outcome-${value}`}
+          >
+            {ACTIVITY_OUTCOME_LABELS[value]}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        rows={2}
+        maxLength={5000}
+        placeholder="What happened? (optional)"
+        aria-label="What happened"
+        className="input text-sm"
+        data-testid="panel-log-note"
+      />
+      {error && (
+        <p className="text-xs text-[var(--danger)]" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm min-h-9">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={pending || (!outcome && !note.trim())}
+          onClick={() =>
+            start(async () => {
+              const form = new FormData();
+              form.set("contactId", contactId);
+              form.set("type", type);
+              form.set("body", note.trim());
+              if (outcome) form.set("outcome", outcome);
+              const result = await logActivity({}, form);
+              if (result.error) {
+                setError(result.error);
+                return;
+              }
+              onDone(`Logged${outcome ? ` · ${ACTIVITY_OUTCOME_LABELS[outcome]}` : ""}`, result.batchId);
+            })
+          }
+          className="btn btn-primary btn-sm min-h-9"
+          data-testid="panel-log-save"
+        >
+          {pending ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- Meetings -------------------------------- */
+
+function meetingWhen(meeting: PanelMeeting) {
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(
+    new Date(`${meeting.day}T12:00:00Z`),
+  );
+  const time = time12(meeting.time);
+  return time ? `${day}, ${time}` : day;
+}
+
+function MeetingRow({
+  meeting,
+  today,
+  onHeld,
+  onNoShow,
+  onReschedule,
+}: {
+  meeting: PanelMeeting;
+  today: string;
+  onHeld: () => void;
+  onNoShow: () => void;
+  onReschedule: (on: string, time: string | null) => Promise<string | null>;
+}) {
+  const [moving, setMoving] = useState(false);
+  const state = meeting.outcome === "HELD" ? "Held" : meeting.outcome === "NO_SHOW" ? "No-show" : meeting.ahead ? "Coming up" : "How did it go?";
+  return (
+    <li className="rounded-lg border border-[var(--hairline-3)] p-2.5 text-xs" data-testid="panel-meeting" data-state={state}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <IconCalendar size={12} className="text-[var(--text-dim)]" />
+        <span className="font-medium" data-testid="panel-meeting-when">
+          {meetingWhen(meeting)}
+        </span>
+        {meeting.where && <span className="text-[var(--text-dim)]">· {meeting.where}</span>}
+        <span className={`ml-auto ${state === "How did it go?" ? "font-semibold text-[var(--text)]" : "text-[var(--text-dim)]"}`}>{state}</span>
+      </div>
+      {meeting.note && <p className="mt-1 line-clamp-3 whitespace-pre-line text-[var(--text-dim)]">{meeting.note}</p>}
+      {meeting.outcome !== "HELD" && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {!meeting.ahead && !meeting.outcome && (
+            <>
+              <button type="button" onClick={onHeld} className="btn btn-primary btn-sm min-h-9" data-testid="panel-meeting-held">
+                Held
+              </button>
+              <button type="button" onClick={onNoShow} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-meeting-noshow">
+                No-show
+              </button>
+            </>
+          )}
+          {meeting.ahead && (
+            <button type="button" onClick={onHeld} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-meeting-held">
+              It happened early
+            </button>
+          )}
+          <button type="button" onClick={() => setMoving(!moving)} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-meeting-reschedule">
+            Reschedule
+          </button>
+        </div>
+      )}
+      {moving && (
+        <DayTimePicker
+          today={today}
+          initialTime={meeting.time}
+          saveLabel={(on) => `Move to ${shortDay(on)}`}
+          onSave={async (on, time) => {
+            const problem = await onReschedule(on, time);
+            if (!problem) setMoving(false);
+            return problem;
+          }}
+          onCancel={() => setMoving(false)}
+        />
+      )}
+    </li>
+  );
+}
+
+// "+ Book a meeting": day and time chips, who else from the people on it,
+// booked on this opportunity (bookMeeting: Meeting · <name> on the
+// calendar, Meeting Set, the booker kept on the meeting).
+function BookForm({
+  today,
+  primary,
+  others,
+  opportunityId,
+  onDone,
+  onCancel,
+}: {
+  today: string;
+  primary: { contactId: string; name: string };
+  others: { contactId: string; name: string }[];
+  opportunityId: string;
+  onDone: (text: string, batchId?: string) => void;
+  onCancel: () => void;
+}) {
+  const [withIds, setWithIds] = useState<string[]>([]);
+  return (
+    <div className="mb-2 space-y-2 rounded-lg border border-[var(--border)] p-2.5" data-testid="panel-book-form">
+      <p className="text-xs font-semibold">Book a meeting with {primary.name}</p>
+      {others.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" aria-label="Who else">
+          {others.map((row) => {
+            const on = withIds.includes(row.contactId);
+            return (
+              <button
+                key={row.contactId}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setWithIds(on ? withIds.filter((id) => id !== row.contactId) : [...withIds, row.contactId])}
+                className={`min-h-9 rounded-lg border px-2.5 text-xs [@media(pointer:coarse)]:min-h-11 ${on ? "border-[var(--brand)] bg-[var(--hover)]" : "border-[var(--border)] text-[var(--text-dim)]"}`}
+              >
+                + {row.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <DayTimePicker
+        today={today}
+        initialTime="10:00"
+        saveLabel={(on) => `Book ${shortDay(on)}`}
+        onCancel={onCancel}
+        onSave={async (on, time) => {
+          const result = await bookMeeting({
+            contactId: primary.contactId,
+            on,
+            ...(time ? { time } : {}),
+            withContactIds: withIds,
+            opportunity: opportunityId,
+          });
+          if (result.error) return result.error;
+          onDone(result.success ?? "Booked", result.batchId);
+          return null;
+        }}
+      />
+    </div>
+  );
+}
+
+function DayTimePicker({
+  today,
+  initialTime,
+  saveLabel,
+  onSave,
+  onCancel,
+}: {
+  today: string;
+  initialTime: string | null;
+  saveLabel: (on: string) => string;
+  onSave: (on: string, time: string | null) => Promise<string | null>;
+  onCancel: () => void;
+}) {
+  const chips = dayChips(today);
+  const [on, setOn] = useState(chips[0].on);
+  const [time, setTime] = useState<string | null>(initialTime ?? "10:00");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const chip = (active: boolean) =>
+    `min-h-9 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
+      active ? "border-[var(--brand)] bg-[var(--hover)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
+    }`;
+  return (
+    <div className="mt-2 space-y-2" data-testid="day-time-picker">
+      <div className="flex flex-wrap gap-1.5">
+        {chips.map((row) => (
+          <button key={row.label} type="button" onClick={() => setOn(row.on)} className={chip(on === row.on)} data-testid="picker-day">
+            {row.label}
+          </button>
+        ))}
+        <input
+          type="date"
+          value={on}
+          min={today}
+          onChange={(event) => event.target.value && setOn(event.target.value)}
+          aria-label="Pick a day"
+          className="input input-sm w-auto"
+          data-testid="picker-date"
+        />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {TIMES.map((value) => (
+          <button key={value} type="button" onClick={() => setTime(value)} className={chip(time === value)} data-testid="picker-time">
+            {timeWords(value)}
+          </button>
+        ))}
+        <button type="button" onClick={() => setTime(null)} className={chip(time === null)}>
+          No time
+        </button>
+      </div>
+      {error && (
+        <p className="text-xs text-[var(--danger)]" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm min-h-9">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              const problem = await onSave(on, time);
+              if (problem) setError(problem);
+            })
+          }
+          className="btn btn-primary btn-sm min-h-9"
+          data-testid="picker-save"
+        >
+          {pending ? "Saving…" : saveLabel(on)}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -424,7 +942,7 @@ function AddPerson({
 
   if (!open) {
     return (
-      <button type="button" onClick={() => setOpen(true)} className="link mt-2 inline-flex items-center gap-1 text-xs" data-testid="panel-add-person">
+      <button type="button" onClick={() => setOpen(true)} className="link mt-2 inline-flex min-h-9 items-center gap-1 text-xs" data-testid="panel-add-person">
         <IconPlus size={12} />
         Add contact
       </button>
@@ -443,7 +961,7 @@ function AddPerson({
         data-testid="panel-add-search"
       />
       <ul className="mt-1 max-h-48 overflow-y-auto">
-        {query.trim().length >= 2 && shown.length === 0 && <li className="faint px-2 py-1.5 text-xs">Nobody new matches.</li>}
+        {query.trim().length >= 2 && shown.length === 0 && <li className="px-2 py-1.5 text-xs text-[var(--text-dim)]">Nobody new matches.</li>}
         {shown.map((row) => (
           <li key={row.id}>
             <button
@@ -457,12 +975,12 @@ function AddPerson({
               data-testid="panel-add-result"
             >
               <span className="font-medium">{row.name}</span>
-              <span className="faint">{[row.company, row.email, row.phone].filter(Boolean).join(" · ")}</span>
+              <span className="text-[var(--text-dim)]">{[row.company, row.email, row.phone].filter(Boolean).join(" · ")}</span>
             </button>
           </li>
         ))}
       </ul>
-      <button type="button" onClick={() => setOpen(false)} className="link mt-1 text-xs">
+      <button type="button" onClick={() => setOpen(false)} className="link mt-1 min-h-9 text-xs">
         Done adding
       </button>
     </div>

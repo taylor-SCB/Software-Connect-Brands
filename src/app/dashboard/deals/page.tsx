@@ -2,11 +2,11 @@ import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/format";
-import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
+import { dealValueCents, isOpenStage, pickPrimaryQuote, QUOTES_FOR_VALUE } from "@/lib/deals";
+import { computeQuoteTotals } from "@/lib/quote-math";
 import { PageHeader, Card, EmptyState } from "@/components/ui";
-import { IconTrending, IconPlus, IconClock } from "@/components/icons";
+import { IconTrending } from "@/components/icons";
 import { loadWorkspaceUsers } from "@/lib/workspace-users";
-import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { sweepStaleContracts } from "@/lib/status";
 import { opportunityColumn, reconcileOpportunities } from "@/lib/opportunities";
@@ -15,28 +15,84 @@ import { cleanSearch } from "@/lib/list-params";
 import { goneQuietOpportunities } from "@/lib/gone-quiet";
 import { ruleLeadLabels } from "@/lib/ai-assist";
 import { aiConfigured } from "@/lib/ai";
-import type { Prisma } from "@/generated/prisma/client";
+import { healthSettings, loadOpportunityHealth } from "@/lib/health-load";
+import { zoneDay } from "@/lib/health";
+import { Prisma } from "@/generated/prisma/client";
 import { PipelineBoard, type BoardTile } from "./pipeline-board";
 import { PipelineFilters } from "./pipeline-filters";
+import { PipelineMore } from "./pipeline-more";
+import { groupOf, meetingFocus, meetingSortKey, tileAction, tileLine, type TileMeeting } from "./tile-line";
 
 // The Pipeline (Sept 30, 2026; one tile per opportunity since Oct 27,
-// 2026). It starts at Meeting Set. An opportunity is a sale being worked:
-// the meeting or meetings that set it and the people in them, then the one
+// 2026; the BDR redesign's Release 1 tiles and Release 7, Nov 11, 2026).
+// It starts at Meeting Set. An opportunity is a sale being worked: the
+// meeting or meetings that set it and the people in them, then the one
 // deal it turns into from Quote Sent on. See src/lib/opportunities.ts.
+//
+// The bar: Mine | Everyone (Members open on Mine, approved decision 17;
+// the choice is in the address bar and remembered on User.uiPrefs as
+// pipelineScope), Search, Gone quiet, Needs a decision (Meeting Set tiles
+// whose meeting has passed with none ahead), Lead label. Show archived,
+// Contract Coordinator and New quote sit under the header's ⋯.
+
+type Scope = "mine" | "all";
+
+function scopeFrom(param: string | undefined, prefs: unknown, role: string): Scope {
+  if (param === "mine" || param === "all") return param;
+  const saved = prefs && typeof prefs === "object" && !Array.isArray(prefs) ? (prefs as Record<string, unknown>).pipelineScope : null;
+  if (saved === "mine" || saved === "all") return saved;
+  return role === "MEMBER" ? "mine" : "all";
+}
+
+// Meeting Set tiles whose meeting has passed with nothing ahead: the
+// "Happened — how did it go?" group and the Needs a decision filter, the
+// same rule as meetingFocus() in tile-line.ts, counted for the whole
+// scope (search and labels don't change the count, as with Gone quiet).
+async function decisionOpportunityIds(organizationId: string, mineOf: string | null) {
+  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT o.id
+      FROM "Opportunity" o
+      LEFT JOIN "Deal" d ON d.id = o."dealId"
+     WHERE o."organizationId" = ${organizationId}
+       AND o.stage = 'MEETING_SET'
+       AND (d.id IS NULL OR d.stage NOT IN ('QUOTE_SENT', 'CONTRACT_SENT', 'WON', 'LOST', 'ARCHIVED'))
+       ${mineOf ? Prisma.sql`AND (CASE WHEN d.id IS NULL THEN o."ownerId" ELSE d."ownerId" END) = ${mineOf}` : Prisma.empty}
+       AND EXISTS (SELECT 1 FROM "OpportunityMeeting" m WHERE m."opportunityId" = o.id AND m."on" <= now())
+       AND NOT EXISTS (
+         SELECT 1 FROM "OpportunityMeeting" m
+           LEFT JOIN "Activity" a ON a.id = m."activityId"
+          WHERE m."opportunityId" = o.id AND m."on" > now()
+            AND m.outcome IS NULL AND (a.outcome IS NULL OR a.outcome NOT IN ('HELD', 'NO_SHOW'))
+       )`);
+  return new Set(rows.map((row) => row.id));
+}
+
+function initialsOf(name: string | null) {
+  if (!name) return "";
+  const words = name.replace(/\(removed\)/, "").trim().split(/\s+/).filter(Boolean);
+  return ((words[0]?.[0] ?? "") + (words.length > 1 ? (words.at(-1)?.[0] ?? "") : "")).toUpperCase();
+}
+
 export default async function DealsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string; q?: string; label?: string | string[]; quiet?: string }>;
+  searchParams: Promise<{ archived?: string; q?: string; label?: string | string[]; quiet?: string; decide?: string; scope?: string }>;
 }) {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId, role } = await requireSession();
   const params = await searchParams;
   const showArchived = params.archived === "1";
   // "Gone quiet" (Nov 10, 2026): only the open opportunities nobody has
   // touched in the workspace's quietDays.
   const quietOnly = params.quiet === "1";
+  const decideOnly = params.decide === "1";
   const q = cleanSearch(params.q ?? "").slice(0, 80);
   const labels = (Array.isArray(params.label) ? params.label : params.label ? [params.label] : []).map((label) => label.slice(0, 60));
-  const timeZone = await getTimeZone();
+  const [settings, me] = await Promise.all([
+    healthSettings(organizationId),
+    prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } }),
+  ]);
+  const scope = scopeFrom(params.scope, me?.uiPrefs, role);
+  const timeZone = settings.timeZone;
   const today = todayIso(timeZone);
 
   // The app's own clock for the 90 / 180-day contract rule, then the
@@ -45,11 +101,32 @@ export default async function DealsPage({
   await sweepStaleContracts(organizationId);
   await reconcileOpportunities(organizationId);
 
-  const quiet = await goneQuietOpportunities(organizationId, { limit: 1000 });
+  const mineWhere: Prisma.OpportunityWhereInput = {
+    OR: [{ dealId: null, ownerId: userId }, { deal: { ownerId: userId } }],
+  };
+  const [quiet, decision] = await Promise.all([
+    goneQuietOpportunities(organizationId, { limit: 1000 }),
+    decisionOpportunityIds(organizationId, scope === "mine" ? userId : null),
+  ]);
   const quietById = new Map(quiet.opportunities.map((row) => [row.id, row.days]));
+  // Gone quiet's count is goneQuietOpportunities' own list, inside Mine
+  // when Mine is on.
+  const quietInScope =
+    scope === "mine" && quietById.size
+      ? new Set(
+          (
+            await prisma.opportunity.findMany({
+              where: { AND: [{ organizationId, id: { in: [...quietById.keys()] } }, mineWhere] },
+              select: { id: true },
+            })
+          ).map((row) => row.id),
+        )
+      : new Set(quietById.keys());
 
   const and: Prisma.OpportunityWhereInput[] = [{ organizationId }];
-  if (quietOnly) and.push({ id: { in: [...quietById.keys()] } });
+  if (scope === "mine") and.push(mineWhere);
+  if (quietOnly) and.push({ id: { in: [...quietInScope] } });
+  if (decideOnly) and.push({ id: { in: [...decision] } });
   if (!showArchived) and.push({ OR: [{ dealId: null }, { deal: { stage: { not: "ARCHIVED" } } }] });
   if (q) {
     and.push({
@@ -92,17 +169,25 @@ export default async function DealsPage({
           select: {
             id: true,
             stage: true,
+            stageChangedAt: true,
             ownerId: true,
             valueCents: true,
-            quotes: { select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true }, orderBy: { createdAt: "desc" } },
+            quotes: {
+              select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true, sentAt: true },
+              orderBy: { createdAt: "desc" },
+            },
+            contracts: { where: { status: "SENT", payable: false }, select: { sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
           },
         },
         contacts: {
           where: { role: { not: "HIDDEN" } },
           orderBy: { createdAt: "asc" },
-          select: { role: true, contact: { select: { id: true, name: true, company: { select: { name: true } } } } },
+          select: {
+            role: true,
+            contact: { select: { id: true, name: true, phone: true, mobile: true, company: { select: { name: true } } } },
+          },
         },
-        meetings: { orderBy: { on: "desc" }, select: { on: true } },
+        meetings: { orderBy: { on: "desc" }, select: { id: true, on: true, outcome: true, activityId: true, eventId: true } },
       },
     }),
     loadWorkspaceUsers(organizationId),
@@ -111,46 +196,109 @@ export default async function DealsPage({
     prisma.opportunity.count({ where: { organizationId }, take: 1 }),
   ]);
 
-  // The faint suggested label on tiles with none, from the rules alone;
-  // the AI is only asked when someone presses "Suggest label".
-  const suggested = await ruleLeadLabels(
-    organizationId,
-    opportunities.filter((row) => !row.leadLabel).map((row) => row.id),
-  );
+  // Each meeting's day and time come from its calendar entry when it has
+  // one (a booked meeting with no time stays untimed), and how it went
+  // from the history line it was logged as. Two batched reads.
+  const eventIds = [...new Set(opportunities.flatMap((row) => row.meetings.map((meeting) => meeting.eventId)).filter((id): id is string => Boolean(id)))];
+  const activityIds = [
+    ...new Set(opportunities.flatMap((row) => row.meetings.map((meeting) => meeting.activityId)).filter((id): id is string => Boolean(id))),
+  ];
+  const ids = opportunities.map((row) => row.id);
+  const [events, activities, health, suggested] = await Promise.all([
+    eventIds.length
+      ? prisma.calendarEvent.findMany({ where: { organizationId, id: { in: eventIds } }, select: { id: true, startOn: true, startTime: true } })
+      : [],
+    activityIds.length
+      ? prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, outcome: true } })
+      : [],
+    loadOpportunityHealth(organizationId, ids, { settings }),
+    // The faint suggested label for a tile with none, from the rules
+    // alone; it shows in the panel (the AI is only asked on "Suggest label").
+    ruleLeadLabels(
+      organizationId,
+      opportunities.filter((row) => !row.leadLabel).map((row) => row.id),
+    ),
+  ]);
+  const eventById = new Map(events.map((row) => [row.id, row]));
+  const outcomeOfActivity = new Map(activities.map((row) => [row.id, row.outcome]));
 
-  // A meeting booked ahead is the next one, never the "last" one (UX
-  // review, Nov 10, 2026): the tile names the newest meeting that has
-  // happened and the soonest one still to come, on the same clock as
-  // gone quiet (src/lib/gone-quiet.ts).
   const now = new Date();
   const tiles: BoardTile[] = opportunities.map((row) => {
-    const held = row.meetings.filter((meeting) => meeting.on <= now);
-    const booked = row.meetings.filter((meeting) => meeting.on > now);
     const people = row.contacts
-      .map((link) => ({ id: link.contact.id, name: link.contact.name, company: link.contact.company?.name ?? null, primary: link.role === "PRIMARY" }))
+      .map((link) => ({
+        id: link.contact.id,
+        name: link.contact.name,
+        company: link.contact.company?.name ?? null,
+        primary: link.role === "PRIMARY",
+        phone: link.contact.mobile || link.contact.phone || null,
+      }))
       .sort((a, b) => Number(b.primary) - Number(a.primary));
     const ownerId = row.deal ? row.deal.ownerId : row.ownerId;
+    const ownerName = users.find((user) => user.id === ownerId)?.name ?? row.owner?.name ?? null;
+    const column = opportunityColumn(row);
+
+    const meetings: TileMeeting[] = row.meetings.map((meeting) => {
+      const event = meeting.eventId ? eventById.get(meeting.eventId) : undefined;
+      const logged = meeting.activityId ? outcomeOfActivity.get(meeting.activityId) : null;
+      const outcome = meeting.outcome ?? logged ?? null;
+      return {
+        id: meeting.id,
+        at: meeting.on.toISOString(),
+        day: event ? event.startOn.toISOString().slice(0, 10) : zoneDay(meeting.on, timeZone),
+        time: event?.startTime ?? null,
+        outcome: outcome === "HELD" || outcome === "NO_SHOW" ? outcome : null,
+      };
+    });
+    const focus = column === "MEETING_SET" ? meetingFocus(meetings, now) : null;
+    const lastMet = meetings.filter((meeting) => Date.parse(meeting.at) <= now.getTime() && meeting.outcome !== "NO_SHOW")[0] ?? null;
+
+    const deal = row.deal;
+    const valueCents = deal ? dealValueCents(deal) : 0;
+    const sent = deal?.quotes.find((quote) => quote.status === "SENT" && quote.sentAt);
+    const draft = deal && !deal.quotes.some((quote) => quote.status !== "DRAFT") ? pickPrimaryQuote(deal.quotes) : undefined;
+    const tileHealth = health.get(row.id) ?? null;
+    const line = tileLine({
+      column,
+      focus,
+      lastMet,
+      today,
+      quietDays: quietById.get(row.id) ?? null,
+      valueCents,
+      sentQuote: sent ? { cents: computeQuoteTotals(sent.lineItems, sent).totalCents, day: zoneDay(sent.sentAt!, timeZone) } : null,
+      draftQuote: draft ? { cents: computeQuoteTotals(draft.lineItems, draft).totalCents } : null,
+      contractSentDay: deal?.contracts[0]?.sentAt ? zoneDay(deal.contracts[0].sentAt, timeZone) : null,
+      stageDay: deal ? zoneDay(deal.stageChangedAt, timeZone) : null,
+      owes: tileHealth?.owes?.text ?? null,
+      closedReason: tileHealth?.meter.closed?.reason ?? null,
+    });
+
     return {
       id: row.id,
       title: row.title,
-      column: opportunityColumn(row),
+      column,
       leadLabel: row.leadLabel,
       people,
       ownerId,
-      ownerName: users.find((user) => user.id === ownerId)?.name ?? row.owner?.name ?? null,
+      ownerName,
+      ownerInitials: initialsOf(ownerName),
       quietDays: quietById.get(row.id) ?? null,
       suggestedLabel: row.leadLabel ? null : (suggested.get(row.id) ?? null),
-      meetingCount: row.meetings.length,
-      // Meetings come newest first: the first held one is the last that
-      // happened, the last booked one is the soonest still to come.
-      lastMeetingOn: held[0]?.on.toISOString() ?? null,
-      nextMeetingOn: booked.at(-1)?.on.toISOString() ?? null,
-      deal: row.deal
+      health: tileHealth,
+      group: column === "MEETING_SET" ? groupOf(focus) : null,
+      // A tile with nothing ahead whose meeting has passed is the same
+      // set the Needs a decision count reads.
+      decide: decision.has(row.id),
+      focus,
+      sortKey: meetingSortKey(focus),
+      line,
+      action: tileAction(column, focus),
+      meetingCount: meetings.length,
+      deal: deal
         ? {
-            id: row.deal.id,
-            stage: row.deal.stage,
-            valueCents: dealValueCents(row.deal),
-            quotes: row.deal.quotes.map((quote) => ({ id: quote.id, number: quote.number, title: quote.title })),
+            id: deal.id,
+            stage: deal.stage,
+            valueCents,
+            quotes: deal.quotes.map((quote) => ({ id: quote.id, number: quote.number, title: quote.title })),
           }
         : null,
     };
@@ -166,25 +314,7 @@ export default async function DealsPage({
         eyebrow="Closer's Club"
         title="Pipeline"
         subtitle={`${inMeetings.toLocaleString()} in meetings · ${formatCents(openValue)} in quotes and contracts out`}
-        actions={
-          <>
-            <Link
-              href={showArchived ? "/dashboard/deals" : "/dashboard/deals?archived=1"}
-              className="btn btn-ghost btn-sm"
-              data-testid="toggle-archived"
-            >
-              {showArchived ? "Hide archived" : `Show archived${archivedCount ? ` (${archivedCount})` : ""}`}
-            </Link>
-            <Link href="/dashboard/deals/tracker" className="btn btn-ghost btn-sm">
-              <IconClock size={13} />
-              Contract Coordinator
-            </Link>
-            <Link href="/dashboard/quotes/new" className="btn btn-primary btn-sm">
-              <IconPlus size={14} />
-              New quote
-            </Link>
-          </>
-        }
+        actions={<PipelineMore showArchived={showArchived} archivedCount={archivedCount} />}
       />
 
       {anyAtAll === 0 ? (
@@ -207,13 +337,15 @@ export default async function DealsPage({
             labels={labels}
             labelChoices={labelChoices}
             shown={tiles.length}
+            scope={scope}
             quiet={quietOnly}
-            quietCount={quiet.opportunities.length}
+            quietCount={quietInScope.size}
             quietDays={quiet.quietDays}
+            decide={decideOnly}
+            decideCount={decision.size}
           />
           <PipelineBoard
             tiles={tiles}
-            users={users.map((user) => ({ id: user.id, name: user.name }))}
             customLabels={customLabels.map((row) => row.name)}
             timeZone={timeZone}
             today={today}

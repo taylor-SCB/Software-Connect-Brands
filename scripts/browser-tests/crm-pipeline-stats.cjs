@@ -217,13 +217,15 @@ function isoDaysAgo(n) {
   const meetingCol = page.locator("[data-testid=pipeline-column-MEETING_SET]");
   const avaCard = meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ava Stone" });
   await avaCard.waitFor();
-  assert.equal(await avaCard.locator("[data-testid=tile-rep]").textContent(), "Nic Rivera");
+  // The rep shows as initials since the BDR redesign (edited in the panel).
+  assert.equal(await avaCard.locator("[data-testid=tile-rep]").getAttribute("title"), "Rep: Nic Rivera");
+  assert.equal(await avaCard.locator("[data-testid=tile-rep]").textContent(), "NR");
   await meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
   await shot(page, "01-pipeline-meetings");
 
-  log("Meeting Completed from the tile's stage menu moves Ben to the second column, no prompt");
+  log("Meeting Completed from the tile's Move to… moves Ben to the second column, no prompt");
   const benCard = meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" });
-  await benCard.locator("[data-testid=tile-move]").click();
+  await benCard.locator("[data-testid=tile-more]").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_COMPLETED]").click();
   await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
   await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_COMPLETED", "Ben meeting completed");
@@ -278,7 +280,7 @@ function isoDaysAgo(n) {
   );
   await page.reload();
   const tile = page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-tile]", { hasText: "Cara roof" });
-  await tile.locator("[data-testid=tile-move]").click();
+  await tile.locator("[data-testid=tile-more]").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-WON]").click();
   await until(async () => (await sql(`SELECT stage FROM "Deal" WHERE id='deal_ps_cara'`)).rows[0].stage === "WON", "Cara won");
   assert.equal(await status("Contact", "ctc_ps_cara"), "WON");
@@ -305,6 +307,8 @@ function isoDaysAgo(n) {
   assert.equal(await status("Contact", "ctc_ps_dee"), "CONTRACT_SENT", "archiving the deal leaves the person as they were");
   assert.equal(await page.locator("[data-testid=pipeline-tile]", { hasText: "Dee install" }).count(), 0, "archived is off the board");
   await page.locator("[data-testid=pipeline-column-LOST] [data-testid=pipeline-tile]", { hasText: "Eli install" }).waitFor();
+  // Show archived sits under the header's ⋯ since the BDR redesign.
+  await page.locator("[data-testid=pipeline-more]").click();
   await page.locator("[data-testid=toggle-archived]", { hasText: "Show archived (1)" }).click();
   await page.locator("[data-testid=pipeline-tile]", { hasText: "Dee install" }).waitFor();
   await shot(page, "03-pipeline-deals");

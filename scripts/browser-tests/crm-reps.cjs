@@ -209,14 +209,20 @@ async function login(page, email) {
   // Deals join the board at Quote Sent (Sept 30, 2026); put this one there.
   await sql(`UPDATE "Deal" SET stage='QUOTE_SENT' WHERE id=$1`, [deal.id]);
   await page.goto(`${BASE}/dashboard/deals`);
-  const tile = page.locator("div.rounded-lg", { hasText: "Rivera office build-out" });
-  const rep = tile.locator("[data-testid=deal-owner] select");
-  assert.equal(await rep.inputValue(), nicId);
-  assert.equal(await rep.locator("option:checked").textContent(), "Nic Rivera");
+  // The tile shows the rep's initials (BDR redesign, Nov 11, 2026); the
+  // picker moved into the tile's panel.
+  const tile = page.locator("[data-testid=pipeline-tile]", { hasText: "Rivera office build-out" });
+  const rep = tile.locator("[data-testid=tile-rep]");
+  assert.equal(await rep.getAttribute("data-owner-id"), nicId);
+  assert.equal(await rep.getAttribute("title"), "Rep: Nic Rivera");
   await shot(page, "04-pipeline-rep");
 
-  log("Taylor hands the deal to himself from the tile, and it sticks");
-  await rep.selectOption(taylor.id);
+  log("Taylor hands the deal to himself from the tile's panel, and it sticks");
+  await tile.locator("[data-testid=tile-open]").click();
+  const panel = page.locator("[data-testid=opportunity-panel]");
+  await panel.locator("[data-testid=panel-rep]").selectOption(taylor.id);
+  await panel.locator("[data-testid=panel-save]").click();
+  await panel.waitFor({ state: "detached" });
   for (let i = 0; i < 20; i += 1) {
     const now = (await sql(`SELECT "ownerId" FROM "Deal" WHERE id = $1`, [deal.id])).rows[0].ownerId;
     if (now === taylor.id) break;
@@ -224,7 +230,7 @@ async function login(page, email) {
   }
   assert.equal((await sql(`SELECT "ownerId" FROM "Deal" WHERE id = $1`, [deal.id])).rows[0].ownerId, taylor.id);
   await page.reload();
-  assert.equal(await page.locator("div.rounded-lg", { hasText: "Rivera office build-out" }).locator("[data-testid=deal-owner] select").inputValue(), taylor.id);
+  assert.equal(await page.locator("[data-testid=pipeline-tile]", { hasText: "Rivera office build-out" }).locator("[data-testid=tile-rep]").getAttribute("data-owner-id"), taylor.id);
 
   log("a quote made on a brand-new deal names its maker as the rep");
   await nic.goto(`${BASE}/dashboard/quotes/new?contactId=${alexId}`);

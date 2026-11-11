@@ -26,6 +26,17 @@
  * nothing, and the convert prompt offers the saved name); every Lead Label
  * chip and the suggested chip read at 4.5:1 in Dark and Light, unfaded.
  *
+ * "Sprint:" steps (BDR redesign, Release 1 tiles and Release 7, Nov 11,
+ * 2026): tiles titled by the Primary person, a 3px health edge, the mini
+ * meter and one next-step line; Move to… / Lead label / Draft follow-up /
+ * Open under the tile's ⋯; Mine | Everyone (a Member opens on Mine,
+ * remembered per person); Meeting Set split into Happened — how did it
+ * go? (Held / No-show / Reschedule, with Undo) and Coming up; Needs a
+ * decision; the early guard; a drag to Meeting Completed marking the
+ * meeting Held with no second line; Build Quote staying at Meeting
+ * Completed (decision 19); the column health bars; the panel's meter,
+ * people rows and meetings; the reworded convert prompt; the phone tabs.
+ *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace and deletes it on the next run. Never point
@@ -246,18 +257,27 @@ async function pixelContrast(page, png) {
   const meetingSet = page.locator("[data-testid=pipeline-column-MEETING_SET]");
   const patTile = page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" });
   await meetingSet.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
-  assert.deepEqual(await patTile.locator("[data-testid=tile-people] a").allTextContents(), ["Pat Steffl", "Nic Partner"]);
-  await patTile.getByText(/2 meetings/).waitFor();
+  // Sprint (Release 7): the tile is titled by its Primary person; the
+  // others are "+1" with their names on it, and both meetings have passed
+  // with nobody saying how they went.
+  assert.equal(await patTile.getByTestId("tile-person").innerText(), "Pat Steffl");
+  assert.equal(await patTile.getByTestId("tile-others").getAttribute("data-names"), "Nic Partner");
+  assert.equal(await patTile.getAttribute("data-group"), "happened");
+  assert.equal(await patTile.getByTestId("tile-line").getAttribute("data-key"), "due");
   assert.equal(await meetingSet.locator("[data-testid=pipeline-tile]").count(), 2);
-  assert.equal(await patTile.locator("[data-testid=lead-label]").first().getAttribute("data-label"), "N/A");
-  const naStyle = await patTile.locator("[data-testid=lead-label]").first().evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
+  // N/A draws nothing on a tile (Release 1); the picker still offers it.
+  assert.equal(await patTile.locator("[data-testid=lead-label]").count(), 0, "no N/A chip on a tile");
+  await patTile.getByTestId("tile-add-label").click();
+  const naChip = page.locator("[data-testid=lead-label-menu] [data-testid='lead-label-option-N/A'] [data-testid=lead-label]");
+  const naStyle = await naChip.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
   // The red is a deeper red since the UX review (5.6:1 on the gray; #dc2626 was 3.3:1).
   assert.deepEqual(naStyle, ["rgb(212, 212, 216)", "rgb(153, 27, 27)"], "N/A is light gray with red letters");
+  await page.keyboard.press("Escape");
   await shot(page, "01-board");
 
-  log("the stage menu on a first-column tile opens fully on screen, clear of the sidebar (the cut-off bug)");
-  await patTile.locator("[data-testid=tile-move]").click();
-  const menu = page.locator("[data-testid=tile-move-menu]");
+  log("the ⋯ menu (Move to…) on a first-column tile opens fully on screen, clear of the sidebar (the cut-off bug)");
+  await patTile.getByTestId("tile-more").click();
+  const menu = page.locator("[data-testid=tile-menu]");
   await menu.waitFor();
   const box = await menu.boundingBox();
   const sidebar = await page.locator("aside, nav").first().boundingBox();
@@ -268,16 +288,22 @@ async function pixelContrast(page, png) {
     y: box.y + box.height / 2,
   });
   assert.ok(onTop, "nothing covers the menu");
+  assert.equal(await menu.getByTestId("tile-move-MEETING_SET").isDisabled(), true, "the column it is in");
   await shot(page, "02-menu");
   await page.keyboard.press("Escape");
 
-  log("dragging Pat's tile to Meeting Completed moves it with no prompt; Opportunity Created lands on Pat and Nic");
+  log("dragging Pat's tile to Meeting Completed moves it with no prompt; Opportunity Created lands on Pat and Nic; Sprint: the latest meeting is marked Held, no second line");
+  const meetingLines = async () =>
+    (await sql(`SELECT body, outcome FROM "Activity" WHERE "organizationId"=$1 AND type='MEETING' AND "contactId"='op_pat' ORDER BY "occurredAt", body`, [org])).rows;
+  assert.equal((await meetingLines()).length, 2);
   await patTile.dragTo(page.locator("[data-testid=pipeline-column-MEETING_COMPLETED]"));
   await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
   assert.equal(await page.locator("[data-testid=convert-dialog]").count(), 0);
   await until(async () => (await opps())[0].stage === "MEETING_COMPLETED", "meeting completed");
   assert.deepEqual(await logs(patOpp), ["op_nic:OPPORTUNITY_CREATED", "op_pat:OPPORTUNITY_CREATED"]);
   await until(async () => (await one(`SELECT status FROM "Contact" WHERE id='op_nic'`)).status === "MEETING_COMPLETED", "Nic follows");
+  await until(async () => (await meetingLines()).some((row) => row.outcome === "HELD"), "the meeting marked held");
+  assert.equal((await meetingLines()).length, 2, "Held marks the meeting's own line; nothing new is written");
 
   log("clicking the tile opens it: three boxes per person, ticking one greys the other two");
   await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-open]").click();
@@ -309,8 +335,8 @@ async function pixelContrast(page, png) {
   ]);
   assert.deepEqual(await logs(patOpp), ["op_pat:OPPORTUNITY_CREATED", "op_zoe:OPPORTUNITY_CREATED"], "Nic's line off, Zoe's on");
   assert.equal((await opps())[0].leadLabel, "Vendor");
-  await page.locator("[data-testid=pipeline-tile]", { hasText: "Zoe Extra" }).waitFor();
-  assert.equal(await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-people]").getByText("Nic Partner").count(), 0);
+  const patById = page.locator(`[data-testid=pipeline-tile][data-id='${patOpp}']`);
+  await until(async () => (await patById.getByTestId("tile-others").getAttribute("data-names")) === "Zoe Extra", "Zoe on the tile, Nic off it");
   assert.equal(
     (await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='op_nic' AND type='MEETING'`)).n,
     1,
@@ -330,7 +356,9 @@ async function pixelContrast(page, png) {
   await convert.waitFor({ state: "detached" });
   const quoteSent = page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" });
   await quoteSent.waitFor();
-  await quoteSent.getByText("$2,500.00").waitFor();
+  // Sprint: the next-step line reads the quote's value and age; the column's header has the money.
+  assert.equal(await quoteSent.getByTestId("tile-line").innerText(), "Quote $2.5k · sent today");
+  assert.equal(await page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-column-value]").innerText(), "$2,500.00");
   const deal = await one(`SELECT d.id, d.stage, d."valueCents", d."contactId" FROM "Deal" d JOIN "Opportunity" o ON o."dealId"=d.id WHERE o.id=$1`, [patOpp]);
   assert.deepEqual({ ...deal, id: undefined }, { id: undefined, stage: "QUOTE_SENT", valueCents: 250000, contactId: "op_pat" });
   assert.deepEqual(await logs(patOpp), ["op_pat:DEAL_CREATED", "op_pat:OPPORTUNITY_CREATED", "op_zoe:DEAL_CREATED", "op_zoe:OPPORTUNITY_CREATED"]);
@@ -347,7 +375,7 @@ async function pixelContrast(page, png) {
 
   log("moving the deal on to Contract Sent re-tags the same line; no second Deal Created");
   await page.goto(`${BASE}/dashboard/deals`);
-  await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-move]").click();
+  await patById.getByTestId("tile-more").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-CONTRACT_SENT]").click();
   await page.locator("[data-testid=pipeline-column-CONTRACT_SENT] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
   await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "CONTRACT_SENT", "deal saved at Contract Sent");
@@ -355,15 +383,16 @@ async function pixelContrast(page, png) {
   assert.equal(await page.locator("[data-testid=activity-special][data-kind=DEAL_CREATED] [data-testid=activity-stage]").textContent(), "Contract Sent");
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityLog" WHERE "contactId"='op_pat' AND kind='DEAL_CREATED'`)).n, 1);
 
-  log("a deal can't go back to a meeting column: the menu greys them out");
+  log("a deal can't go back to a meeting column: the menu greys them out (Sprint: and its ⋯ links the Contract Coordinator)");
   await page.goto(`${BASE}/dashboard/deals`);
-  await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-move]").click();
+  await patById.getByTestId("tile-more").click();
   assert.equal(await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_SET]").isDisabled(), true);
+  assert.equal(await page.getByTestId("tile-menu").getByTestId("tile-menu-coordinator").getAttribute("href"), `/dashboard/deals/tracker?dealId=${deal.id}`);
   assert.equal(await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_COMPLETED]").isDisabled(), true);
   await page.keyboard.press("Escape");
 
   log("making Zoe Primary moves Pat to Associated; the deal is filed under Zoe; Pat's tag follows");
-  await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-open]").click();
+  await patById.getByTestId("tile-open").click();
   await panel.locator("[data-testid=panel-person]").first().waitFor();
   const zoeRow = panel.locator("[data-testid=panel-person][data-name='Zoe Extra']");
   await zoeRow.locator("[data-testid=role-ASSOCIATED]").uncheck();
@@ -377,24 +406,25 @@ async function pixelContrast(page, png) {
 
   log("a custom lead label from the tile's chip is neon yellow and saved for next time");
   await page.goto(`${BASE}/dashboard/deals`);
-  const patAgain = page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" });
+  // Zoe is the Primary now, so the tile reads her name: found by its id.
+  const patAgain = patById;
+  assert.equal(await patAgain.getByTestId("tile-person").innerText(), "Zoe Extra");
   await patAgain.locator("[data-testid=lead-label-picker]").click();
   await page.locator("[data-testid=lead-label-add-custom]").click();
   await page.locator("[data-testid=lead-label-custom-input]").fill("Golf Buddy");
   await page.locator("[data-testid=lead-label-custom-add]").click();
   await until(async () => (await opps())[0].leadLabel === "Golf Buddy", "custom label saved");
   await page.reload();
-  const chip = page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=lead-label]").first();
+  const chip = patById.locator("[data-testid=lead-label]").first();
   assert.equal(await chip.getAttribute("data-label"), "Golf Buddy");
   assert.equal(await chip.evaluate((el) => getComputedStyle(el).color), "rgb(232, 255, 58)");
   assert.equal((await one(`SELECT count(*)::int n FROM "LeadLabelOption" WHERE "organizationId"=$1 AND name='Golf Buddy'`, [org])).n, 1);
-  const vendorStyle = await page.locator("[data-testid=pipeline-tile]", { hasText: "Abby Peters" }).locator("[data-testid=lead-label]").first().getAttribute("data-label");
-  assert.equal(vendorStyle, "N/A");
+  assert.equal(await page.locator("[data-testid=pipeline-tile]", { hasText: "Abby Peters" }).locator("[data-testid=lead-label]").count(), 0, "no label, no chip");
 
   log("search finds a tile by company or person; the Lead Label filter narrows to Golf Buddy, or to N/A");
   await page.locator("[data-testid=pipeline-search]").fill("Murphy");
   await until(async () => (await page.locator("[data-testid=pipeline-tile]").count()) === 1, "search narrows to Murphy");
-  assert.ok(await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).isVisible());
+  assert.ok(await patById.isVisible());
   await page.locator("[data-testid=pipeline-search]").fill("abby");
   await until(async () => (await page.locator("[data-testid=pipeline-tile]").allTextContents()).join(" ").includes("Abby Peters") && (await page.locator("[data-testid=pipeline-tile]").count()) === 1, "search narrows to Abby");
   await page.locator("[data-testid=pipeline-search]").fill("");
@@ -402,21 +432,24 @@ async function pixelContrast(page, png) {
   await page.locator("[data-testid=filter-lead-label]").click();
   await page.getByRole("listbox", { name: "Lead Label" }).getByText("Golf Buddy").click();
   await until(async () => (await page.locator("[data-testid=pipeline-tile]").count()) === 1, "label filter");
-  assert.ok(await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).isVisible());
+  assert.ok(await patById.isVisible());
   await page.goto(`${BASE}/dashboard/deals?label=N%2FA`);
   assert.deepEqual(await page.locator("[data-testid=pipeline-tile]").evaluateAll((els) => els.map((el) => el.dataset.title)), ["Abby Peters"]);
 
-  log("Build Quote: Abby converted to Contract opens a new quote on her new deal");
+  log("Build Quote: Abby converted to Contract opens a new quote on her new deal; Sprint: decision 19 leaves it at Meeting Completed, and her meeting is marked Held");
   await page.goto(`${BASE}/dashboard/deals`);
-  await page.locator("[data-testid=pipeline-tile]", { hasText: "Abby Peters" }).locator("[data-testid=tile-move]").click();
+  await page.locator("[data-testid=pipeline-tile]", { hasText: "Abby Peters" }).getByTestId("tile-more").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-CONTRACT_SENT]").click();
   await convert.waitFor();
   assert.equal(await convert.locator("[data-testid=convert-stage-CONTRACT_SENT]").isChecked(), true);
+  assert.equal((await convert.locator("#convert-title").innerText()).trim(), "What happened after the meeting with Abby Peters?");
   await convert.locator("[data-testid=convert-mode-quote]").check();
   await convert.locator("[data-testid=convert-save]").click();
   await page.waitForURL(/\/dashboard\/quotes\/new\?contactId=op_abby&dealId=/);
-  const abbyDeal = await one(`SELECT d.stage FROM "Deal" d WHERE d."contactId"='op_abby'`);
-  assert.equal(abbyDeal.stage, "CONTRACT_SENT");
+  const abbyDeal = await one(`SELECT d.stage, o.stage AS opp FROM "Deal" d JOIN "Opportunity" o ON o."dealId"=d.id WHERE d."contactId"='op_abby'`);
+  assert.deepEqual({ ...abbyDeal }, { stage: "LEAD", opp: "MEETING_COMPLETED" }, "Build Quote moves nothing until the quote is sent");
+  assert.equal((await one(`SELECT outcome FROM "Activity" WHERE "contactId"='op_abby' AND type='MEETING'`)).outcome, "HELD");
+  assert.equal((await one(`SELECT status FROM "Contact" WHERE id='op_abby'`)).status, "MEETING_COMPLETED");
 
   log("a deal added on a contact's page with no opportunity gets one (no deal without an opportunity)");
   await page.goto(`${BASE}/dashboard/contacts/op_lone`);
@@ -434,8 +467,8 @@ async function pixelContrast(page, png) {
 
   log("Won closes it: Pat's next meeting starts a new opportunity");
   await page.goto(`${BASE}/dashboard/deals`);
-  await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).dragTo(page.locator("[data-testid=pipeline-column-WON]"));
-  await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
+  await patById.dragTo(page.locator("[data-testid=pipeline-column-WON]"));
+  await page.locator(`[data-testid=pipeline-column-WON] [data-testid=pipeline-tile][data-id='${patOpp}']`).waitFor();
   await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "WON", "deal saved as Won");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
@@ -494,7 +527,8 @@ async function pixelContrast(page, png) {
   await page.goto(`${BASE}/dashboard/deals`);
   const shared = page.locator("[data-testid=pipeline-column-MEETING_SET] [data-testid=pipeline-tile]", { hasText: "Old Mia" });
   await shared.waitFor();
-  assert.deepEqual((await shared.locator("[data-testid=tile-people] a").allTextContents()).sort(), ["Old Mia", "Old Ray"]);
+  const sharedNames = [await shared.getByTestId("tile-person").innerText(), ...((await shared.getByTestId("tile-others").getAttribute("data-names")) ?? "").split("|")];
+  assert.deepEqual(sharedNames.sort(), ["Old Mia", "Old Ray"]);
   await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Old Solo" }).waitFor();
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityLog" ol JOIN "OpportunityContact" oc ON oc."opportunityId"=ol."opportunityId" WHERE oc."contactId" IN ('op_old1','op_old2','op_old3')`)).n, 0, "nothing back-written");
   await page.reload();
@@ -543,6 +577,7 @@ async function pixelContrast(page, png) {
     await panelOf(page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`));
     await panel.locator("[data-testid=panel-person][data-name='Maximiliana Featherstonehaugh']").waitFor();
     const fit = await panel.evaluate((aside) => {
+      // The People rows (a list since the Release 7 panel: Call / Text / Email / Log and the three boxes).
       const table = aside.querySelector("[data-testid=panel-people]");
       const body = table.closest(".overflow-y-auto");
       const edge = body.getBoundingClientRect().right - parseFloat(getComputedStyle(body).paddingRight);
@@ -573,7 +608,7 @@ async function pixelContrast(page, png) {
   const zone = (await one(`SELECT "timeZone" FROM "Organization" WHERE id=$1`, [org])).timeZone || "America/Chicago";
   const day = (date) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: zone }).format(date);
 
-  log("audit fixes (UX review): a meeting booked ahead reads as the next one on the tile, never the last");
+  log("audit fixes (UX review): a meeting booked ahead reads as the next one on the tile, never the last (Sprint: 'Meeting <day>' under Coming up)");
   const patOpen = (
     await one(
       `SELECT o.id FROM "Opportunity" o JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE oc."contactId"='op_pat' AND o."dealId" IS NULL AND o."organizationId"=$1`,
@@ -591,16 +626,21 @@ async function pixelContrast(page, png) {
   await page.goto(`${BASE}/dashboard/deals`);
   const patNow = page.locator(`[data-testid=pipeline-tile][data-id='${patOpen}']`);
   await patNow.waitFor();
-  // Before: "2 meetings · last <the booked date>".
-  assert.ok(!(await patNow.innerText()).includes(`last ${day(ahead)}`), "the booked meeting is called the last one");
-  assert.equal((await patNow.getByTestId("tile-meeting-last").innerText()).trim(), `2 meetings · last ${day(held)}`);
-  assert.equal((await patNow.getByTestId("tile-meeting-next").innerText()).trim(), `Next meeting ${day(ahead)}`);
+  // Before: "2 meetings · last <the booked date>". Now one line about the
+  // meeting still to come, and the tile sits under Coming up.
+  const short = (date) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: zone }).format(date);
+  const weekday = (date) => new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: zone }).format(date);
+  assert.ok(held < ahead);
+  assert.equal(await patNow.getAttribute("data-group"), "coming");
+  assert.equal((await patNow.getByTestId("tile-line").innerText()).trim(), `Meeting ${short(ahead)}`);
   const soonTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_soon']");
-  assert.equal(await soonTile.getByTestId("tile-meeting-last").count(), 0, "a tile whose only meeting is ahead has no last meeting");
-  assert.equal((await soonTile.getByTestId("tile-meeting-next").innerText()).trim(), `Next meeting ${day(soonOn)}`);
-  assert.equal(await page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`).getByTestId("tile-meeting-next").count(), 0, "nothing booked ahead, no next line");
+  assert.equal((await soonTile.getByTestId("tile-line").innerText()).trim(), `Meeting ${weekday(soonOn)}`);
+  assert.notEqual(await page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`).getByTestId("tile-line").getAttribute("data-key"), "ahead", "nothing booked ahead");
+  // Coming up runs by meeting date: Sunny (5 days) before Pat (9 days).
+  const coming = await page.locator("[data-testid=meeting-group-coming] [data-testid=pipeline-tile]").evaluateAll((els) => els.map((el) => el.dataset.id));
+  assert.ok(coming.indexOf("op_opp_soon") < coming.indexOf(patOpen), `Coming up order: ${coming}`);
 
-  log("audit fixes (UX review): a rep saved in the panel shows on the tile's rep picker straight away, no reload");
+  log("audit fixes (UX review): a rep saved in the panel shows on the tile straight away, no reload (Sprint: the tile shows initials, edited in the panel)");
   const nicId = "usr_opps_nic";
   const taylor = await one(`SELECT id, "passwordHash" FROM "User" WHERE email=$1`, [EMAIL]);
   await sql(`INSERT INTO "User" (id,name,email,"passwordHash",role,"organizationId") VALUES ($1,'Nic Rep','test-opps-nic@example.com',$2,'MEMBER',$3)`, [
@@ -610,18 +650,20 @@ async function pixelContrast(page, png) {
   ]);
   await page.goto(`${BASE}/dashboard/deals`);
   const abbyTile = page.locator("[data-testid=pipeline-tile]", { hasText: "Abby Peters" });
-  const tileRep = abbyTile.locator("[data-testid=deal-owner] select");
+  const tileRep = abbyTile.getByTestId("tile-rep");
   const abbyRep = (await one(`SELECT "ownerId" FROM "Deal" WHERE "contactId"='op_abby'`)).ownerId;
   assert.notEqual(abbyRep, nicId);
-  assert.equal(await tileRep.inputValue(), abbyRep ?? "");
+  assert.equal(await tileRep.getAttribute("data-owner-id"), abbyRep ?? "");
+  assert.equal(await tileRep.innerText(), "TT");
   await panelOf(abbyTile);
   await panel.locator("[data-testid=panel-rep]").selectOption(nicId);
   await panel.locator("[data-testid=panel-save]").click();
   await panel.waitFor({ state: "detached" });
   await until(async () => (await one(`SELECT "ownerId" FROM "Deal" WHERE "contactId"='op_abby'`)).ownerId === nicId, "the panel saved Nic");
   // Before: the tile kept showing Taylor until a full reload.
-  await until(async () => (await tileRep.inputValue()) === nicId, "the tile's rep picker shows Nic");
-  assert.equal(await tileRep.evaluate((select) => select.options[select.selectedIndex].text), "Nic Rep");
+  await until(async () => (await tileRep.getAttribute("data-owner-id")) === nicId, "the tile shows Nic");
+  assert.equal(await tileRep.innerText(), "NR");
+  assert.equal(await tileRep.getAttribute("title"), "Rep: Nic Rep");
 
   log("audit fixes (UX review): the panel's Stage menu saves the panel's edits first; a refused save keeps the panel open and moves nothing");
   const oldTile = page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`);
@@ -642,7 +684,7 @@ async function pixelContrast(page, png) {
   // A save that can't go through: the panel stays open with its message and nothing moves.
   await panelOf(moved);
   const primaryBox = panel.locator("[data-testid=panel-person] [data-testid=role-PRIMARY]:checked");
-  const primaryName = await primaryBox.locator("xpath=ancestor::tr").getAttribute("data-name");
+  const primaryName = await primaryBox.locator("xpath=ancestor::*[@data-testid='panel-person']").getAttribute("data-name");
   await primaryBox.uncheck();
   await panel.locator("[data-testid=tile-move]").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_SET]").click();
@@ -693,7 +735,7 @@ async function pixelContrast(page, png) {
     await halTile.waitFor();
     await settle(page);
     // The picker lists every chip there is: N/A, the five built-ins and Golf Buddy.
-    await halTile.locator("[data-testid=lead-label-picker]").click();
+    await halTile.getByTestId("tile-add-label").click();
     const chips = page.locator("[data-testid=lead-label-menu] [data-testid=lead-label]");
     await chips.first().waitFor();
     assert.deepEqual(await chips.evaluateAll((els) => els.map((el) => el.dataset.label)), [
@@ -709,13 +751,17 @@ async function pixelContrast(page, png) {
     for (let i = 0; i < (await chips.count()); i += 1) readable(`${look} chip`, await textContrast(chips.nth(i)));
     await page.keyboard.press("Escape");
     await page.locator("[data-testid=lead-label-menu]").waitFor({ state: "detached" });
-    // Before: "Residential?" at 60% opacity, 1.88:1 on white.
-    assert.equal(await halTile.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Residential");
-    assert.equal(await danaTile.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Vendor");
-    readable(`${look} suggestion on a tile`, await textContrast(halTile.getByTestId("suggested-label-accept")));
-    readable(`${look} suggestion on a tile`, await textContrast(danaTile.getByTestId("suggested-label-accept")));
+    // Before: "Residential?" at 60% opacity, 1.88:1 on white. Since the
+    // Release 1 tiles the suggestion shows in the panel only.
+    assert.equal(await halTile.locator("[data-testid=suggested-label]").count(), 0, "no suggestion on a tile");
     await shot(page, `08-labels-${look}`);
+    await panelOf(halTile);
+    assert.equal(await panel.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Residential");
+    readable(`${look} suggestion in the panel`, await textContrast(panel.getByTestId("suggested-label-accept")));
+    await panel.locator("[data-testid=panel-close]").click();
+    await panel.waitFor({ state: "detached" });
     await panelOf(danaTile);
+    assert.equal(await panel.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Vendor");
     readable(`${look} suggestion in the panel`, await textContrast(panel.getByTestId("suggested-label-accept")));
     readable(`${look} chip in the panel`, await textContrast(panel.locator("[data-testid=lead-label]").first()));
     await panel.locator("[data-testid=panel-close]").click();
@@ -723,7 +769,7 @@ async function pixelContrast(page, png) {
   }
   await sql(`UPDATE "User" SET theme='dark' WHERE email=$1`, [EMAIL]);
 
-  log("audit fixes (UX review): a long label never covers a short title, and a long name stays inside its tile");
+  log("audit fixes (UX review): a long label never covers the name, and a long name stays inside its tile");
   await sql(
     `INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_longtile',$1,'Maximiliana Featherstonehaugh-Wolfeschlegelsteinhausen','MEETING_SET',now())`,
     [org],
@@ -742,12 +788,340 @@ async function pixelContrast(page, png) {
     const t = title.getBoundingClientRect();
     const c = tile.querySelector("[data-testid=lead-label-picker]").getBoundingClientRect();
     const overlap = c.left < t.right && c.right > t.left && c.top < t.bottom && c.bottom > t.top;
-    const name = tile.querySelector("[data-testid=tile-people] a").getBoundingClientRect();
-    return { overlap, titleWidth: Math.round(t.width), titleText: title.textContent, nameRight: Math.round(name.right), tileRight: Math.round(box.right) };
+    const name = tile.querySelector("[data-testid=tile-person]").getBoundingClientRect();
+    const chip = tile.querySelector("[data-testid=lead-label]").getBoundingClientRect();
+    return {
+      overlap,
+      titleWidth: Math.round(t.width),
+      nameRight: Math.round(name.right),
+      chipRight: Math.round(chip.right),
+      tileRight: Math.round(box.right),
+      company: tile.querySelector("[data-testid=tile-company]").textContent,
+    };
   });
-  assert.equal(fit.overlap, false, "the label chip sits clear of the title");
-  assert.ok(fit.titleWidth >= 60, `the title is squeezed to ${fit.titleWidth}px`);
+  assert.equal(fit.overlap, false, "the label chip sits clear of the name");
+  assert.ok(fit.titleWidth >= 60, `the name is squeezed to ${fit.titleWidth}px`);
   assert.ok(fit.nameRight <= fit.tileRight, `the name runs to ${fit.nameRight}px, past the tile's edge at ${fit.tileRight}px`);
+  assert.ok(fit.chipRight <= fit.tileRight, `the chip runs to ${fit.chipRight}px, past the tile's edge at ${fit.tileRight}px`);
+  assert.equal(fit.company, "Lab Soft", "the tile's own name sits under the person");
+
+
+  /* ------------------------- Sprint: the BDR Pipeline ------------------------- */
+  // Release 1 tiles and Release 7 (Nov 11, 2026): Mine | Everyone, three-line
+  // tiles under a health edge, Coming up / Happened with Held / No-show /
+  // Reschedule, Needs a decision, the early guard, the column health bar, the
+  // panel's meter, people rows and meetings, the reworded convert prompt, and
+  // the phone's stage tabs.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const zoneDayOf = (date) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: zone }).format(date);
+  const shortOf = (iso) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`));
+  const longOf = (iso) =>
+    new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`));
+  const weekdayOf = (iso) => new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`));
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('op_s_winco',$1,'Win Co',now()), ('op_s_hco',$1,'Happy Builders',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,email,mobile,status,"ownerId","updatedAt") VALUES
+       ('op_s_mina',$1,NULL,'Mina Mine',NULL,NULL,'MEETING_SET',$2,now()),
+       ('op_s_hana',$1,'op_s_hco','Hana Happened','hana@happy.test','(512) 555-0199','MEETING_SET',$3,now()),
+       ('op_s_cole',$1,NULL,'Cole Coming',NULL,NULL,'MEETING_SET',$3,now()),
+       ('op_s_walt',$1,'op_s_winco','Walt Winner',NULL,NULL,'MEETING_COMPLETED',$3,now()),
+       ('op_s_lou',$1,NULL,'Lou Loser',NULL,NULL,'MEETING_COMPLETED',$3,now())`,
+    [org, nicId, taylorId],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES
+       ('op_s_opp_mina',$1,'Mina Mine','MEETING_SET',$2,now() - interval '5 days',now()),
+       ('op_s_opp_hana',$1,'Happy Builders','MEETING_SET',$3,now() - interval '5 days',now()),
+       ('op_s_opp_cole',$1,'Cole Coming','MEETING_SET',$3,now() - interval '2 days',now()),
+       ('op_s_opp_walt',$1,'Win Co','MEETING_COMPLETED',$3,now() - interval '9 days',now()),
+       ('op_s_opp_lou',$1,'Lou Loser','MEETING_COMPLETED',$3,now() - interval '9 days',now())`,
+    [org, nicId, taylorId],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES
+       ('op_s_oc1','op_s_opp_mina','op_s_mina','PRIMARY',true), ('op_s_oc2','op_s_opp_hana','op_s_hana','PRIMARY',true),
+       ('op_s_oc3','op_s_opp_cole','op_s_cole','PRIMARY',true), ('op_s_oc4','op_s_opp_walt','op_s_walt','PRIMARY',true),
+       ('op_s_oc5','op_s_opp_lou','op_s_lou','PRIMARY',true)`,
+  );
+  const hanaMet = new Date(Date.now() - 3 * 86400000);
+  const coleOn = new Date(Date.now() + 4 * 86400000);
+  const coleDay = zoneDayOf(coleOn);
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","contactId","ownerId","updatedAt")
+     VALUES ('op_s_ev_cole',$1,'Meeting · Cole Coming','Meeting',$2::date,'10:00','op_s_cole',$3,now())`,
+    [org, coleDay, taylorId],
+  );
+  await sql(
+    `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById") VALUES
+       ('op_s_m_hana','op_s_opp_hana',$1,NULL,$3), ('op_s_m_cole','op_s_opp_cole',$2,'op_s_ev_cole',$3)`,
+    [hanaMet, coleOn, taylorId],
+  );
+  const tileOf = (id, where = page) => where.locator(`[data-testid=pipeline-tile][data-id='${id}']`);
+
+  log("Sprint: Mine | Everyone — an Owner opens on Everyone; Mine narrows to their tiles and is remembered; a Member opens on Mine");
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tileOf("op_s_opp_mina").waitFor();
+  assert.equal(await page.getByTestId("pipeline-scope-all").getAttribute("aria-pressed"), "true");
+  await page.getByTestId("pipeline-scope-mine").click();
+  await page.waitForURL(/scope=mine/);
+  await until(async () => (await tileOf("op_s_opp_mina").count()) === 0, "Nic's tile off Mine");
+  const mineOwners = await page.locator("[data-testid=pipeline-tile] [data-testid=tile-rep]").evaluateAll((els) => [...new Set(els.map((el) => el.dataset.ownerId))]);
+  assert.deepEqual(mineOwners, [taylorId], "Mine is the tiles whose rep is me");
+  await until(async () => (await one(`SELECT "uiPrefs"->>'pipelineScope' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "mine", "remembered");
+  await page.goto(`${BASE}/dashboard/deals`);
+  assert.equal(await page.getByTestId("pipeline-scope-mine").getAttribute("aria-pressed"), "true", "Mine remembered for next time");
+  assert.equal(await tileOf("op_s_opp_mina").count(), 0);
+  await page.getByTestId("pipeline-scope-all").click();
+  await tileOf("op_s_opp_mina").waitFor();
+  await until(async () => (await one(`SELECT "uiPrefs"->>'pipelineScope' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "all", "Everyone remembered");
+  const nicContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const nicPage = await nicContext.newPage();
+  nicPage.on("pageerror", (err) => console.error("PAGE ERROR (Nic):", err.message));
+  await nicPage.goto(`${BASE}/login`);
+  await nicPage.fill("#email", "test-opps-nic@example.com");
+  await nicPage.fill("#password", PASSWORD);
+  await nicPage.click("button[type=submit]");
+  await nicPage.waitForURL(/\/dashboard/);
+  await nicPage.goto(`${BASE}/dashboard/deals`);
+  await tileOf("op_s_opp_mina", nicPage).waitFor();
+  assert.equal(await nicPage.getByTestId("pipeline-scope-mine").getAttribute("aria-pressed"), "true", "a Member opens on Mine (decision 17)");
+  assert.equal(await tileOf("op_s_opp_hana", nicPage).count(), 0, "Taylor's tile is one tap away");
+  await nicPage.getByTestId("pipeline-scope-all").click();
+  await tileOf("op_s_opp_hana", nicPage).waitFor();
+  await nicContext.close();
+
+  log("Sprint: Meeting Set splits into Happened — how did it go? and Coming up; Needs a decision counts and filters the Happened tiles");
+  await page.goto(`${BASE}/dashboard/deals`);
+  const hana = tileOf("op_s_opp_hana");
+  const cole = tileOf("op_s_opp_cole");
+  await page.locator("[data-testid=meeting-group-happened] [data-testid=pipeline-tile][data-id='op_s_opp_hana']").waitFor();
+  await page.locator("[data-testid=meeting-group-coming] [data-testid=pipeline-tile][data-id='op_s_opp_cole']").waitFor();
+  assert.equal((await hana.getByTestId("tile-line").innerText()).trim(), `Met ${shortOf(zoneDayOf(hanaMet))} — how did it go?`);
+  assert.equal((await cole.getByTestId("tile-line").innerText()).trim(), `Meeting ${weekdayOf(coleDay)} 10:00 AM`);
+  assert.equal(await hana.getByTestId("tile-person").innerText(), "Hana Happened");
+  assert.equal(await hana.getByTestId("tile-company").innerText(), "Happy Builders", "the company, faint, under the person");
+  for (const id of ["tile-held", "tile-noshow", "tile-reschedule"]) assert.equal(await hana.getByTestId(id).count(), 1, id);
+  assert.equal(await cole.getByTestId("tile-held").count(), 0, "a meeting still ahead has nothing to answer");
+  const happenedCount = await page.locator("[data-testid=meeting-group-happened] [data-testid=pipeline-tile]").count();
+  assert.equal((await page.getByTestId("pipeline-decide-toggle").innerText()).trim(), `Needs a decision (${happenedCount})`);
+  await page.getByTestId("pipeline-decide-toggle").click();
+  await page.waitForURL(/decide=1/);
+  await until(async () => (await page.locator("[data-testid=pipeline-tile]").count()) === happenedCount, "only the Happened tiles");
+  assert.deepEqual([...new Set(await page.locator("[data-testid=pipeline-tile]").evaluateAll((els) => els.map((el) => el.dataset.group)))], ["happened"]);
+  await page.getByTestId("pipeline-decide-toggle").click();
+  await until(async () => !page.url().includes("decide=1"), "toggle off");
+  await shot(page, "09-sprint-groups");
+
+  log("Sprint: Held on a Happened tile writes one Held meeting, moves it and Hana to Meeting Completed, and Undo takes it all back");
+  await hana.getByTestId("tile-held").click();
+  const notice = page.getByTestId("pipeline-notice");
+  await notice.getByText("Held · Meeting Completed").waitFor();
+  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile][data-id='op_s_opp_hana']").waitFor();
+  const hanaLines = async () => (await sql(`SELECT outcome FROM "Activity" WHERE "contactId"='op_s_hana' AND type='MEETING'`)).rows.map((row) => row.outcome);
+  assert.deepEqual(await hanaLines(), ["HELD"]);
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_hana'`)).outcome, "HELD");
+  assert.equal((await one(`SELECT status FROM "Contact" WHERE id='op_s_hana'`)).status, "MEETING_COMPLETED");
+  await notice.getByTestId("pipeline-undo").click();
+  await notice.getByText("Undone").waitFor();
+  await page.locator("[data-testid=meeting-group-happened] [data-testid=pipeline-tile][data-id='op_s_opp_hana']").waitFor();
+  assert.deepEqual(await hanaLines(), [], "the Held line is gone");
+  assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id='op_s_opp_hana'`)).stage, "MEETING_SET");
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_hana'`)).outcome, null);
+
+  log("Sprint: No-show keeps Meeting Set and asks to reschedule; Reschedule books the next one and the tile moves to Coming up");
+  await hana.getByTestId("tile-noshow").click();
+  await notice.getByText(/No-show/).waitFor();
+  await until(async () => (await hana.getByTestId("tile-line").getAttribute("data-key")) === "noshow", "the no-show line");
+  assert.equal((await hana.getByTestId("tile-line").innerText()).trim(), `No-show ${shortOf(zoneDayOf(hanaMet))} — reschedule`);
+  assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id='op_s_opp_hana'`)).stage, "MEETING_SET");
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_hana'`)).outcome, "NO_SHOW");
+  await hana.getByTestId("tile-reschedule").click();
+  const reschedule = page.getByTestId("reschedule-menu");
+  await reschedule.getByTestId("reschedule-day").first().click();
+  await reschedule.getByTestId("reschedule-save").click();
+  await page.locator("[data-testid=meeting-group-coming] [data-testid=pipeline-tile][data-id='op_s_opp_hana']").waitFor();
+  assert.equal((await hana.getByTestId("tile-line").innerText()).trim(), "Meeting tomorrow 10:00 AM");
+  assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"='op_s_opp_hana'`)).n, 2, "the missed one stays, marked");
+
+  log("Sprint: moving a meeting still ahead to Meeting Completed asks 'This meeting is <day>. Did it happen early?'; No keeps it, Yes holds it");
+  await cole.getByTestId("tile-more").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_COMPLETED]").click();
+  const earlyDialog = page.getByTestId("early-dialog");
+  await earlyDialog.waitFor();
+  assert.equal((await earlyDialog.locator("h2").innerText()).trim(), `This meeting is ${longOf(coleDay)}. Did it happen early?`);
+  await earlyDialog.getByTestId("early-no").click();
+  await earlyDialog.waitFor({ state: "detached" });
+  assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id='op_s_opp_cole'`)).stage, "MEETING_SET", "No moves nothing");
+  // Dropped on the column's header: aiming at the middle of a long column
+  // scrolls the page between picking the tile up and pressing, and the
+  // tile two places down was the one dragged.
+  await cole.scrollIntoViewIfNeeded();
+  await cole.dragTo(page.locator("[data-testid=pipeline-column-MEETING_COMPLETED]"), { sourcePosition: { x: 24, y: 14 }, targetPosition: { x: 60, y: 16 } });
+  assert.equal((await earlyDialog.locator("h2").innerText()).trim(), `This meeting is ${longOf(coleDay)}. Did it happen early?`, "the drag asks too");
+  await earlyDialog.getByTestId("early-yes").click();
+  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile][data-id='op_s_opp_cole']").waitFor();
+  await notice.getByText("Held · Meeting Completed").waitFor();
+  assert.deepEqual(
+    (await sql(`SELECT outcome FROM "Activity" WHERE "contactId"='op_s_cole' AND type='MEETING'`)).rows.map((row) => row.outcome),
+    ["HELD"],
+  );
+  assert.ok((await one(`SELECT "doneAt" FROM "CalendarEvent" WHERE id='op_s_ev_cole'`)).doneAt, "its calendar entry is ticked done");
+
+  log("Sprint: column headers carry one count and a health bar that adds up, with one shared legend; tiles a 3px health edge and no N/A chip; ⋯ holds Show archived, Contract Coordinator and New quote");
+  await page.reload();
+  await page.getByTestId("health-legend").waitFor();
+  for (const column of ["MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON", "LOST"]) {
+    const col = page.locator(`[data-testid=pipeline-column-${column}]`);
+    const count = Number(await col.getByTestId("pipeline-column-count").innerText());
+    const mix = (await col.getByTestId("column-health").getAttribute("data-mix")).split(",").reduce((sum, part) => sum + Number(part.split(":")[1]), 0);
+    assert.equal(mix, count, `${column}: the bar adds up to the count`);
+    assert.equal(await col.locator("[data-testid=pipeline-tile]").count(), count);
+  }
+  const edge = await hana.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { width: style.borderTopWidth, color: style.borderTopColor, hc: getComputedStyle(el).getPropertyValue("--hc").trim(), tone: el.dataset.health };
+  });
+  assert.equal(edge.width, "3px");
+  const toneColor = await page.evaluate((tone) => {
+    const probe = document.createElement("span");
+    probe.dataset.health = tone;
+    probe.style.color = "var(--hc)";
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  }, edge.tone);
+  assert.equal(edge.color, toneColor, "the edge is the tile's health colour");
+  assert.equal(await page.locator("[data-testid=pipeline-tile] [data-testid=lead-label][data-label='N/A']").count(), 0, "N/A draws nothing");
+  await page.getByTestId("pipeline-more").click();
+  const moreMenu = page.getByTestId("pipeline-more-menu");
+  await moreMenu.getByTestId("toggle-archived").waitFor();
+  assert.equal(await moreMenu.getByTestId("pipeline-coordinator").getAttribute("href"), "/dashboard/deals/tracker");
+  assert.equal(await moreMenu.getByTestId("pipeline-new-quote").getAttribute("href"), "/dashboard/quotes/new");
+  await page.keyboard.press("Escape");
+
+  log("Sprint: the panel — the full meter on top, people with Call / Text / Email / Log, meetings with time and note upcoming first, Save only when something changed");
+  await hana.getByTestId("tile-open").click();
+  await panel.getByTestId("panel-meter").waitFor();
+  assert.equal(await panel.getByTestId("panel-meter").getAttribute("data-step"), "2", "Meeting Set on the meter");
+  assert.ok((await panel.getByTestId("lifecycle-reason").innerText()).trim().length > 0, "a reason sentence");
+  const hanaRow = panel.locator("[data-testid=panel-person][data-name='Hana Happened']");
+  assert.equal(await hanaRow.getByTestId("panel-call").getAttribute("href"), "tel:5125550199");
+  assert.equal(await hanaRow.getByTestId("panel-text").getAttribute("href"), "sms:5125550199");
+  assert.equal(await hanaRow.getByTestId("panel-email").getAttribute("href"), "mailto:hana@happy.test");
+  const states = await panel.getByTestId("panel-meeting").evaluateAll((els) => els.map((el) => el.dataset.state));
+  assert.deepEqual(states, ["Coming up", "No-show"], "upcoming first");
+  assert.match(await panel.getByTestId("panel-meeting-when").first().innerText(), /10:00 AM$/);
+  assert.equal(await panel.getByTestId("panel-save").count(), 0, "nothing changed, no Save");
+  await panel.getByTestId("panel-title").fill("Happy Builders HQ");
+  await panel.getByTestId("panel-save").waitFor();
+  await panel.getByTestId("panel-title").fill("Happy Builders");
+  await panel.getByTestId("panel-save").waitFor({ state: "detached" });
+  await hanaRow.getByTestId("panel-log").click();
+  await hanaRow.getByTestId("panel-log-outcome-TALKED").click();
+  await hanaRow.getByTestId("panel-log-save").click();
+  await notice.getByText("Logged · Talked").waitFor();
+  assert.equal((await one(`SELECT outcome FROM "Activity" WHERE "contactId"='op_s_hana' AND type='PHONE_CALL'`)).outcome, "TALKED");
+  assert.equal(await panel.count(), 1, "the panel stays open");
+  await notice.getByTestId("pipeline-undo").click();
+  await notice.getByText("Undone").waitFor();
+  assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='op_s_hana' AND type='PHONE_CALL'`)).n, 0);
+  // + Book a meeting: on this tile, under whoever booked it.
+  await panel.getByTestId("panel-book").click();
+  const bookForm = panel.getByTestId("panel-book-form");
+  await bookForm.getByTestId("picker-day").last().click();
+  await bookForm.getByTestId("picker-time").nth(3).click();
+  await bookForm.getByTestId("picker-save").click();
+  await notice.getByText(/^Booked .* · Hana Happened is on your Pipeline in Meeting Set/).waitFor();
+  const booked = await one(
+    `SELECT om."bookedById", e."startTime" FROM "OpportunityMeeting" om JOIN "CalendarEvent" e ON e.id = om."eventId" WHERE om."opportunityId"='op_s_opp_hana' ORDER BY om."createdAt" DESC LIMIT 1`,
+  );
+  assert.deepEqual({ ...booked }, { bookedById: taylorId, startTime: "13:00" });
+  await until(async () => (await panel.getByTestId("panel-meeting").count()) === 3, "the panel lists it");
+  await shot(page, "10-sprint-panel");
+  await panel.getByTestId("panel-close").click();
+  await panel.waitFor({ state: "detached" });
+
+  log("Sprint: the convert prompt asks what happened after the meeting; They signed needs the amount; Not moving forward keeps its reason");
+  await tileOf("op_s_opp_walt").getByTestId("tile-more").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-WON]").click();
+  await convert.waitFor();
+  assert.equal((await convert.locator("#convert-title").innerText()).trim(), "What happened after the meeting with Walt Winner (Win Co)?");
+  assert.equal(await convert.locator("[data-testid^=convert-card-]").count(), 4);
+  assert.equal(await convert.getByTestId("convert-stage-WON").isChecked(), true);
+  assert.equal(await convert.getByTestId("convert-save").isDisabled(), true, "the amount is required");
+  await convert.getByTestId("convert-value").fill("0");
+  assert.equal(await convert.getByTestId("convert-save").isDisabled(), true, "zero is no amount");
+  await convert.getByTestId("convert-value").fill("4200");
+  await convert.getByTestId("convert-save").click();
+  await convert.waitFor({ state: "detached" });
+  await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-tile][data-id='op_s_opp_walt']").waitFor();
+  assert.deepEqual({ ...(await one(`SELECT d.stage, d."valueCents" FROM "Deal" d JOIN "Opportunity" o ON o."dealId"=d.id WHERE o.id='op_s_opp_walt'`)) }, { stage: "WON", valueCents: 420000 });
+  await tileOf("op_s_opp_lou").getByTestId("tile-more").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-LOST]").click();
+  await convert.waitFor();
+  await convert.getByTestId("convert-reason-HAS_VENDOR").click();
+  await convert.getByTestId("convert-save").click();
+  await convert.waitFor({ state: "detached" });
+  const louTile = page.locator("[data-testid=pipeline-column-LOST] [data-testid=pipeline-tile][data-id='op_s_opp_lou']");
+  await louTile.waitFor();
+  const louDeal = (await one(`SELECT "dealId" FROM "Opportunity" WHERE id='op_s_opp_lou'`)).dealId;
+  assert.equal((await one(`SELECT reason FROM "StatusChange" WHERE "dealId"=$1 AND "contactId" IS NULL AND "toStatus"='LOST'`, [louDeal])).reason, "HAS_VENDOR");
+  assert.equal((await louTile.getByTestId("tile-line").innerText()).trim(), "Lost · Has a vendor");
+  // A deal moved to Lost on the board asks why too (optional).
+  await tileOf("op_s_opp_walt").getByTestId("tile-more").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-LOST]").click();
+  await page.getByTestId("lost-reason").getByTestId("lost-reason-PRICE").click();
+  await notice.getByText("Lost · Price").waitFor();
+  const waltDeal = (await one(`SELECT "dealId" FROM "Opportunity" WHERE id='op_s_opp_walt'`)).dealId;
+  assert.equal((await one(`SELECT reason FROM "StatusChange" WHERE "dealId"=$1 AND "contactId" IS NULL AND "toStatus"='LOST' ORDER BY "on" DESC LIMIT 1`, [waltDeal])).reason, "PRICE");
+
+  log("Sprint: the phone — sticky stage tabs with counts over one stage's cards, a full-width 44px next-step button on each, nothing sideways, the panel full screen");
+  const phoneContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    storageState: await context.storageState(),
+  });
+  const phone = await phoneContext.newPage();
+  phone.on("pageerror", (err) => console.error("PAGE ERROR (phone):", err.message));
+  await phone.goto(`${BASE}/dashboard/deals`);
+  const tabs = phone.getByTestId("pipeline-tabs");
+  await tabs.waitFor();
+  assert.equal(await tabs.evaluate((el) => getComputedStyle(el).position), "sticky");
+  assert.deepEqual(
+    (await tabs.getByRole("tab").allInnerTexts()).map((text) => text.replace(/\s+\d+$/, "").trim()),
+    ["Set", "Met", "Quote", "Contract", "Closed"],
+  );
+  assert.equal(await phone.getByRole("tab", { selected: true }).getAttribute("data-testid"), "pipeline-tab-MEETING_SET");
+  await phone.getByTestId("pipeline-tab-MEETING_COMPLETED").click();
+  const metCards = phone.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]");
+  await metCards.first().waitFor();
+  const metCount = Number((await phone.getByTestId("pipeline-tab-MEETING_COMPLETED").innerText()).match(/(\d+)$/)[1]);
+  assert.equal(await metCards.count(), metCount, "the tab's count is its cards");
+  const button = await metCards.first().evaluate((card) => {
+    const action = card.querySelector("[data-testid=tile-action-button]");
+    const a = action.getBoundingClientRect();
+    const c = card.getBoundingClientRect();
+    return { height: a.height, width: a.width, card: c.width, text: action.textContent };
+  });
+  assert.ok(button.height >= 44, `the next-step button is ${button.height}px tall`);
+  assert.ok(button.width >= button.card - 24, `the next-step button is ${button.width}px in a ${button.card}px card`);
+  assert.equal(button.text.trim(), "Start a quote →");
+  const more = await metCards.first().getByTestId("tile-more").boundingBox();
+  assert.ok(more.height >= 44 && more.width >= 44, `⋯ is ${more.width}x${more.height}`);
+  const sideways = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.ok(sideways <= 1, `the phone page scrolls sideways by ${sideways}px`);
+  await phone.screenshot({ path: path.join(OUT, "11-sprint-phone.png"), fullPage: true });
+  await metCards.first().getByTestId("tile-open").click();
+  const phonePanel = phone.getByTestId("opportunity-panel");
+  await phonePanel.getByTestId("panel-person").first().waitFor();
+  const panelBox = await phonePanel.boundingBox();
+  assert.ok(panelBox.width >= 389 && panelBox.x <= 1, `the panel is ${panelBox.width}px wide at x=${panelBox.x}`);
+  await phoneContext.close();
 
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED. Screenshots in ${OUT}`);
