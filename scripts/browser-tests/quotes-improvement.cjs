@@ -1129,8 +1129,8 @@ let context;
     }
     await tabA.getByTestId("accept-quote-name").fill("Quinn Ito");
     await tabA.getByTestId("accept-quote-submit").click();
-    await tabA.getByTestId("quote-accepted").waitFor();
-    assert.match(await tabA.getByTestId("quote-accepted").textContent(), /Accepted by Quinn Ito on/);
+    // The page re-renders as accepted, with the name typed and the day.
+    await tabA.getByTestId("quote-accepted").filter({ hasText: /Accepted by Quinn Ito on/ }).waitFor();
     const accepted = (await sql(`SELECT status, "acceptedByName", "respondedAt" IS NOT NULL AS dated FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0];
     assert.deepEqual({ ...accepted }, { status: "ACCEPTED", acceptedByName: "Quinn Ito", dated: true });
     // The second tab still shows the form: pressing it again is fine and
@@ -1157,11 +1157,11 @@ let context;
   assert.equal((await page.getByTestId("deal-journey").getByTestId("journey-next").textContent()).trim(), "Make contract");
 
   log("Sprint: Build Quote (New quote for a deal with no quote) starts the quote titled after the deal, with the deal's rep, and opens it");
-  const me = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
+  const bqRep = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
   await sql(
     `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"ownerId","updatedAt")
      VALUES ('deal_qi_bq','${org}','ctc_qi','Parking garage cameras','LEAD',$1,now())`,
-    [me],
+    [bqRep],
   );
   await page.goto(`${BASE}/dashboard/quotes/new?contactId=ctc_qi&dealId=deal_qi_bq`);
   await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+$/);
@@ -1169,7 +1169,7 @@ let context;
   assert.equal(built.length, 1, "Build Quote made more than one quote");
   assert.deepEqual(
     { title: built[0].title, template: built[0].template, rep: built[0].leadSalesRepId, status: built[0].status },
-    { title: "Parking garage cameras", template: "SIMPLE", rep: me, status: "DRAFT" },
+    { title: "Parking garage cameras", template: "SIMPLE", rep: bqRep, status: "DRAFT" },
   );
   assert.ok(page.url().endsWith(built[0].id));
   // Coming back within two minutes, or with the deal now holding a quote,

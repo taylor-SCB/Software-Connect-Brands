@@ -925,7 +925,10 @@ export async function acceptQuoteByCustomer(_prev: ActionState, formData: FormDa
     select: { id: true, status: true, organizationId: true, contactId: true, dealId: true },
   });
   if (!quote || quote.status === "DRAFT") return { error: "This quote isn't available" };
-  if (quote.status === "ACCEPTED") return { success: "Accepted" };
+  if (quote.status === "ACCEPTED") {
+    revalidatePath(`/q/${parsed.data.token}`);
+    return { success: "Accepted" };
+  }
   if (quote.status !== "SENT") return { error: "This quote can't be accepted online any more. Reply to us directly." };
 
   const accepted = await prisma.quote.updateMany({
@@ -936,6 +939,7 @@ export async function acceptQuoteByCustomer(_prev: ActionState, formData: FormDa
     // Answered between the read and the write: a second tap, or the team
     // marking it at the same moment.
     const now = await prisma.quote.findUnique({ where: { id: quote.id }, select: { status: true } });
+    revalidatePath(`/q/${parsed.data.token}`);
     return now?.status === "ACCEPTED" ? { success: "Accepted" } : { error: "This quote can't be accepted online any more. Reply to us directly." };
   }
 

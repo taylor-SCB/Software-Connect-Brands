@@ -9,6 +9,14 @@ import type { ActionState } from "@/lib/forms";
 // name and says yes on their own copy. The page re-renders as accepted.
 export function AcceptQuoteForm({ token, businessName }: { token: string; businessName: string }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(acceptQuoteByCustomer, {});
+  // The page re-renders as accepted; this covers the moment before it does.
+  if (state.success) {
+    return (
+      <p className="no-print mx-auto mt-5 max-w-4xl text-center text-sm" role="status" data-testid="quote-accepted">
+        <span className="font-semibold">Accepted.</span> {businessName} will be in touch with the agreement.
+      </p>
+    );
+  }
   return (
     <div className="card card-lit no-print mx-auto mt-5 max-w-4xl p-5" data-testid="accept-quote">
       <h2 className="text-sm font-semibold">Accept this quote</h2>
