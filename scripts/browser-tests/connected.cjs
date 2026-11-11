@@ -168,10 +168,11 @@ async function meetingAction(page, actor, name, ...args) {
 }
 
 // The log form lives in the How did it go? sheet, opened from the "What
-// happened with …?" bar (Nov 11, 2026).
+// happened with …?" bar on a contact page and "Log a touch" on a company
+// page (Nov 11, 2026).
 async function openLog(page) {
   const form = page.locator("[data-testid=log-activity-form]");
-  if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
+  if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar], [data-testid=company-log-toggle]").first().click();
   await form.waitFor();
   return form;
 }

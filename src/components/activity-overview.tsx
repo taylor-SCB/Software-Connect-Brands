@@ -24,6 +24,7 @@ export function ActivityOverview({
   openDealCount,
   quotesOut,
   timeZone,
+  bare = false,
 }: {
   notes: number;
   personalNotes?: number;
@@ -33,6 +34,9 @@ export function ActivityOverview({
   openDealCount: number;
   quotesOut: number;
   timeZone: string;
+  // Without its card: the contact page shows these behind "Show counts"
+  // under the meter's caption (BDR redesign, Nov 11, 2026).
+  bare?: boolean;
 }) {
   const touches = activity.TEXT + activity.EMAIL + activity.PHONE_CALL + activity.MEETING;
   // Days on the workspace's calendar, the same calendar the date beside
@@ -48,18 +52,17 @@ export function ActivityOverview({
     { label: "Personal", value: personalNotes ?? 0, Icon: IconTag, href: "#notes" },
   ];
 
-  return (
-    <Card lit>
-      <CardHeader
-        title="Activity overview"
-        subtitle={touches === 0 ? "No touches yet" : `${touches} ${touches === 1 ? "touch" : "touches"} logged`}
-      />
-      <div className="grid grid-cols-3 gap-2 p-4">
+  const body = (
+    <>
+      <div className={`grid grid-cols-3 gap-2 ${bare ? "py-2 sm:grid-cols-6" : "p-4"}`} data-testid="activity-counts">
         {tiles.map(({ label, value, Icon, href }) => (
           <a
             key={label}
             href={href}
             className="card card-hover flex flex-col items-center gap-1 px-2 py-3 text-center"
+            data-testid="activity-tile"
+            data-label={label}
+            data-value={value}
           >
             <Icon
               size={14}
@@ -72,8 +75,8 @@ export function ActivityOverview({
           </a>
         ))}
       </div>
-      <div className="divider" />
-      <dl className="space-y-3 px-5 py-4 text-sm">
+      {!bare && <div className="divider" />}
+      <dl className={`space-y-3 text-sm ${bare ? "py-2" : "px-5 py-4"}`}>
         <OverviewRow
           Icon={IconClock}
           label="Last touch"
@@ -124,6 +127,16 @@ export function ActivityOverview({
           }
         />
       </dl>
+    </>
+  );
+  if (bare) return <div data-testid="activity-overview">{body}</div>;
+  return (
+    <Card lit>
+      <CardHeader
+        title="Activity overview"
+        subtitle={touches === 0 ? "No touches yet" : `${touches} ${touches === 1 ? "touch" : "touches"} logged`}
+      />
+      {body}
     </Card>
   );
 }

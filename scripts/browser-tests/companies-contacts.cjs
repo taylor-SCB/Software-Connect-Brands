@@ -118,12 +118,17 @@ function backLink(page) {
   const dannyUrl = page.url();
   await page.getByRole("heading", { name: "Danny Ortiz" }).waitFor();
   assert.ok(await page.getByText("Owner").first().isVisible(), "title under the name");
-  const details = page.locator("dl").first();
-  assert.ok(await details.getByRole("link", { name: "Spirit Communications" }).isVisible(), "company is a link in Details");
+  // Details is the Reach card with "More details", and the Activity
+  // overview's tiles sit behind "Show counts" (BDR redesign, Nov 11, 2026).
+  const reach = page.locator("[data-testid=reach]");
+  assert.ok(await reach.getByRole("link", { name: "Spirit Communications" }).isVisible(), "company is a link in Reach");
+  await reach.locator("[data-testid=more-details]").click();
+  const details = reach.locator("[data-testid=more-details-list]");
   assert.ok(await details.getByText("Mar 9, 1984").isVisible(), "birthday shown");
   const labels = await details.locator("dt").allTextContents();
   assert.deepEqual(labels.slice(-2), ["City", "State"], "city and state are the last two lines of Details");
-  assert.ok(await page.getByText("Activity overview").isVisible(), "overview box present");
+  await page.locator("[data-testid=show-counts]").click();
+  assert.ok(await page.locator("[data-testid=activity-overview]").isVisible(), "overview box present behind Show counts");
   assert.ok(await page.getByText("Never").isVisible(), "no touches yet");
   await shot(page, "02-contact-page");
   const dannyId = dannyUrl.split("/").pop();
@@ -215,6 +220,8 @@ function backLink(page) {
 
   log("new quote from a contact: customer preselected, deal typed as new via + Add new deal");
   await page.goto(dannyUrl);
+  // Under ⋯ More since the BDR redesign (Nov 11, 2026).
+  await page.locator("[data-testid=record-more]").click();
   await page.getByRole("link", { name: "New quote" }).first().click();
   await page.waitForURL(/\/dashboard\/quotes\/new\?contactId=/);
   assert.ok((await page.locator("#contactId option:checked").textContent()).includes("Danny Ortiz"));
@@ -233,12 +240,14 @@ function backLink(page) {
   await shot(page, "05-quote-back-to-contact");
   await backLink(page).click();
   await page.waitForURL(dannyUrl);
-  const dealsCard = page.locator("div.card", { hasText: "a deal is one job" });
+  // Deals, Quotes and Contracts are one Paperwork card since the BDR
+  // redesign (Nov 11, 2026).
+  const dealsCard = page.locator("[data-testid=paperwork-deals]");
   assert.ok(await dealsCard.getByText("Fiber install").first().isVisible(), "deal appears on the contact");
   assert.ok(await dealsCard.getByText("1 quote").isVisible());
   // Since Sept 30, 2026 a deal before its quote goes out reads "Quote not sent".
   assert.ok(await dealsCard.getByText("Quote not sent").isVisible(), "new deal starts before the pipeline");
-  const quotesCard = page.locator("div.card", { hasText: "QUO-1000" });
+  const quotesCard = page.locator("[data-testid=paperwork-quotes]");
   assert.ok(await quotesCard.getByText("QUO-1000 · Fiber install").isVisible(), "quote row names its deal");
 
   log("second quote on the same deal from the deal row; the picker shows the existing deal");
@@ -306,8 +315,8 @@ function backLink(page) {
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "open pipeline on the contact reads the quote");
 
   log("a note with the Birthday label, logged on Danny and Sara at once");
-  // The activity log is the How did it go? sheet now (Nov 11, 2026), so the
-  // only form on the page itself is the note's.
+  // The Notes card's form: the activity log is the How did it go? sheet
+  // behind "What happened with Danny?" since Nov 11, 2026.
   const noteForm = page.locator("#notes form", { has: page.locator("textarea[name=body]") });
   await noteForm.locator("textarea[name=body]").fill("Birthday is March 9 — likes bourbon");
   await noteForm.getByRole("button", { name: "Birthday" }).click();
@@ -340,6 +349,8 @@ function backLink(page) {
   await shot(page, "08-notes-personal");
 
   log("log a call on Danny and Resi at once; overview shows Calls 1 and Last touch Today");
+  // The log is the How did it go? sheet behind "What happened with Danny?";
+  // the overview's tiles open from Show counts (BDR redesign, Nov 11, 2026).
   await page.locator("[data-testid=log-bar]").click();
   const activityForm = page.locator("[data-testid=log-activity-form]");
   await activityForm.locator("textarea[name=body]").fill("Walked the site, quote by Friday");
@@ -349,9 +360,11 @@ function backLink(page) {
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
   await activityForm.getByRole("button", { name: "Log phone call" }).click();
   await page.locator("#activity").getByText("Walked the site").waitFor();
-  const overview = page.locator("div.card", { hasText: "Activity overview" });
+  await page.locator("[data-testid=show-counts]").click();
+  const overview = page.locator("[data-testid=activity-overview]");
   assert.ok(await overview.getByText("Today").isVisible());
-  assert.ok(await overview.getByText("1 touch logged").isVisible());
+  assert.equal(await overview.locator("[data-testid=activity-tile][data-label=Calls]").getAttribute("data-value"), "1", "1 touch logged");
+  assert.equal(await page.locator("[data-testid=history-count-all]").textContent(), "1");
   await shot(page, "09-overview");
 
   log("audit fixes (UX review): Last touch counts days on the workspace's calendar: 11:59pm last night is Yesterday, eight dates back warns");
@@ -366,12 +379,14 @@ function backLink(page) {
        ('act_cc_eight',$1,'ctc_cc_eight',$2,'PHONE_CALL','Old call',${lateLastNight} - interval '7 days')`,
     [org, me],
   );
-  const lastTouchRow = page.locator("div.card", { hasText: "Activity overview" }).locator("dl > div", { hasText: "Last touch" });
+  const lastTouchRow = page.locator("[data-testid=activity-overview]").locator("dl > div", { hasText: "Last touch" });
   await page.goto(`${BASE}/dashboard/contacts/ctc_cc_late`);
+  await page.locator("[data-testid=show-counts]").click();
   const yesterdayWords = (await sql(`SELECT to_char((now() AT TIME ZONE 'Pacific/Honolulu') - interval '1 day', 'Mon FMDD, YYYY') AS d`)).rows[0].d;
   assert.equal((await lastTouchRow.locator("dd").innerText()).trim(), `Yesterday · ${yesterdayWords}`, "under 24 hours ago, but yesterday's date");
   assert.doesNotMatch((await lastTouchRow.locator("dt svg").getAttribute("class")) ?? "", /--warn/);
   await page.goto(`${BASE}/dashboard/contacts/ctc_cc_eight`);
+  await page.locator("[data-testid=show-counts]").click();
   assert.match(await lastTouchRow.locator("dd").innerText(), /^8 days ago · /, "under 8 × 24 hours ago, eight dates back");
   assert.match((await lastTouchRow.locator("dt svg").getAttribute("class")) ?? "", /--warn/, "the 8-day warning");
   await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);

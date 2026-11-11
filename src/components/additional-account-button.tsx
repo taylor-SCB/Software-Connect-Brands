@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { IconBuilding, IconCheck, IconPlus, IconSearch, IconX } from "@/components/icons";
 import { FormError } from "@/components/ui";
@@ -22,15 +23,27 @@ export function AdditionalAccountButton({
   contactId,
   contactName,
   linkedIds,
+  open: openProp,
+  onOpenChange,
 }: {
   contactId: string;
   contactName: string;
   // Their main company and the ones already linked: shown ticked and
   // locked, so nothing is linked twice.
   linkedIds: string[];
+  // Opened from somewhere else (the contact page's ⋯ More, Nov 11, 2026):
+  // no button of its own, and the dialog says when it closes.
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (next: boolean) => {
+    if (!controlled) setOpenState(next);
+    onOpenChange?.(next);
+  };
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Map<string, CompanyHit>>(new Map());
   const [adding, setAdding] = useState(false);
@@ -38,10 +51,16 @@ export function AdditionalAccountButton({
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
 
+  // The latest close, for the Escape listener (it tells the page's ⋯ More
+  // when the dialog is opened from there).
+  const closeRef = useRef(() => setOpen(false));
+  useEffect(() => {
+    closeRef.current = () => setOpen(false);
+  });
   useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") closeRef.current();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -91,12 +110,14 @@ export function AdditionalAccountButton({
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost btn-sm" data-testid="additional-account">
-        <IconPlus size={13} />
-        Additional Account
-      </button>
+      {!controlled && (
+        <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost btn-sm" data-testid="additional-account">
+          <IconPlus size={13} />
+          Additional Account
+        </button>
+      )}
 
-      {open && (
+      {open && typeof document !== "undefined" && createPortal(
         <div className="modal-backdrop" onClick={() => setOpen(false)}>
           <div
             role="dialog"
@@ -216,7 +237,8 @@ export function AdditionalAccountButton({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

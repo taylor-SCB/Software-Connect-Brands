@@ -29,13 +29,19 @@ export function UpcomingCard({
   choices,
   defaults,
   label,
+  phoneFold = false,
 }: {
   events: UpcomingEvent[];
   choices: EventChoices;
   defaults: { contactId?: string; companyId?: string; startOn: string; type?: string };
   label: string;
+  // Folded on a phone until tapped (the contact page, where the Next step
+  // strip already names the first thing booked).
+  phoneFold?: boolean;
 }) {
   const [adding, setAdding] = useState(false);
+  const [unfolded, setUnfolded] = useState(false);
+  const folded = phoneFold && !unfolded && !adding;
 
   return (
     <Card lit>
@@ -43,18 +49,31 @@ export function UpcomingCard({
         title="Coming up"
         subtitle={events.length === 0 ? `Nothing booked with ${label} yet.` : `Days booked with ${label}.`}
         actions={
-          <button
-            type="button"
-            onClick={() => setAdding(!adding)}
-            className="btn btn-ghost btn-sm"
-            data-testid="upcoming-add-event"
-          >
-            <IconCalendar size={13} />
-            {adding ? "Close" : "+ Event"}
-          </button>
+          <>
+            {phoneFold && (
+              <button
+                type="button"
+                onClick={() => setUnfolded(!unfolded)}
+                aria-expanded={!folded}
+                className="btn btn-ghost btn-sm pointer-coarse:min-h-11 lg:hidden"
+                data-testid="upcoming-toggle"
+              >
+                {folded ? `Show${events.length ? ` ${events.length}` : ""}` : "Hide"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setAdding(!adding)}
+              className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
+              data-testid="upcoming-add-event"
+            >
+              <IconCalendar size={13} />
+              {adding ? "Close" : "+ Event"}
+            </button>
+          </>
         }
       />
-      <div className="space-y-2 p-5" data-testid="upcoming-card">
+      <div className={`space-y-2 p-5 ${folded ? "max-lg:hidden" : ""}`} data-testid="upcoming-card">
         {adding && (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
             <EventForm choices={choices} defaults={defaults} onDone={() => setAdding(false)} />

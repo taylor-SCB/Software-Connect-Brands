@@ -688,7 +688,15 @@ async function textContrast(locator) {
     ["/dashboard/contacts", "State filter chip", (p) => p.locator("[data-testid=filter-state]")],
     ["/dashboard/contacts", "search box", (p) => p.getByPlaceholder(/Search contacts/)],
     ["/dashboard/contacts", "the list's card", (p) => p.locator("main .card").first()],
-    [`/dashboard/contacts/${contactId}`, "Log phone call", (p) => p.getByRole("button", { name: /Log phone call/ })],
+    // The contact page folds its log form into "What happened with …?".
+    [
+      `/dashboard/contacts/${contactId}`,
+      "Log phone call",
+      async (p) => {
+        if (await p.getByTestId("log-bar").count()) await p.getByTestId("log-bar").click();
+        return p.getByRole("button", { name: /Log phone call/ });
+      },
+    ],
     [`/dashboard/contacts/${contactId}`, "+ Include multiple contacts", (p) => p.getByRole("button", { name: /Include multiple contacts/ }).first()],
     [`/dashboard/contacts/${contactId}`, "note box", (p) => p.locator("main textarea").first()],
   ];
@@ -697,7 +705,7 @@ async function textContrast(locator) {
       await page.goto(`${BASE}${url}`);
       await settle(page);
     }
-    const c = await outlineContrast(find(page));
+    const c = await outlineContrast(await find(page));
     // The reviewer measured 1.3:1 (--border) and 1.6:1 (--border-strong).
     assert.ok(c.inside >= 3 && c.outside >= 3, `light ${what}: its outline is ${c.inside}:1 against itself and ${c.outside}:1 against what is around it (${c.border}); needs 3:1`);
     console.log(`     ${what}: ${c.inside}:1 inside, ${c.outside}:1 outside`);

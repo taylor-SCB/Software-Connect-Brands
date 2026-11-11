@@ -119,6 +119,18 @@ async function followUps(org) {
   ).rows;
 }
 
+
+// The log is the How did it go? sheet behind the "What happened with …?"
+// bar on a contact page and "Log a touch" on a company page (BDR redesign,
+// Nov 11, 2026). A log with no outcome chip moves on to the follow-up box;
+// what it adds is said in the "Saved · Undo" line once the sheet closes.
+async function openLog(p) {
+  const form = p.locator("[data-testid=log-activity-form]");
+  if (!(await form.isVisible().catch(() => false))) await p.locator("[data-testid=log-bar], [data-testid=company-log-toggle]").first().click();
+  await form.waitFor();
+  return form;
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -230,18 +242,11 @@ async function followUps(org) {
 
   const form = page.locator("[data-testid=log-activity-form]");
   const box = page.locator("[data-testid=follow-up-prompt]");
-  // The log is the How did it go? sheet behind the "What happened?" bar
-  // (Nov 11, 2026). A log with no outcome chip moves on to this box; what
-  // it adds is said in the "Saved · Undo" line once the sheet closes.
-  const openLog = async () => {
-    if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
-    await form.waitFor();
-  };
   const notice = page.locator("[data-testid=log-toast-words]");
 
   log("logging a call opens 'Want to set a follow-up?' with nothing ticked and nothing to add yet");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
-  await openLog();
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Left a voicemail about the kitchen quote");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -299,7 +304,7 @@ async function followUps(org) {
 
   log("the box opens again for the next touch; No thanks writes nothing");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
-  await openLog();
+  await openLog(page);
   await form.getByRole("button", { name: "Text", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Texted the revised numbers");
   await form.locator("[data-testid=activity-submit]").click();
@@ -314,7 +319,7 @@ async function followUps(org) {
 
   log("Sprint: a Meeting follow-up is “Try to book a meeting” — a reminder call that moves no status (decision 5)");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_eli`);
-  await openLog();
+  await openLog(page);
   await form.getByRole("button", { name: "Email", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Sent the brochure");
   await form.locator("[data-testid=activity-submit]").click();
@@ -335,7 +340,7 @@ async function followUps(org) {
 
   log("a day before today is refused, and the box stays open to fix it");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
-  await openLog();
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Quick check-in");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -352,7 +357,7 @@ async function followUps(org) {
   assert.equal((await followUps(org)).length, 4, "today itself is fine");
 
   log("scheduling a call ahead opens no box — it is already the thing to do");
-  await openLog();
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Call back next week");
   await form.locator("[data-testid=activity-when-toggle]").click();
   await form.locator("[data-testid=activity-when]").fill(daysOn(6));
@@ -362,7 +367,7 @@ async function followUps(org) {
 
   log("a company-page log (bypassed, nobody linked) gets the same box, with the company as who it is with");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_oak`);
-  await openLog();
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Spoke to reception");
   await form.locator("[data-testid=company-bypass-tick]").check();
   await form.locator("[data-testid=activity-submit]").click();
@@ -377,7 +382,7 @@ async function followUps(org) {
 
   log("with people ticked on the company page, the follow-up is with the first and the rest are expected");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_harbor`);
-  await openLog();
+  await openLog(page);
   const picker = form.locator("[data-testid=company-people-picker]");
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Eli Park" }).click();

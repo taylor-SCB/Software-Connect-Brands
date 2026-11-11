@@ -236,6 +236,11 @@ async function runImport(page, rows) {
   log("phone width: the contact page fits without sideways scrolling");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/dashboard/contacts/mob-ann`);
+  // The phone's bar calls the mobile first; Reach starts folded there (BDR
+  // redesign, Nov 11, 2026) and opens with a tap.
+  const mobileNumber = await page.getByTestId("contact-mobile").textContent();
+  assert.equal(await page.getByTestId("phone-bar-call").getAttribute("href"), `tel:${mobileNumber}`);
+  await page.getByTestId("reach-toggle").click();
   await page.getByTestId("contact-mobile").waitFor();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);

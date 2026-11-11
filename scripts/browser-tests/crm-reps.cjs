@@ -62,6 +62,37 @@ async function login(page, email) {
   await page.waitForURL(/\/dashboard$/);
 }
 
+
+// The log is the How did it go? sheet behind the "What happened with …?"
+// bar (BDR redesign, Nov 11, 2026): open it unless it is open.
+async function openLog(p) {
+  const sheet = p.locator("[data-testid=log-activity-form]");
+  if (!(await sheet.isVisible().catch(() => false))) await p.locator("[data-testid=log-bar]").click();
+  await sheet.waitFor();
+  return sheet;
+}
+// New quote, Additional Account, the status picker and Delete sit under
+// ⋯ More on the contact page (BDR redesign, Release 4).
+async function openMore(p) {
+  const more = p.locator("[data-testid=record-more]");
+  if ((await more.count()) && !(await p.locator("[data-testid=record-more-menu]").count())) await more.click();
+}
+
+
+// Add deal: in the Paperwork card's ⋯ from Meeting Completed on, else under
+// the header's ⋯ More (BDR redesign, Nov 11, 2026).
+async function openAddDeal(p) {
+  await p.locator("[data-testid=contact-header]").waitFor();
+  if (await p.locator("[data-testid=paperwork-more]").count()) {
+    await p.locator("[data-testid=paperwork-more]").click();
+    await p.locator("[data-testid=paperwork-add-deal-open]").click();
+  } else {
+    await p.locator("[data-testid=record-more]").click();
+    await p.locator("[data-testid=more-add-deal]").click();
+  }
+  await p.locator("#deal-title").waitFor();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE 'test-crm-reps-co%'`);
   await sql(`DELETE FROM "User" WHERE email = $1`, [NIC_EMAIL]);
@@ -168,8 +199,7 @@ async function login(page, email) {
 
   log("Nic logs a call on Alex");
   await nic.goto(alexUrl);
-  // The log is the How did it go? sheet behind the "What happened?" bar (Nov 11, 2026).
-  await nic.locator("[data-testid=log-bar]").click();
+  await openLog(nic);
   const activityForm = nic.locator("[data-testid=log-activity-form]");
   await activityForm.locator("textarea[name=body]").fill("Intro call, wants a walkthrough");
   await activityForm.locator("[data-testid=activity-submit]").click();
@@ -201,6 +231,7 @@ async function login(page, email) {
 
   log("Nic adds a deal; the pipeline tile names him as the rep");
   await nic.goto(alexUrl);
+  await openAddDeal(nic);
   await nic.fill("#deal-title", "Rivera office build-out");
   await nic.fill("#deal-value", "12000");
   await nic.getByRole("button", { name: "Add", exact: true }).click();
@@ -245,6 +276,7 @@ async function login(page, email) {
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
   const throwawayId = page.url().split("/").pop();
+  await openMore(page);
   await page.locator("[data-testid=header-delete]").click();
   await page.getByText("Delete Throwaway Person, with their notes").waitFor();
   await page.getByRole("button", { name: "Cancel" }).click();
@@ -277,6 +309,7 @@ async function login(page, email) {
   );
   await sql(`UPDATE "Organization" SET "nextContractNumber" = GREATEST("nextContractNumber", 990002) WHERE id = $1`, [org]);
   await page.goto(alexUrl);
+  await openMore(page);
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
   await page.locator("[data-testid=header-delete-error]").waitFor();
