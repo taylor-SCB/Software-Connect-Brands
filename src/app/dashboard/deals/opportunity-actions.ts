@@ -9,16 +9,19 @@ import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { canonicalLeadLabel, isBuiltInLeadLabel } from "@/lib/lead-labels";
 import { CONVERTED_STAGES, opportunityColumn, stampLostReason, syncOpportunity } from "@/lib/opportunities";
 import { loadWorkspaceUsers } from "@/lib/workspace-users";
-import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { zonedNoon } from "@/lib/money";
 import { cleanTime, isRealDay } from "@/lib/calendar";
 import { meetingHeldAnswer, meetingNoShowAnswer, meetingRescheduleAnswer } from "@/lib/meetings";
+import { healthSettings, opportunityHealth } from "@/lib/health-load";
+import { zoneDay, type LeadHealth } from "@/lib/health";
+import { Prisma } from "@/generated/prisma/client";
 import { updateDealStage } from "./actions";
 
 // The Pipeline's tiles (Oct 27, 2026): open one, move it, convert it to a
 // deal, and save what its panel edits. The rules live in
-// src/lib/opportunities.ts; these only check the request and call them.
+// src/lib/opportunities.ts and src/lib/meetings.ts; these only check the
+// request and call them.
 
 type Result = { error?: string; success?: string };
 
@@ -36,9 +39,24 @@ export type OpportunityPerson = {
   name: string;
   company: string | null;
   email: string | null;
+  // The number to call: the mobile first, else the phone.
   phone: string | null;
   role: "PRIMARY" | "ASSOCIATED" | "HIDDEN";
   fromMeeting: boolean;
+};
+
+// A meeting on the tile, as the panel lists it (upcoming first, soonest
+// first; then the ones that happened, newest first).
+export type PanelMeeting = {
+  id: string;
+  at: string;
+  // The workspace's day and "HH:MM" when a time was set.
+  day: string;
+  time: string | null;
+  note: string | null;
+  where: string | null;
+  outcome: "HELD" | "NO_SHOW" | null;
+  ahead: boolean;
 };
 
 export type OpportunityDetail = {
@@ -56,16 +74,45 @@ export type OpportunityDetail = {
     quotes: { id: string; number: number; title: string; status: string }[];
   } | null;
   people: OpportunityPerson[];
-  meetings: { id: string; on: string }[];
+  meetings: PanelMeeting[];
   users: { id: string; name: string }[];
   customLabels: string[];
+  // The full meter and its reason (src/lib/health.ts); null if it could
+  // not be read.
+  health: LeadHealth | null;
+  today: string;
+  timeZone: string;
 };
+
+// The meeting a "it happened" answer is about: the latest one that has
+// passed with nobody saying how it went, else the soonest one still ahead
+// (held early, after asking). None when every meeting is answered.
+async function meetingToHold(organizationId: string, opportunityId: string, now: Date) {
+  const meetings = await prisma.opportunityMeeting.findMany({
+    where: { opportunityId, opportunity: { organizationId } },
+    select: { id: true, on: true, outcome: true, activityId: true },
+  });
+  const activityIds = meetings.map((row) => row.activityId).filter((id): id is string => Boolean(id));
+  const logged = activityIds.length
+    ? new Map(
+        (await prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, outcome: true } })).map((row) => [row.id, row.outcome]),
+      )
+    : new Map<string, string | null>();
+  const open = meetings.filter((row) => {
+    const outcome = row.outcome ?? (row.activityId ? logged.get(row.activityId) : null);
+    return outcome !== "HELD" && outcome !== "NO_SHOW";
+  });
+  const past = open.filter((row) => row.on <= now).sort((a, b) => b.on.getTime() - a.on.getTime());
+  if (past[0]) return past[0].id;
+  const ahead = open.filter((row) => row.on > now).sort((a, b) => a.on.getTime() - b.on.getTime());
+  return ahead[0]?.id ?? null;
+}
 
 export async function loadOpportunity(id: string): Promise<OpportunityDetail | { error: string }> {
   const { organizationId } = await requireSession();
   const parsed = idSchema.safeParse(id);
   if (!parsed.success) return { error: "That opportunity isn't valid" };
-  const [opportunity, users, labels] = await Promise.all([
+  const [opportunity, users, labels, settings] = await Promise.all([
     prisma.opportunity.findFirst({
       where: { id: parsed.data, organizationId },
       select: {
@@ -87,17 +134,60 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
           select: {
             role: true,
             fromMeeting: true,
-            contact: { select: { id: true, name: true, email: true, phone: true, company: { select: { name: true } } } },
+            contact: { select: { id: true, name: true, email: true, phone: true, mobile: true, company: { select: { name: true } } } },
           },
         },
-        meetings: { orderBy: { on: "asc" }, select: { id: true, on: true } },
+        meetings: { orderBy: { on: "asc" }, select: { id: true, on: true, outcome: true, activityId: true, eventId: true } },
       },
     }),
     loadWorkspaceUsers(organizationId),
     prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, orderBy: { name: "asc" }, select: { name: true } }),
+    healthSettings(organizationId),
   ]);
   if (!opportunity) return { error: "That opportunity is no longer on the board" };
   const deal = opportunity.deal;
+  const timeZone = settings.timeZone;
+  const now = new Date();
+
+  // Each meeting's time, place and note from its calendar entry, and its
+  // note and outcome from the history line it was logged as.
+  const eventIds = opportunity.meetings.map((row) => row.eventId).filter((value): value is string => Boolean(value));
+  const activityIds = opportunity.meetings.map((row) => row.activityId).filter((value): value is string => Boolean(value));
+  const [events, activities, health] = await Promise.all([
+    eventIds.length
+      ? prisma.calendarEvent.findMany({
+          where: { organizationId, id: { in: eventIds } },
+          select: { id: true, startOn: true, startTime: true, notes: true, location: true, title: true },
+        })
+      : [],
+    activityIds.length
+      ? prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, body: true, outcome: true } })
+      : [],
+    opportunityHealth(organizationId, opportunity.id, { settings, now }).catch(() => null),
+  ]);
+  const eventById = new Map(events.map((row) => [row.id, row]));
+  const activityById = new Map(activities.map((row) => [row.id, row]));
+  const meetings: PanelMeeting[] = opportunity.meetings.map((row) => {
+    const event = row.eventId ? eventById.get(row.eventId) : undefined;
+    const activity = row.activityId ? activityById.get(row.activityId) : undefined;
+    const outcome = row.outcome ?? activity?.outcome ?? null;
+    const note = activity?.body?.trim() || event?.notes?.trim() || null;
+    return {
+      id: row.id,
+      at: row.on.toISOString(),
+      day: event ? event.startOn.toISOString().slice(0, 10) : zoneDay(row.on, timeZone),
+      time: event?.startTime ?? null,
+      note,
+      where: event?.location ?? null,
+      outcome: outcome === "HELD" || outcome === "NO_SHOW" ? outcome : null,
+      ahead: row.on > now && outcome !== "HELD" && outcome !== "NO_SHOW",
+    };
+  });
+  meetings.sort((a, b) => {
+    if (a.ahead !== b.ahead) return a.ahead ? -1 : 1;
+    return a.ahead ? Date.parse(a.at) - Date.parse(b.at) : Date.parse(b.at) - Date.parse(a.at);
+  });
+
   return {
     id: opportunity.id,
     title: opportunity.title,
@@ -118,24 +208,36 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
       name: row.contact.name,
       company: row.contact.company?.name ?? null,
       email: row.contact.email,
-      phone: row.contact.phone,
+      phone: row.contact.mobile || row.contact.phone || null,
       role: row.role,
       fromMeeting: row.fromMeeting,
     })),
-    meetings: opportunity.meetings.map((meeting) => ({ id: meeting.id, on: meeting.on.toISOString() })),
+    meetings,
     users: users.map((user) => ({ id: user.id, name: user.name })),
     customLabels: labels.map((row) => row.name),
+    health,
+    today: todayIso(timeZone),
+    timeZone,
   };
 }
 
-// A tile dropped on a column, or moved from its menu. Between the two
-// meeting columns it just moves. Into a deal column with no deal yet the
-// browser asks "convert this to a deal?" instead (convertOpportunity); a
-// deal moves between deal columns dated today, and never back into a
-// meeting column.
-export async function moveOpportunity(id: string, column: string): Promise<Result & { convert?: boolean }> {
+type MoveResult = Result & { convert?: boolean; confirmEarly?: string; batchId?: string };
+
+// A tile dropped on a column, or moved from its menu. Meeting Set ↔
+// Meeting Completed moves with no prompt, except that a move forward means
+// the meeting happened (decision 4): the latest meeting that has passed
+// with no answer is marked Held (no second history line, markMeetingHeld's
+// rule), and one still ahead comes back as { confirmEarly: day } — "This
+// meeting is Tue Nov 17. Did it happen early?" — and is held only when
+// asked again with { early: true }. Into a deal column with no deal yet the
+// browser asks "What happened after the meeting?" instead
+// (convertOpportunity); a deal moves between deal columns dated today, and
+// never back into a meeting column.
+export async function moveOpportunity(id: string, column: string, options: { early?: boolean } = {}): Promise<MoveResult> {
   const { organizationId, userId } = await requireSession();
-  const parsed = z.object({ id: idSchema, column: z.enum(PIPELINE_COLUMNS) }).safeParse({ id, column });
+  const parsed = z
+    .object({ id: idSchema, column: z.enum(PIPELINE_COLUMNS), early: z.boolean().optional() })
+    .safeParse({ id, column, early: options.early });
   if (!parsed.success) return { error: "That move isn't valid" };
   const opportunity = await prisma.opportunity.findFirst({
     where: { id: parsed.data.id, organizationId },
@@ -143,7 +245,8 @@ export async function moveOpportunity(id: string, column: string): Promise<Resul
   });
   if (!opportunity) return { error: "That opportunity is no longer on the board" };
   const target = parsed.data.column as PipelineColumn;
-  if (opportunityColumn(opportunity) === target) return { success: "No change" };
+  const from = opportunityColumn(opportunity);
+  if (from === target) return { success: "No change" };
   const toMeeting = (CONTACT_COLUMNS as readonly string[]).includes(target);
 
   if (opportunity.deal && CONVERTED_STAGES.includes(opportunity.deal.stage)) {
@@ -158,6 +261,17 @@ export async function moveOpportunity(id: string, column: string): Promise<Resul
       return moved.error ? { error: moved.error } : { success: "Moved" };
     }
     return { convert: true };
+  }
+  if (from === "MEETING_SET" && target === "MEETING_COMPLETED") {
+    const meetingId = await meetingToHold(organizationId, opportunity.id, new Date());
+    if (meetingId) {
+      const answer = await meetingHeldAnswer({ organizationId, userId }, meetingId, { early: parsed.data.early });
+      if (answer.confirmEarly) return { confirmEarly: answer.confirmEarly, error: answer.error };
+      if (answer.error) return { error: answer.error };
+      revalidateBoard();
+      revalidatePath("/dashboard/calendar");
+      return { success: answer.success, batchId: answer.batchId };
+    }
   }
   await prisma.opportunity.updateMany({
     where: { id: opportunity.id, organizationId },
@@ -176,45 +290,98 @@ const convertSchema = z.object({
   title: z.string().trim().min(1, "Give the deal a name").max(160),
   valueCents: z.number().int().min(0).max(100_000_000_000).default(0),
   on: z.string().trim().optional(),
+  // Not moving forward: the optional one-tap reason (decision 14).
+  reason: z.enum(STATUS_REASONS).nullish(),
+  // The tile's meeting is still ahead and the person said it happened early.
+  early: z.boolean().optional(),
 });
 
-// "Do you want to convert this to a deal?" → Save and Accept. Makes the
-// one deal this opportunity gets, at the stage picked, under its Primary
-// POC; a draft quote's deal already on it is moved instead of doubled.
-export async function convertOpportunity(input: z.input<typeof convertSchema>): Promise<Result & { dealId?: string; quoteUrl?: string }> {
+// "What happened after the meeting with <person>?" (reworded Nov 11, 2026;
+// Taylor's options kept). Makes the one deal this opportunity gets, under
+// its Primary POC; a draft quote's deal already on it is used instead of
+// doubled.
+// - Build Quote (decision 19): the deal is made but stays at Meeting
+//   Completed; sending the quote moves it to Quote Sent (advanceDealStage).
+//   A new quote on it opens next.
+// - Manual Input: the deal moves straight to the stage picked, at the
+//   value typed — required on Won ("They signed").
+// - Lost takes the optional reason onto the move (stampLostReason).
+// Converting from Meeting Set means the meeting happened: its latest
+// unanswered meeting is marked Held first (one ahead only with `early`).
+export async function convertOpportunity(
+  input: z.input<typeof convertSchema>,
+): Promise<Result & { dealId?: string; quoteUrl?: string; confirmEarly?: string; batchId?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = convertSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That conversion isn't valid" };
   const { id, stage, mode, title, valueCents } = parsed.data;
+  if (mode === "manual" && stage === "WON" && valueCents <= 0) return { error: "Enter the amount they signed for" };
 
-  const timeZone = await getTimeZone();
+  const settings = await healthSettings(organizationId);
+  const timeZone = settings.timeZone;
   const today = todayIso(timeZone);
   const day = parsed.data.on || today;
   if (!isRealDay(day)) return { error: "That day isn't a real date" };
   if (day > today) return { error: "That day hasn't happened yet" };
   const at = day === today ? new Date() : zonedNoon(day, timeZone);
 
-  const opportunity = await prisma.opportunity.findFirst({
-    where: { id, organizationId },
-    select: {
-      id: true,
-      ownerId: true,
-      deal: { select: { id: true, stage: true } },
-      contacts: { where: { role: { not: "HIDDEN" } }, orderBy: { createdAt: "asc" }, select: { contactId: true, role: true } },
-    },
-  });
+  const load = () =>
+    prisma.opportunity.findFirst({
+      where: { id, organizationId },
+      select: {
+        id: true,
+        stage: true,
+        ownerId: true,
+        deal: { select: { id: true, stage: true } },
+        contacts: { where: { role: { not: "HIDDEN" } }, orderBy: { createdAt: "asc" }, select: { contactId: true, role: true } },
+      },
+    });
+  let opportunity = await load();
   if (!opportunity) return { error: "That opportunity is no longer on the board" };
   if (opportunity.deal && CONVERTED_STAGES.includes(opportunity.deal.stage)) return { error: "This one is already a deal" };
   const primary = opportunity.contacts.find((row) => row.role === "PRIMARY") ?? opportunity.contacts[0];
   if (!primary) return { error: "Pick a Primary POC on the opportunity first" };
 
+  let batchId: string | undefined;
+  if (opportunity.stage === "MEETING_SET") {
+    const meetingId = await meetingToHold(organizationId, opportunity.id, new Date());
+    if (meetingId) {
+      const answer = await meetingHeldAnswer({ organizationId, userId }, meetingId, { early: parsed.data.early });
+      if (answer.confirmEarly) return { confirmEarly: answer.confirmEarly, error: answer.error };
+      if (answer.error) return { error: answer.error };
+      batchId = answer.batchId;
+      opportunity = (await load()) ?? opportunity;
+    }
+  }
+
+  const ownerId = opportunity.ownerId ?? userId;
   let dealId: string;
-  if (opportunity.deal) {
+  if (mode === "quote") {
+    // Decision 19: no stage move until the quote is sent.
+    if (opportunity.deal) {
+      dealId = opportunity.deal.id;
+      await prisma.deal.updateMany({ where: { id: dealId, organizationId }, data: { title } });
+    } else {
+      const deal = await prisma.deal.create({
+        data: { organizationId, contactId: primary.contactId, title, stage: "LEAD", stageChangedAt: at, valueCents: 0, ownerId },
+        select: { id: true },
+      });
+      dealId = deal.id;
+      const claimed = await prisma.opportunity.updateMany({
+        where: { id: opportunity.id, organizationId, dealId: null },
+        data: { dealId, stage: "MEETING_COMPLETED" },
+      });
+      if (claimed.count === 0) {
+        await prisma.deal.deleteMany({ where: { id: dealId, organizationId } });
+        return { error: "Someone else just converted this one. Refresh the board." };
+      }
+    }
+  } else if (opportunity.deal) {
     dealId = opportunity.deal.id;
     await prisma.$transaction([
       prisma.deal.updateMany({
         where: { id: dealId, organizationId },
-        data: { stage, stageChangedAt: at, title, ...(mode === "manual" ? { valueCents } : {}) },
+        data: { stage, stageChangedAt: at, title, valueCents },
       }),
       prisma.statusChange.create({
         data: { organizationId, dealId, userId, fromStatus: opportunity.deal.stage, toStatus: stage, on: at, auto: false },
@@ -222,15 +389,7 @@ export async function convertOpportunity(input: z.input<typeof convertSchema>): 
     ]);
   } else {
     const deal = await prisma.deal.create({
-      data: {
-        organizationId,
-        contactId: primary.contactId,
-        title,
-        stage,
-        stageChangedAt: at,
-        valueCents: mode === "manual" ? valueCents : 0,
-        ownerId: opportunity.ownerId ?? userId,
-      },
+      data: { organizationId, contactId: primary.contactId, title, stage, stageChangedAt: at, valueCents, ownerId },
       select: { id: true },
     });
     dealId = deal.id;
@@ -249,12 +408,28 @@ export async function convertOpportunity(input: z.input<typeof convertSchema>): 
   }
   await prisma.opportunity.updateMany({ where: { id: opportunity.id, organizationId }, data: { stage: "MEETING_COMPLETED" } });
   await syncOpportunity({ organizationId, userId }, opportunity.id);
+  if (mode === "manual" && stage === "LOST" && parsed.data.reason) await stampLostReason(organizationId, opportunity.id, parsed.data.reason);
   revalidateBoard();
   return {
-    success: "Converted to a deal",
+    success: mode === "quote" ? "Deal made · it moves to Quote Sent when the quote goes out" : "Converted to a deal",
     dealId,
+    ...(batchId ? { batchId } : {}),
     ...(mode === "quote" ? { quoteUrl: `/dashboard/quotes/new?contactId=${primary.contactId}&dealId=${dealId}` } : {}),
   };
+}
+
+// Mine | Everyone, remembered for this person (User.uiPrefs, merged key by
+// key so it never overwrites another screen's choices).
+export async function setPipelineScope(scope: string): Promise<Result> {
+  const { userId } = await requireSession();
+  const parsed = z.enum(["mine", "all"]).safeParse(scope);
+  if (!parsed.success) return { error: "That view isn't valid" };
+  await prisma.$executeRaw(Prisma.sql`
+    UPDATE "User"
+       SET "uiPrefs" = (CASE WHEN jsonb_typeof("uiPrefs") = 'object' THEN "uiPrefs" ELSE '{}'::jsonb END)
+                       || jsonb_build_object('pipelineScope', ${parsed.data}::text)
+     WHERE id = ${userId}`);
+  return { success: "Saved" };
 }
 
 const saveSchema = z.object({
