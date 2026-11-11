@@ -1011,7 +1011,9 @@ function ContractCard({
         </p>
         <button
           type="button"
-          className="link shrink-0 text-xs"
+          // 44px to tap on a phone (audit, Nov 11, 2026): it is the only
+          // way to the card's template, direction, terms and title.
+          className="link inline-flex min-h-11 shrink-0 items-center px-1 text-xs sm:min-h-0 sm:px-0"
           aria-expanded={settingsOpen}
           aria-controls={id("settings")}
           onClick={() => setSettingsOpen((value) => !value)}

@@ -957,7 +957,10 @@ let context;
   assert.doesNotMatch(pipelineText, undiscountedTotal, "the undiscounted figure is nowhere on the pipeline");
   await page.goto(`${BASE}/dashboard`);
   await page.getByText(/Welcome back/).waitFor();
-  assert.match(await page.locator("main").textContent(), discountedTotal, "the dashboard's quoted and open-deal figures follow");
+  // The Overview tiles read whole dollars since round 2 of the BDR sprint.
+  const whole = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.round(cents / 100));
+  const tiles = await page.locator("main").textContent();
+  assert.match(tiles, new RegExp(escapeRe(whole(subtotalBefore - tenOff))), "the dashboard's quoted and open-deal figures follow");
 
   log("{{quote_total}} merges the discounted total; a money-in contract made from the quote starts with the quote's discount");
   await sql(
@@ -1489,6 +1492,23 @@ let context;
     assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the quote page scrolls sideways on a phone");
     await phoneCtx.close();
   }
+
+  log("audit fixes: Send quote waits for an unsaved payment table or Quote details too, not just the lines");
+  await sql(`UPDATE "Quote" SET status='DRAFT' WHERE id=$1`, [oneId]);
+  await page.goto(`${BASE}/dashboard/quotes/${oneId}`);
+  await page.getByTestId("quote-save-bar").waitFor();
+  await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — not saved");
+  await until(async () => /Payment table/.test(await page.getByTestId("quote-save-status").textContent()), "the table listed as unsaved");
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-error").filter({ hasText: "Save your changes to the payment table first" }).waitFor();
+  assert.equal(await page.getByTestId("send-quote-sheet").count(), 0, "the share sheet opened over an unsaved table");
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id=$1`, [oneId])).rows[0].status, "DRAFT");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "saved");
+  await page.getByTestId("send-quote-error").waitFor({ state: "detached" });
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-sheet").waitFor();
+  await page.keyboard.press("Escape");
 
   console.log("\nAll steps passed.");
   await context.close();

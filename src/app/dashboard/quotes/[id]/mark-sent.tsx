@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useTransition } from "r
 import { IconCheck, IconCopy, IconSend } from "@/components/icons";
 import { Sheet } from "@/components/how-did-it-go/sheet";
 import { markQuoteSent } from "../actions";
+import { useQuoteSaveAll } from "./quote-save";
 
 // Whether the Line items card holds edits nobody has saved. Send quote
 // sits under the DealJourney strip, away from the editor, and the
@@ -52,7 +53,12 @@ export function SendQuoteButton({
   contact: { name: string; email: string | null; phone: string | null };
   className?: string;
 }) {
-  const unsaved = useContext(UnsavedLines)?.unsaved ?? false;
+  const linesUnsaved = useContext(UnsavedLines)?.unsaved ?? false;
+  // The payment table and Quote details joined the one Save too (audit,
+  // Nov 11, 2026): sent with an edit to either unsaved, the customer got
+  // the old table while the screen showed the new one.
+  const otherUnsaved = useQuoteSaveAll().unsaved.filter((label) => label !== "Line items");
+  const unsaved = linesUnsaved || otherUnsaved.length > 0;
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   // Pressed while lines were unsaved; the words go once they are saved.
@@ -94,7 +100,12 @@ export function SendQuoteButton({
     });
   }
 
-  const shownBlock = blocked && unsaved ? UNSAVED_LINES_MESSAGE : null;
+  const shownBlock =
+    blocked && unsaved
+      ? linesUnsaved
+        ? UNSAVED_LINES_MESSAGE
+        : `Save your changes to the ${otherUnsaved.join(" and ").toLowerCase()} first. The customer's link shows only what is saved.`
+      : null;
 
   return (
     <div className="flex flex-col items-end gap-1 max-sm:items-stretch">

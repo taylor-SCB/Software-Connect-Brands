@@ -872,7 +872,7 @@ async function anonymousStatus(browser, url) {
   await page.goto(`${BASE}/dashboard/quotes`);
   assert.match(await page.locator("table tbody tr").filter({ hasText: "Kitchen quote" }).textContent(), /\$334\.80/);
 
-  log("audit fixes: a signed contract with nothing to collect finishes the journey; a $0 first row is skipped for the deposit; a finished journey pins no empty bar on a phone");
+  log("audit fixes: a signed contract with nothing to collect finishes the journey; a $0 first row is skipped for the deposit; a finished journey pins no empty bar on a phone; the Coordinator card's Change is 44px on a phone");
   await sql(
     `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"updatedAt") VALUES
        ('deal_tr_au1','${org}','ctc_tr','No schedule job','WON',now()),
@@ -904,6 +904,12 @@ async function anonymousStatus(browser, url) {
   {
     const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
     const phone = await phoneCtx.newPage();
+    // The Coordinator card's Change is 44px to tap on a phone.
+    await phone.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
+    const change = phone.getByTestId("column-change").first();
+    await change.waitFor();
+    const changeBox = await change.boundingBox();
+    assert.ok(changeBox.height >= 44, `the card's Change is ${changeBox.height}px tall on a phone`);
     await phone.goto(`${BASE}/dashboard/contracts/con_tr_au1`);
     await phone.getByTestId("deal-journey-summary").waitFor();
     assert.match(await phone.getByTestId("deal-journey-summary").textContent(), /Step 5 of 5 · Deposit paid/);
