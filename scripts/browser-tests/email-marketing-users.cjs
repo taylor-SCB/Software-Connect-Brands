@@ -542,12 +542,12 @@ async function login(page, who) {
     // Room in today's allowance for one send, put back afterwards.
     const stepStart = new Date();
     const moved = (await db.query(`UPDATE "EmailSend" SET "createdAt" = "createdAt" - interval '2 days' WHERE "userId"=$1 AND "createdAt" > now() - interval '1 day' RETURNING id`, [ownerRow.id])).rows.map((r) => r.id);
-    const benId = await contactId("Ben Brown");
     await page.route("**/dashboard/email/to/**", async (route) => {
       if (route.request().method() === "POST") await new Promise((r) => setTimeout(r, 2500));
       await route.continue();
     });
-    await page.goto(`${BASE}/dashboard/email/to/${benId}`);
+    // Alice: Ben and Cara unsubscribed earlier in the suite.
+    await page.goto(`${BASE}/dashboard/email/to/${aliceId}`);
     await page.waitForSelector('[data-testid="one-to-one-email"]');
     await page.click('[data-testid="one-to-one-use-marketing"]');
     await page.waitForSelector('[data-testid="email-counter"]', { timeout: 20000 });

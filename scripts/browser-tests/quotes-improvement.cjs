@@ -1442,7 +1442,9 @@ let context;
     await sql(`UPDATE "Quote" SET "validUntil"='2026-01-10T12:00:00Z' WHERE id='quo_qi_lapse'`);
     await tab.getByTestId("accept-quote-name").fill("Quinn Ito");
     await tab.getByTestId("accept-quote-submit").click();
-    await tab.getByText("This quote has expired").waitFor();
+    // Refused, and the page redraws as expired in place of the form.
+    await tab.getByTestId("quote-expired").waitFor();
+    assert.equal(await tab.getByTestId("accept-quote").count(), 0);
     assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_lapse'`)).rows[0].status, "SENT", "a lapsed quote was accepted");
     // Still good on its last day.
     await sql(`UPDATE "Quote" SET "validUntil"=now() WHERE id='quo_qi_lapse'`);
