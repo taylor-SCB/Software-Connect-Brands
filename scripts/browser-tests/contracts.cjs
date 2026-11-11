@@ -317,6 +317,47 @@ async function previewChips(page) {
   assert.ok(await page.getByText("Project: Kitchen remodel for $250.00").isVisible());
   await shot(page, "10-public-sign");
 
+  log("Sprint: the sign box's name starts empty; on a phone a pinned Review and sign bar with the total takes them to it");
+  assert.equal(await page.locator("[name=signerName]").inputValue(), "", "the customer's name was typed in for them");
+  assert.equal(await page.locator("[name=signerName]").getAttribute("placeholder"), "Type your full name");
+  assert.equal(await page.getByTestId("review-and-sign-bar").isVisible(), false, "the phone bar shows on a wide screen");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(link);
+    const bar = phone.getByTestId("review-and-sign-bar");
+    await bar.waitFor();
+    const barBox = await bar.boundingBox();
+    assert.ok(barBox.y + barBox.height <= 845 && barBox.y > 700, `the bar isn't pinned to the foot (${barBox.y})`);
+    assert.match(await bar.textContent(), /Review and sign ↓/);
+    await bar.getByRole("link").click();
+    await phone.waitForFunction(() => location.hash === "#sign");
+    const signBox = await phone.locator("#sign").boundingBox();
+    assert.ok(signBox.y < 844, "the link didn't bring the sign box on screen");
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the customer's page scrolls sideways");
+    await phoneCtx.close();
+  }
+
+  log("Sprint: a sent contract's wording is locked on screen and on the server, with Pull back to draft to edit");
+  await page.goto(contractUrl);
+  await page.getByTestId("contract-body-sent").waitFor();
+  assert.equal(await page.locator("#body").count(), 0, "the body is editable while it is out for signature");
+  await page.getByTestId("pull-back-to-edit").click();
+  await page.locator("#body").waitFor();
+  assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [contractId])).rows[0].status, "DRAFT");
+  // A second tab still holds the editor when the first sends it again.
+  const staleTab = await context.newPage();
+  await staleTab.goto(contractUrl);
+  await staleTab.locator("#body").waitFor();
+  await page.getByRole("button", { name: "Send for signature" }).first().click();
+  await page.getByTestId("contract-body-sent").waitFor();
+  const bodyBefore = (await sql(`SELECT body FROM "Contract" WHERE id=$1`, [contractId])).rows[0].body;
+  await staleTab.locator("#body").fill(`${bodyBefore}\nA sneaky extra clause.`);
+  await staleTab.getByRole("button", { name: "Save changes" }).click();
+  await staleTab.getByText("This contract is out for signature. Pull it back to draft to edit it.").waitFor();
+  assert.equal((await sql(`SELECT body FROM "Contract" WHERE id=$1`, [contractId])).rows[0].body, bodyBefore, "the server saved new wording on a sent contract");
+  await staleTab.close();
+
   log("audit fixes (UX review): Mark signed on a contract made from a sent quote accepts the quote and takes its follow-up off the calendar");
   // The quote goes out from its page, so its follow-up is on the calendar.
   await page.goto(`${BASE}/dashboard/quotes/quo_ct`);

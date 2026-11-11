@@ -1161,7 +1161,8 @@ export function LineItemsEditor({
             Blank line
           </button>
 
-          <div className="ml-auto flex items-center gap-3">
+          {/* On a phone the one Save sits in the bar pinned below. */}
+          <div className="ml-auto flex items-center gap-3 max-sm:hidden">
             {dirty && <span className="faint text-xs">Unsaved changes</span>}
             <button
               type="button"
@@ -1172,6 +1173,24 @@ export function LineItemsEditor({
               {pending ? "Saving…" : "Save line items"}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Phone (ux-gaps): the total and the one Save stay in reach while
+          the lines scroll, sitting above the strip's pinned Next when the
+          page has one. */}
+      {!readOnly && (
+        <div
+          className="popover sticky bottom-0 z-30 flex items-center justify-between gap-3 border-t border-[var(--hairline-3)] px-4 py-2.5 sm:hidden [body:has(.dj-next[data-sticky])_&]:bottom-[4.75rem]"
+          data-testid="line-items-phone-bar"
+        >
+          <div className="min-w-0">
+            <p className="faint text-xs">{dirty ? "Unsaved changes" : "Quote total"}</p>
+            <p className="num text-base font-semibold" data-testid="line-items-phone-total">{formatCents(totals.totalCents)}</p>
+          </div>
+          <button type="button" onClick={save} disabled={pending || !dirty} className="btn btn-primary min-h-11">
+            {pending ? "Saving…" : "Save line items"}
+          </button>
         </div>
       )}
 

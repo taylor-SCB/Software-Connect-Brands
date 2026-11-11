@@ -1107,6 +1107,104 @@ let context;
   await page.getByTestId("tracker-grid").waitFor();
   assert.equal((await page.getByTestId("create-contracts").textContent()).trim(), "Create contract for $1,000.00 →");
 
+  log("Sprint: the customer accepts on their own copy with their typed name; safe twice; a quote no longer out can't be accepted");
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","sentAt","updatedAt")
+     VALUES ('quo_qi_acc','${org}','ctc_qi','deal_qi_sq',1902,'Lobby cameras B','SENT','tok_quo_qi_acc_0123456789',now(),now()),
+            ('quo_qi_dec','${org}','ctc_qi','deal_qi_sq',1903,'Lobby cameras C','SENT','tok_quo_qi_dec_0123456789',now(),now())`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_qi_acc','quo_qi_acc','Dome camera',2,25000,'MATERIALS',0),
+            ('qli_qi_dec','quo_qi_dec','Dome camera',1,25000,'MATERIALS',0)`,
+  );
+  {
+    const customerCtx = await browser.newContext();
+    const tabA = await customerCtx.newPage();
+    const tabB = await customerCtx.newPage();
+    for (const tab of [tabA, tabB]) {
+      await tab.goto(`${BASE}/q/tok_quo_qi_acc_0123456789`);
+      await tab.getByTestId("accept-quote").waitFor();
+      assert.equal(await tab.getByTestId("accept-quote-name").inputValue(), "", "the name starts empty");
+    }
+    await tabA.getByTestId("accept-quote-name").fill("Quinn Ito");
+    await tabA.getByTestId("accept-quote-submit").click();
+    await tabA.getByTestId("quote-accepted").waitFor();
+    assert.match(await tabA.getByTestId("quote-accepted").textContent(), /Accepted by Quinn Ito on/);
+    const accepted = (await sql(`SELECT status, "acceptedByName", "respondedAt" IS NOT NULL AS dated FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0];
+    assert.deepEqual({ ...accepted }, { status: "ACCEPTED", acceptedByName: "Quinn Ito", dated: true });
+    // The second tab still shows the form: pressing it again is fine and
+    // changes nothing.
+    await tabB.getByTestId("accept-quote-name").fill("Quinn I.");
+    await tabB.getByTestId("accept-quote-submit").click();
+    await tabB.getByTestId("quote-accepted").waitFor();
+    assert.equal((await sql(`SELECT "acceptedByName" FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].acceptedByName, "Quinn Ito", "a second press rewrote the answer");
+    // Declined from the office while the customer's page was open.
+    await tabA.goto(`${BASE}/q/tok_quo_qi_dec_0123456789`);
+    await tabA.getByTestId("accept-quote").waitFor();
+    await sql(`UPDATE "Quote" SET status='DECLINED' WHERE id='quo_qi_dec'`);
+    await tabA.getByTestId("accept-quote-name").fill("Quinn Ito");
+    await tabA.getByTestId("accept-quote-submit").click();
+    await tabA.getByText("This quote can't be accepted online any more").waitFor();
+    assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_dec'`)).rows[0].status, "DECLINED");
+    await tabA.reload();
+    assert.equal(await tabA.getByTestId("accept-quote").count(), 0, "a declined quote still offers Accept");
+    await customerCtx.close();
+  }
+  // The office sees who said yes, and the next step is the contract.
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_acc`);
+  assert.match(await page.getByTestId("quote-accepted-by").textContent(), /Accepted online by Quinn Ito/);
+  assert.equal((await page.getByTestId("deal-journey").getByTestId("journey-next").textContent()).trim(), "Make contract");
+
+  log("Sprint: Build Quote (New quote for a deal with no quote) starts the quote titled after the deal, with the deal's rep, and opens it");
+  const me = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"ownerId","updatedAt")
+     VALUES ('deal_qi_bq','${org}','ctc_qi','Parking garage cameras','LEAD',$1,now())`,
+    [me],
+  );
+  await page.goto(`${BASE}/dashboard/quotes/new?contactId=ctc_qi&dealId=deal_qi_bq`);
+  await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+$/);
+  const built = (await sql(`SELECT id, title, template, "leadSalesRepId", status FROM "Quote" WHERE "dealId"='deal_qi_bq'`)).rows;
+  assert.equal(built.length, 1, "Build Quote made more than one quote");
+  assert.deepEqual(
+    { title: built[0].title, template: built[0].template, rep: built[0].leadSalesRepId, status: built[0].status },
+    { title: "Parking garage cameras", template: "SIMPLE", rep: me, status: "DRAFT" },
+  );
+  assert.ok(page.url().endsWith(built[0].id));
+  // Coming back within two minutes, or with the deal now holding a quote,
+  // doesn't make a second one: a deal with a quote gets the setup form.
+  await page.goto(`${BASE}/dashboard/quotes/new?contactId=ctc_qi&dealId=deal_qi_bq`);
+  await page.locator("[name=title]").waitFor();
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Quote" WHERE "dealId"='deal_qi_bq'`)).rows[0].n, 1);
+
+  log("Sprint: on a phone a draft quote's lines stack, with the total and the one Save pinned above Send quote");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/quotes/${built[0].id}`);
+    await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    const bar = phone.getByTestId("line-items-phone-bar");
+    await bar.waitFor();
+    assert.equal(await phone.getByRole("button", { name: "Save line items" }).count(), 1, "one Save on a phone");
+    await phone.getByRole("button", { name: "Blank line" }).click();
+    await phone.getByLabel("Line 1 product", { exact: true }).fill("Bullet camera");
+    await phone.getByLabel("Line 1 quantity", { exact: true }).fill("3");
+    await phone.getByLabel("Line 1 unit value", { exact: true }).fill("200.00");
+    assert.match(await bar.textContent(), /Unsaved changes/);
+    assert.equal(await phone.getByTestId("line-items-phone-total").textContent(), "$600.00");
+    const barBox = await bar.boundingBox();
+    const nextBox = await phone.getByTestId("send-quote").boundingBox();
+    assert.ok(barBox.y + barBox.height <= nextBox.y + 1, `the Save bar sits under the pinned Send quote (${barBox.y}+${barBox.height} vs ${nextBox.y})`);
+    assert.ok(barBox.y + barBox.height <= 845, "the Save bar is off the screen");
+    await bar.getByRole("button", { name: "Save line items" }).click();
+    await phone.getByText("Line items saved", { exact: true }).waitFor();
+    assert.equal((await sql(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [built[0].id])).rows[0].n, 1);
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the quote page scrolls sideways on a phone");
+    await phone.screenshot({ path: path.join(OUT, "sprint-phone-quote.png") });
+    await phoneCtx.close();
+  }
+
   log("audit fixes (UX review): at 1440 and 1280 the Qty, Value and Tag boxes show their whole value and a pictured catalog line's name shows whole; on a phone each line stacks with its total on screen");
   // A catalog product with a picture, on the sent quote the way Mark as
   // sent leaves it (the line holds the picture it went out with).

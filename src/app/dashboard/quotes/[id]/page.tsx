@@ -189,6 +189,12 @@ export default async function QuoteBuilderPage({
                 <span className="faint text-xs">Deal</span>
                 <DealStageBadge stage={quote.deal.stage} />
                 {quote.sentAt && <span className="faint text-xs">Sent {formatDate(quote.sentAt, timeZone)}</span>}
+                {quote.status === "ACCEPTED" && quote.acceptedByName && (
+                  <span className="faint text-xs" data-testid="quote-accepted-by">
+                    Accepted online by {quote.acceptedByName}
+                    {quote.respondedAt ? ` · ${formatDate(quote.respondedAt, timeZone)}` : ""}
+                  </span>
+                )}
               </>
             }
           />

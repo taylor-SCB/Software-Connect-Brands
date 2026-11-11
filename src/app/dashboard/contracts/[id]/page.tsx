@@ -242,7 +242,9 @@ export default async function ContractDetailPage({
               subtitle={
                 signed
                   ? "Locked — a signed contract can't be edited."
-                  : "Fields are already filled in. Edit anything before you send it."
+                  : contract.status === "SENT"
+                    ? "Locked while it is out for signature."
+                    : "Fields are already filled in. Edit anything before you send it."
               }
             />
             <ContractBodyForm
@@ -250,6 +252,7 @@ export default async function ContractDetailPage({
               title={contract.title}
               body={contract.body}
               locked={signed}
+              sent={contract.status === "SENT"}
             />
           </Card>
 

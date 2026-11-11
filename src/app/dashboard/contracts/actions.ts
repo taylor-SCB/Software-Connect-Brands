@@ -434,11 +434,20 @@ export async function updateContractBody(_prev: ActionState, formData: FormData)
   if (contract.status === "SIGNED") {
     return { error: "This contract is signed and can no longer be edited" };
   }
+  // Out for signature: the customer is reading these words, and could sign
+  // wording that changed after they read it (ux-gaps). Pull it back to
+  // draft to edit; that turns their link off until it is sent again.
+  if (contract.status === "SENT") {
+    return { error: "This contract is out for signature. Pull it back to draft to edit it." };
+  }
 
-  await prisma.contract.updateMany({
-    where: { id: parsed.data.contractId, organizationId },
+  // Only while still not sent or signed, so a send landing between the
+  // read above and this write can't let an edit through.
+  const saved = await prisma.contract.updateMany({
+    where: { id: parsed.data.contractId, organizationId, status: { notIn: ["SENT", "SIGNED"] } },
     data: { title: parsed.data.title, body: parsed.data.body },
   });
+  if (saved.count === 0) return { error: "This contract is out for signature. Pull it back to draft to edit it." };
 
   revalidatePath(`/dashboard/contracts/${parsed.data.contractId}`);
   revalidatePath("/dashboard/contracts");

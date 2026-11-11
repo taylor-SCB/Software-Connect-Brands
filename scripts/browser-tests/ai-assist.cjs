@@ -396,9 +396,8 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await convert.getByTestId("convert-mode-quote").check();
   assert.equal(await convert.getByTestId("convert-draft-lines").isChecked(), true);
   await convert.getByTestId("convert-save").click();
-  await page.waitForURL(/\/dashboard\/quotes\/new\?.*draft=meeting/);
-  await page.fill("[name=title]", "New wing cabling");
-  await page.locator("form:has([name=title]) button[type=submit]").click();
+  // Build Quote starts the quote itself, titled after the deal, and opens
+  // it drafting (paperwork sprint: no setup form in between).
   await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+/);
   await page.getByTestId("quote-draft-info").waitFor();
   assert.match(await page.getByTestId("quote-draft-info").innerText(), /Added 2 lines[\s\S]*1 needs a price[\s\S]*1 line named a product not in your catalog/);
