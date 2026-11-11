@@ -106,7 +106,13 @@ export function CalendarToolbar({
     return value === "week" || value === "team" || value === "agenda" ? value : "month";
   };
 
-  const showView = (option: "agenda" | "week" | "month" | "team") =>
+  // Agenda / Week / Month is remembered for the person (Round 2); the Team
+  // week is a look at everyone, not a way of working, so it isn't.
+  const showView = (option: "agenda" | "week" | "month" | "team") => {
+    if (option !== "team") void saveUiPref("calendar", "view", option);
+    goView(option);
+  };
+  const goView = (option: "agenda" | "week" | "month" | "team") =>
     go(
       option === "month"
         ? { view: live.current.get("on") ? null : "month", layout: null }

@@ -7,8 +7,9 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/avatar";
 import { HealthRing } from "@/components/health-marks";
 import { LifecycleMeter } from "@/components/lifecycle-meter";
-import { IconMessage, IconPhone, IconNote, IconUserPlus } from "@/components/icons";
+import { IconCalendar, IconMessage, IconPhone, IconNote, IconUserPlus } from "@/components/icons";
 import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
+import { useBookMeeting } from "@/components/book-meeting/book-meeting";
 import { UP_NEXT_SHOWN } from "@/lib/up-next";
 import type { UpNextItem } from "./load";
 import { giveBackLeads, takeUnownedLeads } from "./actions";
@@ -44,7 +45,10 @@ export function UpNextList({
   readOnly: boolean;
   unowned: { count: number; ids: string[] };
 }) {
+  const router = useRouter();
   const how = useHowDidItGo({ dial: !readOnly });
+  // Book meeting on a row (Round 2): the shared sheet, offered the row's tile.
+  const book = useBookMeeting({ onChanged: () => router.refresh() });
   const [all, setAll] = useState(false);
   // People logged from this page since it loaded, so the phone bar moves
   // on at once (the refresh that follows re-ranks the list).
@@ -58,6 +62,7 @@ export function UpNextList({
         type,
         name: item.name,
         today,
+        opportunityId: item.opportunityId ?? undefined,
         onSaved: () => setLogged((prev) => new Set(prev).add(item.id)),
       }),
     [how, today],
@@ -116,6 +121,16 @@ export function UpNextList({
                   ) : (
                     <span className="faint flex-1 px-2 text-xs sm:flex-none">No number</span>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => book.open({ contactId: item.id, name: item.name, today, opportunityId: item.opportunityId ?? undefined })}
+                    className="btn btn-ghost btn-sm pointer-coarse:min-h-11 flex-1 sm:flex-none"
+                    data-testid="up-next-book"
+                    aria-label={`Book a meeting with ${item.name}`}
+                  >
+                    <IconCalendar size={14} />
+                    Book
+                  </button>
                   <button type="button" onClick={() => log(item)} className="btn btn-primary btn-sm pointer-coarse:min-h-11 flex-1 sm:flex-none" data-testid="up-next-log">
                     <IconNote size={14} />
                     Log
@@ -164,6 +179,7 @@ export function UpNextList({
         </OnBody>
       )}
       {how.element}
+      {book.element}
     </div>
   );
 }

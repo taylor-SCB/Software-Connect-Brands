@@ -2,6 +2,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { OVERDUE_TYPES } from "@/lib/calendar-data";
 import { goneQuietOpportunities } from "@/lib/gone-quiet";
+import { waitingMeetings, type Waiting } from "@/lib/meetings";
 import { healthSettings, loadContactHealth } from "@/lib/health-load";
 import { isoDiff, zoneDay, zoneTime, type LeadHealth } from "@/lib/health";
 import { addDaysIso, periodRange, zonedParts } from "@/lib/reports/period";
@@ -34,11 +35,16 @@ export type UpNextItem = {
   reason: string;
   park: boolean;
   health: LeadHealth;
+  // The tile the row is about (the meeting waiting, else the one booked,
+  // else their latest), handed to the log and booking sheets.
+  opportunityId: string | null;
 };
 
 export type MeetingItem = {
+  // The calendar entry, or the booked meeting when it has no entry.
   eventId: string;
   meetingId: string | null;
+  opportunityId: string | null;
   title: string;
   on: string;
   time: string | null;
@@ -46,6 +52,8 @@ export type MeetingItem = {
   contactId: string | null;
   past: boolean;
   done: boolean;
+  // Waiting for Held / No-show, by the one meeting rule.
+  waiting: boolean;
 };
 
 export type DoneItem = { key: string; at: string; type: string; words: string; who: string; contactId: string | null; companyId: string | null };
@@ -220,12 +228,13 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
     goneQuietOpportunities(organizationId, { quietDays: settings.quietDays, limit: 300 }),
   ]);
 
-  // Health for every candidate, in two statements.
-  const health = await loadContactHealth(
-    organizationId,
-    candidates.map((row) => row.id),
-    { settings, now },
-  );
+  // Health for every candidate, in two statements, and which meeting each
+  // is waiting on by the one rule (src/lib/meeting-rule.ts), in three.
+  const candidateIds = candidates.map((row) => row.id);
+  const [health, waiting] = await Promise.all([
+    loadContactHealth(organizationId, candidateIds, { settings, now }),
+    waitingMeetings(organizationId, { contactIds: candidateIds }, { now, timeZone }),
+  ]);
 
   const byId = new Map(candidates.map((row) => [row.id, row]));
   const input: UpNextCandidate[] = [];
@@ -238,9 +247,11 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       health: one,
       lateDays: late ? Math.max(1, isoDiff(today, late)) : null,
       dueToday: row.today_type ? { time: row.today_time, kind: kindWord(row.today_type) } : null,
-      bookedAhead: row.ahead || one.nextText !== null,
+      bookedAhead: row.ahead || one.nextText !== null || Boolean(waiting.get(row.id)?.ahead),
       lastTalkDays: row.last_connect ? Math.max(0, isoDiff(today, zoneDay(row.last_connect, timeZone))) : null,
-      meetingOn: isoOf(row.meeting_oldest),
+      // A meeting gone by that nobody answered, by the one rule (a bare
+      // calendar entry with no booked meeting behind it is a follow-up).
+      meetingOn: waiting.get(row.id)?.due?.day ?? null,
       lastTouchAt: row.last_touch ? row.last_touch.getTime() : null,
       createdAt: row.created_at.getTime(),
     });
@@ -258,20 +269,90 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       reason: entry.reason,
       park: entry.park,
       health: health.get(entry.id)!,
+      opportunityId: tileOf(waiting.get(entry.id)),
     };
   });
   const groupCounts = new Map<string, number>();
   for (const row of candidates) for (const why of row.why) groupCounts.set(why, (groupCounts.get(why) ?? 0) + 1);
   const more = [...groupCounts.entries()].some(([why, n]) => n >= (why === "due" ? DUE_CAP : GROUP_CAP));
 
-  // Meetings: today and the next 7 days, and any past one nobody closed out.
+  // Meetings: today and the next 7 days, and any past one still waiting
+  // for an answer. Booked meetings (OpportunityMeeting) on this rep's tiles
+  // or booked by them, with "waiting" from the one meeting rule; then any
+  // Meeting entry on their calendar with no booked meeting behind it
+  // (Held / No-show then ticks the entry).
   const nowTime = zoneTime(now, timeZone);
-  const meetingRows = meetings.map((event) => {
+  const booked = await prisma.opportunityMeeting.findMany({
+    where: {
+      opportunity: { organizationId, OR: [{ ownerId: rep.id }] },
+      on: { gte: meetingFrom, lte: new Date(meetingTo.getTime() + 86_400_000) },
+    },
+    orderBy: { on: "asc" },
+    take: 60,
+    select: {
+      id: true,
+      on: true,
+      eventId: true,
+      opportunityId: true,
+      opportunity: { select: { title: true, contacts: { where: { role: "PRIMARY" }, take: 1, select: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } } } } },
+    },
+  });
+  const bookedBy = await prisma.opportunityMeeting.findMany({
+    where: {
+      bookedById: rep.id,
+      opportunity: { organizationId, NOT: { ownerId: rep.id } },
+      on: { gte: meetingFrom, lte: new Date(meetingTo.getTime() + 86_400_000) },
+    },
+    orderBy: { on: "asc" },
+    take: 60,
+    select: {
+      id: true,
+      on: true,
+      eventId: true,
+      opportunityId: true,
+      opportunity: { select: { title: true, contacts: { where: { role: "PRIMARY" }, take: 1, select: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } } } } },
+    },
+  });
+  const allBooked = [...booked, ...bookedBy];
+  const tiles = await waitingMeetings(organizationId, { opportunityIds: [...new Set(allBooked.map((row) => row.opportunityId))] }, { now, timeZone });
+  const eventOf = new Map(meetings.map((event) => [event.id, event]));
+  const meetingRows: MeetingItem[] = [];
+  const seenEvents = new Set<string>();
+  for (const row of allBooked) {
+    const event = row.eventId ? eventOf.get(row.eventId) : undefined;
+    if (row.eventId) seenEvents.add(row.eventId);
+    const on = event ? isoOf(event.startOn)! : zoneDay(row.on, timeZone);
+    const time = event ? event.startTime : null;
+    const tile = tiles.get(row.opportunityId);
+    const isWaiting = tile?.toAnswer?.id === row.id && row.on.getTime() <= now.getTime();
+    const answered = Boolean(tile && !isWaiting && row.on.getTime() <= now.getTime());
+    const past = on < today || (on === today && (time ? time <= nowTime : row.on.getTime() <= now.getTime()));
+    // Gone by and answered (or ticked): it's in the history now, off the card
+    // unless it was today.
+    if (past && !isWaiting && on < today) continue;
+    const person = row.opportunity.contacts[0]?.contact;
+    meetingRows.push({
+      eventId: row.eventId ?? row.id,
+      meetingId: row.id,
+      opportunityId: row.opportunityId,
+      title: event?.title ?? row.opportunity.title,
+      on,
+      time,
+      who: person ? `${person.name}${person.company ? ` · ${person.company.name}` : ""}` : null,
+      contactId: person?.id ?? null,
+      past,
+      done: past && !isWaiting && (answered || Boolean(event?.doneAt)),
+      waiting: isWaiting,
+    });
+  }
+  for (const event of meetings) {
+    if (seenEvents.has(event.id)) continue;
     const on = isoOf(event.startOn)!;
     const past = on < today || (on === today && Boolean(event.startTime) && event.startTime! <= nowTime);
-    return {
+    meetingRows.push({
       eventId: event.id,
-      meetingId: null as string | null,
+      meetingId: null,
+      opportunityId: null,
       title: event.title,
       on,
       time: event.startTime,
@@ -279,17 +360,10 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       contactId: event.contactId,
       past,
       done: Boolean(event.doneAt),
-    };
-  });
-  const open = meetingRows.filter((row) => !row.done).map((row) => row.eventId);
-  if (open.length) {
-    const linked = await prisma.opportunityMeeting.findMany({
-      where: { eventId: { in: open }, opportunity: { organizationId } },
-      select: { id: true, eventId: true },
+      waiting: past && !event.doneAt,
     });
-    const meetingOf = new Map(linked.map((row) => [row.eventId, row.id]));
-    for (const row of meetingRows) row.meetingId = meetingOf.get(row.eventId) ?? null;
   }
+  meetingRows.sort((a, b) => a.on.localeCompare(b.on) || (a.time ?? "99:99").localeCompare(b.time ?? "99:99"));
 
   // Done today: one line per save.
   const seen = new Set<string>();
@@ -356,4 +430,10 @@ function kindWord(type: string) {
   if (t.includes("quote")) return "quote follow-up";
   if (t.includes("contract")) return "contract follow-up";
   return "follow-up";
+}
+
+// The tile a row is about: the meeting waiting for an answer, else the one
+// booked ahead, else their latest.
+function tileOf(waiting: Waiting | undefined) {
+  return waiting?.toAnswer?.opportunityId ?? waiting?.ahead?.opportunityId ?? waiting?.last?.opportunityId ?? null;
 }

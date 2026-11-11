@@ -88,6 +88,7 @@ function kindOf(system) {
   if (/draft quote lines/.test(system)) return "QUOTE";
   if (/spreadsheet columns/.test(system)) return "HEADERS";
   if (/lead label/.test(system)) return "LABEL";
+  if (/greeting sentence/.test(system)) return "GREETING";
   return "OTHER";
 }
 const json = (value) => ({ text: JSON.stringify(value), stop: "end_turn" });
@@ -691,6 +692,23 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   } else {
     log("AI off: SKIPPED — pass NOAI_BASE (a second server with no ANTHROPIC_API_KEY) to run it");
   }
+
+  log("Sprint R2: My day's greeting offers Rewrite with AI on; the answer shows in place, a made-up number is refused, the plain one comes back");
+  replies.GREETING = json({ sentence: "Good to see you, Taylor, your list is ready." });
+  await page.goto(`${BASE}/dashboard?view=myday`);
+  const greetingLine = page.locator("[data-testid=my-day-greeting]");
+  const plainGreeting = await greetingLine.textContent();
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.locator("[data-testid=my-day-greeting][data-source=ai]").waitFor();
+  assert.equal(await greetingLine.textContent(), "Good to see you, Taylor, your list is ready.");
+  assert.match(lastRequest("GREETING").prompt, /plainSentence/, "Claude is given the facts as JSON");
+  await page.locator("[data-testid=greeting-plain]").click();
+  assert.equal(await greetingLine.textContent(), plainGreeting);
+  replies.GREETING = json({ sentence: "You have 987 people to call today." });
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.locator("[data-testid=greeting-error]").waitFor();
+  assert.equal(await greetingLine.textContent(), plainGreeting, "a number not in the facts is thrown out");
+  assert.ok((await one(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='MY_DAY_GREETING'`, [org])).n === 2, "counted against its own allowance");
 
   await browser.close();
   fakeClaude.close();

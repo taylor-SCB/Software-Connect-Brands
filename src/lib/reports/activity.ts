@@ -14,6 +14,7 @@ import {
   type SummaryTable,
 } from "@/lib/reports/common";
 import { addDaysIso } from "@/lib/reports/period";
+import { sellingReps } from "@/lib/reports/daily";
 
 // Activity (Nov 10, 2026). Touches — calls, texts, emails and meetings a
 // person logged — by day, kind and rep (Activity.userId). Marketing sends
@@ -193,7 +194,13 @@ export async function loadActivity(params: ReportParams): Promise<ActivityReport
     target.untouched += row.untouched;
   }
   // On the Rep breakdown, every active teammate has a row even at zero.
-  if (by === "rep") for (const member of members) if (!member.removed && (!repId || member.id === repId)) ensure(member.id);
+  // Only teammates who sell (they own records or logged lately): an owner
+  // with no book gets no zero row and is never "the fewest" (Round 2).
+  if (by === "rep") {
+    const selling = new Set((await sellingReps(organizationId, params.now)).map((row) => row.id));
+    for (const member of members) if (!member.removed && selling.has(member.id) && (!repId || member.id === repId)) ensure(member.id);
+    if (repId) ensure(repId);
+  }
   const groups = topGroups(
     [...groupMap.values()],
     (row) => row.touches * 1_000_000 + row.untouched,

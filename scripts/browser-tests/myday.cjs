@@ -156,6 +156,43 @@ const ago = (days) => `now() - interval '${days} days'`;
     [org, M, addDays(TODAY, -1), addDays(TODAY, -3), TODAY, addDays(TODAY, 3)],
   );
 
+  // Round 2: Mia's meeting is a real booked meeting on a Meeting Set tile
+  // (Quinn's last touch is 40 days back and Quinn is nobody's, so the owner
+  // still sells nothing and stays out of Team today)
+  // (the one meeting rule reads OpportunityMeeting, not bare calendar
+  // entries); a quiet opportunity of the owner's with Quinn as Primary; and
+  // one text Marcus logged on two people in one save.
+  await sql(`UPDATE "Organization" SET "quietDays"=7 WHERE id=$1`, [org]);
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,"companyId",status,"ownerId",mobile,"createdAt","updatedAt") VALUES
+       ('ctc_md_quinn',$1,'Quinn Quiet','cmp_md_redbud','MEETING_COMPLETED',NULL,'(512) 555-0109',now() - interval '50 days',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES
+       ('opp_md_mia',$1,'Redbud Dental','MEETING_SET',$2,now() - interval '8 days',now()),
+       ('opp_md_quinn',$1,'Redbud Dental North','MEETING_COMPLETED',$3,now() - interval '45 days',now())`,
+    [org, M, taylor.id],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role) VALUES
+       ('oc_md_mia','opp_md_mia','ctc_md_mia','PRIMARY'),
+       ('oc_md_quinn','opp_md_quinn','ctc_md_quinn','PRIMARY')`,
+  );
+  await sql(
+    `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById","createdAt") VALUES
+       ('om_md_mia','opp_md_mia',($1::date + time '10:00') AT TIME ZONE $2,'ev_md_mia',$3,now() - interval '8 days')`,
+    [addDays(TODAY, -1), ZONE, M],
+  );
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,"occurredAt","batchId") VALUES
+       ('act_md_q',$1,'ctc_md_quinn',$2,'PHONE_CALL','Last call','TALKED',${ago(40)},NULL),
+       ('act_md_p1',$1,'ctc_md_mia',$3,'TEXT','See you soon','SENT',${ago(2)},'b_md_pair'),
+       ('act_md_p2',$1,'ctc_md_tom',$3,'TEXT','See you soon','SENT',${ago(2)},'b_md_pair')`,
+    [org, taylor.id, M],
+  );
+  await sql(`UPDATE "Activity" SET "createdAt"=now() - interval '40 days' WHERE id='act_md_q'`);
+
   log("a Member lands on My day: the first tab, the greeting and three week rings");
   await login(page, MARCUS_EMAIL);
   await page.locator("[data-testid=my-day]").waitFor();
@@ -164,6 +201,7 @@ const ago = (days) => `now() - interval '${days} days'`;
   assert.equal(await page.locator("[data-testid=report-tab][aria-current=page]").textContent(), "My day");
   assert.match(await page.locator("[data-testid=my-day-greeting]").textContent(), /^(Morning|Afternoon|Evening), Marcus · 1 follow-up late · \d+ to call/);
   assert.equal(await page.locator("[data-testid=week-rings] a[data-testid^=ring-]").count(), 3);
+  assert.equal(await page.locator("[data-testid=greeting-rewrite]").count(), 0, "Rewrite shows only when AI is on");
   for (const caption of await page.locator("[data-testid=ring-caption]").allTextContents()) {
     assert.match(caption, /last week/, "with no goals the rings read against last week");
   }
@@ -209,10 +247,13 @@ const ago = (days) => `now() - interval '${days} days'`;
   log("the Meetings card: yesterday's meeting offers Held / No-show; Held saves a HELD meeting with Undo");
   const meeting = page.locator("[data-testid=meeting-row][data-event-id=ev_md_mia]");
   await meeting.locator("[data-testid=meeting-held]").waitFor();
+  assert.equal(await meeting.locator("[data-testid=meeting-tile]").getAttribute("href"), "/dashboard/deals?open=opp_md_mia", "the row links to its tile");
+  const miaRow = page.locator("[data-testid=up-next-row][data-contact-id=ctc_md_mia]");
+  assert.equal(await miaRow.getAttribute("data-category"), "meeting", "the booked meeting waits, by the one rule");
   assert.equal(await meeting.locator("[data-testid=meeting-noshow]").count(), 1);
   await meeting.locator("[data-testid=meeting-held]").click();
   await page.locator("[data-testid=log-toast-words]", { hasText: /^Held · Mia Meeting/ }).waitFor();
-  await until(async () => (await sql(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_md_mia' AND type='MEETING' AND outcome='HELD'`)).rows[0].n === 1, "the held meeting");
+  await until(async () => (await sql(`SELECT outcome FROM "OpportunityMeeting" WHERE id='om_md_mia'`)).rows[0].outcome === "HELD", "the booked meeting answered Held");
   // A past meeting that is done leaves the card; it is in the history now.
   await meeting.waitFor({ state: "detached" });
   await until(async () => (await page.locator("[data-testid=up-next-row][data-contact-id=ctc_md_mia]").count()) === 0, "Mia off Up next once held");
@@ -224,6 +265,28 @@ const ago = (days) => `now() - interval '${days} days'`;
   await done.locator("summary").click();
   assert.equal(await done.locator("[data-testid=done-row]").count(), 1);
   assert.match(await done.textContent(), /Ty Trying · Phone Call · No answer/);
+
+  log("Sprint R2: Up next rows have Book, which opens the shared Book meeting sheet");
+  const niaRow = page.locator("[data-testid=up-next-row][data-contact-id=ctc_md_nia]");
+  await niaRow.locator("[data-testid=up-next-book]").click();
+  await page.locator("[data-testid=book-meeting-fields]").waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator("[data-testid=book-meeting-fields]").waitFor({ state: "detached" });
+
+  log("Sprint R2: Team & money holds the full write-up and Recent activity one line per save naming the people; open is remembered");
+  const teamMoney = page.locator("[data-testid=team-money]");
+  assert.equal(await teamMoney.getAttribute("open"), null);
+  await teamMoney.locator("> summary").click();
+  await teamMoney.locator("[data-testid=report-narrative]").waitFor();
+  assert.equal(await teamMoney.locator("[data-testid=report-narrative-more]").count(), 0, "the full write-up, not folded");
+  const recent = await teamMoney.locator("[data-testid=recent-who]").allTextContents();
+  const pair = /^(Mia Meeting, Tom Talked|Tom Talked, Mia Meeting) · Redbud Dental · Marcus Reed$/;
+  assert.equal(recent.filter((line) => pair.test(line)).length, 1, `one line naming both people for the two-person text: ${recent.join(" | ")}`);
+  await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.myday?.teamMoney === true, "open remembered");
+  await page.reload();
+  assert.equal(await page.locator("[data-testid=team-money]").getAttribute("open"), "", "still open after a reload");
+  await page.locator("[data-testid=team-money] > summary").click();
+  await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.myday?.teamMoney === false, "shut remembered");
 
   log("12 new leads nobody owns · Take 10, with a confirm, then Undo gives them back");
   const unowned = page.locator("[data-testid=unowned]");
@@ -279,6 +342,25 @@ const ago = (days) => `now() - interval '${days} days'`;
   await page.locator("[data-testid=jump-in-member]").waitFor();
   assert.equal(await page.getByText("Change branding").count(), 0);
   assert.equal(await page.locator("[data-testid=team-today]").count(), 0, "Team today is for Owners and Admins");
+
+  log("Sprint R2: a Member's Rundown opens on Me, Whole team one tap away; rows lead to people with Call; done entries fold");
+  assert.match(await page.locator("[data-testid=report-scope]").textContent(), /Marcus Reed$/);
+  assert.equal(await page.locator("[data-testid=report-rep]").inputValue(), M);
+  const rundownOverdue = page.locator("[data-testid=rundown-overdue]");
+  assert.match(await rundownOverdue.textContent(), /Lou Late/);
+  assert.equal(await rundownOverdue.locator("[data-testid=rundown-person]").first().getAttribute("href"), "/dashboard/contacts/ctc_md_lou");
+  assert.equal(await rundownOverdue.locator("[data-testid=rundown-call]").first().getAttribute("href"), "tel:5125550102");
+  assert.equal(await rundownOverdue.locator("[data-testid=rundown-overdue-all]").getAttribute("href"), "/dashboard/calendar?view=agenda");
+  const cal = page.locator("[data-testid=rundown-calendar]");
+  assert.match(await cal.locator("[data-testid=rundown-row]").first().textContent(), /Tia Today/);
+  assert.equal(await cal.locator("[data-testid=rundown-row][data-done]").count(), 0, "done entries aren't in the open list");
+  const doneFold = cal.locator("[data-testid=rundown-done]");
+  assert.equal(await doneFold.getAttribute("open"), null, "Done today is collapsed");
+  assert.match(await doneFold.locator("summary").textContent(), /Done today \(\d+\)/);
+  await page.locator("[data-testid=report-rep]").selectOption("all");
+  await page.waitForURL(/rep=all/);
+  await page.locator("[data-testid=report-scope]", { hasText: /Whole team$/ }).waitFor();
+  assert.match(await page.locator("[data-testid=rundown-quiet]").textContent(), /Quinn Quiet/, "the whole team's quiet opportunity names its Primary");
 
   log("a Member's Settings opens My Account, and the sidebar's search finds a person");
   assert.equal(await page.locator("aside [data-testid=nav-link][data-href='/dashboard/settings']").getAttribute("href"), "/dashboard/settings/account");
@@ -352,6 +434,16 @@ const ago = (days) => `now() - interval '${days} days'`;
   const nia = (await sql(`SELECT type, "startTime", "ownerId", "contactId" FROM "CalendarEvent" WHERE "organizationId"=$1 AND title='Call back Nia'`, [org])).rows[0];
   assert.deepEqual(nia, { type: "Call", startTime: "15:00", ownerId: M, contactId: "ctc_md_nia" });
 
+  log("Sprint R2: Agenda / Week / Month is remembered per person");
+  await page.goto(`${BASE}/dashboard/calendar`);
+  await page.locator("[data-testid=cal-view-week]").click();
+  await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.calendar?.view === "week", "week remembered");
+  await page.goto(`${BASE}/dashboard/calendar`);
+  await page.locator("[data-testid=cal-view-week][aria-selected=true]").waitFor();
+  await page.locator("[data-testid=week-grid]").waitFor();
+  await page.locator("[data-testid=cal-view-agenda]").click();
+  await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.calendar?.view === "agenda", "agenda remembered");
+
   log("Mine / Everyone is remembered per person");
   await page.locator("[data-testid=cal-everyone]").click();
   await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.calendar?.scope === "team", "team remembered");
@@ -397,6 +489,35 @@ const ago = (days) => `now() - interval '${days} days'`;
   assert.equal(await team.first().locator("[data-testid=team-dot]").getAttribute("data-fresh"), "", "logged in the last two hours");
   assert.match(await op.locator("[data-testid=team-unowned]").textContent(), /12 new leads nobody owns/);
   await op.locator("[data-testid=jump-in-member]").count().then((n) => assert.equal(n, 0, "an Owner keeps the owner's Jump in"));
+
+  log("Sprint R2: the Owner's four money tiles in whole dollars, the rest under More numbers; the write-up is a headline and Read more");
+  assert.deepEqual(
+    await op.locator("[data-testid=money-tiles] [data-testid=stat-tile]").evaluateAll((els) => els.map((el) => el.dataset.label)),
+    ["Owed to you", "Quoted & sent", "Awaiting signature", "Open pipeline"],
+  );
+  for (const value of await op.locator("[data-testid=money-tiles] [data-testid=stat-tile] p.num").allTextContents()) assert.match(value, /^\$[\d,]+$/, `whole dollars: ${value}`);
+  const moreNumbers = op.locator("[data-testid=more-numbers]");
+  assert.equal(await moreNumbers.getAttribute("open"), null);
+  assert.deepEqual(await moreNumbers.locator("[data-testid=stat-tile]").evaluateAll((els) => els.map((el) => el.dataset.label)), ["Active jobs", "Contacts", "Signed"]);
+  const headline = await op.locator("[data-testid=report-narrative-headline]").textContent();
+  assert.match(headline, /[.!?]$/, `one sentence: ${headline}`);
+  assert.equal(await op.locator("[data-testid=report-scope]").textContent().then((t) => /Whole team$/.test(t)), true, "an Owner's Rundown is the whole team");
+  const quiet = op.locator("[data-testid=rundown-quiet] [data-testid=rundown-row]").first();
+  assert.match(await quiet.textContent(), /Quinn Quiet/);
+  assert.match(await quiet.locator("[data-testid=rundown-quiet-sub]").textContent(), /^Redbud Dental · Taylor Test$/);
+  assert.equal(await quiet.locator("[data-testid=rundown-call]").getAttribute("href"), "tel:5125550109");
+
+  log("Sprint R2: the Activity report's rep rows leave out a teammate with no book and no touches");
+  await sql(`INSERT INTO "User" (id, name, email, "passwordHash", role, "organizationId") VALUES ('usr_md_idle','Ida Idle',$1,$2,'MEMBER',$3)`, ["test-myday-idle@example.com", taylor.passwordHash, org]);
+  await op.goto(`${BASE}/dashboard?report=activity&period=this-week`);
+  const groups = op.locator("[data-testid=activity-groups]");
+  await groups.waitFor();
+  const groupsText = await groups.textContent();
+  assert.match(groupsText, /Marcus Reed/);
+  assert.doesNotMatch(groupsText, /Ida Idle/, "nobody with no book and no touches");
+  assert.doesNotMatch(await op.locator("[data-testid=report-narrative-body]").textContent(), /Ida Idle/);
+  await op.goto(`${BASE}/dashboard`);
+  await op.locator("[data-testid=team-row]").first().waitFor();
 
   log("clicking a rep opens their My day, read-only");
   await team.first().click();
@@ -484,6 +605,16 @@ const ago = (days) => `now() - interval '${days} days'`;
   const ownerPhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const p2 = await ownerPhone.newPage();
   await login(p2, EMAIL);
+  await p2.locator("[data-testid=report][data-report=daily]").waitFor();
+  const overdueY = (await p2.locator("[data-testid=rundown-overdue]").boundingBox()).y;
+  const todayY = (await p2.locator("[data-testid=rundown-calendar]").boundingBox()).y;
+  assert.ok(overdueY < todayY, "on a phone Overdue comes above Today");
+  const reportBar = p2.locator("[data-testid=report-bar]");
+  assert.equal(await reportBar.evaluate((el) => getComputedStyle(el).flexWrap), "nowrap", "the report tabs are one sideways strip");
+  for (const h of await reportBar.locator("a").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) assert.ok(Math.round(h) >= 44, `a report tab is ${h}px`);
+  assert.ok((await p2.evaluate(() => document.documentElement.scrollWidth)) <= 391, "the Rundown doesn't scroll sideways");
+  const tilesBox = await p2.locator("[data-testid=money-tiles] [data-testid=stat-tile]").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
+  assert.equal(new Set(tilesBox).size, 2, `money tiles 2×2 on a phone (${tilesBox})`);
   await p2.goto(`${BASE}/dashboard/calendar`);
   await p2.waitForURL(/view=agenda/);
   await p2.locator("[data-testid=agenda]").waitFor();

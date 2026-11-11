@@ -411,7 +411,8 @@ async function narrativeText(page) {
       [org, N],
     );
     assert.equal(await statValue("Signed"), String(nicSigned));
-    const nicActs = await count(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1 AND "userId"=$2 AND marketing=false`, [org, N]);
+    // One line per save, dated now or earlier (Round 2).
+    const nicActs = await count(`SELECT count(DISTINCT COALESCE("batchId", id))::int n FROM "Activity" WHERE "organizationId"=$1 AND "userId"=$2 AND marketing=false AND "occurredAt" <= now()`, [org, N]);
     await page.getByText("Logged by this rep").waitFor();
     const recent = page.locator(".card", { has: page.locator("h2", { hasText: "Recent activity" }) }).locator("ul > li");
     assert.equal(await recent.count(), Math.min(8, nicActs), "only what Nic logged");
@@ -434,8 +435,12 @@ async function narrativeText(page) {
     assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today · 2", "2 still open, not 11");
     assert.match(await page.locator("[data-testid=rundown-calendar]").textContent(), /Still open · 9 already done/);
     let calRows = await calendarRows();
-    assert.equal(calRows.length, 8);
-    assert.deepEqual(calRows.map((row) => row.done), [false, false, true, true, true, true, true, true], "open first, the done calls after");
+    // Round 2 (BDR redesign): the done entries fold into a collapsed "Done
+    // today" under the open ones (up to 8 of each), rather than sharing 8 rows.
+    assert.deepEqual(calRows.map((row) => row.done), [false, false, true, true, true, true, true, true, true, true], "open first, the done calls after");
+    assert.equal(await page.locator("[data-testid=rundown-calendar] [data-testid=rundown-done] li").count(), 8, "the done calls are under Done today");
+    assert.equal(await page.locator("[data-testid=rundown-done]").getAttribute("open"), null, "collapsed");
+    assert.match(await page.locator("[data-testid=rundown-done] summary").textContent(), /Done today \(9\)/);
     assert.match(calRows[0].text, /Site walk at Acme.*09:00/s);
     assert.match(calRows[1].text, /Call Bob/);
     // Follow-up: a done row is struck through but not faded (opacity 0.6
@@ -448,7 +453,7 @@ async function narrativeText(page) {
     assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today", "nothing open, no count");
     assert.match(await page.locator("[data-testid=rundown-calendar]").textContent(), /All 11 done/);
     calRows = await calendarRows();
-    assert.ok(calRows.length === 8 && calRows.every((row) => row.done), "the done entries are still listed");
+    assert.ok(calRows.length === 8 && calRows.every((row) => row.done), "the done entries are still listed, under Done today");
     words = await narrativeText(page);
     assert.match(words, /The team has 11 things on the calendar today, all done\./);
     assert.doesNotMatch(words, /starting with/);
@@ -1042,7 +1047,8 @@ async function narrativeText(page) {
     await thumb.goto(`${BASE}/dashboard`);
     await thumb.locator("[data-testid=report][data-report=daily]").waitFor();
     const fit = await thumb.evaluate(() => {
-      const line = [...document.querySelectorAll("p.truncate")].find((p) => p.textContent.startsWith("Walked the whole building"));
+      // (Round 2: the people are named on the first line, the words under it.)
+      const line = [...document.querySelectorAll("p.truncate")].find((p) => p.textContent.includes("Walked the whole building"));
       return {
         inner: window.innerWidth,
         doc: document.documentElement.scrollWidth,
