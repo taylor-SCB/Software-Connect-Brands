@@ -79,7 +79,7 @@ async function login(page) {
 // "Unsaved changes" also contains the word "saved", so the success banner
 // has to be matched on its own text rather than a substring.
 async function saveLines(page) {
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved", { exact: true }).waitFor();
 }
 
@@ -364,7 +364,8 @@ let context;
   assert.equal(await rowTerms[0].inputValue(), "Net 30", "the baseline carries Net 30");
 
   log("save it; the two rows add up to the quote total exactly");
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("payment-table-keep").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
 
   const quoteTotal = (
@@ -392,7 +393,7 @@ let context;
 
   log("re-saving without a reload keeps the same payment rows");
   await table.getByTestId("row-terms").first().fill("Upon signature");
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   const resaved = await sql(
     `SELECT id, terms FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`,
@@ -417,7 +418,7 @@ let context;
     "50% + 10% should report the remaining 40% as unscheduled",
   );
   // Advisory, not blocking — a half-built table still has to be savable.
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
 
   log("a dollar amount over the total reports the overage");
@@ -429,7 +430,7 @@ let context;
   log("put it back to the baseline; it ties out exactly again");
   await table.locator("[data-testid=payment-row]").nth(1).locator("select").first().selectOption("BALANCE");
   await table.getByTestId("row-terms").first().fill("Net 30");
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   assert.equal(await page.getByTestId("schedule-difference").count(), 0, "the baseline ties out exactly");
   const restored = await sql(
@@ -472,7 +473,7 @@ let context;
 
   log("Hide from quote keeps it off the customer's copy entirely");
   await page.getByTestId("hide-payment-table").check();
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   await publicPage.reload();
   await publicPage.getByText("Install labor").first().waitFor();
@@ -487,7 +488,7 @@ let context;
 
   log("unhide it again");
   await page.getByTestId("hide-payment-table").uncheck();
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   await publicPage.reload();
   await publicPage.getByTestId("document-payments").waitFor();
@@ -507,7 +508,7 @@ let context;
 
   await page.getByTestId("lead-sales-rep").selectOption(me.id);
   await page.getByTestId("contract-signer").selectOption(me.id);
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
 
   const people = await sql(
@@ -530,7 +531,7 @@ let context;
   log("a refused save keeps what was typed, and keeps the rep");
   await page.getByLabel("Quote title").fill("x".repeat(200));
   await page.locator("#terms").fill("Quote valid 30 days.");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText(/at most 160|too big|Too long/i).waitFor();
   assert.equal(
     await page.getByTestId("lead-sales-rep").inputValue(),
@@ -543,7 +544,7 @@ let context;
     "a refused save threw away what was typed in Terms",
   );
   await page.getByLabel("Quote title").fill("Rekey quote");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
   await publicPage.close();
 
@@ -805,11 +806,13 @@ let context;
 
   log("audit fix: a refused Quote details save keeps a field the user cleared");
   await page.locator("#terms").fill("Quote valid 30 days.");
-  await page.getByRole("button", { name: "Save details" }).click();
-  await page.getByText("Quote details saved", { exact: true }).waitFor();
+  await page.getByTestId("quote-save").click();
+  // The one Save writes only what changed: Terms may already read this, so
+  // wait for the page to say everything is saved rather than for Details.
+  await page.waitForFunction(() => /All changes saved/.test(document.querySelector("[data-testid=quote-save-status]")?.textContent ?? ""));
   await page.locator("#terms").fill("");
   await page.getByLabel("Quote title").fill("y".repeat(200));
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText(/at most 160|too big|Too long/i).waitFor();
   assert.equal(
     await page.locator("#terms").inputValue(),
@@ -817,7 +820,7 @@ let context;
     "a refused save put deleted Terms text back, which the next save would write",
   );
   await page.getByLabel("Quote title").fill("Rekey quote");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
 
   log("audit fix: a fixed-dollar quote row carries into a smaller contract without going negative");
@@ -954,7 +957,12 @@ let context;
   assert.doesNotMatch(pipelineText, undiscountedTotal, "the undiscounted figure is nowhere on the pipeline");
   await page.goto(`${BASE}/dashboard`);
   await page.getByText(/Welcome back/).waitFor();
-  assert.match(await page.locator("main").textContent(), discountedTotal, "the dashboard's quoted and open-deal figures follow");
+  // The money tiles read whole dollars since the BDR redesign's round 2
+  // (Nov 11, 2026): $13,234.50 shows as $13,235.
+  const whole = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.round(cents / 100));
+  const tile = (label) => page.locator(`[data-testid=stat-tile][data-label="${label}"] p.num`).textContent();
+  assert.equal(await tile("Quoted & sent"), whole(subtotalBefore - tenOff), "the dashboard's Quoted & sent tile follows the discount");
+  assert.equal(await tile("Open pipeline"), whole(subtotalBefore - tenOff), "the dashboard's Open pipeline tile follows the discount");
 
   log("{{quote_total}} merges the discounted total; a money-in contract made from the quote starts with the quote's discount");
   await sql(
@@ -1022,7 +1030,7 @@ let context;
    * Audit fixes (UX review, Nov 10, 2026). A second quote on the deal,
    * QUO-1900, so nothing above moves.
    * ---------------------------------------------------------------- */
-  log("audit fixes (UX review): Mark as sent refuses a quote with no saved lines, and holds off while a typed line is unsaved");
+  log("audit fixes (UX review): Send quote refuses a quote with no saved lines, and holds off while a typed line is unsaved");
   await sql(
     `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
      VALUES ('quo_qi_ux','${org}','ctc_qi','deal_qi',1900,'Option B','DRAFT','tok_quo_qi_ux_0123456789',now())`,
@@ -1034,29 +1042,176 @@ let context;
       )
     ).rows[0];
   await page.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
-  await page.getByTestId("mark-sent").click();
-  await page.getByTestId("mark-sent-error").waitFor();
-  assert.match(await page.getByTestId("mark-sent-error").innerText(), /Add a line item and save it/);
+  // Send quote (was Mark as sent) opens its share sheet; the server's
+  // refusal shows in the sheet.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
+  await page.getByTestId("send-quote-error").waitFor();
+  assert.match(await page.getByTestId("send-quote-error").innerText(), /Add a line item and save it/);
   assert.deepEqual(await uxQuote(), { status: "DRAFT", lines: 0 }, "a quote with no lines went out to the customer");
+  await page.getByTestId("sheet-close").click();
+  await page.getByTestId("send-quote-sheet").waitFor({ state: "detached" });
   // Typed, not saved: before the fix Mark as sent sent the quote without
   // it, the editor kept showing $23,200.00 and the customer's link $0.00.
   await page.getByRole("button", { name: "Blank line" }).click();
   await page.getByLabel("Line 1 product", { exact: true }).fill("NVR 16-channel, 8TB");
   await page.getByLabel("Line 1 quantity", { exact: true }).fill("16");
   await page.getByLabel("Line 1 unit value", { exact: true }).fill("1450.00");
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
   await page.getByText("Save line items first", { exact: false }).waitFor();
+  assert.equal(await page.getByTestId("send-quote-sheet").count(), 0, "the share sheet opened over unsaved lines");
   assert.deepEqual(await uxQuote(), { status: "DRAFT", lines: 0 }, "the quote went out without the line typed into it");
   assert.equal(await page.getByLabel("Line 1 product", { exact: true }).inputValue(), "NVR 16-channel, 8TB", "the typed line was dropped");
   await saveLines(page);
-  await page.getByTestId("mark-sent-error").waitFor({ state: "detached" });
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote-error").waitFor({ state: "detached" });
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   assert.deepEqual(await uxQuote(), { status: "SENT", lines: 1 });
   const uxCustomer = await context.newPage();
   await uxCustomer.goto(`${BASE}/q/tok_quo_qi_ux_0123456789`);
   assert.equal(await uxCustomer.getByTestId("document-total").textContent(), "$23,200.00", "the customer's link shows the saved line");
   await uxCustomer.close();
+
+  log("Sprint: the quote page's DealJourney strip; Send quote's Copy link copies the customer's link, marks it sent and moves a deal still behind it to Quote Sent");
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"updatedAt")
+     VALUES ('deal_qi_sq','${org}','ctc_qi','Lobby cameras','LEAD',now())`,
+  );
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
+     VALUES ('quo_qi_sq','${org}','ctc_qi','deal_qi_sq',1901,'Lobby cameras','DRAFT','tok_quo_qi_sq_0123456789',now())`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_qi_sq','quo_qi_sq','Dome camera',4,25000,'MATERIALS',0)`,
+  );
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_sq`);
+  const sqStrip = page.getByTestId("deal-journey");
+  assert.match(await sqStrip.locator(".dj-steps").getAttribute("aria-label"), /Quote next \(draft\)/);
+  assert.ok(await sqStrip.locator("span.badge", { hasText: "Draft" }).first().isVisible(), "the quote's badge sits in the strip's details row");
+  // Send quote is the strip's Next, not a second button in the header.
+  assert.equal(await page.getByTestId("send-quote").count(), 1);
+  await sqStrip.getByTestId("send-quote").click();
+  const sheet = page.getByTestId("send-quote-sheet");
+  await sheet.waitFor();
+  assert.equal(await sheet.getByTestId("send-quote-link").inputValue(), `${BASE}/q/tok_quo_qi_sq_0123456789`);
+  await sheet.getByTestId("send-quote-copy").click();
+  await sheet.waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${BASE}/q/tok_quo_qi_sq_0123456789`, "Copy link copied the customer's link");
+  const sqState = (await sql(`SELECT q.status, d.stage FROM "Quote" q JOIN "Deal" d ON d.id=q."dealId" WHERE q.id='quo_qi_sq'`)).rows[0];
+  assert.deepEqual(sqState, { status: "SENT", stage: "QUOTE_SENT" }, "sending the quote moves its deal on (decision 19)");
+  await page.getByRole("button", { name: "Back to draft" }).waitFor();
+  assert.equal((await sqStrip.getByTestId("journey-next").textContent()).trim(), "Customer said yes");
+  await sqStrip.getByTestId("journey-next").click();
+  await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_sq'`)).rows[0].status, "ACCEPTED");
+  assert.equal((await sqStrip.getByTestId("journey-next").textContent()).trim(), "Make contract");
+  assert.match(await sqStrip.getByTestId("journey-next").getAttribute("href"), /\/dashboard\/contracts\/tracker\?dealId=deal_qi_sq&quoteId=quo_qi_sq/);
+  // The Coordinator opens on a first contract: the open row ticked onto
+  // Contract A, one Create button with its total.
+  await sqStrip.getByTestId("journey-next").click();
+  await page.getByTestId("tracker-grid").waitFor();
+  assert.equal((await page.getByTestId("create-contracts").textContent()).trim(), "Create contract for $1,000.00 →");
+
+  log("Sprint: the customer accepts on their own copy with their typed name; safe twice; a quote no longer out can't be accepted");
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","sentAt","updatedAt")
+     VALUES ('quo_qi_acc','${org}','ctc_qi','deal_qi_sq',1902,'Lobby cameras B','SENT','tok_quo_qi_acc_0123456789',now(),now()),
+            ('quo_qi_dec','${org}','ctc_qi','deal_qi_sq',1903,'Lobby cameras C','SENT','tok_quo_qi_dec_0123456789',now(),now())`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_qi_acc','quo_qi_acc','Dome camera',2,25000,'MATERIALS',0),
+            ('qli_qi_dec','quo_qi_dec','Dome camera',1,25000,'MATERIALS',0)`,
+  );
+  {
+    const customerCtx = await browser.newContext();
+    const tabA = await customerCtx.newPage();
+    const tabB = await customerCtx.newPage();
+    for (const tab of [tabA, tabB]) {
+      await tab.goto(`${BASE}/q/tok_quo_qi_acc_0123456789`);
+      await tab.getByTestId("accept-quote").waitFor();
+      assert.equal(await tab.getByTestId("accept-quote-name").inputValue(), "", "the name starts empty");
+    }
+    await tabA.getByTestId("accept-quote-name").fill("Quinn Ito");
+    await tabA.getByTestId("accept-quote-submit").click();
+    // The page re-renders as accepted, with the name typed and the day.
+    await tabA.getByTestId("quote-accepted").filter({ hasText: /Accepted by Quinn Ito on/ }).waitFor();
+    const accepted = (await sql(`SELECT status, "acceptedByName", "respondedAt" IS NOT NULL AS dated FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0];
+    assert.deepEqual({ ...accepted }, { status: "ACCEPTED", acceptedByName: "Quinn Ito", dated: true });
+    // The second tab still shows the form: pressing it again is fine and
+    // changes nothing.
+    await tabB.getByTestId("accept-quote-name").fill("Quinn I.");
+    await tabB.getByTestId("accept-quote-submit").click();
+    await tabB.getByTestId("quote-accepted").waitFor();
+    assert.equal((await sql(`SELECT "acceptedByName" FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].acceptedByName, "Quinn Ito", "a second press rewrote the answer");
+    // Declined from the office while the customer's page was open.
+    await tabA.goto(`${BASE}/q/tok_quo_qi_dec_0123456789`);
+    await tabA.getByTestId("accept-quote").waitFor();
+    await sql(`UPDATE "Quote" SET status='DECLINED' WHERE id='quo_qi_dec'`);
+    await tabA.getByTestId("accept-quote-name").fill("Quinn Ito");
+    await tabA.getByTestId("accept-quote-submit").click();
+    await tabA.getByText("This quote can't be accepted online any more").waitFor();
+    assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_dec'`)).rows[0].status, "DECLINED");
+    await tabA.reload();
+    assert.equal(await tabA.getByTestId("accept-quote").count(), 0, "a declined quote still offers Accept");
+    await customerCtx.close();
+  }
+  // The office sees who said yes, and the next step is the contract.
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_acc`);
+  assert.match(await page.getByTestId("quote-accepted-by").textContent(), /Accepted online by Quinn Ito/);
+  assert.equal((await page.getByTestId("deal-journey").getByTestId("journey-next").textContent()).trim(), "Make contract");
+
+  log("Sprint: Build Quote (New quote for a deal with no quote) starts the quote titled after the deal, with the deal's rep, and opens it");
+  const bqRep = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"ownerId","updatedAt")
+     VALUES ('deal_qi_bq','${org}','ctc_qi','Parking garage cameras','LEAD',$1,now())`,
+    [bqRep],
+  );
+  await page.goto(`${BASE}/dashboard/quotes/new?contactId=ctc_qi&dealId=deal_qi_bq`);
+  await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+$/);
+  const built = (await sql(`SELECT id, title, template, "leadSalesRepId", status FROM "Quote" WHERE "dealId"='deal_qi_bq'`)).rows;
+  assert.equal(built.length, 1, "Build Quote made more than one quote");
+  assert.deepEqual(
+    { title: built[0].title, template: built[0].template, rep: built[0].leadSalesRepId, status: built[0].status },
+    { title: "Parking garage cameras", template: "SIMPLE", rep: bqRep, status: "DRAFT" },
+  );
+  assert.ok(page.url().endsWith(built[0].id));
+  // Coming back within two minutes, or with the deal now holding a quote,
+  // doesn't make a second one: a deal with a quote gets the setup form.
+  await page.goto(`${BASE}/dashboard/quotes/new?contactId=ctc_qi&dealId=deal_qi_bq`);
+  await page.locator("[name=title]").waitFor();
+  assert.equal((await sql(`SELECT count(*)::int n FROM "Quote" WHERE "dealId"='deal_qi_bq'`)).rows[0].n, 1);
+
+  log("Sprint: on a phone a draft quote's lines stack, with the total and the one Save pinned above Send quote");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/quotes/${built[0].id}`);
+    await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    const bar = phone.getByTestId("line-items-phone-bar");
+    await bar.waitFor();
+    assert.equal(await phone.getByRole("button", { name: "Save", exact: true }).count(), 1, "one Save on a phone");
+    await phone.getByRole("button", { name: "Blank line" }).click();
+    await phone.getByLabel("Line 1 product", { exact: true }).fill("Bullet camera");
+    await phone.getByLabel("Line 1 quantity", { exact: true }).fill("3");
+    await phone.getByLabel("Line 1 unit value", { exact: true }).fill("200.00");
+    assert.match(await bar.textContent(), /Unsaved changes/);
+    assert.equal(await phone.getByTestId("line-items-phone-total").textContent(), "$600.00");
+    const barBox = await bar.boundingBox();
+    const nextBox = await phone.getByTestId("send-quote").boundingBox();
+    assert.ok(barBox.y + barBox.height <= nextBox.y + 1, `the Save bar sits under the pinned Send quote (${barBox.y}+${barBox.height} vs ${nextBox.y})`);
+    assert.ok(barBox.y + barBox.height <= 845, "the Save bar is off the screen");
+    await bar.getByTestId("quote-save-phone").click();
+    await phone.getByText("Line items saved", { exact: true }).waitFor();
+    assert.equal((await sql(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [built[0].id])).rows[0].n, 1);
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the quote page scrolls sideways on a phone");
+    await phone.screenshot({ path: path.join(OUT, "sprint-phone-quote.png") });
+    await phoneCtx.close();
+  }
 
   log("audit fixes (UX review): at 1440 and 1280 the Qty, Value and Tag boxes show their whole value and a pictured catalog line's name shows whole; on a phone each line stacks with its total on screen");
   // A catalog product with a picture, on the sent quote the way Mark as
@@ -1210,6 +1365,154 @@ let context;
   await page.getByTestId("delete-quote-yes").click();
   await page.waitForURL(/\/dashboard\/quotes$/);
   assert.equal(await uxCount(), 0, "Yes, delete left the quote");
+
+  log("Sprint: a draft quote has one Save at the foot of the window — lines, payment table and details in one press; a refusal stops it there");
+  const oneId = built[0].id;
+  const until = async (fn, what) => {
+    for (let i = 0; i < 60; i += 1) {
+      if (await fn()) return;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  await sql(`UPDATE "Quote" SET status='DRAFT' WHERE id=$1`, [oneId]);
+  // A short window, so the page is taller than it and the bar has to pin.
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await page.goto(`${BASE}/dashboard/quotes/${oneId}`);
+  const saveBar = page.getByTestId("quote-save-bar");
+  await saveBar.waitFor();
+  for (const old of ["Save line items", "Save details", "Save payment table"]) {
+    assert.equal(await page.getByRole("button", { name: old }).count(), 0, `no separate "${old}"`);
+  }
+  assert.equal(await page.getByTestId("save-schedule").count(), 0, "the payment table's own button is gone");
+  const pinned = async () => {
+    const box = await saveBar.boundingBox();
+    // Sub-pixel layout can put its edge a pixel or two past the window.
+    return box && box.y + box.height <= 600 + 2 && box.y >= 600 - 120;
+  };
+  await page.evaluate(() => window.scrollTo(0, 0));
+  assert.ok(await pinned(), "the Save bar is at the foot of the window at the top of the page");
+  await page.getByLabel("Line 1 quantity", { exact: true }).fill("4");
+  await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — one save");
+  await page.getByLabel("Quote title").fill("One save quote");
+  await until(async () => /Line items · Payment table · Quote details/.test(await page.getByTestId("quote-save-status").textContent()), "all three listed");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "everything saved");
+  const oneSaved = (await sql(
+    `SELECT q.title, (SELECT quantity FROM "QuoteLineItem" WHERE "quoteId"=q.id ORDER BY position LIMIT 1) AS qty,
+            (SELECT label FROM "QuotePayment" WHERE "quoteId"=q.id ORDER BY position LIMIT 1) AS label
+       FROM "Quote" q WHERE q.id=$1`,
+    [oneId],
+  )).rows[0];
+  assert.deepEqual([oneSaved.title, Number(oneSaved.qty), oneSaved.label], ["One save quote", 4, "Deposit — one save"]);
+
+  await page.getByLabel("Line 1 product", { exact: true }).fill("");
+  await page.getByLabel("Quote title").fill("Not this title");
+  await page.getByTestId("quote-save").click();
+  await page.getByText("Line 1 needs a product name.").waitFor();
+  assert.match(await page.getByTestId("quote-save-status").textContent(), /Line items wasn't saved/);
+  assert.equal((await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title, "One save quote", "nothing after the refusal was saved");
+  assert.ok(await page.getByTestId("send-quote").first().isVisible());
+  await page.getByLabel("Line 1 product", { exact: true }).fill("Bullet camera");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "saved after the fix");
+  assert.equal((await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title, "Not this title");
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+  assert.ok(await pinned(), "still pinned halfway down");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 200), "the page is taller than the window");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  log("audit fixes: a quote past its Valid until day can't be accepted online, on the page or from a tab opened before it lapsed");
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","sentAt","validUntil","updatedAt")
+     VALUES ('quo_qi_exp','${org}','ctc_qi','deal_qi_sq',1904,'Lobby cameras D','SENT','tok_quo_qi_exp_0123456789',now(),'2026-01-10T12:00:00Z',now()),
+            ('quo_qi_lapse','${org}','ctc_qi','deal_qi_sq',1905,'Lobby cameras E','SENT','tok_quo_qi_lapse_0123456789',now(),now() + interval '20 days',now())`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_qi_exp','quo_qi_exp','Dome camera',1,25000,'MATERIALS',0),
+            ('qli_qi_lapse','quo_qi_lapse','Dome camera',1,25000,'MATERIALS',0)`,
+  );
+  {
+    const customerCtx = await browser.newContext();
+    const tab = await customerCtx.newPage();
+    await tab.goto(`${BASE}/q/tok_quo_qi_exp_0123456789`);
+    await tab.getByTestId("quote-expired").filter({ hasText: /expired on Jan 10, 2026/ }).waitFor();
+    assert.equal(await tab.getByTestId("accept-quote").count(), 0, "an expired quote offers Accept");
+    await tab.goto(`${BASE}/q/tok_quo_qi_lapse_0123456789`);
+    await tab.getByTestId("accept-quote").waitFor();
+    await sql(`UPDATE "Quote" SET "validUntil"='2026-01-10T12:00:00Z' WHERE id='quo_qi_lapse'`);
+    await tab.getByTestId("accept-quote-name").fill("Quinn Ito");
+    await tab.getByTestId("accept-quote-submit").click();
+    // Refused, and the page redraws as expired in place of the form.
+    await tab.getByTestId("quote-expired").waitFor();
+    assert.equal(await tab.getByTestId("accept-quote").count(), 0);
+    assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_lapse'`)).rows[0].status, "SENT", "a lapsed quote was accepted");
+    // Still good on its last day.
+    await sql(`UPDATE "Quote" SET "validUntil"=now() WHERE id='quo_qi_lapse'`);
+    await tab.reload();
+    await tab.getByTestId("accept-quote").waitFor();
+    await customerCtx.close();
+  }
+
+  log("audit fixes: the name a customer accepted under online goes once the quote is answered another way");
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_acc`);
+  await page.getByTestId("quote-accepted-by").waitFor();
+  await page.getByRole("button", { name: "Mark declined" }).click();
+  await until(async () => (await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].status === "DECLINED", "declined");
+  await page.getByRole("button", { name: "Mark accepted" }).click();
+  await until(async () => (await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].status === "ACCEPTED", "accepted by the team");
+  assert.equal((await sql(`SELECT "acceptedByName" FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].acceptedByName, null, "the old online name was kept");
+  await page.reload();
+  assert.equal(await page.getByTestId("quote-accepted-by").count(), 0, "still says Accepted online by Quinn Ito");
+  {
+    const customerCtx = await browser.newContext();
+    const tab = await customerCtx.newPage();
+    await tab.goto(`${BASE}/q/tok_quo_qi_acc_0123456789`);
+    const line = await tab.getByTestId("quote-accepted").textContent();
+    assert.doesNotMatch(line, /Quinn/, line);
+    await customerCtx.close();
+  }
+
+  log("audit fixes: on a phone, Quote details and Payment table edits each get a Save in reach (the foot bar is hidden there)");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/quotes/${oneId}`);
+    await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    assert.equal(await phone.getByTestId("quote-details-phone-save").count(), 0, "a Save before anything changed");
+    await phone.getByLabel("Quote title").fill("Saved from a phone");
+    const detailsSave = phone.getByTestId("quote-details-phone-save");
+    await detailsSave.waitFor();
+    assert.ok(await detailsSave.isVisible());
+    await detailsSave.click();
+    await until(async () => (await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title === "Saved from a phone", "the title saved");
+    await detailsSave.waitFor({ state: "detached" });
+    await phone.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — phone");
+    const tableSave = phone.getByTestId("payment-table-phone-save");
+    await tableSave.waitFor();
+    await tableSave.click();
+    await until(async () => (await sql(`SELECT label FROM "QuotePayment" WHERE "quoteId"=$1 ORDER BY position LIMIT 1`, [oneId])).rows[0]?.label === "Deposit — phone", "the payment label saved");
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the quote page scrolls sideways on a phone");
+    await phoneCtx.close();
+  }
+
+  log("audit fixes: Send quote waits for an unsaved payment table or Quote details too, not just the lines");
+  await sql(`UPDATE "Quote" SET status='DRAFT' WHERE id=$1`, [oneId]);
+  await page.goto(`${BASE}/dashboard/quotes/${oneId}`);
+  await page.getByTestId("quote-save-bar").waitFor();
+  await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — not saved");
+  await until(async () => /Payment table/.test(await page.getByTestId("quote-save-status").textContent()), "the table listed as unsaved");
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-error").filter({ hasText: "Save your changes to the payment table first" }).waitFor();
+  assert.equal(await page.getByTestId("send-quote-sheet").count(), 0, "the share sheet opened over an unsaved table");
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id=$1`, [oneId])).rows[0].status, "DRAFT");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "saved");
+  await page.getByTestId("send-quote-error").waitFor({ state: "detached" });
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-sheet").waitFor();
+  await page.keyboard.press("Escape");
 
   console.log("\nAll steps passed.");
   await context.close();

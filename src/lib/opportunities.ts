@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import { advanceContact } from "@/lib/status";
-import type { ContactStatusValue, PipelineColumn } from "@/lib/constants";
+import { advanceContact, type Who } from "@/lib/status";
+import { statusRank, type ContactStatusValue, type PipelineColumn } from "@/lib/constants";
+import { answerOf } from "@/lib/meeting-rule";
 import type { Prisma } from "@/generated/prisma/client";
 
 // Opportunities (Taylor, Oct 27, 2026): one tile on the Pipeline per sale
@@ -8,8 +9,6 @@ import type { Prisma } from "@/generated/prisma/client";
 // file holds the rules, so the meeting forms, the paperwork and the board
 // all apply the same ones. Not "use server": every function here takes an
 // organizationId and must never be callable from a browser.
-
-type Who = { organizationId: string; userId?: string | null };
 
 // A deal at one of these has been "created" in Taylor's sense: the sale
 // reached Quote Sent or further. Lead / Contacted is a quote not yet sent.
@@ -45,15 +44,63 @@ function titleFor(contact: { name: string; company: { name: string } | null }) {
   return contact.company?.name ?? contact.name;
 }
 
+// The meeting this already is — a calendar entry or history line that
+// already has its row, wherever that sits in the workspace — and its tile
+// while that is open (final audit, Nov 11, 2026). Only the tile attachMeeting
+// picks used to be searched, so the calendar form or a claim naming a booked
+// entry without a tile wrote a second meeting on the person's newest tile
+// and left the booked one asking "how did it go?". Looked up on every tile,
+// closed ones too (fix review): a booked entry whose tile has since been Won
+// or Lost, re-saved from the calendar form (it books on every Meeting save,
+// a typo fix included) or ticked done, found nothing open and started a new
+// Meeting Set tile with a second row for the same entry, asking "how did it
+// go?" about a meeting long past. `known` with no `ownTile` is a meeting
+// that is history on a closed tile.
+export type MeetingRow = {
+  known: { id: string; opportunityId: string } | null;
+  ownTile: { id: string; contacts: { contactId: string }[] } | null;
+};
+export async function meetingRowOf(organizationId: string, meeting: { activityId?: string | null; eventId?: string | null }): Promise<MeetingRow> {
+  const known =
+    meeting.eventId || meeting.activityId
+      ? await prisma.opportunityMeeting.findFirst({
+          where: {
+            ...(meeting.eventId ? { eventId: meeting.eventId } : { activityId: meeting.activityId }),
+            opportunity: { organizationId },
+          },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, opportunityId: true },
+        })
+      : null;
+  const ownTile = known
+    ? await prisma.opportunity.findFirst({
+        where: { id: known.opportunityId, organizationId, ...OPEN_OPPORTUNITY },
+        select: { id: true, contacts: { select: { contactId: true } } },
+      })
+    : null;
+  return { known, ownTile };
+}
+
 // A meeting logged, booked or ticked done with these people. If any of
-// them is already on an open opportunity the meeting joins it and anyone
+// them is already on an open opportunity (as Primary or Associated; Do
+// Not List is not on it) the meeting joins it and anyone
 // new from the meeting is added as Associated; otherwise it starts one,
 // with the first person as Primary. Every meeting path calls this through
-// markMeetingSet.
+// markMeetingSet. `opportunity` lets the Book meeting sheet choose: "new"
+// always starts one, an open opportunity's id joins that one (the
+// company's open tile with someone else on it), anything else is the rule
+// above. A meeting that already has its row (its calendar entry or history
+// line, on any tile in the workspace) stays on that tile whatever is
+// picked; on a closed tile (Won or Lost) its row is updated in place and
+// nothing else changes. The rep who booked it is kept on the meeting
+// (bookedById, never edited) so a held meeting is credited to them
+// (decision 13).
 export async function attachMeeting(
   who: Who,
   contactIds: string[],
-  meeting: { on: Date; activityId?: string | null; eventId?: string | null },
+  meeting: { on: Date; activityId?: string | null; eventId?: string | null; opportunity?: string | null },
+  // meetingRowOf for this meeting, when the caller has already read it.
+  found?: MeetingRow,
 ) {
   const ids = Array.from(new Set(contactIds));
   if (ids.length === 0) return null;
@@ -65,11 +112,40 @@ export async function attachMeeting(
   const ordered = ids.map((id) => people.find((person) => person.id === id)).filter((person) => person !== undefined);
   if (ordered.length === 0) return null;
 
-  const existing = await prisma.opportunity.findFirst({
-    where: { organizationId, ...OPEN_OPPORTUNITY, contacts: { some: { contactId: { in: ordered.map((person) => person.id) } } } },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, contacts: { select: { contactId: true } } },
-  });
+  const { known, ownTile } = found ?? (await meetingRowOf(organizationId, meeting));
+  if (known && !ownTile) {
+    // On a closed tile the meeting is history there: its row takes the
+    // new moment (and the history line it was logged as), and nobody is
+    // added, no tile is started and no second row is written.
+    await prisma.opportunityMeeting.update({
+      where: { id: known.id },
+      data: { on: meeting.on, ...(meeting.activityId ? { activityId: meeting.activityId } : {}) },
+    });
+    return known.opportunityId;
+  }
+  const pick = meeting.opportunity && meeting.opportunity !== "auto" && meeting.opportunity !== "new" ? meeting.opportunity : null;
+  const chosen =
+    ownTile ??
+    (pick
+      ? await prisma.opportunity.findFirst({
+          where: { id: pick, organizationId, ...OPEN_OPPORTUNITY },
+          select: { id: true, contacts: { select: { contactId: true } } },
+        })
+      : null);
+  const existing =
+    chosen ??
+    (meeting.opportunity === "new"
+      ? null
+      : await prisma.opportunity.findFirst({
+          // On it as Primary or Associated: Do Not List is not on it.
+          where: {
+            organizationId,
+            ...OPEN_OPPORTUNITY,
+            contacts: { some: { contactId: { in: ordered.map((person) => person.id) }, role: { not: "HIDDEN" } } },
+          },
+          orderBy: { updatedAt: "desc" },
+          select: { id: true, contacts: { select: { contactId: true } } },
+        }));
 
   let opportunityId: string;
   if (existing) {
@@ -103,11 +179,14 @@ export async function attachMeeting(
 
   // A booked meeting logged as done is the same meeting: its row takes
   // the activity and the day it happened rather than a second row.
-  const same = meeting.eventId
-    ? await prisma.opportunityMeeting.findFirst({ where: { opportunityId, eventId: meeting.eventId }, select: { id: true } })
-    : meeting.activityId
-      ? await prisma.opportunityMeeting.findFirst({ where: { opportunityId, activityId: meeting.activityId }, select: { id: true } })
-      : null;
+  const same =
+    known && known.opportunityId === opportunityId
+      ? known
+      : meeting.eventId
+        ? await prisma.opportunityMeeting.findFirst({ where: { opportunityId, eventId: meeting.eventId }, select: { id: true } })
+        : meeting.activityId
+          ? await prisma.opportunityMeeting.findFirst({ where: { opportunityId, activityId: meeting.activityId }, select: { id: true } })
+          : null;
   if (same) {
     await prisma.opportunityMeeting.update({
       where: { id: same.id },
@@ -115,7 +194,13 @@ export async function attachMeeting(
     });
   } else {
     await prisma.opportunityMeeting.create({
-      data: { opportunityId, on: meeting.on, activityId: meeting.activityId ?? null, eventId: meeting.eventId ?? null },
+      data: {
+        opportunityId,
+        on: meeting.on,
+        activityId: meeting.activityId ?? null,
+        eventId: meeting.eventId ?? null,
+        bookedById: who.userId ?? null,
+      },
     });
   }
   await prisma.opportunity.updateMany({ where: { id: opportunityId, organizationId }, data: { updatedAt: new Date() } });
@@ -236,17 +321,79 @@ export async function syncOpportunity(who: Who, opportunityId: string) {
     await prisma.deal.updateMany({ where: { id: opportunity.dealId, organizationId }, data: { contactId: primary } });
   }
 
-  // Everyone listed moves forward with it (never back).
+  // Everyone listed moves forward with it (never back) — except that a
+  // person's status follows their own meetings (final audit, Nov 11, 2026):
+  // someone booked onto a tile already at Meeting Completed hasn't met yet,
+  // so they stay at Meeting Set until one of their meetings is held. They
+  // used to jump straight to Meeting Completed on the booking.
   const target: ContactStatusValue | undefined = opportunity.deal
     ? (STATUS_FOR_STAGE[opportunity.deal.stage] ?? (opportunity.stage === "MEETING_COMPLETED" ? "MEETING_COMPLETED" : undefined))
     : opportunity.stage === "MEETING_COMPLETED"
       ? "MEETING_COMPLETED"
       : undefined;
   if (target) {
+    const waiting = target === "MEETING_COMPLETED" ? await stillToMeet(organizationId, opportunity.id, listed) : new Set<string>();
     for (const contactId of listed) {
+      if (waiting.has(contactId)) continue;
       await advanceContact(who, contactId, target, { dealId: opportunity.dealId, auto: true });
     }
   }
+}
+
+// The people on a tile who are on at least one of its meetings and in none
+// of its held ones: Meeting Completed waits for them, whatever the timing —
+// a meeting still ahead, one that passed with nobody answering, a No-show
+// (they stay Meeting Set, as a No-show always leaves them) (fix review,
+// Nov 11, 2026: only a meeting still ahead held them back, so the next sync
+// after it passed, or after a No-show, moved them on though they never met;
+// and that test read the row's own moment, the evening before for an old
+// calendar row). People on the tile with no meeting of theirs (added by
+// hand) follow the tile. Only people not yet at Meeting Completed are looked
+// at, so a tile everyone has caught up with costs one read. A meeting's
+// people are its calendar entry's (who it is with and who is expected) and
+// its history line's (one row per person in the save).
+async function stillToMeet(organizationId: string, opportunityId: string, listed: string[]) {
+  const waiting = new Set<string>();
+  if (!listed.length) return waiting;
+  const behind = (
+    await prisma.contact.findMany({ where: { organizationId, id: { in: listed } }, select: { id: true, status: true } })
+  ).filter((row) => statusRank(row.status) < statusRank("MEETING_COMPLETED"));
+  if (!behind.length) return waiting;
+  const meetings = await prisma.opportunityMeeting.findMany({
+    where: { opportunityId, opportunity: { organizationId } },
+    select: { outcome: true, activityId: true, eventId: true },
+  });
+  if (!meetings.length) return waiting;
+  const eventIds = meetings.map((row) => row.eventId).filter((id): id is string => Boolean(id));
+  const activityIds = meetings.map((row) => row.activityId).filter((id): id is string => Boolean(id));
+  const [events, lines] = await Promise.all([
+    eventIds.length
+      ? prisma.calendarEvent.findMany({ where: { organizationId, id: { in: eventIds } }, select: { id: true, contactId: true, attendees: { select: { id: true } } } })
+      : Promise.resolve([]),
+    activityIds.length
+      ? prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, outcome: true, batchId: true, contactId: true } })
+      : Promise.resolve([]),
+  ]);
+  const batches = [...new Set(lines.map((row) => row.batchId).filter((id): id is string => Boolean(id)))];
+  const siblings = batches.length
+    ? await prisma.activity.findMany({ where: { organizationId, batchId: { in: batches } }, select: { batchId: true, contactId: true } })
+    : [];
+  const eventById = new Map(events.map((row) => [row.id, row]));
+  const lineById = new Map(lines.map((row) => [row.id, row]));
+  const held = new Set<string>();
+  const onMeeting = new Set<string>();
+  for (const meeting of meetings) {
+    const event = meeting.eventId ? eventById.get(meeting.eventId) : undefined;
+    const line = meeting.activityId ? lineById.get(meeting.activityId) : undefined;
+    const people = new Set<string>();
+    if (event) [event.contactId, ...event.attendees.map((row) => row.id)].forEach((id) => id && people.add(id));
+    if (line?.contactId) people.add(line.contactId);
+    if (line?.batchId) siblings.filter((row) => row.batchId === line.batchId && row.contactId).forEach((row) => people.add(row.contactId!));
+    people.forEach((id) => onMeeting.add(id));
+    if (answerOf(meeting.outcome, line?.outcome) === "HELD") people.forEach((id) => held.add(id));
+  }
+  for (const row of behind) if (onMeeting.has(row.id) && !held.has(row.id)) waiting.add(row.id);
+  return waiting;
 }
 
 // The board's own repair, run when it opens. Every deal gets an
@@ -257,6 +404,8 @@ export async function syncOpportunity(who: Who, opportunityId: string) {
 // existed. People who were in the same meeting share one. Writes no log
 // lines; those are written the next time the tile moves or is edited.
 // Fixed ids make two tabs opening the board at once write each row once.
+// Every row it writes is dated when the thing happened (the deal, the
+// Meeting Set move, the meeting), never when the board was opened.
 export async function reconcileOpportunities(organizationId: string) {
   const orphanDeals = await prisma.deal.findMany({
     where: { organizationId, opportunity: null },
@@ -364,10 +513,12 @@ export async function reconcileOpportunities(organizationId: string) {
         const key = meeting.batchId ?? meeting.id;
         if (seen.has(key)) continue;
         seen.add(key);
-        meetings.push({ id: `${id}-m-${meeting.id}`, opportunityId: id, on: meeting.occurredAt, activityId: meeting.id });
+        // Dated by the meeting itself, not today (final audit, Nov 11,
+        // 2026): a repair run now must never read as a booking made now.
+        meetings.push({ id: `${id}-m-${meeting.id}`, opportunityId: id, on: meeting.occurredAt, activityId: meeting.id, createdAt: meeting.occurredAt });
       }
     }
-    if (seen.size === 0 && setter) meetings.push({ id: `${id}-m-set`, opportunityId: id, on: setter.on });
+    if (seen.size === 0 && setter) meetings.push({ id: `${id}-m-set`, opportunityId: id, on: setter.on, createdAt: setter.on });
   }
   await prisma.opportunity.createMany({ data: opportunities, skipDuplicates: true });
   await prisma.opportunityContact.createMany({ data: members, skipDuplicates: true });
@@ -394,6 +545,32 @@ export async function followContactStatus(who: Who, contactId: string, status: s
   if (!stage || stage === opportunity.stage) return;
   await prisma.opportunity.updateMany({ where: { id: opportunity.id, organizationId: who.organizationId }, data: { stage } });
   await syncOpportunity(who, opportunity.id);
+}
+
+// The one-tap reason a deal was lost (decision 14), written on that move's
+// StatusChange rows: the deal's latest Lost and each of its people's.
+export async function stampLostReason(organizationId: string, opportunityId: string, reason: string) {
+  const opportunity = await prisma.opportunity.findFirst({
+    where: { id: opportunityId, organizationId },
+    select: { dealId: true, deal: { select: { stage: true } }, contacts: { select: { contactId: true } } },
+  });
+  if (!opportunity) return { error: "That opportunity is no longer on the board" };
+  if (!opportunity.dealId || opportunity.deal?.stage !== "LOST") return { error: "Move it to Lost first" };
+  const latest = await prisma.statusChange.findFirst({
+    where: { organizationId, dealId: opportunity.dealId, contactId: null, toStatus: "LOST" },
+    orderBy: { on: "desc" },
+    select: { id: true },
+  });
+  const people = await prisma.statusChange.findMany({
+    where: { organizationId, dealId: opportunity.dealId, contactId: { in: opportunity.contacts.map((row) => row.contactId) }, toStatus: "LOST" },
+    orderBy: { on: "desc" },
+    distinct: ["contactId"],
+    select: { id: true },
+  });
+  const ids = [latest?.id, ...people.map((row) => row.id)].filter((id): id is string => Boolean(id));
+  if (!ids.length) return { error: "Move it to Lost first" };
+  await prisma.statusChange.updateMany({ where: { organizationId, id: { in: ids } }, data: { reason } });
+  return { success: "Reason saved" };
 }
 
 export { CLOSED_DEAL_STAGES, CONVERTED_STAGES };

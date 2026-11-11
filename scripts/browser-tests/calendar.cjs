@@ -88,6 +88,22 @@ function daysAgo(n) {
   return date.toISOString().slice(0, 10);
 }
 
+// BDR redesign (Nov 11, 2026): the Team week, the layouts and Copy this
+// week into next sit in the View menu; the filters in a Filters sheet;
+// "+ New" opens a sheet whose who / where / job / notes are under More.
+async function openView(page) {
+  if (!(await page.locator("[data-testid=cal-view-panel]").count())) await page.locator("[data-testid=cal-view-menu]").click();
+  await page.locator("[data-testid=cal-view-panel]").waitFor();
+}
+async function openFilters(page) {
+  if (!(await page.locator("[data-testid=cal-filters-sheet]").count())) await page.locator("[data-testid=cal-filters-open]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor();
+}
+async function closeFilters(page) {
+  if (await page.locator("[data-testid=cal-filters-sheet]").count()) await page.locator("[data-testid=cal-filters-done]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor({ state: "detached" });
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -264,6 +280,7 @@ function daysAgo(n) {
   await page.locator("[data-testid=event-timed]").check();
   await page.locator("[data-testid=event-start-time]").fill("09:30");
   await page.locator("[data-testid=event-end-time]").fill("10:30");
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-attendees]").getByRole("button", { name: "Priya Menon" }).click();
   await page.locator("[data-testid=event-location]").fill("1400 Harbor Blvd");
   await page.locator("[data-testid=event-save]").click();
@@ -288,7 +305,7 @@ function daysAgo(n) {
   await page.locator("[data-testid=event-end-time]").fill("09:00");
   await page.locator("[data-testid=event-save]").click();
   await page.getByText("The finish time is before the start time.").waitFor();
-  await page.locator("[data-testid=cal-add-event]").click();
+  await page.locator("[data-testid=cal-new-sheet] [data-testid=sheet-close]").click();
 
   log("the workspace's own event type can be added from the form");
   await page.locator("[data-testid=cal-add-event]").click();
@@ -315,6 +332,7 @@ function daysAgo(n) {
   await shot(page, "02-day-panel");
 
   log("the crew filter keeps only that crew's days");
+  await openFilters(page);
   await page.locator("[data-testid=cal-crew-filter]").selectOption({ label: "Install Team A" });
   await page.waitForURL(/crew=/);
   assert.equal(
@@ -335,7 +353,9 @@ function daysAgo(n) {
     await page.locator(`[data-testid=month-day][data-day="${day(2)}"]`).getAttribute("data-count"),
     "0",
   );
-  await page.getByRole("button", { name: "Clear" }).click();
+  await closeFilters(page);
+  assert.match(await page.locator("[data-testid=cal-active-filters]").textContent(), /Site walk/, "a chip names the filter");
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await page.locator(`[data-testid=month-day][data-day="${day(2)}"][data-count="1"]`).waitFor();
 
   log("paging goes back a month and forward again, and Today comes home");
@@ -358,8 +378,12 @@ function daysAgo(n) {
     await page.locator("[data-testid=cal-view-week]").click();
     await page.locator("[data-testid=cal-view-week][aria-selected=true]").waitFor();
     await page.locator("[data-testid=week-day][data-day='2027-06-30']").waitFor();
+    await openView(page);
     await page.locator("[data-testid=cal-view-team]").click();
+    await page.waitForURL(/view=team/);
+    await openView(page);
     await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+    await page.keyboard.press("Escape");
     await page.locator("[data-testid=cal-view-month]").click();
     await page.locator("[data-testid=cal-view-month][aria-selected=true]").waitFor();
     await page.getByText("June 2027").first().waitFor();
@@ -385,6 +409,11 @@ function daysAgo(n) {
   // into the current month lands on today).
   assert.match(new URL(page.url()).searchParams.get("on"), /^2027-08-\d\d$/, "still August");
   assert.ok(new URL(page.url()).searchParams.get("users"), "Just me survived the pending month change");
+  // Mine is remembered per person now (BDR redesign, Nov 11, 2026): put
+  // Everyone back so the rest of the suite sees the whole team's days.
+  await page.locator("[data-testid=cal-everyone]").click();
+  await page.locator("[data-testid=cal-everyone][aria-pressed=true]").waitFor();
+  await page.waitForURL((url) => !url.searchParams.has("users"));
 
   log("the week view lists the days in full");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=${day(3)}`);
@@ -403,6 +432,7 @@ function daysAgo(n) {
   log("Copy this week into next repeats the same days a week on");
   const beforeCopy = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1`, [org]))
     .rows[0].n;
+  await openView(page);
   await page.locator("[data-testid=cal-copy-week]").click();
   await page.getByText(/days copied into the week of/).waitFor();
   const afterCopy = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1`, [org]))
@@ -422,6 +452,7 @@ function daysAgo(n) {
 
   log("an empty week has nothing to copy, and says so");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=2027-03-03`);
+  await openView(page);
   await page.locator("[data-testid=cal-copy-week]").click();
   await page.getByText("There is nothing in that week to copy.").waitFor();
 
@@ -590,6 +621,7 @@ function daysAgo(n) {
   await page.locator("[data-testid=cal-add-event]").click();
   await page.locator("[data-testid=event-title]").fill("Walk with the super");
   await page.locator("[data-testid=event-start-on]").fill(day(18));
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-notes]").fill("Gate code 4412");
   await page.locator("[data-testid=event-timed]").check();
   await page.locator("[data-testid=event-start-time]").fill("16:00");
@@ -607,9 +639,11 @@ function daysAgo(n) {
   await page.locator(`[data-testid=month-day][data-day="${day(18)}"][data-count="1"]`).waitFor();
 
   log("audit fixes: two open new-event forms do not share DOM ids");
-  await page.locator("[data-testid=cal-add-event]").click();
+  // The day's own form first: "+ New" is a sheet over the page now.
   await page.locator(`[data-testid=month-day][data-day="${day(20)}"]`).click();
   await page.locator("[data-testid=day-add-event]").click();
+  await page.locator("[data-testid=cal-add-event]").click();
+  await page.locator("[data-testid=cal-new-sheet]").waitFor();
   const dupes = await page.evaluate(() => {
     const seen = new Map();
     for (const el of document.querySelectorAll("[id]")) {
@@ -726,6 +760,7 @@ function daysAgo(n) {
   const walksBefore = await countBy("Site walk");
   const installsBefore = await countBy("Install");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=${day(4)}&type=Install`);
+  await openView(page);
   await page.locator("[data-testid=cal-copy-week]").click();
   await page.getByText(/copied into the week of/).waitFor();
   assert.equal(
@@ -758,6 +793,55 @@ function daysAgo(n) {
     /Install booked/,
     "and it says so where the button is",
   );
+
+  log("audit fixes: the Agenda draws 60 a day with Showing 60 of N · Show all, and folds the day's done behind n done");
+  // Perf fix (Nov 11, 2026): a team's Agenda at 200,000 contacts drew
+  // 2,204 rows for today (1,144 open, 1,000 done) and took the browser past
+  // two seconds. A day reads 60 open entries, says how many more there are
+  // with a way to the day in Week, and folds its done ones.
+  {
+    const agendaToday = (
+      await sql(`SELECT to_char((now() AT TIME ZONE "timeZone")::date, 'YYYY-MM-DD') AS d FROM "Organization" WHERE id = $1`, [org])
+    ).rows[0].d;
+    const owner = (await sql(`SELECT id FROM "User" WHERE "organizationId" = $1 LIMIT 1`, [org])).rows[0].id;
+    await sql(
+      `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "startTime", "ownerId", "doneAt", "updatedAt")
+       SELECT 'evt_cap_' || g, $1, 'Call · Cap ' || lpad(g::text, 3, '0'), 'Call', $2::date,
+              lpad((7 + g / 12)::text, 2, '0') || ':' || lpad(((g % 12) * 5)::text, 2, '0'), $3,
+              CASE WHEN g > 70 THEN now() END, now()
+         FROM generate_series(1, 75) g`,
+      [org, agendaToday, owner],
+    );
+    await page.goto(`${BASE}/dashboard/calendar?view=agenda&scope=team`);
+    const todaySection = page.locator("[data-testid=agenda-today]");
+    await todaySection.waitFor();
+    const capRows = todaySection.locator('[data-testid=agenda-row][data-event-id^="evt_cap_"]');
+    assert.equal(await capRows.count(), 60, "60 of the 70 open ones are drawn");
+    assert.ok(Number(await todaySection.getAttribute("data-count")) >= 75, "the header counts every entry, drawn or not");
+    const firstIds = await capRows.evaluateAll((rows) => rows.slice(0, 2).map((row) => row.dataset.eventId));
+    assert.deepEqual(firstIds, ["evt_cap_1", "evt_cap_2"], "soonest first");
+    assert.equal(await capRows.locator("[data-testid=agenda-done-mark]").count(), 0, "no done row is drawn while folded");
+    const more = todaySection.locator("[data-testid=agenda-day-more]");
+    assert.match(await more.textContent(), /Showing 60 of \d+ · Show all/);
+    assert.ok(Number(await more.getAttribute("data-total")) >= 70);
+    const fold = todaySection.locator("[data-testid=agenda-done-fold]");
+    assert.match(await fold.textContent(), /^5 done(Show)?$/);
+    assert.equal(await fold.getAttribute("aria-expanded"), "false");
+    await fold.click();
+    assert.equal(await fold.getAttribute("aria-expanded"), "true");
+    assert.equal(await todaySection.locator("[data-testid=agenda-row] [data-testid=agenda-done-mark]").count(), 5, "the 5 done open under the fold");
+    assert.equal(await todaySection.locator("[data-testid=agenda-done-more]").count(), 0, "5 is under the cap: no Show all for done");
+    await fold.click();
+    assert.equal(await todaySection.locator("[data-testid=agenda-done-mark]").count(), 0, "and fold away again");
+    // The rest of the Agenda is as it was: Today's Done button, the count.
+    assert.ok((await capRows.first().locator("[data-testid=agenda-done]").count()) === 1, "an open row still has Done");
+    await more.locator("[data-testid=agenda-day-more-all]").click();
+    await page.waitForURL((url) => url.searchParams.get("view") === "week" && url.searchParams.get("on") === agendaToday);
+    assert.equal(new URL(page.url()).searchParams.get("scope"), "team", "Show all keeps the filters");
+    await page.getByText("Call · Cap 070").first().waitFor(); // past the Agenda's 60
+    await shot(page, "agenda-cap-week");
+    await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND id LIKE 'evt_cap_%'`, [org]);
+  }
 
   log("cross-tenant: another workspace's event is not on this calendar");
   await sql(

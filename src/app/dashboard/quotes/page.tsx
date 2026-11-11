@@ -77,7 +77,7 @@ export default async function QuotesPage() {
                   const totals = computeQuoteTotals(quote.lineItems, quote);
                   return (
                     <tr key={quote.id}>
-                      <td className="num faint text-xs">QUO-{quote.number}</td>
+                      <td className="docnum faint text-xs">QUO-{quote.number}</td>
                       <td>
                         <Link
                           href={`/dashboard/quotes/${quote.id}`}

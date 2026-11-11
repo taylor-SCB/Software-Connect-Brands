@@ -6,6 +6,9 @@ import { QuoteDocument } from "@/components/quote-document";
 import { IconDownload } from "@/components/icons";
 import { linePicture, picturesFor } from "@/lib/product-images";
 import { customUnitLabel, readSnapshot } from "@/lib/variation-shared";
+import { formatDate } from "@/lib/format";
+import { AcceptQuoteForm } from "./accept-form";
+import { quoteExpired } from "@/lib/quote-accept";
 
 export const metadata: Metadata = {
   title: "Quote",
@@ -37,6 +40,8 @@ export default async function PublicQuotePage({
       terms: true,
       validUntil: true,
       createdAt: true,
+      respondedAt: true,
+      acceptedByName: true,
       // The discount on the whole quote and the rate it was given at.
       discountCents: true,
       discountPercent: true,
@@ -96,6 +101,8 @@ export default async function PublicQuotePage({
     if (!isOwnerPreview) notFound();
   }
 
+  const expired = quote.status === "SENT" && quoteExpired(quote.validUntil, quote.organization.timeZone);
+
   // A draft shows each product's picture live; a sent quote, the picture
   // each line went out with.
   const draft = quote.status === "DRAFT";
@@ -152,6 +159,21 @@ export default async function PublicQuotePage({
           salesRep: quote.leadSalesRep,
         }}
       />
+
+      {/* The customer says yes here (BDR redesign, Release 8). */}
+      {quote.status === "SENT" && !expired && <AcceptQuoteForm token={token} businessName={quote.organization.name} />}
+      {quote.status === "SENT" && expired && (
+        <p className="no-print muted mx-auto mt-5 max-w-4xl text-center text-sm" data-testid="quote-expired">
+          This quote expired on {formatDate(quote.validUntil!, quote.organization.timeZone)}. Contact {quote.organization.name} for an updated one.
+        </p>
+      )}
+      {quote.status === "ACCEPTED" && (
+        <p className="no-print mx-auto mt-5 max-w-4xl text-center text-sm" data-testid="quote-accepted">
+          <span className="font-semibold">Accepted</span>
+          {quote.acceptedByName ? ` by ${quote.acceptedByName}` : ""}
+          {quote.respondedAt ? ` on ${formatDate(quote.respondedAt, quote.organization.timeZone)}` : ""}. {quote.organization.name} will be in touch with the agreement.
+        </p>
+      )}
 
       {/* Contractors need a file to drop into a bid package, not just a
           link — this is the primary action on a customer-facing quote. */}

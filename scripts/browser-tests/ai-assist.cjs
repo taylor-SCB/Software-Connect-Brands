@@ -88,6 +88,7 @@ function kindOf(system) {
   if (/draft quote lines/.test(system)) return "QUOTE";
   if (/spreadsheet columns/.test(system)) return "HEADERS";
   if (/lead label/.test(system)) return "LABEL";
+  if (/greeting sentence/.test(system)) return "GREETING";
   return "OTHER";
 }
 const json = (value) => ({ text: JSON.stringify(value), stop: "end_turn" });
@@ -213,20 +214,39 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
 
   const tile = (name) => page.locator("[data-testid=pipeline-tile]", { hasText: name });
   const tileId = (id) => page.locator(`[data-testid=pipeline-tile][data-id=${id}]`);
+  // Since the BDR redesign (Nov 11, 2026) a quiet tile says so on its
+  // next-step line ("Quiet 12d — call") and in data-quiet, the suggested
+  // label shows in the panel only, and Draft follow-up sits under the
+  // tile's ⋯. Pat Quiet's tile is found by its id: once Sam is its
+  // Primary it is titled by him.
+  const quietOf = async (locator) => locator.getAttribute("data-quiet");
+  const menuItem = async (locator, testId) => {
+    await locator.getByTestId("tile-more").click();
+    await page.getByTestId("tile-menu").getByTestId(testId).click();
+  };
+  const panelFor = async (locator) => {
+    await locator.getByTestId("tile-open").click();
+    await page.getByTestId("opportunity-panel").getByTestId("panel-title").waitFor();
+    return page.getByTestId("opportunity-panel");
+  };
+  const closePanel = async () => {
+    await page.getByTestId("panel-close").click();
+    await page.getByTestId("opportunity-panel").waitFor({ state: "detached" });
+  };
 
   log("Pipeline: Quiet 12 days on the quiet tile (a marketing email is no touch), none on the fresh ones");
   await page.goto(`${BASE}/dashboard/deals`);
-  await tile("Pat Quiet").waitFor();
-  assert.equal(await tile("Pat Quiet").locator("[data-testid=quiet-badge]").getAttribute("data-days"), "12");
-  assert.match(await tile("Pat Quiet").locator("[data-testid=quiet-badge]").innerText(), /Quiet 12 days/);
-  assert.equal(await tile("Homer Owner").locator("[data-testid=quiet-badge]").count(), 0);
+  await tileId("aa_opp1").waitFor();
+  assert.equal(await quietOf(tileId("aa_opp1")), "12");
+  assert.equal(await tileId("aa_opp1").getByTestId("tile-line").innerText(), "Quiet 12d — call");
+  assert.equal(await quietOf(tile("Homer Owner")), null);
   await page.screenshot({ path: path.join(OUT, "01-board.png"), fullPage: true });
 
   log("Gone quiet toggle: only the quiet tile, in the address bar; off again shows them all");
   await page.getByTestId("pipeline-quiet-toggle").click();
   await page.waitForURL(/quiet=1/);
   await until(async () => (await page.locator("[data-testid=pipeline-tile]").count()) === 1, "one quiet tile");
-  assert.equal(await tile("Pat Quiet").count(), 1);
+  assert.equal(await tileId("aa_opp1").count(), 1);
   await page.getByTestId("pipeline-quiet-toggle").click();
   await until(async () => !page.url().includes("quiet=1"), "toggle off");
   await until(async () => (await page.locator("[data-testid=pipeline-tile]").count()) >= 6, "all tiles back");
@@ -239,8 +259,8 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await page.getByText("Saved: quiet after 15 days").waitFor();
   assert.equal((await one(`SELECT "quietDays" FROM "Organization" WHERE id=$1`, [org])).quietDays, 15);
   await page.goto(`${BASE}/dashboard/deals`);
-  await tile("Pat Quiet").waitFor();
-  assert.equal(await tile("Pat Quiet").locator("[data-testid=quiet-badge]").count(), 0);
+  await tileId("aa_opp1").waitFor();
+  assert.equal(await quietOf(tileId("aa_opp1")), null);
   await page.goto(`${BASE}/dashboard/settings/general`);
   await page.getByTestId("quiet-days-form").evaluate((form) => (form.noValidate = true));
   await page.getByTestId("quiet-days-input").fill("0");
@@ -254,27 +274,40 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   log("Lead label rules: Vendor (Distributor), Residential (no company, gmail), Client (a won deal); nothing saved until accepted");
   await page.goto(`${BASE}/dashboard/deals`);
   await tile("Dan Distro").waitFor();
-  assert.equal(await tile("Dan Distro").locator("[data-testid=suggested-label]").getAttribute("data-label"), "Vendor");
-  assert.equal(await tile("Homer Owner").locator("[data-testid=suggested-label]").getAttribute("data-label"), "Residential");
-  assert.equal(await tileId("aa_opp4").locator("[data-testid=suggested-label]").getAttribute("data-label"), "Client");
-  assert.equal(await tile("Myra Mystery").locator("[data-testid=suggested-label]").count(), 0, "rules say nothing");
-  assert.equal((await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp2'`)).leadLabel, null);
-  await tile("Dan Distro").getByTestId("suggested-label-accept").click();
-  await until(async () => (await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp2'`)).leadLabel === "Vendor", "Vendor saved");
-  await tile("Homer Owner").getByTestId("suggested-label-dismiss").click();
-  assert.equal(await tile("Homer Owner").locator("[data-testid=suggested-label]").count(), 0);
+  assert.equal(await page.locator("[data-testid=pipeline-tile] [data-testid=suggested-label]").count(), 0, "suggestions show in the panel only");
+  let opened = await panelFor(tile("Homer Owner"));
+  assert.equal(await opened.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Residential");
+  await opened.getByTestId("suggested-label-dismiss").click();
+  assert.equal(await opened.locator("[data-testid=suggested-label]").count(), 0);
+  await closePanel();
   assert.equal((await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp3'`)).leadLabel, null);
+  opened = await panelFor(tileId("aa_opp4"));
+  assert.equal(await opened.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Client");
+  await closePanel();
+  opened = await panelFor(tile("Myra Mystery"));
+  assert.equal(await opened.locator("[data-testid=suggested-label]").count(), 0, "rules say nothing");
+  await closePanel();
+  opened = await panelFor(tile("Dan Distro"));
+  assert.equal(await opened.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Vendor");
+  assert.equal((await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp2'`)).leadLabel, null);
+  await opened.getByTestId("suggested-label-accept").click();
+  await opened.getByTestId("panel-save").click();
+  await opened.waitFor({ state: "detached" });
+  await until(async () => (await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp2'`)).leadLabel === "Vendor", "Vendor saved");
 
   log("AI lead label: an unreadable answer is a message; then Reseller suggested and accepted");
   replies.LABEL = { text: "this is not json", stop: "end_turn" };
-  await tile("Myra Mystery").getByTestId("suggest-label").click();
-  await tile("Myra Mystery").getByTestId("suggest-label-error").getByText("unreadable").waitFor();
+  opened = await panelFor(tile("Myra Mystery"));
+  await opened.getByTestId("suggest-label").click();
+  await opened.getByTestId("suggest-label-error").getByText("unreadable").waitFor();
   replies.LABEL = json({ leadLabel: "reseller", reason: "They resell systems" });
-  await tile("Myra Mystery").getByTestId("suggest-label").click();
-  await tile("Myra Mystery").locator("[data-testid=suggested-label][data-label=Reseller]").waitFor();
+  await opened.getByTestId("suggest-label").click();
+  await opened.locator("[data-testid=suggested-label][data-label=Reseller]").waitFor();
   assert.match(lastRequest("LABEL").prompt, /Allowed labels: Residential, Client, Vendor/);
   assert.equal((await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp5'`)).leadLabel, null, "not saved yet");
-  await tile("Myra Mystery").getByTestId("suggested-label-accept").click();
+  await opened.getByTestId("suggested-label-accept").click();
+  await opened.getByTestId("panel-save").click();
+  await opened.waitFor({ state: "detached" });
   await until(async () => (await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opp5'`)).leadLabel === "Reseller", "Reseller saved");
 
   log("the daily allowance: a used-up kind says so and asks Claude nothing");
@@ -284,8 +317,10 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   );
   const before = requests.length;
   const rowsBefore = (await one(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='LEAD_LABEL'`, [org])).n;
-  await tile("Nora Null").getByTestId("suggest-label").click();
-  await tile("Nora Null").getByTestId("suggest-label-error").getByText("allowance for this is used up").waitFor();
+  opened = await panelFor(tile("Nora Null"));
+  await opened.getByTestId("suggest-label").click();
+  await opened.getByTestId("suggest-label-error").getByText("allowance for this is used up").waitFor();
+  await closePanel();
   assert.equal(requests.length, before);
   assert.equal((await one(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='LEAD_LABEL'`, [org])).n, rowsBefore, "the refused one is taken back");
 
@@ -295,7 +330,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     emailSubject: "Cat6 for the new wing",
     emailBody: "Hi Pat,\n\nFollowing up on our walk-through. Happy to put the quote together for the Cat6 run and the permit.\n\nThanks",
   });
-  await tile("Pat Quiet").getByTestId("follow-up-draft").click();
+  await menuItem(tileId("aa_opp1"), "follow-up-draft");
   const dialog = page.getByTestId("follow-up-dialog");
   await dialog.getByTestId("follow-up-text").waitFor();
   assert.match(await dialog.getByTestId("follow-up-text").inputValue(), /Cat6 run/);
@@ -322,9 +357,9 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await dialog.getByTestId("follow-up-close").click({ timeout: 3000 }).catch(() => {});
   await dialog.waitFor({ state: "detached" });
   await page.goto(`${BASE}/dashboard/deals`);
-  await tile("Pat Quiet").waitFor();
-  assert.equal(await tile("Pat Quiet").locator("[data-testid=quiet-badge]").count(), 0, "a logged text is a touch");
-  assert.equal(await tile("Pat Quiet").locator("[data-testid=follow-up-draft]").count(), 0);
+  await tileId("aa_opp1").waitFor();
+  assert.equal(await quietOf(tileId("aa_opp1")), null, "a logged text is a touch");
+  assert.notEqual(await tileId("aa_opp1").getByTestId("tile-line").getAttribute("data-key"), "quiet");
 
   log("Suggest from meeting notes: a label outside the list is dropped; dismissed and cancelled, nothing saved");
   replies.MEETING = json({
@@ -336,7 +371,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     valueReason: "Budget around $5,000",
     nextStep: "Send the quote and book the permit",
   });
-  await tile("Pat Quiet").getByTestId("tile-open").click();
+  await tileId("aa_opp1").getByTestId("tile-open").click();
   const panel = page.getByTestId("opportunity-panel");
   await panel.getByTestId("panel-title").waitFor();
   await panel.getByTestId("meeting-suggest-ask").click();
@@ -348,7 +383,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   assert.match(lastRequest("MEETING").prompt, /aa_sam: Sam Helper/);
   await panel.getByTestId("meeting-dismiss-all").click();
   assert.equal(await panel.locator("[data-testid=meeting-chip]").count(), 0);
-  await panel.getByRole("button", { name: "Cancel" }).click();
+  await panel.getByTestId("panel-cancel").click();
   await panel.waitFor({ state: "detached" });
   assert.equal((await one(`SELECT role FROM "OpportunityContact" WHERE id='aa_oc1'`)).role, "PRIMARY");
 
@@ -362,7 +397,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     valueReason: "Budget around $5,000",
     nextStep: null,
   });
-  await tile("Pat Quiet").getByTestId("tile-open").click();
+  await tileId("aa_opp1").getByTestId("tile-open").click();
   await panel.getByTestId("meeting-suggest-ask").click();
   await panel.locator("[data-testid=meeting-chip][data-kind=primary] [data-testid=meeting-chip-accept]").click();
   await panel.locator("[data-testid=meeting-chip][data-kind=label] [data-testid=meeting-chip-accept]").click();
@@ -377,7 +412,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
 
   log("a refusal is a message, not a dead panel");
   replies.MEETING = { text: "", stop: "refusal" };
-  await tile("Pat Quiet").getByTestId("tile-open").click();
+  await tileId("aa_opp1").getByTestId("tile-open").click();
   await panel.getByTestId("meeting-suggest-ask").click();
   await panel.getByTestId("meeting-suggest-error").getByText("declined").waitFor();
   await panel.getByTestId("panel-close").click();
@@ -390,15 +425,14 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
       { productId: "aa_widget", name: "", quantity: 1, tag: "MATERIALS", note: "forged" },
     ],
   });
-  await tile("Pat Quiet").getByTestId("tile-move").click();
+  await tileId("aa_opp1").getByTestId("tile-more").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-QUOTE_SENT]").click();
   const convert = page.getByTestId("convert-dialog");
   await convert.getByTestId("convert-mode-quote").check();
   assert.equal(await convert.getByTestId("convert-draft-lines").isChecked(), true);
   await convert.getByTestId("convert-save").click();
-  await page.waitForURL(/\/dashboard\/quotes\/new\?.*draft=meeting/);
-  await page.fill("[name=title]", "New wing cabling");
-  await page.locator("form:has([name=title]) button[type=submit]").click();
+  // Build Quote starts the quote itself, titled after the deal, and opens
+  // it drafting (paperwork sprint: no setup form in between).
   await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+/);
   await page.getByTestId("quote-draft-info").waitFor();
   assert.match(await page.getByTestId("quote-draft-info").innerText(), /Added 2 lines[\s\S]*1 needs a price[\s\S]*1 line named a product not in your catalog/);
@@ -412,11 +446,11 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   assert.equal(await page.locator("input[aria-label='Line 1 unit value']").inputValue(), "189.00");
   assert.equal(await page.locator("input[aria-label='Line 1 quantity']").inputValue(), "3");
   assert.equal(await page.getByTestId("line-price-needed").count(), 1);
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line 2 needs a price").waitFor();
   await page.locator("input[aria-label='Line 2 unit value']").fill("150");
   assert.equal(await page.getByTestId("line-price-needed").count(), 0);
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await until(async () => (await one(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId])).n === 2, "lines saved");
   const lines = (await sql(`SELECT name, "productId", quantity, "unitPriceCents", "projectNotes" FROM "QuoteLineItem" WHERE "quoteId"=$1 ORDER BY position`, [quoteId])).rows;
   assert.deepEqual(lines.map((line) => [line.name, line.productId, line.quantity, line.unitPriceCents]), [
@@ -436,7 +470,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   const quoteAsks = () => requests.filter((row) => row.kind === "QUOTE").length;
   const asked = quoteAsks();
   await page.locator("input[aria-label='Line 1 quantity']").fill("4");
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await until(async () => (await one(`SELECT quantity FROM "QuoteLineItem" WHERE "quoteId"=$1 AND "productId"='aa_cat6'`, [quoteId])).quantity === 4, "saved again");
   await page.waitForTimeout(600);
   assert.ok(!page.url().includes("draft=meeting"), "a save doesn't put ?draft=meeting back in the address bar");
@@ -463,7 +497,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   fs.writeFileSync(csvPath, csv);
   const contactsBefore = (await one(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1`, [org])).n;
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   const cleanup = page.getByTestId("import-cleanup");
   await cleanup.waitFor();
@@ -505,7 +539,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   const csv2Path = path.join(OUT, "ai-import-2.csv");
   fs.writeFileSync(csv2Path, csv2);
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csv2Path);
   await cleanup.waitFor();
   await until(async () => (await cleanup.getByTestId("import-dup-updates").count()) === 1, "existing check");
@@ -535,8 +569,9 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   );
   await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on") VALUES ('aa_ombook','aa_oppbook',now() + interval '5 days')`);
   await page.goto(`${BASE}/dashboard/deals`);
-  await tile("Quinn Quiet").locator("[data-testid=quiet-badge]").waitFor();
-  assert.equal(await tile("Bea Booked").locator("[data-testid=quiet-badge]").count(), 0, "the next meeting is already booked");
+  await tile("Quinn Quiet").waitFor();
+  assert.ok(Number(await quietOf(tile("Quinn Quiet"))) >= 8, "Quinn is quiet");
+  assert.equal(await quietOf(tile("Bea Booked")), null, "the next meeting is already booked");
   await page.goto(`${BASE}/dashboard/deals?quiet=1`);
   await tile("Quinn Quiet").waitFor();
   assert.equal(await tile("Bea Booked").count(), 0);
@@ -544,7 +579,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   log("audit fixes: clicks inside the follow-up dialog stay in it; the tile's panel doesn't open underneath");
   replies.FOLLOW_UP = json({ text: "Hi Quinn, checking in.", emailSubject: "Checking in", emailBody: "Hi Quinn,\n\nChecking in.\n\nThanks" });
   await page.goto(`${BASE}/dashboard/deals`);
-  await tile("Quinn Quiet").getByTestId("follow-up-draft").click();
+  await menuItem(tile("Quinn Quiet"), "follow-up-draft");
   await dialog.getByTestId("follow-up-text").waitFor();
   await dialog.getByTestId("follow-up-text").click();
   await dialog.locator("h2").click();
@@ -567,16 +602,30 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached" });
 
+  log("Sprint: Log as sent hands back Undo, and Undo takes the text off Quinn's history");
+  await menuItem(tile("Quinn Quiet"), "follow-up-draft");
+  await dialog.getByTestId("follow-up-text").waitFor();
+  await dialog.getByTestId("follow-up-log-text").click();
+  await dialog.getByTestId("follow-up-notice").getByText("Logged as a text to Quinn Quiet").waitFor();
+  assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='aa_quinn' AND type='TEXT'`)).n, 1);
+  await dialog.getByTestId("follow-up-undo").click();
+  await dialog.getByTestId("follow-up-notice").getByText("Undone").waitFor();
+  assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='aa_quinn' AND type='TEXT'`)).n, 0);
+  await dialog.getByTestId("follow-up-close").click();
+  await dialog.waitFor({ state: "detached" });
+
   log("audit fixes: AI lead-label suggestions never offer a retired label");
   await sql(`DELETE FROM "AiRequest" WHERE id LIKE 'aa_cap_%'`);
   await sql(`INSERT INTO "LeadLabelOption" (id,"organizationId",name,"retiredAt") VALUES ('aa_lbl_old',$1,'Old Custom',now()), ('aa_lbl_live',$1,'Live Custom',NULL)`, [org]);
   replies.LABEL = json({ leadLabel: "Old Custom", reason: "Retired, but it fits" });
   await page.goto(`${BASE}/dashboard/deals`);
-  await tile("Lou Label").getByTestId("suggest-label").click();
+  opened = await panelFor(tile("Lou Label"));
+  await opened.getByTestId("suggest-label").click();
   await until(async () => requests.length > 0 && lastRequest("LABEL").prompt.includes("Live Custom"), "asked");
   assert.doesNotMatch(lastRequest("LABEL").prompt, /Old Custom/, "a retired label isn't offered to the AI");
   await page.waitForTimeout(600);
-  assert.equal(await tile("Lou Label").locator("[data-testid=suggested-label][data-label='Old Custom']").count(), 0, "nor shown");
+  assert.equal(await opened.locator("[data-testid=suggested-label][data-label='Old Custom']").count(), 0, "nor shown");
+  await closePanel();
   assert.equal((await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='aa_opplou'`)).leadLabel, null);
 
   log("phone width: the board scrolls inside itself and the follow-up dialog fits");
@@ -591,10 +640,12 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   replies.FOLLOW_UP = json({ text: "Hi Nora, checking in.", emailSubject: "Checking in", emailBody: "Hi Nora,\n\nChecking in.\n\nThanks" });
   await phonePage.goto(`${BASE}/dashboard/deals`);
   const noraTile = phonePage.locator("[data-testid=pipeline-tile]", { hasText: "Nora Null" });
-  await noraTile.locator("[data-testid=quiet-badge]").waitFor();
+  await noraTile.waitFor();
+  assert.ok(Number(await noraTile.getAttribute("data-quiet")) > 0, "Nora is quiet");
   assert.ok((await phonePage.evaluate(() => document.documentElement.scrollWidth)) <= 390, "no page-wide sideways scroll");
-  await noraTile.getByTestId("follow-up-draft").scrollIntoViewIfNeeded();
-  await noraTile.getByTestId("follow-up-draft").click();
+  await noraTile.getByTestId("tile-more").scrollIntoViewIfNeeded();
+  await noraTile.getByTestId("tile-more").click();
+  await phonePage.getByTestId("tile-menu").getByTestId("follow-up-draft").click();
   await phonePage.getByTestId("follow-up-text").waitFor();
   const box = await phonePage.getByTestId("follow-up-dialog").boundingBox();
   assert.ok(box.x >= 0 && box.x + box.width <= 390, `dialog inside the screen (${box.x}, ${box.width})`);
@@ -612,10 +663,17 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     await offPage.waitForURL(/\/dashboard$/);
     await offPage.goto(`${NOAI_BASE}/dashboard/deals`);
     const offNora = offPage.locator("[data-testid=pipeline-tile]", { hasText: "Nora Null" });
-    await offNora.locator("[data-testid=quiet-badge]").waitFor();
+    await offNora.waitFor();
+    assert.ok(Number(await offNora.getAttribute("data-quiet")) > 0, "the quiet line stays");
+    await offNora.getByTestId("tile-more").click();
+    await offPage.getByTestId("tile-menu").getByTestId("tile-menu-open").waitFor();
     assert.equal(await offPage.locator("[data-testid=follow-up-draft]").count(), 0);
+    await offPage.keyboard.press("Escape");
+    await offPage.locator("[data-testid=pipeline-tile]", { hasText: "Homer Owner" }).getByTestId("tile-open").click();
+    await offPage.getByTestId("panel-title").waitFor();
     assert.equal(await offPage.locator("[data-testid=suggest-label]").count(), 0);
     assert.ok((await offPage.locator("[data-testid=suggested-label]").count()) >= 1, "the rules' chips need no AI");
+    await offPage.getByTestId("panel-close").click();
     await offNora.getByTestId("tile-open").click();
     await offPage.getByTestId("panel-title").waitFor();
     assert.equal(await offPage.locator("[data-testid=meeting-suggest]").count(), 0);
@@ -624,7 +682,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     await offPage.locator("input[aria-label='Line 1 quantity']").waitFor();
     assert.equal(await offPage.locator("[data-testid=quote-draft-meeting]").count(), 0);
     await offPage.goto(`${NOAI_BASE}/dashboard/contacts`);
-    await offPage.getByTestId("import-csv").click();
+    await cleanUp(offPage, "import");
     await offPage.getByTestId("import-file").setInputFiles(csvPath);
     await offPage.getByTestId("import-cleanup").waitFor();
     await offPage.getByTestId("import-dup-file-count").waitFor();
@@ -635,6 +693,61 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     log("AI off: SKIPPED — pass NOAI_BASE (a second server with no ANTHROPIC_API_KEY) to run it");
   }
 
+  log("Sprint R2: My day's greeting offers Rewrite with AI on; the answer shows in place, a made-up number is refused, the plain one comes back");
+  replies.GREETING = json({ sentence: "Good to see you, Taylor, your list is ready." });
+  await page.goto(`${BASE}/dashboard?view=myday`);
+  const greetingLine = page.locator("[data-testid=my-day-greeting]");
+  const plainGreeting = await greetingLine.textContent();
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.locator("[data-testid=my-day-greeting][data-source=ai]").waitFor();
+  assert.equal(await greetingLine.textContent(), "Good to see you, Taylor, your list is ready.");
+  assert.match(lastRequest("GREETING").prompt, /plainSentence/, "Claude is given the facts as JSON");
+  await page.locator("[data-testid=greeting-plain]").click();
+  assert.equal(await greetingLine.textContent(), plainGreeting);
+  replies.GREETING = json({ sentence: "You have 987 people to call today." });
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.locator("[data-testid=greeting-error]").waitFor();
+  assert.equal(await greetingLine.textContent(), plainGreeting, "a number not in the facts is thrown out");
+  assert.ok((await one(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='MY_DAY_GREETING'`, [org])).n === 2, "counted against its own allowance");
+
+  log("audit fixes: the greeting's numbers come from the counts, not a person's name; a used-up allowance answers before My day is built");
+  // The next person on Up next is called "Studio 54": 54 is in the facts
+  // only as part of a name, so a sentence that uses it as a count is out.
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","createdAt","updatedAt") VALUES ('ctc_ai_studio',$1,'Studio 54','NOT_ACTIONED',$2,now(),now())
+       ON CONFLICT (id) DO NOTHING`,
+    [org, userId],
+  );
+  await page.goto(`${BASE}/dashboard?view=myday`);
+  const firstUp = page.locator("[data-testid=up-next-row]").first();
+  await firstUp.waitFor();
+  const firstId = await firstUp.getAttribute("data-contact-id");
+  await sql(`UPDATE "Contact" SET name='Studio 54' WHERE id=$1`, [firstId]);
+  await page.reload();
+  const plainAgain = await greetingLine.textContent();
+  assert.ok(!/\b54\b/.test(plainAgain), "the plain sentence doesn't use 54");
+  assert.match(lastRequest("GREETING").prompt, /plainSentence/);
+  replies.GREETING = json({ sentence: "You have 54 people to call today." });
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.locator("[data-testid=greeting-error]").waitFor();
+  assert.equal(await greetingLine.textContent(), plainAgain, "54 from a name is no count");
+  // The allowance used up: the answer comes without reading anyone's book
+  // (Postgres's own counters on the Contact table stay where they were).
+  await sql(
+    `INSERT INTO "AiRequest" (id,"organizationId","userId",kind,"createdAt") SELECT 'air_audit_' || g, $1, $2, 'MY_DAY_GREETING', now() - interval '1 hour' FROM generate_series(1, 200) g`,
+    [org, userId],
+  );
+  const contactReads = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 11_000));
+    return Number((await one(`SELECT COALESCE(seq_scan,0) + COALESCE(idx_scan,0) AS n FROM pg_stat_user_tables WHERE relname='Contact'`)).n);
+  };
+  const readsBefore = await contactReads();
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.getByText(/allowance for this is used up/).waitFor();
+  const readsAfter = await contactReads();
+  assert.equal(readsAfter, readsBefore, `My day was read ${readsAfter - readsBefore} times for a refused rewrite`);
+  await sql(`DELETE FROM "AiRequest" WHERE id LIKE 'air_audit_%'`);
+
   await browser.close();
   fakeClaude.close();
   console.log(`\nAll ${step} steps passed.`);
@@ -643,3 +756,20 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   fakeClaude.close();
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

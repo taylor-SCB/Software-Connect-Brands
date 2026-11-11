@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { DEAL_STAGES } from "@/lib/constants";
+import { BOARD_DEAL_STAGES } from "@/lib/constants";
 import type { ActionState } from "@/lib/forms";
 import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
@@ -20,7 +20,10 @@ export async function updateDealStage(dealId: string, stage: string, on?: string
   const { organizationId, userId } = await requireSession();
 
   const parsed = z
-    .object({ dealId: z.string().trim().min(1), stage: z.enum(DEAL_STAGES) })
+    // Only the board's deal columns: a deal never goes back to Lead or
+    // Contacted (a meeting column) or into Archived by hand, and a forged
+    // call can't do what the board refuses (audit, Nov 11, 2026).
+    .object({ dealId: z.string().trim().min(1), stage: z.enum(BOARD_DEAL_STAGES) })
     .safeParse({ dealId, stage });
   if (!parsed.success) return { error: "That stage isn't valid" };
 
@@ -36,6 +39,9 @@ export async function updateDealStage(dealId: string, stage: string, on?: string
   });
   if (!deal) return { error: "Deal not found" };
   if (deal.stage === parsed.data.stage) return { success: "No change" };
+  // A Build Quote deal whose quote isn't out yet is converted on its tile
+  // (the prompt holds the meeting and asks the amount for Won).
+  if (deal.stage === "LEAD" || deal.stage === "CONTACTED") return { error: "Convert it from its tile on the Pipeline first" };
 
   await prisma.$transaction([
     prisma.deal.updateMany({

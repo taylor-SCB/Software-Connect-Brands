@@ -44,13 +44,17 @@ export const ACTIVITY_LABELS: Record<ActivityTypeValue, string> = {
 
 // The status ladder on contacts and companies (Sept 30, 2026), in the
 // order a relationship moves through it. Not Actioned is where every new
-// record starts; the first logged touch makes it Contacted; Not
-// Interested and Interested are set by hand; Meeting Set onwards is the
-// pipeline. Archived sits outside the ladder and hides the record from
-// the pickers.
+// record starts; the first logged touch makes it Contacted (shown as
+// "Attempted", Taylor, Nov 11, 2026 — the stored value and the CSV word
+// stay CONTACTED); a live talk, a reply or a held meeting makes it
+// Connected (Nov 11, 2026); Not Interested and Interested are set by hand
+// (and pass through Connected the same day when set from below it);
+// Meeting Set onwards is the pipeline. Archived sits outside the ladder
+// and hides the record from the pickers.
 export const CONTACT_STATUSES = [
   "NOT_ACTIONED",
   "CONTACTED",
+  "CONNECTED",
   "NOT_INTERESTED",
   "INTERESTED",
   "MEETING_SET",
@@ -65,7 +69,8 @@ export type ContactStatusValue = (typeof CONTACT_STATUSES)[number];
 
 export const CONTACT_STATUS_LABELS: Record<ContactStatusValue, string> = {
   NOT_ACTIONED: "Not Actioned",
-  CONTACTED: "Contacted",
+  CONTACTED: "Attempted",
+  CONNECTED: "Connected",
   NOT_INTERESTED: "Not Interested",
   INTERESTED: "Interested",
   MEETING_SET: "Meeting Set",
@@ -78,40 +83,117 @@ export const CONTACT_STATUS_LABELS: Record<ContactStatusValue, string> = {
 };
 
 // What a brand-new record can start at, typed in by hand.
-export const START_STATUSES = ["NOT_ACTIONED", "CONTACTED", "NOT_INTERESTED", "INTERESTED"] as const;
+export const START_STATUSES = ["NOT_ACTIONED", "CONTACTED", "CONNECTED", "NOT_INTERESTED", "INTERESTED"] as const;
 
 // The pipeline part of the ladder, where each step has a date that Stats
 // measures from. Skipping one by hand asks for the day it happened.
 export const PIPELINE_STEPS = ["MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"] as const;
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
+// The statuses that can't be reached without having talked to the person:
+// a move onto one of them from below Connected writes Connected first, the
+// same day (Nov 11, 2026). Old records are not back-filled.
+export const PASS_THROUGH_CONNECTED: readonly ContactStatusValue[] = ["INTERESTED", "NOT_INTERESTED", "MEETING_SET"];
+
 // How far along a status is, for "only ever moves forward on its own".
-// Not Interested sits level with Interested: both come after a touch and
+// Not Interested sits level with Interested: both come after a talk and
 // before a meeting. Lost and Archived rank below everything, so nothing
 // automatic lifts a record out of them except a new meeting or paperwork.
+// Only ever compared, never stored, so the numbers can shift.
 export function statusRank(status: string): number {
   switch (status) {
     case "NOT_ACTIONED":
       return 0;
     case "CONTACTED":
       return 1;
+    case "CONNECTED":
+      return 2;
     case "NOT_INTERESTED":
     case "INTERESTED":
-      return 2;
-    case "MEETING_SET":
       return 3;
-    case "MEETING_COMPLETED":
+    case "MEETING_SET":
       return 4;
-    case "QUOTE_SENT":
+    case "MEETING_COMPLETED":
       return 5;
-    case "CONTRACT_SENT":
+    case "QUOTE_SENT":
       return 6;
-    case "WON":
+    case "CONTRACT_SENT":
       return 7;
+    case "WON":
+      return 8;
     default:
       return -1;
   }
 }
+
+// How a touch went (BDR redesign, Nov 11, 2026; Activity.outcome). One tap
+// on a chip; the chip's words become the note when none is typed. A connect
+// is TALKED, REPLIED or HELD (or an old MEETING with none, dated today or
+// earlier). NO_SHOW is neither a touch nor a connect. "Busy" is NO_ANSWER;
+// "Not interested" and "Meeting booked" are TALKED on a call and REPLIED
+// on a text or email; "Rescheduled" writes no activity.
+export const ACTIVITY_OUTCOMES = [
+  "NO_ANSWER",
+  "VOICEMAIL",
+  "GATEKEEPER",
+  "BAD_NUMBER",
+  "TALKED",
+  "REPLIED",
+  "SENT",
+  "HELD",
+  "NO_SHOW",
+] as const;
+export type ActivityOutcomeValue = (typeof ACTIVITY_OUTCOMES)[number];
+
+export const ACTIVITY_OUTCOME_LABELS: Record<ActivityOutcomeValue, string> = {
+  NO_ANSWER: "No answer",
+  VOICEMAIL: "Left voicemail",
+  GATEKEEPER: "Front desk",
+  BAD_NUMBER: "Wrong number",
+  TALKED: "Talked",
+  REPLIED: "They replied",
+  SENT: "Sent",
+  HELD: "Held",
+  NO_SHOW: "No-show",
+};
+
+// Which outcomes each kind of touch can have.
+export const OUTCOMES_BY_TYPE: Record<ActivityTypeValue, readonly ActivityOutcomeValue[]> = {
+  PHONE_CALL: ["NO_ANSWER", "VOICEMAIL", "GATEKEEPER", "BAD_NUMBER", "TALKED"],
+  TEXT: ["SENT", "REPLIED"],
+  EMAIL: ["SENT", "REPLIED"],
+  MEETING: ["HELD", "NO_SHOW"],
+};
+
+export const CONNECT_OUTCOMES: readonly ActivityOutcomeValue[] = ["TALKED", "REPLIED", "HELD"];
+
+// Whether a touch was a connect, by the same rule the database triggers
+// use for lastConnectAt.
+export function isConnect(row: { type: string; outcome: string | null; occurredAt: Date }, now = new Date()) {
+  if (row.occurredAt > now) return false;
+  if (row.outcome) return (CONNECT_OUTCOMES as readonly string[]).includes(row.outcome);
+  return row.type === "MEETING";
+}
+
+// The one-tap reason for Not Interested, Lost or a no-show (decision 14),
+// stored as the key on StatusChange.reason.
+export const STATUS_REASONS = ["PRICE", "TIMING", "HAS_VENDOR", "NO_BUDGET", "OTHER"] as const;
+export type StatusReasonValue = (typeof STATUS_REASONS)[number];
+export const STATUS_REASON_LABELS: Record<StatusReasonValue, string> = {
+  PRICE: "Price",
+  TIMING: "Timing",
+  HAS_VENDOR: "Has a vendor",
+  NO_BUDGET: "No budget",
+  OTHER: "Other",
+};
+
+// The next step picked in "How did it go?": a follow-up on a day, a
+// "Try to book a meeting" reminder that moves no status (decision 5), or
+// parking the lead with one "Try again in 30 days" (decision 12). Booking
+// the meeting itself is `next=meeting`.
+export const NEXT_STEP_KINDS = ["follow", "book", "park", "meeting"] as const;
+export type NextStepKind = (typeof NEXT_STEP_KINDS)[number];
+export const PARK_DAYS = 30;
 
 // The Personal / Work tag on a contact's emails and phone numbers.
 export const CHANNEL_LABELS = ["WORK", "PERSONAL"] as const;

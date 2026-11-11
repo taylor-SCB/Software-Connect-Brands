@@ -10,7 +10,8 @@
  * make two open calendar entries with the same people under whoever
  * logged it, they show on the contact's Coming up and the calendar's
  * Upcoming log, "No thanks" writes nothing, the box opens again for the
- * next call, a Meeting follow-up sets Meeting Set, a day before today is
+ * next call, a Meeting follow-up is "Try to book a meeting" (a reminder
+ * call that moves no status, Nov 11, 2026), a day before today is
  * refused, scheduling a call ahead opens no box, and a company-page log
  * (with and without people ticked) gets the same box.
  *
@@ -92,7 +93,8 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
 
 const LADDER = [
   "Not Actioned",
-  "Contacted",
+  "Attempted",
+  "Connected",
   "Not Interested",
   "Interested",
   "Meeting Set",
@@ -110,10 +112,23 @@ async function followUps(org) {
     await sql(
       `SELECT e.id, e.type, e.title, e.notes, e."startOn", e."startTime", e."doneAt", e.auto, e."ownerId", e."contactId", e."companyId",
               (SELECT array_agg(a."B" ORDER BY a."B") FROM "_EventAttendees" a WHERE a."A"=e.id) AS attendees
-       FROM "CalendarEvent" e WHERE e."organizationId"=$1 AND e.title LIKE 'Follow up ·%' ORDER BY e."startOn", e.type`,
+       FROM "CalendarEvent" e WHERE e."organizationId"=$1 AND (e.title LIKE 'Follow up ·%' OR e.title LIKE 'Try to book a meeting ·%')
+       ORDER BY e."startOn", e.type`,
       [org],
     )
   ).rows;
+}
+
+
+// The log is the How did it go? sheet behind the "What happened with …?"
+// bar on a contact page and "Log a touch" on a company page (BDR redesign,
+// Nov 11, 2026). A log with no outcome chip moves on to the follow-up box;
+// what it adds is said in the "Saved · Undo" line once the sheet closes.
+async function openLog(p) {
+  const form = p.locator("[data-testid=log-activity-form]");
+  if (!(await form.isVisible().catch(() => false))) await p.locator("[data-testid=log-bar], [data-testid=company-log-toggle]").first().click();
+  await form.waitFor();
+  return form;
 }
 
 (async () => {
@@ -165,7 +180,7 @@ async function followUps(org) {
   log("Contacts: the Status dropdown lists the ladder in its own order");
   await page.goto(`${BASE}/dashboard/contacts`);
   assert.equal(await page.locator("[data-testid=contact-row]").count(), 4);
-  await page.getByTestId("filter-status").click();
+  await openFilters(page); await page.getByTestId("filter-status").click();
   await statusList.waitFor();
   assert.deepEqual((await statusList.locator("label span").allTextContents()).map((t) => t.trim()), LADDER);
   await shot(page, "01-status-dropdown");
@@ -174,15 +189,16 @@ async function followUps(org) {
   await statusOption("Interested").click();
   await page.waitForURL(/status=INTERESTED/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 1, "one interested contact");
-  assert.deepEqual(await page.locator("[data-testid=contact-row] td:nth-child(4) a").allTextContents(), ["Eli Park"]);
+  assert.deepEqual(await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents(), ["Eli Park"]);
   await statusOption("Meeting Set").click();
   await page.waitForURL(/status=INTERESTED&status=MEETING_SET/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 2, "two contacts");
-  const twoNames = (await page.locator("[data-testid=contact-row] td:nth-child(4) a").allTextContents()).sort();
+  const twoNames = (await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents()).sort();
   assert.deepEqual(twoNames, ["Eli Park", "Faye Chen"]);
   const chips = page.locator("[data-testid=active-filters]");
   assert.match(await chips.textContent(), /Status: Interested/);
   assert.match(await chips.textContent(), /Status: Meeting Set/);
+  await openFilters(page);
   assert.match(await page.getByTestId("filter-status").textContent(), /2/, "the button counts two");
   await shot(page, "02-status-two-ticked");
 
@@ -193,7 +209,7 @@ async function followUps(org) {
   await page.waitForURL(/q=Faye.*status=|status=.*q=Faye/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 1, "Faye only");
   await page.getByRole("button", { name: "Clear all" }).click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 4, "all four back");
 
   log("a pasted status that is not on the ladder is ignored, not a crash");
@@ -206,7 +222,7 @@ async function followUps(org) {
   log("Companies: the same dropdown; Meeting Set is Pine Roofing alone");
   await page.goto(`${BASE}/dashboard/companies`);
   assert.equal(await page.locator("[data-testid=company-row]").count(), 3);
-  await page.getByTestId("filter-status").click();
+  await openFilters(page); await page.getByTestId("filter-status").click();
   await statusList.waitFor();
   await statusOption("Meeting Set").click();
   await page.waitForURL(/status=MEETING_SET/);
@@ -217,9 +233,11 @@ async function followUps(org) {
   log("the Interested sub-panes hold the status already and hide the dropdown");
   await page.goto(`${BASE}/dashboard/contacts/interested`);
   await page.locator("[data-testid=contact-row]").first().waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-status").count(), 0, "no Status dropdown on Interested Contacts");
   await page.goto(`${BASE}/dashboard/companies/interested`);
   await page.locator("[data-testid=company-row]").first().waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-status").count(), 0, "nor on Interested Companies");
   void rowNames;
 
@@ -227,9 +245,11 @@ async function followUps(org) {
 
   const form = page.locator("[data-testid=log-activity-form]");
   const box = page.locator("[data-testid=follow-up-prompt]");
+  const notice = page.locator("[data-testid=log-toast-words]");
 
   log("logging a call opens 'Want to set a follow-up?' with nothing ticked and nothing to add yet");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Left a voicemail about the kitchen quote");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -250,8 +270,8 @@ async function followUps(org) {
   await shot(page, "05-two-follow-ups-picked");
   await box.locator("[data-testid=follow-up-save]").click();
   await box.waitFor({ state: "detached" });
-  await page.locator("[data-testid=follow-up-notice]").waitFor();
-  assert.match(await page.locator("[data-testid=follow-up-notice]").textContent(), /2 follow-ups on the calendar/);
+  await notice.waitFor();
+  assert.match(await notice.textContent(), /2 follow-ups on the calendar/);
 
   log("two open entries: Call and Email, on their days, with Dana and her company, under Taylor, not auto");
   const two = await followUps(org);
@@ -287,6 +307,7 @@ async function followUps(org) {
 
   log("the box opens again for the next touch; No thanks writes nothing");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog(page);
   await form.getByRole("button", { name: "Text", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Texted the revised numbers");
   await form.locator("[data-testid=activity-submit]").click();
@@ -294,12 +315,14 @@ async function followUps(org) {
   await box.locator("[data-testid=follow-up-type-MEETING]").click();
   await box.locator("[data-testid=follow-up-skip]").click();
   await box.waitFor({ state: "detached" });
-  assert.equal(await page.locator("[data-testid=follow-up-notice]").count(), 0, "nothing to say when nothing was added");
+  await notice.waitFor();
+  assert.doesNotMatch(await notice.textContent(), /follow-up|on the calendar/, "nothing to say when nothing was added");
   assert.equal((await followUps(org)).length, 2, "still the two from before");
   assert.equal(await status("Contact", "ctc_fu_dana"), "CONTACTED", "a Meeting ticked then skipped sets nothing");
 
-  log("a Meeting follow-up is a meeting booked: Eli goes to Meeting Set");
+  log("Sprint: a Meeting follow-up is “Try to book a meeting” — a reminder call that moves no status (decision 5)");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_eli`);
+  await openLog(page);
   await form.getByRole("button", { name: "Email", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Sent the brochure");
   await form.locator("[data-testid=activity-submit]").click();
@@ -308,13 +331,19 @@ async function followUps(org) {
   await box.locator("[data-testid=follow-up-on-MEETING]").fill(daysOn(5));
   await box.locator("[data-testid=follow-up-save]").click();
   await box.waitFor({ state: "detached" });
-  assert.match(await page.locator("[data-testid=follow-up-notice]").textContent(), /Meeting follow-up on the calendar for/);
-  await until(async () => (await status("Contact", "ctc_fu_eli")) === "MEETING_SET", "Eli meeting set");
+  assert.match(await notice.textContent(), /“Try to book a meeting” on the calendar for/);
   const eli = (await followUps(org)).filter((row) => row.contactId === "ctc_fu_eli");
-  assert.deepEqual(eli.map((row) => [row.type, isoOf(row.startOn), row.title]), [["Meeting", daysOn(5), "Follow up · Eli Park"]]);
+  assert.deepEqual(eli.map((row) => [row.type, isoOf(row.startOn), row.title]), [["Call", daysOn(5), "Try to book a meeting · Eli Park"]]);
+  assert.equal(await status("Contact", "ctc_fu_eli"), "INTERESTED", "the reminder books nothing, so Eli stays where he was");
+  assert.equal(
+    (await sql(`SELECT count(*)::int n FROM "OpportunityMeeting" m JOIN "Opportunity" o ON o.id=m."opportunityId" WHERE o."organizationId"=$1`, [org])).rows[0].n,
+    0,
+    "and nothing lands on the Pipeline",
+  );
 
   log("a day before today is refused, and the box stays open to fix it");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Quick check-in");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -331,14 +360,17 @@ async function followUps(org) {
   assert.equal((await followUps(org)).length, 4, "today itself is fine");
 
   log("scheduling a call ahead opens no box — it is already the thing to do");
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Call back next week");
+  await form.locator("[data-testid=activity-when-toggle]").click();
   await form.locator("[data-testid=activity-when]").fill(daysOn(6));
   await form.locator("[data-testid=activity-submit]").click();
-  await form.getByText(/Scheduled for/).waitFor();
+  await page.locator("[data-testid=log-toast]").getByText(/Scheduled for/).waitFor();
   assert.equal(await box.count(), 0, "no follow-up box after scheduling");
 
   log("a company-page log (bypassed, nobody linked) gets the same box, with the company as who it is with");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_oak`);
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Spoke to reception");
   await form.locator("[data-testid=company-bypass-tick]").check();
   await form.locator("[data-testid=activity-submit]").click();
@@ -353,6 +385,7 @@ async function followUps(org) {
 
   log("with people ticked on the company page, the follow-up is with the first and the rest are expected");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_harbor`);
+  await openLog(page);
   const picker = form.locator("[data-testid=company-people-picker]");
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Eli Park" }).click();
@@ -377,3 +410,20 @@ async function followUps(org) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

@@ -4,20 +4,42 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/session";
+import type { Prisma } from "@/generated/prisma/client";
+import { requireAdminSession, requireSession } from "@/lib/session";
 import { keepFields, parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
-import { ACTIVITY_LABELS, ACTIVITY_TYPES, CHANNEL_LABELS, START_STATUSES } from "@/lib/constants";
+import { ACTIVITY_EVENT_TYPE, ACTIVITY_LABELS, ACTIVITY_TYPES, CHANNEL_LABELS, CONNECT_OUTCOMES, START_STATUSES, type ActivityOutcomeValue } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
 import { moneyHold, moneyHoldMessage, zonedNoon } from "@/lib/money";
 import { getTimeZone } from "@/lib/organization";
-import { todayIso } from "@/lib/payments";
+import { isoToDate, todayIso } from "@/lib/payments";
 import { cleanTime, isRealDay } from "@/lib/calendar";
-import { recordActivityEvent, scheduleActivityEvent, scheduleFollowUpEvents, zonedMoment } from "@/lib/calendar-auto";
-import { markContacted, markMeetingSet } from "@/lib/status";
-import { ensureOpportunityForDeal } from "@/lib/opportunities";
+import {
+  planNextStep,
+  recordActivityEvent,
+  scheduleActivityEvent,
+  scheduleFollowUpEvents,
+  writeNextStep,
+  zonedMoment,
+  dayInZone,
+  timeInZone,
+} from "@/lib/calendar-auto";
+import { markByHand, markConnected, markContacted, markMeetingSet } from "@/lib/status";
+import { ensureOpportunityForDeal, OPEN_OPPORTUNITY } from "@/lib/opportunities";
+import { bookMeetingCore, meetingFor, recordMeetingHeld } from "@/lib/meetings";
+import { newBatchId, stashMeetingForEvent, undoLogCore } from "@/lib/undo-log";
+import {
+  connectOutcomeFor,
+  markSchema,
+  nextStepSchema,
+  outcomeNote,
+  outcomeProblem,
+  outcomeSchema,
+  readNextStep,
+  reasonSchema,
+} from "@/lib/outcomes";
 import { formatDay } from "@/lib/format";
 import {
   targetSchema,
@@ -26,7 +48,6 @@ import {
   noteBodySchema,
   noteLabelSchema,
   activityTypeSchema,
-  activityBodySchema,
   type FollowUpSeed,
   type LogActivityState,
 } from "@/lib/logging";
@@ -303,41 +324,92 @@ export async function addNote(_prev: ActionState, formData: FormData): Promise<A
   return { success: others > 0 ? `Note added to ${others + 1} contacts` : "Note added" };
 }
 
+// What logActivity hands back: the usual message and follow-up seed, plus
+// the save's batchId for "Saved · Undo" (undoLog), the next step's words
+// ("Booked Tue Nov 17, 10am · Kristen is on your Pipeline in Meeting Set",
+// "Call follow-up on the calendar for Nov 14") and the opportunity a
+// booked or held meeting is on.
+export type LogResult = LogActivityState & { batchId?: string; notices?: string[]; opportunityId?: string | null };
+
 // Logs a call, text, email or meeting — and puts it on the calendar. The
 // "When" on the form defaults to today; a day in the past is logged on
 // that day, so a call remembered on Friday lands on Wednesday where it
 // happened. A day still ahead is not history yet: it goes on the
 // calendar as something to do, and nothing is written to anyone's
 // Activity until it has happened.
-export async function logActivity(_prev: LogActivityState, formData: FormData): Promise<LogActivityState> {
+//
+// "How did it go?" (Nov 11, 2026) — every field optional, so today's form
+// works unchanged:
+// - `outcome`: one of OUTCOMES_BY_TYPE[type] (NO_ANSWER, VOICEMAIL,
+//   GATEKEEPER, BAD_NUMBER, TALKED for a call; SENT, REPLIED for a text or
+//   email; HELD, NO_SHOW for a meeting). With an outcome (or a mark) the
+//   note may be left empty: the chip's words become it. TALKED, REPLIED and
+//   HELD make everyone on it Connected; a meeting HELD moves them and its
+//   tile to Meeting Completed (decision 4); NO_SHOW is not a touch.
+// - `mark`: INTERESTED or NOT_INTERESTED, set by hand in the same save,
+//   with `reason` (PRICE, TIMING, HAS_VENDOR, NO_BUDGET, OTHER) on a Not
+//   interested (decision 14).
+// - The next step (`next` = follow | book | park | meeting, with nextOn,
+//   nextTime, nextType, nextWith, nextWhere, nextNote, opportunity; see
+//   nextStepSchema). `book` is "Try to book a meeting", a reminder that
+//   moves no status (decision 5); `park` is "Try again in 30 days"
+//   (decision 12); `meeting` books it now through the same path as every
+//   meeting (Meeting Set, the opportunity, bookedById) and, with no
+//   outcome given, logs the touch as TALKED (a call) / REPLIED / HELD.
+// - On a company page, the "Front desk" chip (outcome GATEKEEPER) lets a
+//   log with nobody ticked through, like the bypass box.
+// A touch dated ahead can't carry an outcome or a mark yet.
+export async function logActivity(_prev: LogActivityState, formData: FormData): Promise<LogResult> {
   const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(
     z.object({
       target: targetSchema,
       type: activityTypeSchema,
-      body: activityBodySchema,
+      body: z.string().trim().max(5000, "That summary is too long"),
       occurredOn: z.union([z.literal(""), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day")]).optional(),
+      outcome: z.union([z.literal(""), outcomeSchema]).optional(),
+      mark: z.union([z.literal(""), markSchema]).optional(),
+      reason: z.union([z.literal(""), reasonSchema]).optional(),
+      next: nextStepSchema.optional(),
     }),
     {
       target: readTarget(formData),
       type: formData.get("type"),
-      body: formData.get("body"),
+      body: formData.get("body") ?? "",
       occurredOn: formData.get("occurredOn") ?? undefined,
+      outcome: formData.get("outcome") ?? undefined,
+      mark: formData.get("mark") ?? undefined,
+      reason: formData.get("reason") ?? undefined,
+      next: readNextStep(formData),
     },
   );
-  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.ok) return { error: parsed.error, kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
+  const type = parsed.data.type;
+  const mark = parsed.data.mark || null;
+  const reason = mark === "NOT_INTERESTED" ? parsed.data.reason || null : null;
+  const next = parsed.data.next;
+  // Booking the meeting on the call says how the call went.
+  let outcome: ActivityOutcomeValue | null = parsed.data.outcome || (next?.kind === "meeting" ? connectOutcomeFor(type) : null);
+  const problem = outcomeProblem(type, outcome);
+  if (problem) return { error: problem, kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
+  const body = parsed.data.body || outcomeNote({ outcome, mark, reason, booked: next?.kind === "meeting" });
+  // A meeting logged from a tile's panel lands on that tile (an open one in
+  // this workspace; attachMeeting checks), not whichever they are on.
+  const meetingOpportunity = type === "MEETING" ? idSchema.safeParse(formData.get("meetingOpportunity")).data ?? null : null;
+  if (!body) return { error: "Add a short summary", kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
 
   const targets = await resolveTargets(parsed.data.target, organizationId);
   if (!targets) return { error: "Record not found" };
 
   // On a company page an activity is with a person at it (Taylor, Oct 4,
   // 2026). Nobody ticked is only allowed with the "I'm choosing not to
-  // link a contact" box ticked; it then sits on the company under
-  // "<who> Bypassed" in Other Contacts until somebody claims it. The
-  // typed fields come back with the refusal so nothing is lost.
+  // link a contact" box ticked, or the "Front desk" chip (Nov 11, 2026);
+  // it then sits on the company under "<who> Bypassed" in Other Contacts
+  // until somebody claims it. The typed fields come back with the refusal
+  // so nothing is lost.
   const onCompanyOnly = targets.rows.length === 1 && !targets.rows[0].contactId && Boolean(targets.rows[0].companyId);
-  if (onCompanyOnly && formData.get("bypass") !== "1") {
+  if (onCompanyOnly && formData.get("bypass") !== "1" && outcome !== "GATEKEEPER") {
     return {
       error: "Tick who at this company it was with, or tick “I'm choosing not to link a contact for these activities”.",
       kept: keepFields(formData, ["body", "occurredOn", "atTime"]),
@@ -349,6 +421,26 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   const on = parsed.data.occurredOn || today;
   if (!isRealDay(on)) return { error: "That day isn't a real date" };
   const atTime = cleanTime(formData.get("atTime"));
+  // Final audit (Nov 11, 2026): the outcome a booking implies and any next
+  // step count too — a touch dated ahead used to drop them silently.
+  if (on > today && (outcome || mark || next)) {
+    return { error: "A touch dated ahead hasn't happened yet, so it can't say how it went", kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
+  }
+  // A meeting logged as having happened was held (decision 4, as a tick
+  // on the calendar is): it completes like one, and nothing later asks
+  // "Did the meeting happen?" about it.
+  if (type === "MEETING" && on <= today && !outcome) outcome = "HELD";
+  // Front desk / main line (on the company, nobody linked) is always a try
+  // (final audit, Nov 11, 2026): the sheet turns the talk chips off, and a
+  // forged form can't save it as a talk, a reply, a held meeting (a meeting
+  // logged with nobody ticked is held, so it is refused too) or an
+  // Interested / Not interested — those are with a person.
+  if (onCompanyOnly && ((outcome && CONNECT_OUTCOMES.includes(outcome)) || mark)) {
+    return {
+      error: "Front desk / main line is a try, not a talk. Tick who you spoke or met with to log a talk, a reply, a held meeting or Interested / Not interested.",
+      kept: keepFields(formData, ["body", "occurredOn", "atTime"]),
+    };
+  }
 
   // Who it was with, for the calendar's title: the first contact, or
   // the company.
@@ -361,83 +453,186 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
     ? await prisma.company.findFirst({ where: { id: companyId, organizationId }, select: { name: true } })
     : null;
   const primaryName = named?.name ?? company?.name ?? "";
+  // Every save gets one, so Undo can find exactly what it wrote.
+  const batchId = newBatchId();
+  const who = { organizationId, userId, batchId };
 
   if (on > today) {
     const scheduledId = await scheduleActivityEvent({
       organizationId,
       userId,
-      type: parsed.data.type,
-      body: parsed.data.body,
+      type,
+      body,
       startOn: on,
       startTime: atTime,
       contactIds,
       companyId: companyId ?? named?.companyId ?? null,
       primaryName,
+      batchId,
     });
     // Booking a meeting is what sets it, whenever it is for.
-    if (parsed.data.type === "MEETING") {
-      await markMeetingSet({ organizationId, userId }, contactIds, new Date(), { on: zonedNoon(on, timeZone), eventId: scheduledId });
+    let opportunityId: string | null = null;
+    if (type === "MEETING") {
+      opportunityId = await markMeetingSet(who, contactIds, new Date(), {
+        on: atTime ? zonedMoment(on, atTime, timeZone) : zonedNoon(on, timeZone),
+        eventId: scheduledId,
+        opportunity: meetingOpportunity,
+      });
     }
     revalidateTarget(targets.primary);
     revalidatePath("/dashboard/calendar");
-    return { success: `Scheduled for ${formatDay(`${on}T12:00:00Z`)} — it's on the calendar` };
+    if (opportunityId) revalidatePath("/dashboard/deals");
+    return { success: `Scheduled for ${formatDay(`${on}T12:00:00Z`)} — it's on the calendar`, batchId, opportunityId };
   }
+
+  const plan = planNextStep(next, today);
+  if (plan && "error" in plan) return { error: plan.error, kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
 
   // The moment it happened: the time typed, or now if it was today, or
   // midday on the day it was. In the workspace's clock, like every
   // other stamp in the app.
-  const occurredAt = atTime ? zonedMoment(on, atTime, timeZone) : on === today ? new Date() : zonedNoon(on, timeZone);
+  let occurredAt = atTime ? zonedMoment(on, atTime, timeZone) : on === today ? new Date() : zonedNoon(on, timeZone);
+  // Saying how it went means it has happened: a time later today is now
+  // (as the calendar's Done box does), so a talk still makes them
+  // Connected rather than a line dated ahead that never does.
+  if ((outcome || mark) && occurredAt > new Date()) occurredAt = new Date();
 
-  const rows = await prisma.$transaction(
-    targets.rows.map((row) =>
-      prisma.activity.create({
-        data: {
-          organizationId,
-          contactId: row.contactId,
-          companyId: row.companyId,
-          userId,
-          type: parsed.data.type,
-          body: parsed.data.body,
-          batchId: targets.batchId,
-          occurredAt,
-        },
-        select: { id: true },
-      }),
-    ),
-  );
-
-  await recordActivityEvent({
-    organizationId,
-    userId,
-    activityId: rows[0].id,
-    type: parsed.data.type,
-    body: parsed.data.body,
-    occurredAt,
-    withTime: Boolean(atTime) || on === today,
-    contactIds,
-    companyId: companyId ?? named?.companyId ?? null,
-    primaryName,
+  // One statement however many people it is on (an array of creates is
+  // one transaction with Prisma's 5-second limit, and ran the touch
+  // triggers once a row). Rows come back in the order given.
+  const order = new Map(targets.rows.map((row, index) => [`${row.contactId}|${row.companyId}`, index]));
+  const targetIndex = (row: { contactId: string | null; companyId: string | null }) => order.get(`${row.contactId}|${row.companyId}`) ?? 0;
+  const rows = await prisma.activity.createManyAndReturn({
+    data: targets.rows.map((row) => ({
+      organizationId,
+      contactId: row.contactId,
+      companyId: row.companyId,
+      userId,
+      type,
+      outcome,
+      body,
+      batchId,
+      occurredAt,
+    })),
+    select: { id: true, contactId: true, companyId: true },
   });
+  rows.sort((a, b) => targetIndex(a) - targetIndex(b));
 
-  // The ladder: a touch that happened makes Not Actioned into Contacted;
-  // a meeting that happened was, at the latest, set that day.
-  await markContacted({ organizationId, userId }, { contactIds, companyId }, occurredAt);
-  if (parsed.data.type === "MEETING") await markMeetingSet({ organizationId, userId }, contactIds, occurredAt, { activityId: rows[0].id });
+  // A meeting logged on the day one was booked with them is that meeting:
+  // its calendar entry is ticked done with this line (as the Done box
+  // does) rather than a copy written beside it, so the booked meeting is
+  // never left asking "how did it go?" next to a second one.
+  const booked =
+    type === "MEETING" && outcome !== "NO_SHOW" && contactIds.length
+      ? await prisma.calendarEvent.findFirst({
+          where: {
+            organizationId,
+            activityId: null,
+            auto: false,
+            type: { equals: ACTIVITY_EVENT_TYPE.MEETING, mode: "insensitive" },
+            startOn: isoToDate(on)!,
+            OR: [{ contactId: { in: contactIds } }, { attendees: { some: { id: { in: contactIds } } } }],
+          },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, doneAt: true },
+        })
+      : null;
+  // The meeting the booking is (on its own tile, not whichever of theirs
+  // was touched last), with what it was before this save for Undo.
+  const bookedMeeting = booked ? await stashMeetingForEvent(organizationId, booked.id, who) : null;
+  if (booked) {
+    await prisma.calendarEvent.updateMany({
+      where: { id: booked.id, organizationId, activityId: null },
+      data: { activityId: rows[0].id, doneAt: booked.doneAt ?? occurredAt },
+    });
+  } else {
+    await recordActivityEvent({
+      organizationId,
+      userId,
+      activityId: rows[0].id,
+      type,
+      body,
+      occurredAt,
+      withTime: Boolean(atTime) || on === today,
+      contactIds,
+      companyId: companyId ?? named?.companyId ?? null,
+      primaryName,
+      batchId,
+    });
+  }
+
+  // The ladder: a touch that happened makes Not Actioned into Contacted
+  // (a no-show is not a touch); a talk, a reply or a held meeting into
+  // Connected; a meeting that happened was, at the latest, set that day,
+  // and one held completes it.
+  const notices: string[] = [];
+  let opportunityId: string | null = null;
+  if (outcome !== "NO_SHOW") await markContacted(who, { contactIds, companyId }, occurredAt);
+  if (outcome && CONNECT_OUTCOMES.includes(outcome) && occurredAt <= new Date()) {
+    await markConnected(who, { contactIds, companyId }, occurredAt);
+  }
+  if (type === "MEETING" && outcome !== "NO_SHOW") {
+    opportunityId = await markMeetingSet(who, contactIds, occurredAt, {
+      activityId: rows[0].id,
+      eventId: booked?.id ?? null,
+      opportunity: meetingOpportunity ?? bookedMeeting?.opportunityId ?? null,
+    });
+    if (outcome === "HELD") {
+      const meetingId = await meetingFor(organizationId, opportunityId, rows[0].id);
+      if (meetingId) await recordMeetingHeld(who, meetingId, { early: true });
+    }
+  }
+  if (mark) await markByHand(who, { contactIds, companyId }, mark, occurredAt, reason);
+
+  const excerpt = body.length > 140 ? `${body.slice(0, 140).trimEnd()}…` : body;
+  const about = `Follow up on the ${ACTIVITY_LABELS[type].toLowerCase()} logged ${formatDay(`${on}T12:00:00Z`)}: ${excerpt}`;
+  if (plan && plan.kind === "meeting") {
+    const booked = await bookMeetingCore(who, {
+      contactIds: Array.from(new Set([...contactIds, ...plan.withContactIds])),
+      companyId: companyId ?? named?.companyId ?? null,
+      on: plan.on,
+      time: plan.time,
+      where: plan.where,
+      note: plan.note,
+      opportunity: plan.opportunity,
+    });
+    if ("error" in booked) notices.push(booked.error ?? "The meeting couldn't be booked");
+    else {
+      notices.push(booked.message);
+      opportunityId = booked.opportunityId ?? opportunityId;
+    }
+  } else if (plan) {
+    const step = await writeNextStep({
+      organizationId,
+      userId,
+      batchId,
+      plan,
+      contactIds,
+      companyId: companyId ?? named?.companyId ?? null,
+      primaryName,
+      about,
+    });
+    notices.push(step.words);
+  }
 
   revalidateTarget(targets.primary);
   revalidatePath("/dashboard/calendar");
+  if (opportunityId) revalidatePath("/dashboard/deals");
   const others = targets.rows.length - 1;
 
   // Handed back so the form can ask "Want to set a follow-up?" about
-  // exactly this touch, with the same people on it.
-  const excerpt = parsed.data.body.length > 140 ? `${parsed.data.body.slice(0, 140).trimEnd()}…` : parsed.data.body;
-  const followUp: FollowUpSeed = {
-    contactIds,
-    companyId: companyId ?? named?.companyId ?? null,
-    primaryName,
-    about: `Follow up on the ${ACTIVITY_LABELS[parsed.data.type].toLowerCase()} logged ${formatDay(`${on}T12:00:00Z`)}: ${excerpt}`,
+  // exactly this touch, with the same people on it — unless the next step
+  // was already picked in this save.
+  const followUp: FollowUpSeed | undefined = next
+    ? undefined
+    : { contactIds, companyId: companyId ?? named?.companyId ?? null, primaryName, about };
+  return {
+    success: [others > 0 ? `Logged on ${others + 1} contacts` : "Activity logged", ...notices].join(" · "),
+    followUp,
+    batchId,
+    notices,
+    opportunityId,
   };
-  return { success: others > 0 ? `Logged on ${others + 1} contacts` : "Activity logged", followUp };
 }
 
 // The follow-ups ticked in the box that opens after a touch is logged
@@ -446,7 +641,11 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
 // The seed came from logActivity a moment ago, but it has been through
 // the browser since, so every id in it is checked against this workspace
 // and the name is read back from the record rather than trusted.
-export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Promise<ActionState> {
+// A Meeting ticked is "Try to book a meeting" since Nov 11, 2026
+// (decision 5, replacing the Oct 4 rule): a reminder call on that day
+// that moves no status; booking is bookMeeting / next=meeting. Passing the
+// log's `batchId` puts the follow-ups in that save, so its Undo takes them.
+export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown, batchId?: string): Promise<ActionState> {
   const { organizationId, userId } = await requireSession();
 
   const parsed = z
@@ -466,8 +665,9 @@ export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Pro
         )
         .min(1, "Tick at least one follow-up")
         .max(ACTIVITY_TYPES.length),
+      batchId: z.string().trim().min(1).max(200).optional(),
     })
-    .safeParse({ seed, items });
+    .safeParse({ seed, items, batchId });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the follow-ups and try again" };
 
   const timeZone = await getTimeZone();
@@ -500,25 +700,25 @@ export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Pro
   if (!contactIds.length && !company) return { error: "Record not found" };
   const first = contactIds.length ? byId.get(contactIds[0]) : undefined;
   const primaryName = first?.name ?? company?.name ?? "";
+  // Only a save of this person's in this workspace.
+  const save = parsed.data.batchId
+    ? await prisma.activity.findFirst({ where: { organizationId, userId, batchId: parsed.data.batchId }, select: { id: true } })
+    : null;
 
-  const followUpIds = await scheduleFollowUpEvents({
+  await scheduleFollowUpEvents({
     organizationId,
     userId,
-    items: picks.map((item) => ({ type: item.type, startOn: item.on, startTime: cleanTime(item.time) })),
+    items: picks.map((item) =>
+      item.type === "MEETING"
+        ? { type: "PHONE_CALL" as const, startOn: item.on, startTime: cleanTime(item.time), title: `Try to book a meeting · ${primaryName}` }
+        : { type: item.type, startOn: item.on, startTime: cleanTime(item.time) },
+    ),
     contactIds,
     companyId: company?.id ?? first?.companyId ?? null,
     primaryName,
     about: parsed.data.seed.about,
+    batchId: save ? parsed.data.batchId : null,
   });
-  // Booking a meeting is what sets it, whenever it is for — the same rule
-  // as a meeting scheduled from the form above.
-  const meetingAt = picks.findIndex((item) => item.type === "MEETING");
-  if (meetingAt >= 0) {
-    await markMeetingSet({ organizationId, userId }, contactIds, new Date(), {
-      on: zonedNoon(picks[meetingAt].on, await getTimeZone()),
-      eventId: followUpIds[meetingAt],
-    });
-  }
 
   for (const id of contactIds) revalidatePath(`/dashboard/contacts/${id}`);
   const companyPath = company?.id ?? first?.companyId;
@@ -527,11 +727,247 @@ export async function scheduleFollowUps(seed: FollowUpSeed, items: unknown): Pro
   revalidatePath("/dashboard");
 
   const soonest = picks.map((item) => item.on).sort()[0];
+  const name = (type: string) => (type === "MEETING" ? "“Try to book a meeting”" : `${ACTIVITY_LABELS[type as keyof typeof ACTIVITY_LABELS]} follow-up`);
   return {
     success:
       picks.length === 1
-        ? `${ACTIVITY_LABELS[picks[0].type]} follow-up on the calendar for ${formatDay(`${soonest}T12:00:00Z`)}`
+        ? `${name(picks[0].type)} on the calendar for ${formatDay(`${soonest}T12:00:00Z`)}`
         : `${picks.length} follow-ups on the calendar, the first ${formatDay(`${soonest}T12:00:00Z`)}`,
+  };
+}
+
+const bookSchema = z.object({
+  contactId: idSchema,
+  on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day of the meeting"),
+  time: z.string().max(8).optional(),
+  withContactIds: z.array(idSchema).max(50).default([]),
+  where: z.string().trim().max(200).optional(),
+  note: z.string().trim().max(2000).optional(),
+  // "auto" (default): an open opportunity any of them is on; "new"; or an
+  // open opportunity's id (from bookingOptions).
+  opportunity: z.string().trim().max(100).optional(),
+});
+
+// The Book meeting sheet (R4): "Meeting · <name>" on the calendar, Meeting
+// Set (through Connected from below it), the opportunity, and the booker
+// kept on the meeting — the same path as every meeting. Today or later.
+export async function bookMeeting(
+  input: z.input<typeof bookSchema>,
+): Promise<ActionState & { batchId?: string; opportunityId?: string | null; eventId?: string; yours?: boolean }> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = bookSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the meeting and try again" };
+  const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  if (!isRealDay(parsed.data.on)) return { error: "That day isn't a real date" };
+  if (parsed.data.on < today) return { error: "Pick today or a day ahead. A meeting that already happened is logged with How did it go?" };
+  const contact = await prisma.contact.findFirst({ where: { id: parsed.data.contactId, organizationId }, select: { id: true, companyId: true } });
+  if (!contact) return { error: "Contact not found" };
+  const batchId = newBatchId();
+  const booked = await bookMeetingCore(
+    { organizationId, userId, batchId },
+    {
+      contactIds: Array.from(new Set([contact.id, ...parsed.data.withContactIds])),
+      companyId: contact.companyId,
+      on: parsed.data.on,
+      time: cleanTime(parsed.data.time),
+      where: parsed.data.where,
+      note: parsed.data.note,
+      opportunity: parsed.data.opportunity,
+    },
+  );
+  if ("error" in booked) return { error: booked.error };
+  revalidatePath(`/dashboard/contacts/${contact.id}`);
+  if (contact.companyId) revalidatePath(`/dashboard/companies/${contact.companyId}`);
+  revalidatePath("/dashboard/contacts");
+  revalidatePath("/dashboard/calendar");
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard");
+  return { success: booked.message, batchId, opportunityId: booked.opportunityId, eventId: booked.eventId, yours: booked.yours };
+}
+
+// What the Book meeting sheet offers: the other people at the person's
+// company (for "Who else"), and the company's open opportunities (for "Add
+// to the open Ironwood opportunity with Chase?"), each with its Primary.
+// `includesThem` means they are on it as Primary or Associated (Do Not
+// List is not on it). `include` (the Pipeline panel's tile) is listed even
+// when it isn't among the company's newest ten.
+export async function bookingOptions(contactId: string, include?: string | null): Promise<
+  | {
+      people: { id: string; name: string; title: string | null }[];
+      opportunities: { id: string; title: string; primaryName: string | null; ownerName: string | null; includesThem: boolean }[];
+    }
+  | { error: string }
+> {
+  const { organizationId } = await requireSession();
+  const id = idSchema.safeParse(contactId);
+  if (!id.success) return { error: "Missing contact reference" };
+  const contact = await prisma.contact.findFirst({ where: { id: id.data, organizationId }, select: { id: true, companyId: true } });
+  if (!contact) return { error: "Contact not found" };
+  const people = contact.companyId
+    ? await prisma.contact.findMany({
+        where: { organizationId, companyId: contact.companyId, id: { not: contact.id }, status: { not: "ARCHIVED" } },
+        orderBy: [{ favorite: "desc" }, { name: "asc" }],
+        select: { id: true, name: true, title: true },
+        take: 30,
+      })
+    : [];
+  const opportunities = await prisma.opportunity.findMany({
+    where: {
+      organizationId,
+      ...OPEN_OPPORTUNITY,
+      contacts: {
+        some: contact.companyId
+          ? { OR: [{ contactId: contact.id }, { contact: { companyId: contact.companyId } }] }
+          : { contactId: contact.id },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 10,
+    select: OPTION_SELECT,
+  });
+  const wanted = include ? idSchema.safeParse(include).data : undefined;
+  if (wanted && !opportunities.some((row) => row.id === wanted)) {
+    const extra = await prisma.opportunity.findFirst({ where: { id: wanted, organizationId, ...OPEN_OPPORTUNITY }, select: OPTION_SELECT });
+    if (extra) opportunities.unshift(extra);
+  }
+  return {
+    people,
+    opportunities: opportunities.map((row) => ({
+      id: row.id,
+      title: row.title,
+      primaryName: row.contacts.find((person) => person.role === "PRIMARY")?.contact.name ?? null,
+      ownerName: row.owner?.name ?? null,
+      includesThem: row.contacts.some((person) => person.contactId === contact.id && person.role !== "HIDDEN"),
+    })),
+  };
+}
+
+const OPTION_SELECT = {
+  id: true,
+  title: true,
+  owner: { select: { name: true } },
+  contacts: { select: { contactId: true, role: true, contact: { select: { name: true } } } },
+} satisfies Prisma.OpportunitySelect;
+
+// "Saved · Undo" and Delete on your own line (Nov 11, 2026): takes one
+// save back in a single transaction — its activity rows, the calendar
+// copy, follow-ups and meetings booked in the same save, and the status
+// changes it made (statuses go back while still where it left them). See
+// undoLogCore in src/lib/undo-log.ts. Only whoever logged it, or an Owner
+// or Admin.
+export async function undoLog(batchId: string): Promise<ActionState> {
+  const session = await requireAdminSession();
+  const parsed = z.string().trim().min(1).max(200).safeParse(batchId);
+  if (!parsed.success) return { error: "Nothing to undo" };
+  const result = await undoLogCore(session.organizationId, parsed.data, { userId: session.userId, canManage: session.allowed });
+  if ("error" in result) return { error: result.error };
+  for (const id of result.contactIds) revalidatePath(`/dashboard/contacts/${id}`);
+  for (const id of result.companyIds) revalidatePath(`/dashboard/companies/${id}`);
+  revalidatePath("/dashboard/contacts");
+  revalidatePath("/dashboard/companies");
+  revalidatePath("/dashboard/calendar");
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard");
+  return { success: "Undone" };
+}
+
+// Edit on a history line (round 2, Nov 11, 2026; the plan's "Your own
+// lines get Edit / Delete"). Changes what was said, how it went and when
+// it happened — on every copy of the line when it was logged on several
+// people at once (one batch), and on its own calendar copy. Only whoever
+// logged it, or an Owner or Admin, the same as Delete (undoLog). A line
+// can't be moved into the future (that would be a plan, not history), a
+// marketing send can't be edited (it went out), and an outcome must fit
+// the kind of touch. Statuses the original save moved stay where they are:
+// an edit corrects the record, it doesn't replay the save. Returns what it
+// was before, so "Saved · Undo" can put it back through this same action.
+export type ActivityEditValues = { activityId: string; body: string; outcome: string; on: string; time: string };
+export type UpdateActivityResult = { success?: string; error?: string; previous?: ActivityEditValues };
+
+export async function updateActivity(input: ActivityEditValues): Promise<UpdateActivityResult> {
+  const session = await requireAdminSession();
+  const { organizationId, userId } = session;
+  const parsed = z
+    .object({
+      activityId: idSchema,
+      body: z.string().trim().max(5000, "That summary is too long"),
+      outcome: z.union([z.literal(""), outcomeSchema]),
+      on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day"),
+      time: z.string().max(8),
+    })
+    .safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the fields" };
+  const { activityId, on } = parsed.data;
+  const row = await prisma.activity.findFirst({
+    where: { id: activityId, organizationId },
+    select: { id: true, userId: true, type: true, body: true, outcome: true, occurredAt: true, batchId: true, marketing: true, contactId: true, companyId: true },
+  });
+  if (!row) return { error: "That line is gone" };
+  if (row.marketing) return { error: "A marketing email can't be edited. It went out." };
+  if (row.userId !== userId && !session.allowed) return { error: "Only whoever logged it, or an Owner or Admin, can edit it" };
+
+  const type = row.type as (typeof ACTIVITY_TYPES)[number];
+  const outcome = parsed.data.outcome || null;
+  const problem = outcomeProblem(type, outcome);
+  if (problem) return { error: problem };
+  const body = parsed.data.body || outcomeNote({ outcome, mark: null, reason: null, booked: false });
+  if (!body) return { error: "Add a short summary" };
+  if (!isRealDay(on)) return { error: "That day isn't a real date" };
+
+  const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  const time = cleanTime(parsed.data.time);
+  const wasOn = dayInZone(row.occurredAt, timeZone);
+  const wasTime = timeInZone(row.occurredAt, timeZone);
+  const occurredAt =
+    on === wasOn && (time ?? "") === (wasTime ?? "") ? row.occurredAt : time ? zonedMoment(on, time, timeZone) : zonedNoon(on, timeZone);
+  if (on > today || occurredAt.getTime() > Date.now() + 60_000) {
+    return { error: "A line in the history has happened. To plan something ahead, put it on the calendar." };
+  }
+
+  const ids = row.batchId
+    ? (await prisma.activity.findMany({ where: { organizationId, batchId: row.batchId }, select: { id: true, contactId: true, companyId: true } }))
+    : [{ id: row.id, contactId: row.contactId, companyId: row.companyId }];
+  const lineIds = ids.map((line) => line.id);
+  await prisma.$transaction([
+    prisma.activity.updateMany({ where: { organizationId, id: { in: lineIds } }, data: { body, outcome, occurredAt } }),
+    // Its own calendar copy follows; a booked meeting this line ticked done
+    // (auto: false) keeps its own day and words.
+    prisma.calendarEvent.updateMany({
+      where: { organizationId, activityId: { in: lineIds }, auto: true },
+      data: {
+        notes: body,
+        doneAt: occurredAt,
+        ...(occurredAt !== row.occurredAt
+          ? { startOn: isoToDate(dayInZone(occurredAt, timeZone))!, startTime: time }
+          : {}),
+      },
+    }),
+  ]);
+
+  // A meeting line edited to Held answers its meeting: the tile and its
+  // people move to Meeting Completed as a Held anywhere else does (final
+  // audit, Nov 11, 2026; it used to read answered and sit at Meeting Set).
+  if (type === "MEETING" && outcome === "HELD" && row.outcome !== "HELD") {
+    const meeting = await prisma.opportunityMeeting.findFirst({
+      where: { activityId: { in: lineIds }, opportunity: { organizationId } },
+      select: { id: true },
+    });
+    if (meeting) {
+      await recordMeetingHeld({ organizationId, userId, batchId: newBatchId() }, meeting.id, { early: true });
+      revalidatePath("/dashboard/deals");
+    }
+  }
+
+  for (const line of ids) {
+    if (line.contactId) revalidatePath(`/dashboard/contacts/${line.contactId}`);
+    if (line.companyId) revalidatePath(`/dashboard/companies/${line.companyId}`);
+  }
+  revalidatePath("/dashboard/calendar");
+  return {
+    success: lineIds.length > 1 ? `Saved on all ${lineIds.length} people` : "Saved",
+    previous: { activityId: row.id, body: row.body, outcome: row.outcome ?? "", on: wasOn, time: wasTime ?? "" },
   };
 }
 

@@ -25,6 +25,7 @@ import { SupplierCell, type SupplierOption } from "./supplier-cell";
 import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
 import { MeetingDraftButton } from "./meeting-draft";
+import { useQuoteSaveAll, useQuoteSaveSection } from "./quote-save";
 import { useReportUnsavedLines } from "./mark-sent";
 import type { DraftedLine } from "../ai-actions";
 import {
@@ -328,7 +329,7 @@ export function LineItemsEditor({
   // Saved with the lines, and worked out on the server against them.
   const [quoteDiscount, setQuoteDiscount] = useState<DiscountState>(() => discountStateOf(initialDiscount));
   const [dirty, setDirty] = useState(false);
-  // Mark as sent in the header holds off while this is set.
+  // Send quote (under the DealJourney strip) holds off while this is set.
   useReportUnsavedLines(dirty);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
@@ -625,7 +626,7 @@ export function LineItemsEditor({
     mutate(rows.filter((row) => row.uid !== uid));
   }
 
-  function save() {
+  function save(): Promise<boolean> {
     const payload: LineItemInput[] = rows.map((row) => ({
       id: row.id,
       uid: row.uid,
@@ -653,27 +654,34 @@ export function LineItemsEditor({
     const unpriced = rows.findIndex((row) => row.priceNeeded && rowUnitCents(row) === 0);
     if (unpriced >= 0) {
       setState({ error: `Line ${unpriced + 1} needs a price: it was drafted from the meeting and isn't in your catalog.` });
-      return;
+      return Promise.resolve(false);
     }
     const blank = payload.findIndex((line) => line.name.length === 0);
     if (blank >= 0) {
       setState({ error: `Line ${blank + 1} needs a product name.` });
-      return;
+      return Promise.resolve(false);
     }
     // A word or a minus in the discount box would otherwise save as no
     // discount at all, silently.
     const discountIssue = discountProblem(quoteDiscount.input);
     if (discountIssue) {
       setState({ error: discountIssue.replace(/^Discount/, "The discount on the whole quote") });
-      return;
+      return Promise.resolve(false);
     }
 
     editedDuringSave.current = false;
     sentPicks.current = new Map(rows.map((row) => [row.uid, JSON.stringify(row.picks)]));
-    startTransition(async () => {
-      const result = await saveLineItems(quoteId, payload, discountPayload(quoteDiscount));
+    return new Promise<boolean>((resolve) => startTransition(async () => {
+      const result = await saveLineItems(quoteId, payload, discountPayload(quoteDiscount)).catch(() => ({
+        error: "Couldn't reach the server. Nothing was saved; try again.",
+        success: undefined,
+        lines: undefined,
+      }));
       setState({ error: result.error, success: result.success });
-      if (result.error) return;
+      if (result.error) {
+        resolve(false);
+        return;
+      }
 
       // Take on the ids the save just handed back, matched by uid rather
       // than position: a row added or deleted mid-save shifts the array,
@@ -705,8 +713,13 @@ export function LineItemsEditor({
         }),
       );
       if (!editedDuringSave.current) setDirty(false);
-    });
+      resolve(true);
+    }));
   }
+
+  // Part of the quote's one Save (quote-save.tsx): the lines save first.
+  const joined = useQuoteSaveSection("lines", { label: "Line items", order: 0, dirty: !readOnly && dirty, pending, save });
+  const all = useQuoteSaveAll();
 
   return (
     <div>
@@ -1161,17 +1174,44 @@ export function LineItemsEditor({
             Blank line
           </button>
 
-          <div className="ml-auto flex items-center gap-3">
-            {dirty && <span className="faint text-xs">Unsaved changes</span>}
-            <button
-              type="button"
-              onClick={save}
-              disabled={pending || !dirty}
-              className="btn btn-primary btn-sm"
-            >
+          {/* The quote's one Save sits in the bar at the foot of the page
+              (pinned below on a phone); without it (the editor used on its
+              own) the card keeps its own button. */}
+          {joined ? (
+            dirty && <span className="faint ml-auto text-xs max-sm:hidden">Unsaved changes</span>
+          ) : (
+            <div className="ml-auto flex items-center gap-3 max-sm:hidden">
+              {dirty && <span className="faint text-xs">Unsaved changes</span>}
+              <button type="button" onClick={() => void save()} disabled={pending || !dirty} className="btn btn-primary btn-sm">
+                {pending ? "Saving…" : "Save line items"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phone (ux-gaps): the total and the one Save stay in reach while
+          the lines scroll, sitting above the strip's pinned Next when the
+          page has one. */}
+      {!readOnly && (
+        <div
+          className="popover sticky bottom-0 z-30 flex items-center justify-between gap-3 border-t border-[var(--hairline-3)] px-4 py-2.5 sm:hidden [body:has(.dj-next[data-sticky])_&]:bottom-[4.75rem]"
+          data-testid="line-items-phone-bar"
+        >
+          <div className="min-w-0">
+            <p className="faint text-xs">{joined ? (all.unsaved.length ? "Unsaved changes" : "Quote total") : dirty ? "Unsaved changes" : "Quote total"}</p>
+            <p className="num text-base font-semibold" data-testid="line-items-phone-total">{formatCents(totals.totalCents)}</p>
+          </div>
+          {/* The same one Save as the desktop bar: every card's edits. */}
+          {joined ? (
+            <button type="button" onClick={() => void all.saveAll()} disabled={all.pending || all.unsaved.length === 0} className="btn btn-primary min-h-11" data-testid="quote-save-phone">
+              {all.pending ? "Saving…" : "Save"}
+            </button>
+          ) : (
+            <button type="button" onClick={() => void save()} disabled={pending || !dirty} className="btn btn-primary min-h-11">
               {pending ? "Saving…" : "Save line items"}
             </button>
-          </div>
+          )}
         </div>
       )}
 

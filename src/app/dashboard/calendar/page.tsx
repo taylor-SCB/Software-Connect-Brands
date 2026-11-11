@@ -13,11 +13,14 @@ import {
   startOfWeek,
   weekDays,
 } from "@/lib/calendar";
-import { LOG_ROWS, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, type EventFilters } from "@/lib/calendar-data";
+import { LOG_ROWS, countEvents, loadAgenda, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, loadOverdue, type AgendaDay, type EventFilters } from "@/lib/calendar-data";
 import { readIds, readLayout } from "@/lib/calendar-filters";
 import { PageHeader, Card } from "@/components/ui";
 import { CalendarToolbar } from "./calendar-toolbar";
-import { MonthView, WeekView } from "./calendar-views";
+import { AgendaView, MonthView, WeekView, type EventView } from "./calendar-views";
+import { PhoneAgenda } from "./phone-agenda";
+import { prisma } from "@/lib/prisma";
+import { prefChoice, prefFlag, readUiPrefs } from "@/lib/user-prefs";
 import { TeamView } from "./calendar-team";
 import { LogColumns } from "./calendar-log";
 
@@ -31,6 +34,7 @@ type Params = {
   companies?: string;
   contacts?: string;
   projects?: string;
+  scope?: string;
 };
 
 // Everything scheduled and everything that happened, in one place: the
@@ -39,23 +43,54 @@ type Params = {
 // went out and came back. Three ways to lay it out — the grid, the two
 // log columns, or the grid with the logs beneath it — and filters by
 // teammate, company, contact and project that stack.
+//
+// BDR redesign (Nov 11, 2026): Members, and phones, open on an Agenda for
+// them — Overdue, Today, then the next 7 days, each row with Call / Text
+// and Done (which opens How did it go?). Owners and Admins keep the Month
+// grid with Everyone. Mine / Everyone is remembered per person
+// (User.uiPrefs calendar.scope) and applies whenever the address names no
+// users and no other filter. An address that names a day, a view or a
+// layout opens what it names, as it always did.
 export default async function CalendarPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const { organizationId, userId } = await requireSession();
+  const { organizationId, userId, role } = await requireSession();
   const params = await searchParams;
-  const timeZone = await getTimeZone();
+  const [timeZone, prefs] = await Promise.all([getTimeZone(), readUiPrefs(userId)]);
   const today = todayIso(timeZone);
+  const member = role !== "OWNER" && role !== "ADMIN";
 
-  const view = params.view === "week" ? "week" : params.view === "team" ? "team" : "month";
+  const bare = !params.view && !params.on && !params.layout;
+  // A bare address opens the view the person last picked (uiPrefs
+  // calendar.view, Round 2), else the Agenda for a Member and the Month for
+  // an Owner or Admin (a phone swaps a bare Month for the Agenda).
+  const rememberedView = prefChoice(prefs, "calendar", "view", ["agenda", "week", "month"] as const);
+  const wanted = bare ? (rememberedView ?? (member ? "agenda" : "month")) : params.view;
+  const view = wanted === "week" ? "week" : wanted === "team" ? "team" : wanted === "agenda" ? "agenda" : "month";
+  // The Agenda takes Log and Calendar + Log too (audit, Nov 11, 2026): the
+  // plan's "History is a tab". A Member's default calendar had no way to
+  // the history short of switching to Week first.
   const layout = readLayout(params.layout);
   // Anything that is not a real day falls back to today rather than
   // taking the page down with it.
   const asked = isRealDay(params.on) ? params.on : today;
   const anchor = view === "month" ? startOfMonth(asked) : startOfWeek(asked);
 
+  const urlUsers = readIds(params.users);
+  const otherFilter = Boolean(params.crew || params.type || params.companies || params.contacts || params.projects);
+  // ?scope=team is the whole team without naming anyone (the Daily
+  // Rundown's whole-team "See all"; audit, Nov 11, 2026); it is not saved.
+  const remembered =
+    params.scope === "team" ? "team" : (prefChoice(prefs, "calendar", "scope", ["mine", "team"] as const) ?? (member ? "mine" : "team"));
+  const scope: "mine" | "team" | "custom" = urlUsers.length
+    ? urlUsers.length === 1 && urlUsers[0] === userId
+      ? "mine"
+      : "custom"
+    : otherFilter
+      ? "team"
+      : remembered;
   const filters: EventFilters = {
     crewId: params.crew,
     type: params.type,
-    userIds: readIds(params.users),
+    userIds: urlUsers.length ? urlUsers : scope === "mine" ? [userId] : [],
     companyIds: readIds(params.companies),
     contactIds: readIds(params.contacts),
     projectIds: readIds(params.projects),
@@ -63,12 +98,18 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
   // The window is the grid, not the month: the six-week grid shows days
   // either side, and they should carry their events like any other day.
-  const days = view === "month" ? monthGrid(anchor) : weekDays(anchor);
+  // The Agenda's window is today and the next 7 days; its Overdue comes
+  // from the log's own overdue list.
+  const days =
+    view === "agenda" ? Array.from({ length: 8 }, (_, index) => addDays(today, index)) : view === "month" ? monthGrid(anchor) : weekDays(anchor);
   const from = isoToDate(days[0])!;
   const to = isoToDate(days[days.length - 1])!;
 
-  const [events, choices, logs, labels, crews] = await Promise.all([
-    layout === "log" ? [] : loadEvents(organizationId, { from, to }, filters),
+  // The Agenda reads its days capped (perf fix, Nov 11, 2026): loadAgenda,
+  // not the whole window, and the window's count on its own for the header.
+  const agendaShown = view === "agenda" && layout !== "log";
+  const [loaded, choices, logs, labels, crews, overdue, agendaRaw, agendaTotal] = await Promise.all([
+    layout === "log" || agendaShown ? [] : loadEvents(organizationId, { from, to }, filters),
     loadEventChoices(organizationId, userId),
     layout === "calendar" ? null : loadLogs(organizationId, today, filters),
     loadFilterLabels(organizationId, {
@@ -77,7 +118,27 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       projectIds: filters.projectIds ?? [],
     }),
     view === "team" && layout !== "log" ? loadCrewRows(organizationId) : [],
+    // The overdue read alone (final audit, Nov 11, 2026), not the whole log.
+    view === "agenda" && layout === "calendar" ? loadOverdue(organizationId, today, filters) : Promise.resolve([] as EventView[]),
+    agendaShown ? loadAgenda(organizationId, days, filters) : Promise.resolve([] as AgendaDay[]),
+    agendaShown ? countEvents(organizationId, { from, to }, filters) : Promise.resolve(0),
   ]);
+
+  // The Agenda's rows, each once (a multi-day entry sits under every day it
+  // runs across), with their numbers put on in one statement.
+  const agendaRows = new Map<string, EventView>();
+  for (const entry of agendaRaw) for (const event of [...entry.open, ...entry.done]) agendaRows.set(event.id, event);
+  const agendaPhoned = new Map((await withPhones(organizationId, [...agendaRows.values()])).map((event) => [event.id, event]));
+  const agenda: AgendaDay[] = agendaRaw.map((entry) => ({
+    ...entry,
+    open: entry.open.map((event) => agendaPhoned.get(event.id) ?? event),
+    done: entry.done.map((event) => agendaPhoned.get(event.id) ?? event),
+  }));
+
+  // Real tap-to-call: the person's mobile, else their phone, for every
+  // entry with someone on it (one statement for the window).
+  const events = agendaShown ? [...agendaPhoned.values()] : await withPhones(organizationId, loaded);
+  const overdueRows = await withPhones(organizationId, logs ? logs.overdue : overdue);
 
   // A crew in two places at once on the same day, with times that
   // actually collide. A note, not a refusal — sending half a crew to a
@@ -103,17 +164,22 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       if (shown.has(covered)) bookedDays.add(covered);
     }
   }
+  const thingsOn = agendaShown ? agendaTotal : events.length;
 
   const filtering =
     Boolean(params.crew || params.type) ||
-    (filters.userIds?.length ?? 0) +
+    (scope === "mine" && urlUsers.length === 0 ? 0 : (filters.userIds?.length ?? 0)) +
       (filters.companyIds?.length ?? 0) +
       (filters.contactIds?.length ?? 0) +
       (filters.projectIds?.length ?? 0) >
       0;
 
   const subtitle =
-    layout === "log"
+    view === "agenda" && layout !== "log"
+      ? scope === "mine"
+        ? "Your overdue, today and the next 7 days"
+        : "Overdue, today and the next 7 days"
+      : layout === "log"
       ? "What has happened, and what is next"
       : view === "month"
         ? monthTitle(anchor)
@@ -136,15 +202,17 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
           ) : (
             <p className="faint num text-xs" data-testid="cal-count">
               {bookedDays.size} {bookedDays.size === 1 ? "day booked" : "days booked"} ·{" "}
-              {events.length} {events.length === 1 ? "thing on" : "things on"}
+              {thingsOn} {thingsOn === 1 ? "thing on" : "things on"}
               {filtering && " with the filters on"}
             </p>
           )
         }
       />
 
+      {bare && !rememberedView && view !== "agenda" && <PhoneAgenda />}
       <CalendarToolbar
         view={view}
+        scope={scope}
         layout={layout}
         anchor={anchor}
         focus={asked}
@@ -153,7 +221,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         filters={{
           crewId: params.crew ?? "",
           type: params.type ?? "",
-          userIds: filters.userIds ?? [],
+          userIds: urlUsers,
           companyIds: filters.companyIds ?? [],
           contactIds: filters.contactIds ?? [],
           projectIds: filters.projectIds ?? [],
@@ -177,9 +245,20 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         </Card>
       )}
 
-      {layout !== "log" &&
+      {view === "agenda" ? (
+        layout !== "log" && (
+          <AgendaView today={today} agenda={agenda} overdue={overdueRows} choices={choices} overdueCap={LOG_ROWS} />
+        )
+      ) : layout !== "log" &&
         (view === "month" ? (
-          <MonthView key={anchor} monthIso={anchor} today={today} events={events} choices={choices} />
+          <MonthView
+            key={anchor}
+            monthIso={anchor}
+            today={today}
+            events={events}
+            choices={choices}
+            showLogged={prefFlag(prefs, "calendar", "showLogged") ?? false}
+          />
         ) : view === "team" ? (
           <TeamView weekOf={anchor} today={today} events={events} choices={choices} crews={crews} />
         ) : (
@@ -207,4 +286,16 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       )}
     </div>
   );
+}
+
+// Each entry's person's number, for the tap-to-call buttons.
+async function withPhones(organizationId: string, events: EventView[]): Promise<EventView[]> {
+  const ids = [...new Set(events.map((event) => event.contactId).filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return events;
+  const people = await prisma.contact.findMany({
+    where: { organizationId, id: { in: ids } },
+    select: { id: true, mobile: true, phone: true },
+  });
+  const phoneOf = new Map(people.map((person) => [person.id, person.mobile || person.phone || null]));
+  return events.map((event) => ({ ...event, contactPhone: event.contactId ? (phoneOf.get(event.contactId) ?? null) : null }));
 }

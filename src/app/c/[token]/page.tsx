@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { ContractDocument } from "@/components/contract-document";
 import { IconDownload } from "@/components/icons";
 import { SignForm } from "./sign-form";
+import { contractTotalCents } from "@/lib/contracts";
+import { formatCents } from "@/lib/format";
 
 export const metadata: Metadata = {
   title: "Contract",
@@ -55,7 +57,7 @@ export default async function PublicContractPage({
   }
 
   return (
-    <div className="doc-page relative z-10 px-4 py-10 sm:px-6">
+    <div className={`doc-page relative z-10 px-4 py-10 sm:px-6 ${canSign ? "max-sm:pb-28" : ""}`}>
       {isOwnerPreview && (
         <div className="no-print mx-auto mb-4 max-w-3xl rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-xs">
           <span className="font-semibold">Draft preview.</span>{" "}
@@ -75,8 +77,22 @@ export default async function PublicContractPage({
       </div>
 
       {canSign && (
-        <div className="no-print mx-auto mt-5 max-w-3xl">
-          <SignForm token={token} contactName={contract.contact.name} />
+        <div id="sign" className="no-print mx-auto mt-5 max-w-3xl scroll-mt-6">
+          <SignForm token={token} contactName={contract.contact.name} sentAt={contract.sentAt?.toISOString() ?? ""} />
+        </div>
+      )}
+
+      {/* On a phone the sign box is a long scroll down (ux-gaps: 2,900px
+          into a 3,100px page), so a bar pinned to the foot takes them
+          there, with what they are agreeing to pay. */}
+      {canSign && (
+        <div
+          className="no-print fixed inset-x-0 bottom-0 z-40 border-t border-[var(--hairline-3)] bg-[var(--overlay)] px-4 pb-[calc(0.6rem+env(safe-area-inset-bottom,0px))] pt-2.5 sm:hidden"
+          data-testid="review-and-sign-bar"
+        >
+          <a href="#sign" className="btn btn-primary min-h-12 w-full">
+            Review and sign ↓{contract.lineItems.length > 0 ? ` · ${formatCents(contractTotalCents(contract.lineItems, contract.discountCents))}` : ""}
+          </a>
         </div>
       )}
 

@@ -665,7 +665,7 @@ let browser;
   await ownerPage.waitForFunction(
     () => document.querySelector('[data-testid="line-supplier"]')?.selectedOptions[0]?.textContent?.includes("on Software Connect Brands"),
   );
-  await ownerPage.getByRole("button", { name: "Save line items" }).click();
+  await ownerPage.getByTestId("quote-save").click();
   await ownerPage.getByText("Line items saved", { exact: true }).waitFor();
   const panelLocal = (await sql(`SELECT * FROM "Distributor" WHERE "organizationId"=$1 AND "platformOrganizationId"=$2`, [spirit.id, panelOrg.id])).rows[0];
   assert.ok(panelLocal?.companyId);
@@ -710,7 +710,7 @@ let browser;
   );
   const wireBefore = (await sql(`SELECT id FROM "Distributor" WHERE "organizationId"=$1 AND "platformOrganizationId"=$2`, [spirit.id, wireOrg.id])).rows[0];
   await ownerPage.goto(`${BASE}/dashboard/companies`);
-  await ownerPage.locator("[data-testid=merge-open]").click();
+  await cleanUp(ownerPage, "merge");
   const merge = ownerPage.locator("[data-testid=merge-dialog]");
   await merge.locator("[data-testid=merge-search]").fill("Test AT Wire");
   const mergeResults = merge.locator("[data-testid=merge-results] label");
@@ -816,3 +816,20 @@ let browser;
   if (browser) await browser.close().catch(() => {});
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

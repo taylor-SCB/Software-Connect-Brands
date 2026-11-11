@@ -99,7 +99,9 @@ export default async function ProductsPage({
               suppliers={suppliers}
               platformSuppliers={platformSuppliers}
             />
-            <Link href="/dashboard/products/ratesheets/new" className="btn btn-neon btn-sm">
+            {/* One filled button in the header, Add product; the ratesheet
+                actions beside it are plain (ux-gaps: three bright buttons). */}
+            <Link href="/dashboard/products/ratesheets/new" className="btn btn-ghost btn-sm" data-testid="create-ratesheet">
               <IconPlus size={14} />
               Create Ratesheet
             </Link>

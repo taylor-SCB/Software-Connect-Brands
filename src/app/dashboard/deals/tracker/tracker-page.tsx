@@ -12,6 +12,9 @@ import { IconClock, IconFileText, IconHardHat } from "@/components/icons";
 import { TrackerPicker } from "./tracker-picker";
 import { TrackerGrid } from "./tracker-grid";
 import { TrackerContracts } from "./tracker-contracts";
+import { DealJourney } from "@/components/deal-journey";
+import { loadDealJourney } from "@/lib/deal-journey-load";
+import { JourneyNext } from "@/app/dashboard/contracts/journey-next";
 
 export type TrackerSearchParams = Promise<{ dealId?: string; quoteId?: string; created?: string }>;
 
@@ -50,8 +53,9 @@ export async function DealTrackerPage({
   const standing = deal ? deal.contracts.filter((contract) => contractHoldsRows(contract.status)) : [];
   const awaiting = standing.filter((contract) => contract.status === "SENT").length;
   // What the customer still owes on this deal. Money-out purchase orders
-  // are what we owe a supplier, so they are not part of it.
-  const incoming = standing.filter((contract) => !contract.payable);
+  // are what we owe a supplier, so they are not part of it, and neither is
+  // a draft nobody has sent (UX gaps: Outstanding counted unsent drafts).
+  const incoming = standing.filter((contract) => !contract.payable && contract.status !== "DRAFT");
   const outstandingCents = incoming.reduce((sum, contract) => sum + contract.totalCents - contract.paidCents, 0);
   // The part of it they have already signed for — the same number their
   // company row shows as "Owes you".
@@ -59,9 +63,18 @@ export async function DealTrackerPage({
     .filter((contract) => contract.status === "SIGNED")
     .reduce((sum, contract) => sum + contract.totalCents - contract.paidCents, 0);
   const today = todayIso(organization.timeZone);
+  // The DealJourney strip (BDR redesign, Release 8): the quote picked here
+  // and every money-in contract on the deal.
+  const journey = deal
+    ? await loadDealJourney(organizationId, organization.timeZone, { dealId: deal.id, quoteId: quote?.id ?? null, page: "coordinator" })
+    : null;
+  // A first contract: nothing made from this deal yet (a cancelled one
+  // doesn't count), so the open rows start ticked onto Contract A.
+  const firstContract = standing.length === 0;
 
   return (
-    <div>
+    // Room at the foot of a phone for the strip's pinned Next button.
+    <div className={journey?.journey.next ? "max-sm:pb-24" : undefined}>
       <PageHeader
         eyebrow={eyebrow}
         title="Contract Coordinator"
@@ -114,28 +127,43 @@ export async function DealTrackerPage({
                       </>
                     ) : null}
                     <Link href={`/dashboard/contacts/${deal.contact.id}`} className="link">{deal.contact.name}</Link>
-                    {" "}
-                    <DealStageBadge stage={deal.stage} />
                   </p>
                 </div>
               </div>
-              <dl className="grid grid-cols-3 gap-6 text-center">
-                <div>
-                  <dt className="eyebrow">Open rows</dt>
-                  <dd className="num text-lg font-semibold">{openRows}</dd>
-                </div>
-                <div>
-                  <dt className="eyebrow">Awaiting signature</dt>
-                  <dd className="num text-lg font-semibold">{awaiting}</dd>
-                </div>
-                <div>
-                  <dt className="eyebrow">Outstanding</dt>
-                  <dd className="num text-lg font-semibold" data-testid="tracker-outstanding">{formatCents(outstandingCents)}</dd>
-                  <dd className="faint num text-xs" data-testid="tracker-signed-owed">Signed: {formatCents(signedOwedCents)}</dd>
-                </div>
-              </dl>
             </div>
           </Card>
+          {/* Outside the glass card: a card is the box a pinned (fixed)
+              Next button would be placed against on a phone. */}
+          {journey && (
+            <div>
+                <DealJourney
+                  journey={journey.journey}
+                  stickyNext
+                  next={<JourneyNext next={journey.journey.next} refs={journey.refs} page="coordinator" />}
+                  details={
+                    <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-xs">
+                      <div className="flex items-baseline gap-1.5">
+                        <dt className="faint">Deal</dt>
+                        <dd><DealStageBadge stage={deal.stage} /></dd>
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <dt className="faint">Open rows</dt>
+                        <dd className="num font-semibold" data-testid="tracker-open-rows">{openRows}</dd>
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <dt className="faint">Awaiting signature</dt>
+                        <dd className="num font-semibold">{awaiting}</dd>
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <dt className="faint">Outstanding</dt>
+                        <dd className="num font-semibold" data-testid="tracker-outstanding">{formatCents(outstandingCents)}</dd>
+                        <dd className="faint num" data-testid="tracker-signed-owed">Signed: {formatCents(signedOwedCents)}</dd>
+                      </div>
+                    </dl>
+                  }
+                />
+            </div>
+          )}
 
           {/* The job this deal is, or the way to make it one. Its own card,
               in plain words, so a handshake win is never hunted for. */}
@@ -243,6 +271,7 @@ export async function DealTrackerPage({
                   pickers={pickers}
                   today={today}
                   returnTo={basePath}
+                  firstContract={firstContract}
                 />
               </div>
             </Card>

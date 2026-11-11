@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
+import { newBatchId } from "@/lib/undo-log";
 import { askClaude } from "@/lib/ai";
 import { AI_DAILY_CAPS, notesForPrompt, opportunityMeetingNotes, ruleLeadLabels } from "@/lib/ai-assist";
 import { BUILT_IN_LEAD_LABELS, canonicalLeadLabel } from "@/lib/lead-labels";
@@ -141,7 +142,9 @@ const sentSchema = z.object({
 // "Log as sent": the person sent it themselves (we never send from the
 // site), so this is a one-to-one EMAIL or TEXT on the person — a real
 // touch, on the calendar, moving Not Actioned to Contacted like any other.
-export async function logFollowUpSent(input: z.input<typeof sentSchema>): Promise<{ error?: string; success?: string }> {
+// Written with outcome SENT (Nov 11, 2026): a try, not a connect, until
+// they reply. batchId is for "Saved · Undo" (undoLog).
+export async function logFollowUpSent(input: z.input<typeof sentSchema>): Promise<{ error?: string; success?: string; batchId?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = sentSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That couldn't be logged" };
@@ -151,8 +154,18 @@ export async function logFollowUpSent(input: z.input<typeof sentSchema>): Promis
   });
   if (!link) return { error: "That person isn't on this opportunity" };
   const occurredAt = new Date();
+  const batchId = newBatchId();
   const activity = await prisma.activity.create({
-    data: { organizationId, contactId: link.contact.id, userId, type: parsed.data.type, body: parsed.data.body, occurredAt },
+    data: {
+      organizationId,
+      contactId: link.contact.id,
+      userId,
+      type: parsed.data.type,
+      outcome: "SENT",
+      body: parsed.data.body,
+      batchId,
+      occurredAt,
+    },
     select: { id: true },
   });
   await recordActivityEvent({
@@ -166,12 +179,13 @@ export async function logFollowUpSent(input: z.input<typeof sentSchema>): Promis
     contactIds: [link.contact.id],
     companyId: link.contact.companyId,
     primaryName: link.contact.name,
+    batchId,
   });
-  await markContacted({ organizationId, userId }, { contactIds: [link.contact.id] }, occurredAt);
+  await markContacted({ organizationId, userId, batchId }, { contactIds: [link.contact.id] }, occurredAt);
   revalidatePath("/dashboard/deals");
   revalidatePath(`/dashboard/contacts/${link.contact.id}`);
   revalidatePath("/dashboard/calendar");
-  return { success: `Logged as a ${parsed.data.type === "EMAIL" ? "email" : "text"} to ${link.contact.name}` };
+  return { success: `Logged as a ${parsed.data.type === "EMAIL" ? "email" : "text"} to ${link.contact.name}`, batchId };
 }
 
 const meetingSchema = z.object({

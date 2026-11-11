@@ -6,14 +6,16 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { parseForm, type ActionState } from "@/lib/forms";
-import { START_STATUSES } from "@/lib/constants";
+import { isConnect, START_STATUSES } from "@/lib/constants";
 import { normalizeWebsite, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
 import { sameTags, withoutAuto, type AutoField } from "@/lib/enrich";
 import { moneyHold, moneyHoldMessage } from "@/lib/money";
-import { markContacted, markMeetingSet } from "@/lib/status";
+import { markConnected, markContacted, markMeetingSet } from "@/lib/status";
 import { readRepField } from "@/lib/reps";
+import { newBatchId } from "@/lib/undo-log";
+import { signClaim } from "@/lib/claim-token";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -212,7 +214,7 @@ export async function setCompanyFavorite(
 // activities made follow, as if they had been logged on them to begin
 // with — which is why the company link is cleared, the same shape as a
 // touch logged on a person.
-export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState> {
+export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState & { batchId?: string; claimToken?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = z
     .object({ activityIds: z.array(idSchema).min(1, "Nothing to claim").max(500), contactId: idSchema })
@@ -228,23 +230,33 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
 
   const activities = await prisma.activity.findMany({
     where: { id: { in: parsed.data.activityIds }, organizationId, contactId: null, companyId: { not: null } },
-    select: { id: true, companyId: true, type: true, occurredAt: true },
+    select: { id: true, companyId: true, type: true, occurredAt: true, outcome: true },
   });
   if (activities.length === 0) return { error: "Those activities were already claimed" };
   if (activities.some((row) => !at.has(row.companyId!))) return { error: `${contact.name} is not at this company` };
 
   const ids = activities.map((row) => row.id);
+  const claimStarted = Date.now();
   await prisma.$transaction([
     prisma.activity.updateMany({ where: { id: { in: ids }, organizationId }, data: { contactId: contact.id, companyId: null } }),
     prisma.calendarEvent.updateMany({ where: { activityId: { in: ids }, organizationId }, data: { contactId: contact.id } }),
   ]);
 
   // The ladder, as if logged on them: the earliest touch makes them
-  // Contacted, the earliest meeting sets Meeting Set.
-  const who = { organizationId, userId };
+  // Contacted (a no-show is not a touch), the earliest talk, reply or held
+  // meeting Connected (Nov 11, 2026; the outcome lives on the row, so it
+  // comes along), the earliest meeting sets Meeting Set. The status rows
+  // carry the claim's batchId, so "Claimed · Undo" can put them back
+  // (undoClaim in companies/[id]/claim-actions.ts).
+  const batchId = newBatchId();
+  const who = { organizationId, userId, batchId };
   const earliest = (rows: typeof activities) => rows.map((row) => row.occurredAt).sort((a, b) => a.getTime() - b.getTime())[0];
-  await markContacted(who, { contactIds: [contact.id], companyId: activities[0].companyId }, earliest(activities));
-  const meetings = activities.filter((row) => row.type === "MEETING");
+  const now = new Date();
+  const touches = activities.filter((row) => row.outcome !== "NO_SHOW");
+  if (touches.length) await markContacted(who, { contactIds: [contact.id], companyId: activities[0].companyId }, earliest(touches));
+  const connects = activities.filter((row) => isConnect(row, now) && row.outcome !== null);
+  if (connects.length) await markConnected(who, { contactIds: [contact.id] }, earliest(connects));
+  const meetings = activities.filter((row) => row.type === "MEETING" && row.outcome !== "NO_SHOW");
   if (meetings.length) await markMeetingSet(who, [contact.id], earliest(meetings), { activityId: meetings[0].id });
 
   for (const companyId of new Set(activities.map((row) => row.companyId!))) revalidatePath(`/dashboard/companies/${companyId}`);
@@ -252,7 +264,11 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/calendar");
-  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}` };
+  // What Undo may take back, signed so the browser can't widen it.
+  const from: Record<string, string[]> = {};
+  for (const row of activities) (from[row.companyId!] ??= []).push(row.id);
+  const claimToken = signClaim({ batchId, organizationId, userId, contactId: contact.id, from, at: claimStarted });
+  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}`, batchId, claimToken };
 }
 
 // The people stay; they just lose their company link (the database sets

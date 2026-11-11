@@ -5,7 +5,12 @@
  * the 20,000-row import step below, which is enough to time a batch),
  * then times the pages a user would actually open and fails if any of
  * them is slower than the budget. Run it before anything touching these
- * lists goes live.
+ * lists goes live. Since the final audit (Nov 11, 2026) My day, the Daily
+ * Rundown and the Agenda are timed again after the calendar seed, beside a
+ * done calendar entry for every seeded touch, and the plans are checked for
+ * the open-entries and Activity-by-rep indexes, and (fix review) for the
+ * running-entries index on endOn in the Rundown's On today and a calendar
+ * window.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it.
@@ -206,6 +211,16 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   await timed(page, "New contact form (pick list, no company dump)", `${BASE}/dashboard/contacts/new`, "#companyName");
   await timed(page, "Dashboard overview", `${BASE}/dashboard`, "main");
 
+  // BDR redesign, release 5 (Nov 11, 2026): My day ranks Up next from a
+  // rep's whole book (here the owner holds 60,000 of the 200,000, with
+  // 140,000 nobody owns for "Take 10"), Team today reads every rep's
+  // week and book health, and the calendar opens on the Agenda.
+  log("Sprint: My day's Up next for a rep with 60,000 people, Team today and the Agenda, inside budget");
+  await timed(page, "My day (Up next from a 60,000-person book)", `${BASE}/dashboard?view=myday`, "[data-testid=up-next-row]");
+  assert.match(await page.locator("[data-testid=unowned-count]").textContent(), /^1\d\d,?\d{3} new leads nobody owns|^\d+ new leads nobody owns/);
+  await timed(page, "Daily Rundown with Team today", `${BASE}/dashboard?report=daily`, "[data-testid=team-row]");
+  await timed(page, "Calendar Agenda", `${BASE}/dashboard/calendar?view=agenda`, "[data-testid=agenda]");
+
   log("time the Clean CRM data filters, the Labels screen and the duplicate finder");
   const ownerId = (await sql(`SELECT id FROM "User" WHERE email = $1`, [EMAIL])).rows[0].id;
   for (const [label, url, ready] of [
@@ -241,6 +256,157 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     console.log(`     ${seconds.toFixed(2)}s  job title choices → ${rows.length} rows`);
     assert.ok(rows.length > 0 && seconds <= 1, `job title choices took ${seconds.toFixed(2)}s`);
   }
+  log("Sprint: the lists' presets, sorts and scopes at 200,000 contacts, with 3,000 calendar entries late, ahead and this week");
+  await sql(
+    `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "contactId", "updatedAt")
+     SELECT 'lev' || lpad(g::text, 8, '0'), $1, 'Seeded', (ARRAY['Call','Meeting','Email'])[1 + g % 3],
+       current_date + ((g % 21) - 10), 'lp' || lpad((g * 61)::text, 8, '0'), now()
+     FROM generate_series(1, 3000) g ON CONFLICT DO NOTHING`,
+    [org],
+  );
+  await sql(`UPDATE "Contact" SET status = (ARRAY['NOT_ACTIONED','CONTACTED','CONNECTED','INTERESTED','MEETING_SET']::"ContactStatus"[])[1 + (right(id, 2)::int % 5)] WHERE "organizationId" = $1`, [org]);
+  await sql(`ANALYZE "CalendarEvent"; ANALYZE "Contact";`);
+  for (const [label, url, ready] of [
+    ["Contacts My call list (Mine)", "/dashboard/contacts?scope=mine&preset=call", "[data-testid=contact-row]"],
+    ["Contacts My call list (Everyone) — the health sort, late follow-ups first", "/dashboard/contacts?scope=all&preset=call", "[data-testid=contact-row]"],
+    ["Contacts My call list, page 50", "/dashboard/contacts?scope=all&preset=call&page=50", "[data-testid=contact-row]"],
+    ["Contacts Never touched", "/dashboard/contacts?scope=all&preset=never", "[data-testid=contact-row]"],
+    ["Contacts Talked — no meeting", "/dashboard/contacts?scope=all&preset=talked", "[data-testid=contact-row]"],
+    ["Contacts Meetings this week", "/dashboard/contacts?scope=all&preset=week", "h1"],
+    ["Contacts Unowned", "/dashboard/contacts?scope=unowned", "[data-testid=contact-row]"],
+    ["Contacts sorted Oldest touch first (late first)", "/dashboard/contacts?scope=all&sort=touch", "[data-testid=contact-row]"],
+    ["Contacts sorted Recently touched", "/dashboard/contacts?scope=all&sort=recent", "[data-testid=contact-row]"],
+    ["Contacts sorted Name", "/dashboard/contacts?scope=all&sort=name", "[data-testid=contact-row]"],
+    ["Contacts sorted Recently edited", "/dashboard/contacts?scope=all&sort=edited", "[data-testid=contact-row]"],
+    ["Contacts Not connected in 30 days", "/dashboard/contacts?scope=all&act=nc30", "[data-testid=contact-row]"],
+    ["Contacts Never connected", "/dashboard/contacts?scope=all&act=nconn", "[data-testid=contact-row]"],
+    ["Contacts with every extra column", "/dashboard/contacts?scope=all&per=100", "[data-testid=contact-row]"],
+    ["Companies My accounts", "/dashboard/companies?scope=mine&preset=accounts", "h1"],
+    ["Companies Going quiet", "/dashboard/companies?scope=all&preset=quiet", "[data-testid=company-row]"],
+    ["Companies Talked — no meeting", "/dashboard/companies?scope=all&preset=talked", "h1"],
+    ["Companies Never touched", "/dashboard/companies?scope=all&preset=never", "h1"],
+    ["Companies sorted Oldest touch first", "/dashboard/companies?scope=all&sort=touch", "[data-testid=company-row]"],
+    ["Companies sorted Name", "/dashboard/companies?scope=all&sort=name", "[data-testid=company-row]"],
+  ]) {
+    if (label === "Contacts with every extra column")
+      await sql(`UPDATE "User" SET "uiPrefs" = $2::jsonb WHERE id = $1`, [ownerId, JSON.stringify({ "contacts.columns": ["email", "phone2", "location", "industry", "notes", "marketing", "added", "addedBy", "status"] })]);
+    await timed(page, label, `${BASE}${url}`, ready);
+  }
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id = $1`, [ownerId]);
+  log("Sprint: Warmest first and the Pulse filter (the SQL twin of the health rules) at 200,000 contacts, inside the 2-second budget");
+  for (const [label, url] of [
+    ["Contacts sorted Warmest first (Everyone)", "/dashboard/contacts?scope=all&sort=pulse"],
+    ["Contacts Warmest first, page 2,000", "/dashboard/contacts?scope=all&sort=pulse&page=2000"],
+    ["Contacts Warmest first, 100 per page, page 600", "/dashboard/contacts?scope=all&sort=pulse&per=100&page=600"],
+    ["Contacts Warmest first (Mine)", "/dashboard/contacts?scope=mine&sort=pulse"],
+    ["Contacts Pulse = Cold", "/dashboard/contacts?scope=all&pulse=cold"],
+    ["Contacts Pulse = Warm + Cooling", "/dashboard/contacts?scope=all&pulse=warm&pulse=cooling"],
+    ["Contacts Pulse = Trying + stalled, Warmest first", "/dashboard/contacts?scope=all&pulse=trying&pulse=stalled&sort=pulse"],
+    ["Contacts Pulse = New + State TX", "/dashboard/contacts?scope=all&pulse=new&state=TX"],
+  ]) {
+    await timed(page, label, `${BASE}${url}`, "h1");
+  }
+  {
+    // Every pulse, counted through the list, adds up to the whole workspace:
+    // nobody is lost or doubled by the id lists at this size.
+    let sum = 0;
+    for (const key of ["won", "owes", "warm", "cooling", "cold", "trying", "stalled", "new", "closed"]) {
+      await page.goto(`${BASE}/dashboard/contacts?scope=all&pulse=${key}`);
+      const text = (await page.getByTestId("page-summary").textContent()).replace(/,/g, "");
+      const match = text.match(/of (\d+) contacts/);
+      sum += match ? Number(match[1]) : 0;
+    }
+    const all = (await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId" = $1`, [org])).rows[0].n;
+    console.log(`     every pulse adds up to ${sum} of ${all}`);
+    assert.equal(sum, all, "every person is under exactly one pulse");
+  }
+
+  log("audit fixes: My day, the Daily Rundown and the Agenda timed after the calendar seed, beside 100,000 done entries, through the open-entries index");
+  // Final audit (Nov 11, 2026). My day was timed above, before any calendar
+  // entry existed, so its due lookup was never measured. Every logged touch
+  // writes a calendar entry ticked done, so a real workspace's past is
+  // almost all done entries: one here per seeded touch. The overdue reads
+  // (My day's due_ev, the Rundown's Overdue, the Agenda's) walked all of
+  // them through ("organizationId","startOn") and threw them away; the
+  // partial index CalendarEvent_open_startOn_idx holds only the open ones.
+  // And a teammate who logged nothing makes Team today's sellingReps probe
+  // Activity for them (Activity_organizationId_userId_createdAt_idx).
+  {
+    await sql(
+      `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "contactId", "ownerId", "activityId", auto, "doneAt", "updatedAt")
+       SELECT 'lvd' || substr(a.id, 3), a."organizationId",
+         CASE a.type WHEN 'PHONE_CALL' THEN 'Call' WHEN 'EMAIL' THEN 'Email' WHEN 'TEXT' THEN 'Text' ELSE 'Meeting' END || ' · seeded',
+         CASE a.type WHEN 'PHONE_CALL' THEN 'Call' WHEN 'EMAIL' THEN 'Email' WHEN 'TEXT' THEN 'Text' ELSE 'Meeting' END,
+         a."occurredAt"::date, a."contactId", a."userId", a.id, true, a."occurredAt", now()
+       FROM "Activity" a WHERE a."organizationId" = $1 AND a.id LIKE 'la%' AND a.marketing = false
+       ON CONFLICT DO NOTHING`,
+      [org],
+    );
+    const quietMate = "usr_load_quiet_mate";
+    await sql(`DELETE FROM "User" WHERE id = $1`, [quietMate]);
+    await sql(
+      `INSERT INTO "User" (id, name, email, "passwordHash", role, "organizationId") SELECT $1, 'Quinn Quiet', 'test-load-quiet@example.com', "passwordHash", 'MEMBER', $2 FROM "User" WHERE id = $3`,
+      [quietMate, org, ownerId],
+    );
+    await sql(`ANALYZE "CalendarEvent"; ANALYZE "Activity";`);
+    const done = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId" = $1 AND "doneAt" IS NOT NULL`, [org])).rows[0].n;
+    console.log(`     ${done.toLocaleString("en-US")} done calendar entries behind the 3,000 open ones`);
+    assert.ok(done >= CONTACTS / 2 - 1, "a done entry for every seeded touch");
+
+    // The plans name the new indexes (EXPLAIN, the statements as the app sends them).
+    const overdueTypes = ["Call", "Meeting", "Email", "Text", "Quote due", "Quote follow up", "Contract follow up"];
+    const planOf = async (text, params) => JSON.stringify((await sql(`EXPLAIN (FORMAT JSON) ${text}`, params)).rows[0]["QUERY PLAN"]);
+    const overduePlan = await planOf(
+      `SELECT id FROM "CalendarEvent" WHERE "organizationId" = '${org}' AND "doneAt" IS NULL AND type IN (${overdueTypes.map((type) => `'${type}'`).join(",")})
+         AND "startOn" < current_date AND ("endOn" IS NULL OR "endOn" < current_date) ORDER BY "startOn" ASC, "startTime" ASC LIMIT 60`,
+    );
+    assert.match(overduePlan, /CalendarEvent_open_startOn_idx/, `the Rundown's and the Agenda's Overdue read the open entries only: ${overduePlan.slice(0, 300)}`);
+    const sellingPlan = await planOf(
+      `SELECT 1 FROM "Activity" a WHERE a."organizationId" = '${org}' AND a."userId" = '${quietMate}' AND a.marketing = false AND a."createdAt" >= now() - interval '30 days' LIMIT 1`,
+    );
+    assert.match(sellingPlan, /Activity_organizationId_userId_createdAt_idx/, `sellingReps' probe for a teammate with nothing logged: ${sellingPlan.slice(0, 300)}`);
+    // Fix review (Nov 11, 2026): the reads that take done entries too — the
+    // Rundown's On today count and Done today list, and every calendar
+    // window — have an arm for an entry started before and still running
+    // (endOn), which no index covered, so they read (organizationId,
+    // startOn) from the start of history. With CalendarEvent_runs_endOn_idx
+    // both arms are index reads; neither plan scans the whole range.
+    const day = (offset) => `'${new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10)}'::timestamp`;
+    const onTodayPlan = await planOf(
+      `SELECT count(*) FROM "CalendarEvent" WHERE "organizationId" = '${org}' AND "startOn" <= ${day(0)}
+         AND (("endOn" IS NULL AND "startOn" = ${day(0)}) OR "endOn" >= ${day(0)})`,
+    );
+    assert.match(onTodayPlan, /CalendarEvent_runs_endOn_idx/, `the Rundown's On today reads running entries by their end: ${onTodayPlan.slice(0, 400)}`);
+    assert.doesNotMatch(onTodayPlan, /Seq Scan/, "and never the whole table");
+    const windowPlan = await planOf(
+      `SELECT id FROM "CalendarEvent" WHERE "organizationId" = '${org}'
+         AND (("startOn" >= ${day(-3)} AND "startOn" <= ${day(3)}) OR ("startOn" < ${day(-3)} AND "endOn" >= ${day(-3)}))
+       ORDER BY "startOn" ASC, "startTime" ASC`,
+    );
+    assert.match(windowPlan, /CalendarEvent_runs_endOn_idx/, `a calendar window's "still running" arm reads by end: ${windowPlan.slice(0, 400)}`);
+    assert.doesNotMatch(windowPlan, /Seq Scan/, "and never the whole table");
+
+    await timed(page, "audit fixes: My day after the calendar seed (due follow-ups from 3,000 open entries among 100,000 done)", `${BASE}/dashboard?view=myday`, "[data-testid=up-next-row]");
+    assert.ok((await page.locator("[data-testid=up-next-row][data-category=late]").count()) > 0, "Up next has the seed's late follow-ups: the due lookup ran on real entries");
+    await timed(page, "audit fixes: Daily Rundown with Team today after the calendar seed (a teammate with nothing logged)", `${BASE}/dashboard?report=daily`, "[data-testid=team-row]");
+    const overdueSql = (
+      await sql(
+        `SELECT count(*)::int AS n FROM "CalendarEvent" e JOIN "Organization" o ON o.id = e."organizationId"
+          WHERE e."organizationId" = $1 AND e."doneAt" IS NULL AND e.type = ANY($2)
+            AND e."startOn" < (now() AT TIME ZONE o."timeZone")::date AND (e."endOn" IS NULL OR e."endOn" < (now() AT TIME ZONE o."timeZone")::date)`,
+        [org, overdueTypes],
+      )
+    ).rows[0].n;
+    assert.ok(overdueSql > 60, `the seed has more overdue than one screen (${overdueSql})`);
+    assert.match((await page.locator("[data-testid=rundown-overdue] h3").textContent()).replace(/,/g, ""), new RegExp(`Overdue follow-ups · ${overdueSql}\\b`));
+    assert.equal(await page.locator("[data-testid=team-row]").count(), 1, "Quinn, who owns nothing and logged nothing, isn't a selling rep");
+    await timed(page, "audit fixes: Calendar Agenda after the calendar seed (its Overdue alone, not the whole log)", `${BASE}/dashboard/calendar?view=agenda&scope=team`, "[data-testid=agenda-overdue]");
+    assert.equal(await page.locator("[data-testid=agenda-overdue] [data-testid=agenda-row]").count(), 60, "the Overdue column's 60, oldest first");
+    await page.locator("[data-testid=agenda-overdue-more]").waitFor();
+    await sql(`DELETE FROM "User" WHERE id = $1`, [quietMate]);
+  }
+  await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND (id LIKE 'lev%' OR id LIKE 'lvd%')`, [org]);
+
   log("bulk assign the first 1,000 of every Unassigned contact in one go");
   await page.goto(`${BASE}/dashboard/contacts?rep=none`);
   await page.getByTestId("page-check").check();
@@ -251,6 +417,63 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   const assignSeconds = (Date.now() - assignStart) / 1000;
   console.log(`     ${assignSeconds.toFixed(2)}s  assign 1,000 of all Unassigned`);
   assert.ok(assignSeconds <= BUDGET_S * 2, `bulk assign took ${assignSeconds.toFixed(2)}s`);
+
+  // BDR redesign (Nov 11, 2026): lastConnectAt rides the same statement
+  // triggers as lastTouchAt. Outcomes written in bulk, a connect dated
+  // ahead coming due, and the "not connected in 30 days" range all stay
+  // inside budget at this size, and the rows agree with Activity.
+  log("Sprint: lastConnectAt at 200,000 — 20,000 calls marked Talked in one UPDATE keep both dates, inside budget");
+  const bulkStart = Date.now();
+  await sql(
+    `UPDATE "Activity" SET outcome = 'TALKED'
+      WHERE id IN (SELECT id FROM "Activity" WHERE "organizationId" = $1 AND type = 'PHONE_CALL' AND marketing = false ORDER BY id LIMIT 20000)`,
+    [org],
+  );
+  const bulkSeconds = (Date.now() - bulkStart) / 1000;
+  console.log(`     ${bulkSeconds.toFixed(2)}s  20,000 outcomes written, both dates recomputed`);
+  assert.ok(bulkSeconds <= BUDGET_S * 5, `the bulk outcome update took ${bulkSeconds.toFixed(2)}s`);
+  const agree = (
+    await sql(
+      `SELECT (SELECT count(*) FROM "Contact" WHERE "organizationId" = $1 AND "lastConnectAt" IS NOT NULL)::int AS rows,
+              (SELECT count(DISTINCT "contactId") FROM "Activity" WHERE "organizationId" = $1 AND marketing = false AND "occurredAt" <= now()
+                  AND (outcome IN ('TALKED','REPLIED','HELD') OR (type = 'MEETING' AND outcome IS NULL)))::int AS truth,
+              (SELECT count(*) FROM "Company" WHERE "organizationId" = $1 AND "lastConnectAt" IS NOT NULL)::int AS companies,
+              (SELECT count(DISTINCT c."companyId") FROM "Contact" c WHERE c."organizationId" = $1 AND c."lastConnectAt" IS NOT NULL AND c."companyId" IS NOT NULL)::int AS companyTruth,
+              (SELECT count(*) FROM "Contact" c WHERE c."organizationId" = $1 AND c."lastConnectAt" IS NOT NULL AND c."lastConnectAt" > c."lastTouchAt")::int AS ahead`,
+      [org],
+    )
+  ).rows[0];
+  assert.equal(agree.rows, agree.truth, "every connected person has the date, and nobody else");
+  assert.equal(agree.companies, agree.companytruth, "and every company with a connected person");
+  assert.equal(agree.ahead, 0, "a connect is never later than the last touch");
+  assert.ok(agree.rows >= 19000, `${agree.rows} people connected`);
+
+  log("Sprint: a talk dated ahead comes due through crm_touch_due, and the not-connected-in-30-days range answers fast");
+  await sql(
+    `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, outcome, "occurredAt", "createdAt")
+     SELECT 'lt' || lpad(g::text, 8, '0'), $1, 'lp' || lpad((g * 2 + 1)::text, 8, '0'), $2, 'PHONE_CALL', 'Talk for later', 'TALKED',
+            now() + interval '1 second', now()
+       FROM generate_series(1, 2000) g`,
+    [org, owner],
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const dueStart = Date.now();
+  await sql(`SELECT crm_touch_due($1)`, [org]);
+  const dueSeconds = (Date.now() - dueStart) / 1000;
+  const due = (await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId" = $1 AND id IN (SELECT "contactId" FROM "Activity" WHERE id LIKE 'lt%') AND "lastConnectAt" IS NOT NULL`, [org])).rows[0].n;
+  console.log(`     ${dueSeconds.toFixed(2)}s  crm_touch_due brought ${due} talks on`);
+  assert.equal(due, 2000);
+  assert.ok(dueSeconds <= BUDGET_S, `crm_touch_due took ${dueSeconds.toFixed(2)}s`);
+  const rangeStart = Date.now();
+  const quiet = (
+    await sql(
+      `SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId" = $1 AND ("lastConnectAt" IS NULL OR "lastConnectAt" < now() - interval '30 days')`,
+      [org],
+    )
+  ).rows[0].n;
+  const rangeSeconds = (Date.now() - rangeStart) / 1000;
+  console.log(`     ${rangeSeconds.toFixed(2)}s  ${quiet.toLocaleString()} not connected in 30 days`);
+  assert.ok(rangeSeconds <= 1, `the not-connected range took ${rangeSeconds.toFixed(2)}s`);
 
   log("type-to-search answers fast");
   for (const [label, url] of [
@@ -280,7 +503,7 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   const csvPath = path.join(OUT, "load-import.csv");
   fs.writeFileSync(csvPath, lines.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   const readStart = Date.now();
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-summary").waitFor({ timeout: 120000 });
@@ -308,3 +531,9 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// Import CSV sits under "Clean up" since Nov 11, 2026.
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

@@ -14,11 +14,15 @@ export function NarrativeCard({
   source,
   pending,
   choice,
+  fold = false,
 }: {
   body: string;
   source: "CLAUDE" | "RULES";
   pending: boolean;
   choice: { report: string; period: string; rep: string; by: string };
+  // The Daily Rundown (BDR redesign, Round 2): one headline sentence, the
+  // rest behind "Read more". The words are all still on the page.
+  fold?: boolean;
 }) {
   const [text, setText] = useState(body);
   const [from, setFrom] = useState(source);
@@ -68,11 +72,34 @@ export function NarrativeCard({
         </div>
       </div>
       <div className={`space-y-2 text-[0.92rem] leading-relaxed ${waiting || writing ? "opacity-70" : ""}`} data-testid="report-narrative-body">
-        {text.split(/\n{2,}/).map((paragraph, index) => (
-          <p key={index}>{paragraph}</p>
-        ))}
+        {fold ? <Folded text={text} /> : text.split(/\n{2,}/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}
       </div>
       {error && <p className="mt-2 text-xs text-[var(--danger)]">{error}</p>}
     </section>
+  );
+}
+
+// The first sentence, then the rest behind "Read more".
+function Folded({ text }: { text: string }) {
+  const trimmed = text.trim();
+  const match = /^[\s\S]*?[.!?](?=\s|$)/.exec(trimmed);
+  const head = match ? match[0] : trimmed;
+  const rest = trimmed.slice(head.length).trim();
+  return (
+    <>
+      <p className="font-medium" data-testid="report-narrative-headline">
+        {head}
+      </p>
+      {rest && (
+        <details data-testid="report-narrative-more">
+          <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">Read more</summary>
+          <div className="mt-2 space-y-2">
+            {rest.split(/\n{2,}/).map((paragraph, index) => (
+              <p key={index}>{paragraph}</p>
+            ))}
+          </div>
+        </details>
+      )}
+    </>
   );
 }

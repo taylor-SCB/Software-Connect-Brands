@@ -98,7 +98,7 @@ function backLink(page) {
 
   log("Companies is in the sidebar and starts empty");
   await page.locator("aside").getByRole("link", { name: "Companies" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   await page.getByText("No companies yet").waitFor();
 
   log("create a contact, typing a brand-new company into the picker, with title / birthday / city / state");
@@ -118,22 +118,32 @@ function backLink(page) {
   const dannyUrl = page.url();
   await page.getByRole("heading", { name: "Danny Ortiz" }).waitFor();
   assert.ok(await page.getByText("Owner").first().isVisible(), "title under the name");
-  const details = page.locator("dl").first();
-  assert.ok(await details.getByRole("link", { name: "Spirit Communications" }).isVisible(), "company is a link in Details");
+  // Details is the Reach card with "More details", and the Activity
+  // overview's tiles sit behind "Show counts" (BDR redesign, Nov 11, 2026).
+  const reach = page.locator("[data-testid=reach]");
+  assert.ok(await reach.getByRole("link", { name: "Spirit Communications" }).isVisible(), "company is a link in Reach");
+  await reach.locator("[data-testid=more-details]").click();
+  const details = reach.locator("[data-testid=more-details-list]");
   assert.ok(await details.getByText("Mar 9, 1984").isVisible(), "birthday shown");
   const labels = await details.locator("dt").allTextContents();
   assert.deepEqual(labels.slice(-2), ["City", "State"], "city and state are the last two lines of Details");
-  assert.ok(await page.getByText("Activity overview").isVisible(), "overview box present");
+  await page.locator("[data-testid=show-counts]").click();
+  assert.ok(await page.locator("[data-testid=activity-overview]").isVisible(), "overview box present behind Show counts");
   assert.ok(await page.getByText("Never").isVisible(), "no touches yet");
   await shot(page, "02-contact-page");
   const dannyId = dannyUrl.split("/").pop();
   const me = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
 
-  log("audit fixes (UX review): + Event in the narrow Coming up column fits its width and starts on Meeting");
+  log("audit fixes (UX review): + Event in the narrow Coming up column fits its width and starts on a sales type");
   await page.locator("[data-testid=upcoming-add-event]").click();
   const upcomingForm = page.locator("[data-testid=upcoming-card] [data-testid=event-form]");
   await upcomingForm.waitFor();
-  assert.equal(await upcomingForm.locator("[data-testid=event-type]").inputValue(), "Meeting", "a meeting is what gets booked from a person's page, not an Install");
+  // Sprint (round 2): a lead nobody has reached yet starts on Call (the
+  // meter's next step); Meeting once they have been reached. Never Install.
+  assert.equal(await upcomingForm.locator("[data-testid=event-type]").inputValue(), "Call", "an untouched lead's + Event starts on Call, not an Install");
+  const typeOrder = await upcomingForm.locator("[data-testid=event-type] option").allTextContents();
+  assert.deepEqual(typeOrder.slice(0, 4), ["Call", "Meeting", "Email", "Text"], `sales types first (${typeOrder.slice(0, 6)})`);
+  assert.ok(typeOrder.indexOf("Install") > typeOrder.indexOf("Contract closed"), "Install comes after the sales types");
   await upcomingForm.locator("[data-testid=event-timed]").check();
   const narrow = await upcomingForm.evaluate((form) => ({
     width: form.getBoundingClientRect().width,
@@ -149,26 +159,30 @@ function backLink(page) {
   }
   await shot(page, "02b-contact-plus-event");
   await page.locator("[data-testid=upcoming-add-event]").click();
-  // The calendar's own form is wide and keeps its columns.
+  // The calendar's own form keeps its columns where it has the room. Since
+  // the BDR redesign (Nov 11, 2026) it opens in the "+ New" sheet (about
+  // 470px wide on a desktop), with who / where / job under More.
   await page.goto(`${BASE}/dashboard/calendar`);
   await page.locator("[data-testid=cal-add-event]").click();
-  const wideForm = page.locator("[data-testid=event-form]").first();
+  const wideForm = page.locator("[data-testid=cal-new-sheet] [data-testid=event-form]");
   await wideForm.locator("[data-testid=event-timed]").check();
+  await wideForm.locator("[data-testid=event-more]").click();
   const tops = await wideForm.evaluate((form) =>
     ["event-title", "event-type", "event-start-on", "event-start-time", "event-end-time", "event-owner", "event-crew", "event-project"].map((id) =>
       Math.round(form.querySelector(`[data-testid=${id}]`).getBoundingClientRect().top),
     ),
   );
   assert.equal(tops[0], tops[1], "title and kind side by side");
-  assert.ok(tops[2] === tops[3] && tops[3] === tops[4], `day and both times on one row (${tops})`);
-  assert.ok(tops[5] === tops[6] && tops[6] === tops[7], `whose calendar, who is going and which job on one row (${tops})`);
+  assert.ok(tops[2] === tops[3], `day and start time on one row (${tops})`);
+  assert.ok(tops[5] === tops[6], `whose calendar and who is going on one row (${tops})`);
   assert.notEqual(await wideForm.locator("[data-testid=event-type]").inputValue(), "", "the calendar's form still starts on the list's first type");
 
   log("Companies list has the company with 1 person; company page lists Danny");
   await page.goto(`${BASE}/dashboard/companies`);
   const spiritRow = page.locator("tr", { hasText: "Spirit Communications" });
   await spiritRow.waitFor();
-  assert.ok(await spiritRow.getByRole("link", { name: "1" }).isVisible(), "people count 1");
+  // The people count is the Reached column's "of 1" since Nov 11, 2026.
+  assert.equal((await spiritRow.getByTestId("reached").textContent()).trim(), "0 of 1 talked to", "people count 1");
   await spiritRow.getByRole("link", { name: "Spirit Communications" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
   const spiritUrl = page.url();
@@ -179,7 +193,9 @@ function backLink(page) {
 
   log("+ Add person from the company page pre-fills the company; picker says Existing");
   // Since Sept 30, 2026 Add person opens a search of existing people
-  // first; a brand-new person is the link at its foot.
+  // first; a brand-new person is the link at its foot. Since Nov 11, 2026
+  // it sits under the header's ⋯ More.
+  await page.locator("[data-testid=company-more]").click();
   await page.locator("[data-testid=add-person]").click();
   await page.locator("[data-testid=add-person-new]").click();
   await page.waitForURL(/\/dashboard\/contacts\/new\?companyId=/);
@@ -215,6 +231,8 @@ function backLink(page) {
 
   log("new quote from a contact: customer preselected, deal typed as new via + Add new deal");
   await page.goto(dannyUrl);
+  // Under ⋯ More since the BDR redesign (Nov 11, 2026).
+  await page.locator("[data-testid=record-more]").click();
   await page.getByRole("link", { name: "New quote" }).first().click();
   await page.waitForURL(/\/dashboard\/quotes\/new\?contactId=/);
   assert.ok((await page.locator("#contactId option:checked").textContent()).includes("Danny Ortiz"));
@@ -233,12 +251,14 @@ function backLink(page) {
   await shot(page, "05-quote-back-to-contact");
   await backLink(page).click();
   await page.waitForURL(dannyUrl);
-  const dealsCard = page.locator("div.card", { hasText: "a deal is one job" });
+  // Deals, Quotes and Contracts are one Paperwork card since the BDR
+  // redesign (Nov 11, 2026).
+  const dealsCard = page.locator("[data-testid=paperwork-deals]");
   assert.ok(await dealsCard.getByText("Fiber install").first().isVisible(), "deal appears on the contact");
   assert.ok(await dealsCard.getByText("1 quote").isVisible());
   // Since Sept 30, 2026 a deal before its quote goes out reads "Quote not sent".
   assert.ok(await dealsCard.getByText("Quote not sent").isVisible(), "new deal starts before the pipeline");
-  const quotesCard = page.locator("div.card", { hasText: "QUO-1000" });
+  const quotesCard = page.locator("[data-testid=paperwork-quotes]");
   assert.ok(await quotesCard.getByText("QUO-1000 · Fiber install").isVisible(), "quote row names its deal");
 
   log("second quote on the same deal from the deal row; the picker shows the existing deal");
@@ -279,34 +299,45 @@ function backLink(page) {
     [quoteA.rows[0].id],
   );
   await page.goto(quoteAUrl);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByText("Customer link").waitFor();
   await page.goto(`${BASE}/dashboard/deals`);
   // The Pipeline starts at Meeting Set (Sept 30, 2026).
   const columns = page.locator("[data-testid^=pipeline-column-] h2");
   assert.deepEqual(await columns.allTextContents(), ["Meeting Set", "Meeting Completed", "Quote Sent", "Contract Sent", "Signed / Won", "Lost"]);
-  const quoteSentCol = page.locator("div.card", { has: page.locator("h2", { hasText: "Quote Sent" }) }).first();
+  const quoteSentCol = page.getByTestId("pipeline-column-QUOTE_SENT");
   assert.ok(await quoteSentCol.getByText("Fiber install").first().isVisible(), "deal moved to Quote Sent");
   assert.ok(await quoteSentCol.getByText("$1,250.00").first().isVisible(), "value read from the sent quote");
-  assert.ok(await quoteSentCol.getByText("QUO-1000").isVisible(), "quotes listed on the deal card");
-  // Oct 27, 2026: the tile's stage menu; a deal can't go back to a meeting column.
-  await quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" }).locator("[data-testid=tile-move]").click();
-  assert.equal(await page.locator("[data-testid=tile-move-menu] button:not([disabled])").count(), 4);
+  // Oct 27, 2026: the tile's stage menu; a deal can't go back to a meeting
+  // column. Since the BDR redesign (Nov 11, 2026) Move to… sits under the
+  // tile's ⋯ and the quotes are listed in its panel.
+  await quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" }).locator("[data-testid=tile-more]").click();
+  assert.equal(await page.locator("[data-testid=tile-move-menu] button:not([disabled])").count(), 3, "Contract Sent, Won, Lost (Quote Sent is where it is)");
   await page.keyboard.press("Escape");
   assert.ok(await page.getByText("$1,250.00 in quotes and contracts out").isVisible());
   await shot(page, "06-pipeline");
 
   log("Back from a contact reached via the pipeline says Pipeline");
-  // Oct 27, 2026: the tile lists its people by name, their company beside them.
+  // Oct 27, 2026: the tile lists its people by name, their company beside
+  // them; since Nov 11, 2026 it is titled by the person, and the panel it
+  // opens lists the quotes and links each person.
   const fiberTile = quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" });
   assert.ok(await fiberTile.getByText("Spirit Communications").isVisible());
-  await fiberTile.getByRole("link", { name: "Danny Ortiz" }).click();
+  assert.equal((await fiberTile.getByTestId("tile-person").innerText()).trim(), "Danny Ortiz");
+  await fiberTile.getByTestId("tile-open").click();
+  const fiberPanel = page.getByTestId("opportunity-panel");
+  await fiberPanel.getByText("QUO-1000").waitFor(); // quotes listed in the deal's panel
+  await fiberPanel.getByRole("link", { name: "Danny Ortiz", exact: true }).click();
   await page.waitForURL(dannyUrl);
   await backLink(page).getByText("Pipeline").waitFor();
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "open pipeline on the contact reads the quote");
 
   log("a note with the Birthday label, logged on Danny and Sara at once");
-  const noteForm = page.locator("form", { has: page.locator("textarea[name=body]") }).nth(1);
+  // The Notes card's form: the activity log is the How did it go? sheet
+  // behind "What happened with Danny?" since Nov 11, 2026.
+  const noteForm = page.locator("#notes form", { has: page.locator("textarea[name=body]") });
   await noteForm.locator("textarea[name=body]").fill("Birthday is March 9 — likes bourbon");
   await noteForm.getByRole("button", { name: "Birthday" }).click();
   await noteForm.getByRole("button", { name: "+ Include multiple contacts" }).click();
@@ -338,17 +369,25 @@ function backLink(page) {
   await shot(page, "08-notes-personal");
 
   log("log a call on Danny and Resi at once; overview shows Calls 1 and Last touch Today");
-  const activityForm = page.locator("form", { has: page.locator("textarea[name=body]") }).nth(0);
+  // The log is the How did it go? sheet behind "What happened with Danny?";
+  // the overview's tiles open from Show counts (BDR redesign, Nov 11, 2026).
+  await page.locator("[data-testid=log-bar]").click();
+  const activityForm = page.locator("[data-testid=log-activity-form]");
   await activityForm.locator("textarea[name=body]").fill("Walked the site, quote by Friday");
-  await activityForm.getByRole("button", { name: "+ Include multiple contacts" }).click();
+  await activityForm.getByRole("button", { name: "+ others" }).click();
   await page.getByRole("dialog").getByPlaceholder("Search contacts…").fill("resi");
   await page.getByRole("dialog").locator("input[type=checkbox]").check();
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
   await activityForm.getByRole("button", { name: "Log phone call" }).click();
   await page.locator("#activity").getByText("Walked the site").waitFor();
-  const overview = page.locator("div.card", { hasText: "Activity overview" });
+  // The sheet moves on to the next step; closing it skips that.
+  await page.keyboard.press("Escape");
+  await activityForm.waitFor({ state: "detached" });
+  await page.locator("[data-testid=show-counts]").click();
+  const overview = page.locator("[data-testid=activity-overview]");
   assert.ok(await overview.getByText("Today").isVisible());
-  assert.ok(await overview.getByText("1 touch logged").isVisible());
+  assert.equal(await overview.locator("[data-testid=activity-tile][data-label=Calls]").getAttribute("data-value"), "1", "1 touch logged");
+  assert.equal(await page.locator("[data-testid=history-count-all]").textContent(), "1");
   await shot(page, "09-overview");
 
   log("audit fixes (UX review): Last touch counts days on the workspace's calendar: 11:59pm last night is Yesterday, eight dates back warns");
@@ -363,12 +402,14 @@ function backLink(page) {
        ('act_cc_eight',$1,'ctc_cc_eight',$2,'PHONE_CALL','Old call',${lateLastNight} - interval '7 days')`,
     [org, me],
   );
-  const lastTouchRow = page.locator("div.card", { hasText: "Activity overview" }).locator("dl > div", { hasText: "Last touch" });
+  const lastTouchRow = page.locator("[data-testid=activity-overview]").locator("dl > div", { hasText: "Last touch" });
   await page.goto(`${BASE}/dashboard/contacts/ctc_cc_late`);
+  await page.locator("[data-testid=show-counts]").click();
   const yesterdayWords = (await sql(`SELECT to_char((now() AT TIME ZONE 'Pacific/Honolulu') - interval '1 day', 'Mon FMDD, YYYY') AS d`)).rows[0].d;
   assert.equal((await lastTouchRow.locator("dd").innerText()).trim(), `Yesterday · ${yesterdayWords}`, "under 24 hours ago, but yesterday's date");
   assert.doesNotMatch((await lastTouchRow.locator("dt svg").getAttribute("class")) ?? "", /--warn/);
   await page.goto(`${BASE}/dashboard/contacts/ctc_cc_eight`);
+  await page.locator("[data-testid=show-counts]").click();
   assert.match(await lastTouchRow.locator("dd").innerText(), /^8 days ago · /, "under 8 × 24 hours ago, eight dates back");
   assert.match((await lastTouchRow.locator("dt svg").getAttribute("class")) ?? "", /--warn/, "the 8-day warning");
   await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);
@@ -388,7 +429,11 @@ function backLink(page) {
   await companyNotes.locator("textarea[name=body]").fill("Net-30 terms agreed for the whole account");
   await companyNotes.getByRole("button", { name: "Add note" }).click();
   await companyNotes.getByText("Net-30 terms").waitFor();
-  assert.ok(await page.getByText("$1,250.00").first().isVisible(), "company sees its people's pipeline");
+  // The pipeline total sits behind Show counts under the header's meter
+  // (BDR redesign, Nov 11, 2026), and the deal in the Paperwork card.
+  await page.locator("[data-testid=company-show-counts]").click();
+  assert.ok(await page.locator("[data-testid=company-counts]").getByText("$1,250.00").first().isVisible(), "company sees its people's pipeline");
+  assert.ok(await page.locator("[data-testid=company-paperwork]").getByText("$1,250.00").first().isVisible(), "and the deal in Paperwork");
   await shot(page, "10-company-page");
   const spiritId = spiritUrl.split("/").pop();
   const saraId = saraUrl.split("/").pop();
@@ -397,6 +442,8 @@ function backLink(page) {
   const coOverview = page.locator("div.card", { hasText: "Activity overview" });
   const tile = (label) => coOverview.locator("a", { hasText: label }).locator("span.num");
   const callsBefore = Number(await tile("Calls").innerText());
+  // Log a touch on the company page opens the How did it go? sheet (Nov 11, 2026).
+  await page.locator("[data-testid=company-log-toggle]").click();
   const coForm = page.locator("[data-testid=log-activity-form]");
   const coPicker = coForm.locator("[data-testid=company-people-picker]");
   await coPicker.locator("[data-testid=company-person-chip]", { hasText: "Danny Ortiz" }).click();
@@ -457,6 +504,8 @@ function backLink(page) {
   }));
   assert.ok(fit.scroll <= fit.client, `the page is ${fit.scroll}px on a ${fit.client}px phone`);
   assert.deepEqual(fit.past, [], "no card runs past the right edge");
+  // The not-linked line opens the list (Nov 11, 2026).
+  await phonePage.locator("[data-testid=not-linked-toggle]").tap();
   const claim = phonePage.locator("[data-testid=claim-one]").first();
   await claim.scrollIntoViewIfNeeded();
   const claimBox = await claim.boundingBox();
@@ -484,8 +533,16 @@ function backLink(page) {
   await page.check("[name=agree]");
   await page.getByRole("button", { name: "Sign contract" }).click();
   await page.getByRole("button", { name: "Sign contract" }).waitFor({ state: "detached" });
+  // The button reads "Signing…" while the save runs, so "Sign contract"
+  // goes the moment it is pressed; wait for the save, not the words
+  // (flaky once in the Nov 11, 2026 audit run: read mid-save).
+  await page.getByRole("button", { name: "Signing…" }).waitFor({ state: "detached" });
   await page.waitForLoadState("networkidle");
-  stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
+  for (let i = 0; i < 40; i += 1) {
+    stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
+    if (stage.rows[0].stage === "WON") break;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
   assert.equal(stage.rows[0].stage, "WON", "a signature wins the deal");
 
   log("a residential quote works with no company anywhere");
@@ -508,7 +565,7 @@ function backLink(page) {
   await page.getByText("already exists").waitFor();
   await page.goto(`${spiritUrl}/edit`);
   await page.getByRole("button", { name: "Delete company" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   await page.goto(dannyUrl);
   await page.getByRole("heading", { name: "Danny Ortiz" }).waitFor();
   assert.equal(await page.locator("dl").first().getByRole("link", { name: "Spirit Communications" }).count(), 0);
@@ -526,6 +583,54 @@ function backLink(page) {
     assert.ok(mona, `"${typed}" doesn't find Mona`);
     assert.equal(mona.phone, "(870) 555-0167", "her mobile stands in for the missing phone");
   }
+
+  log("Sprint (polish): Add contact asks the Name before the Company, and its hints say Contract Coordinator, never deal tracker");
+  await page.goto(`${BASE}/dashboard/contacts/new`);
+  const order = await page.evaluate(() => {
+    const name = document.querySelector("input[name=name]");
+    const company = document.querySelector("input[name=companyName]");
+    return name && company ? (name.compareDocumentPosition(company) & Node.DOCUMENT_POSITION_FOLLOWING ? "name first" : "company first") : "missing";
+  });
+  assert.equal(order, "name first");
+  assert.ok(await page.locator("input[name=name]").evaluate((el) => el.required), "the name is required");
+  const formText = await page.locator("main").textContent();
+  assert.doesNotMatch(formText, /deal tracker/i);
+  assert.match(formText, /Contract Coordinator/);
+  await page.goto(`${BASE}/dashboard/companies/new`);
+  assert.doesNotMatch(await page.locator("main").textContent(), /deal tracker/i);
+
+  log("Sprint (polish): a new person's Notes card says None yet, not 0 total; Find duplicates says 'an email'");
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('cc_no_notes',$1,'Nora Notes',now())`, [org]);
+  await page.goto(`${BASE}/dashboard/contacts/cc_no_notes`);
+  const emptyNotes = page.getByTestId("notes-card");
+  await emptyNotes.waitFor();
+  assert.doesNotMatch(await emptyNotes.textContent(), /0 total/);
+  assert.match(await emptyNotes.textContent(), /None yet/);
+  const sharedEmails = (await sql(
+    `SELECT count(*)::int AS n FROM (SELECT lower(email) FROM "Contact" WHERE "organizationId"=$1 AND email IS NOT NULL GROUP BY 1 HAVING count(*) > 1) d`,
+    [org],
+  )).rows[0].n;
+  assert.equal(sharedEmails, 0, "this workspace has no shared emails");
+  await page.goto(`${BASE}/dashboard/contacts/duplicates?by=email`);
+  assert.equal((await page.getByText(/^Nothing shares/).first().textContent()).trim(), "Nothing shares an email.");
+  await page.goto(`${BASE}/dashboard/contacts/duplicates?by=phone`);
+  const phoneEmpty = page.getByText(/^Nothing shares/);
+  if (await phoneEmpty.count()) assert.equal((await phoneEmpty.first().textContent()).trim(), "Nothing shares a phone.");
+
+  log("Sprint (polish): Settings tile descriptions show whole, and Products has one filled button in its header");
+  await page.goto(`${BASE}/dashboard/settings/general`);
+  const blurbs = await page.getByTestId("settings-tile-blurb").evaluateAll((els) => els.map((el) => ({ text: el.textContent, cut: el.scrollWidth > el.clientWidth + 0.5 || getComputedStyle(el).textOverflow === "ellipsis" })));
+  assert.equal(blurbs.length, 5);
+  for (const b of blurbs) assert.ok(!b.cut, `"${b.text}" is cut off`);
+  await page.goto(`${BASE}/dashboard/products`);
+  const header = page.locator("main header, main [data-testid=page-header]").first();
+  await page.getByTestId("create-ratesheet").waitFor();
+  const loud = await page.evaluate(() => {
+    const row = document.querySelector("[data-testid=create-ratesheet]").parentElement;
+    return [...row.querySelectorAll(".btn")].filter((b) => /btn-(primary|pink|neon)/.test(b.className)).map((b) => b.textContent.trim());
+  });
+  assert.deepEqual(loud, ["Add product"]);
+  void header;
 
   void quoteBUrl;
   void quoteCUrl;

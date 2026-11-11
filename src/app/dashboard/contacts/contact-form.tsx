@@ -66,18 +66,12 @@ export function ContactForm({
         currentUrl={defaults.imageUrl ?? null}
         fallback={(defaults.name ?? "?").charAt(0).toUpperCase()}
         shape="round"
-        hint="Shown on their page and on the deal tracker."
+        hint="Shown on their page and on the Contract Coordinator."
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <CompanyPicker
-          defaultName={defaults.companyName ?? ""}
-          defaultId={defaults.company?.id ?? null}
-          onChange={(picked, text) => {
-            setCompany(picked);
-            setTyped(text);
-          }}
-        />
+        {/* Name first: it is the one box that must be filled (ux-gaps,
+            Nov 11, 2026); the company after it. */}
         {defaults.id ? (
           <Field
             label="Contact name"
@@ -92,6 +86,14 @@ export function ContactForm({
             company={company ? { id: company.id, name: company.name } : null}
           />
         )}
+        <CompanyPicker
+          defaultName={defaults.companyName ?? ""}
+          defaultId={defaults.company?.id ?? null}
+          onChange={(picked, text) => {
+            setCompany(picked);
+            setTyped(text);
+          }}
+        />
         <IndustryPicker
           key={pickerKey}
           pickList={pickList}

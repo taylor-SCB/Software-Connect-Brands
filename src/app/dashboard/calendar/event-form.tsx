@@ -64,6 +64,7 @@ export function EventForm({
   choices,
   defaults,
   onDone,
+  quick = false,
 }: {
   event?: EventFormValues;
   choices: EventChoices;
@@ -71,13 +72,18 @@ export function EventForm({
   // job being looked at — so those fields come pre-filled.
   defaults?: { startOn?: string; projectId?: string; contactId?: string; companyId?: string; type?: string };
   onDone?: () => void;
+  // The calendar's "+ New" sheet (BDR redesign, Nov 11, 2026): Title,
+  // Type, Day and Time up front, everything else one tap away under More.
+  // The hidden fields still post with their defaults.
+  quick?: boolean;
 }) {
   const [state, action, pending] = useActionState(saveEvent, {});
+  const [more, setMore] = useState(!quick);
   const [type, setType] = useState(event?.type ?? defaults?.type ?? choices.eventTypes[0] ?? "");
   const [addingType, setAddingType] = useState(false);
   const [projectId, setProjectId] = useState(event?.projectId ?? defaults?.projectId ?? "");
   const [multiDay, setMultiDay] = useState(Boolean(event?.endOn));
-  const [timed, setTimed] = useState(Boolean(event?.startTime || event?.endTime));
+  const [timed, setTimed] = useState(quick || Boolean(event?.startTime || event?.endTime));
   const [attendees, setAttendees] = useState<string[]>(event?.attendeeIds ?? []);
   // Unique per rendered form, not per event: the calendar can have the
   // toolbar's new-event form and a day panel's open at once, and two
@@ -313,6 +319,13 @@ export function EventForm({
         </label>
       </div>
 
+      {quick && !more && (
+        <button type="button" onClick={() => setMore(true)} className="btn btn-ghost btn-sm pointer-coarse:min-h-11" data-testid="event-more">
+          More: who, where, job, notes
+        </button>
+      )}
+
+      <div hidden={!more} className="space-y-3" data-testid="event-more-fields">
       <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
         <div>
           <label className="label" htmlFor={id("ownerId")}>
@@ -504,6 +517,7 @@ export function EventForm({
           className="textarea"
           data-testid="event-notes"
         />
+      </div>
       </div>
 
       <FormError message={state.error} />

@@ -7,19 +7,69 @@ import { UNASSIGNED, phoneSearchDigits, searchTerms, type ListParams, type Prese
 import { getTimeZone } from "@/lib/organization";
 import { zonedMoment } from "@/lib/calendar-auto";
 import { NO_LEAD_LABEL } from "@/lib/lead-labels";
+import { OVERDUE_TYPES } from "@/lib/calendar-data";
+import { startOfWeek } from "@/lib/calendar";
+import { addDays } from "@/lib/payments";
+import { zonedMidnight } from "@/lib/reports/period";
+import { zoneDay, TALK_STATUSES } from "@/lib/health";
+import { effectiveSort, type ListSort } from "@/lib/list-params";
+import { Prisma as P } from "@/generated/prisma/client";
+import { loadPulseSets, pulseClause, pulseWhere, type PulseSets } from "@/lib/health-sql";
+import { PULSE_KEYS, type PulseKey } from "@/lib/list-params";
 
 // ---- Clean CRM data filters (Nov 10, 2026) ---------------------------
 // Shared by both lists. Each returns the clauses to AND in.
 
-const WINDOW_DAYS = { t7: 7, t30: 30, t90: 90, n7: 7, n30: 30, n90: 90 } as const;
+const WINDOW_DAYS: Record<string, number> = { t7: 7, t30: 30, t90: 90, n7: 7, n30: 30, n90: 90 };
+
+// A status that takes a conversation to reach (round 2): Connected and
+// every step from Interested on, Not interested included. Lost and
+// Archived can come from anywhere, so they say nothing either way.
+const TALK_IMPLIED = ["CONNECTED", "INTERESTED", "NOT_INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"] as const;
 
 // A touch: a call, text, email or meeting somebody logged. Marketing
 // sends are never a touch (Taylor, Nov 10, 2026). The latest one is kept
 // on the row (lastTouchAt, by database triggers; a company's counts its
 // people's), so these are indexed ranges rather than a search of Activity.
-function touchClause(act: ListParams["act"]): { lastTouchAt: { gte: Date } | { lt: Date } | null } | { OR: object[] } | null {
+function touchClause(act: ListParams["act"]): object | null {
   if (!act) return null;
   if (act === "never") return { lastTouchAt: null };
+  // Connected (BDR redesign, Nov 11, 2026): lastConnectAt, kept by the
+  // same triggers. Not connected in N days includes never connected.
+  // Round 2 (ux-gaps): a status that already means somebody talked —
+  // Connected, Interested, Not interested, Meeting Set or later — counts
+  // as a connect even with no talk logged (old records, a CSV import, a
+  // status set by hand). Its date is the latest move into a talk status
+  // (the health rules' stand-in for a talk); with no such move, and no
+  // talk logged, nobody knows when it was, so it is left out of the
+  // Not-connected windows rather than guessed. Read from StatusChange
+  // when the list is asked; nothing is stored or back-filled.
+  if (act === "nconn") {
+    return {
+      AND: [
+        { lastConnectAt: null },
+        { status: { notIn: [...TALK_IMPLIED] } },
+        { statusChanges: { none: { toStatus: { in: [...TALK_STATUSES] }, on: { lte: new Date() } } } },
+      ],
+    };
+  }
+  if (act === "nc7" || act === "nc30") {
+    const now = new Date();
+    const since = new Date(now.getTime() - (act === "nc7" ? 7 : 30) * 86_400_000);
+    return {
+      AND: [
+        { OR: [{ lastConnectAt: null }, { lastConnectAt: { lt: since } }] },
+        { statusChanges: { none: { toStatus: { in: [...TALK_STATUSES] }, on: { gte: since, lte: now } } } },
+        {
+          OR: [
+            { status: { notIn: [...TALK_IMPLIED] } },
+            { lastConnectAt: { not: null } },
+            { statusChanges: { some: { toStatus: { in: [...TALK_STATUSES] }, on: { lte: now } } } },
+          ],
+        },
+      ],
+    };
+  }
   const since = new Date(Date.now() - WINDOW_DAYS[act] * 86_400_000);
   if (act.startsWith("t")) return { lastTouchAt: { gte: since } };
   return { OR: [{ lastTouchAt: null }, { lastTouchAt: { lt: since } }] };
@@ -199,6 +249,9 @@ export async function companyWhere(organizationId: string, p: ListParams): Promi
   if (p.email) and.push(present("email", p.email));
   if (p.phone) and.push(present("phone", p.phone));
   if (p.labels.length) and.push({ contacts: { some: { opportunities: { some: opportunityLabel(p.labels) } } } });
+  const scope = scopeClause(p);
+  if (scope) and.push(scope);
+  and.push(...((await companyPresetClauses(organizationId, p)) as Prisma.CompanyWhereInput[]));
   return { AND: and };
 }
 
@@ -278,6 +331,13 @@ export async function contactWhere(
   if (p.mobile) and.push(present("mobile", p.mobile));
   if (p.email) and.push(present("email", p.email));
   if (p.labels.length) and.push({ opportunities: { some: opportunityLabel(p.labels) } });
+  if (p.pulses.length) {
+    const sets = await pulseSetsFor(organizationId, p);
+    and.push(pulseWhere(p.pulses, sets) as Prisma.ContactWhereInput);
+  }
+  const scope = scopeClause(p);
+  if (scope) and.push(scope);
+  and.push(...((await contactPresetClauses(organizationId, p)) as Prisma.ContactWhereInput[]));
   return { AND: and };
 }
 
@@ -313,4 +373,305 @@ export async function namesForCompanies(organizationId: string, ids: string[]) {
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
+}
+
+// ---- BDR redesign: scope, presets and order (Nov 11, 2026) -------------
+
+// Mine is the signed-in person's records (p.me, filled by the page and by
+// bulk Assign from the session, never from the address bar); Unowned is
+// nobody's. A Mine with nobody signed in matches nothing rather than
+// everything.
+function scopeClause(p: ListParams): object | null {
+  if (p.scope === "mine") return { ownerId: p.me || "__nobody__" };
+  if (p.scope === "unowned") return { ownerId: null };
+  return null;
+}
+
+// Where someone is on the ladder for each preset.
+const CALL_STATUSES = ["NOT_ACTIONED", "CONTACTED", "CONNECTED", "INTERESTED"] as const;
+const TALKED_STATUSES = ["CONNECTED", "INTERESTED"] as const;
+const CLOSED_STATUSES = ["NOT_INTERESTED", "LOST", "ARCHIVED"] as const;
+// A preset's id lists stop here; past it the list says nothing wrong, it
+// just narrows a little less (a workspace with more than 10,000 people
+// booked ahead is far past the customers this is for).
+const ID_CAP = 10_000;
+
+async function workspaceClock(organizationId: string) {
+  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { timeZone: true, quietDays: true } });
+  const timeZone = org?.timeZone ?? "America/Chicago";
+  return { timeZone, quietDays: org?.quietDays ?? 8, today: zoneDay(new Date(), timeZone) };
+}
+
+// People with something booked today or later: an open calendar entry
+// (theirs or one they attend), a touch dated ahead, or a meeting ahead on
+// an opportunity they are listed on. The same rule as the health loader's
+// "next" (src/lib/health-load.ts).
+async function bookedAheadContactIds(organizationId: string, today: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>(P.sql`
+    SELECT DISTINCT id FROM (
+      SELECT e."contactId" AS id FROM "CalendarEvent" e
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NOT NULL
+         AND (e."startOn" >= ${today}::date OR e."endOn" >= ${today}::date)
+      UNION
+      SELECT ea."B" FROM "_EventAttendees" ea JOIN "CalendarEvent" e ON e.id = ea."A"
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
+         AND (e."startOn" >= ${today}::date OR e."endOn" >= ${today}::date)
+      UNION
+      SELECT a."contactId" FROM "Activity" a
+       WHERE a."organizationId" = ${organizationId} AND a.marketing = false AND a."occurredAt" > now() AND a."contactId" IS NOT NULL
+      UNION
+      SELECT oc."contactId" FROM "OpportunityMeeting" om
+        JOIN "Opportunity" o ON o.id = om."opportunityId"
+        JOIN "OpportunityContact" oc ON oc."opportunityId" = o.id
+       WHERE o."organizationId" = ${organizationId} AND om."on" > now() AND oc.role <> 'HIDDEN'
+    ) x WHERE id IS NOT NULL LIMIT ${ID_CAP}`);
+  return rows.map((row) => row.id);
+}
+
+async function bookedAheadCompanyIds(organizationId: string, today: string): Promise<string[]> {
+  const people = await bookedAheadContactIds(organizationId, today);
+  const rows = await prisma.$queryRaw<{ id: string }[]>(P.sql`
+    SELECT DISTINCT id FROM (
+      SELECT e."companyId" AS id FROM "CalendarEvent" e
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."companyId" IS NOT NULL
+         AND (e."startOn" >= ${today}::date OR e."endOn" >= ${today}::date)
+      UNION
+      SELECT c."companyId" FROM "Contact" c
+       WHERE c."organizationId" = ${organizationId} AND c.id = ANY(${people}) AND c."companyId" IS NOT NULL
+    ) x WHERE id IS NOT NULL LIMIT ${ID_CAP}`);
+  return rows.map((row) => row.id);
+}
+
+// Follow-ups gone late (the health loader's ev_late rule), oldest first:
+// what My call list puts at the top.
+async function lateContactIds(organizationId: string, today: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>(P.sql`
+    SELECT id FROM (
+      SELECT e."contactId" AS id, e."startOn" FROM "CalendarEvent" e
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NOT NULL
+         AND e.type IN (${P.join(OVERDUE_TYPES)})
+         AND e."startOn" < ${today}::date AND (e."endOn" IS NULL OR e."endOn" < ${today}::date)
+      UNION ALL
+      SELECT ea."B", e."startOn" FROM "_EventAttendees" ea JOIN "CalendarEvent" e ON e.id = ea."A"
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
+         AND e.type IN (${P.join(OVERDUE_TYPES)})
+         AND e."startOn" < ${today}::date AND (e."endOn" IS NULL OR e."endOn" < ${today}::date)
+    ) x GROUP BY id ORDER BY MIN("startOn"), id LIMIT ${ID_CAP}`);
+  return rows.map((row) => row.id);
+}
+
+async function lateCompanyIds(organizationId: string, today: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>(P.sql`
+    SELECT id FROM (
+      SELECT COALESCE(e."companyId", c."companyId") AS id, e."startOn" FROM "CalendarEvent" e
+        LEFT JOIN "Contact" c ON c.id = e."contactId"
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
+         AND (e."companyId" IS NOT NULL OR c."companyId" IS NOT NULL)
+         AND e.type IN (${P.join(OVERDUE_TYPES)})
+         AND e."startOn" < ${today}::date AND (e."endOn" IS NULL OR e."endOn" < ${today}::date)
+    ) x GROUP BY id ORDER BY MIN("startOn"), id LIMIT ${ID_CAP}`);
+  return rows.map((row) => row.id);
+}
+
+// Meetings this week (Sunday to Saturday, as the calendar prints it, in
+// the workspace's clock): a Meeting on the calendar, a meeting on an
+// opportunity they are listed on, or a meeting logged; soonest first.
+async function meetingWeekContactIds(organizationId: string, today: string, timeZone: string): Promise<string[]> {
+  const first = startOfWeek(today);
+  const last = addDays(first, 6);
+  const after = addDays(first, 7);
+  const rows = await prisma.$queryRaw<{ id: string }[]>(P.sql`
+    SELECT id FROM (
+      SELECT e."contactId" AS id, to_char(e."startOn", 'YYYY-MM-DD') || ' ' || COALESCE(e."startTime", '99:99') AS at
+        FROM "CalendarEvent" e
+       WHERE e."organizationId" = ${organizationId} AND e.type = 'Meeting' AND e."contactId" IS NOT NULL
+         AND e."startOn" BETWEEN ${first}::date AND ${last}::date
+      UNION ALL
+      SELECT ea."B", to_char(e."startOn", 'YYYY-MM-DD') || ' ' || COALESCE(e."startTime", '99:99')
+        FROM "_EventAttendees" ea JOIN "CalendarEvent" e ON e.id = ea."A"
+       WHERE e."organizationId" = ${organizationId} AND e.type = 'Meeting'
+         AND e."startOn" BETWEEN ${first}::date AND ${last}::date
+      UNION ALL
+      SELECT oc."contactId", to_char(om."on" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone}, 'YYYY-MM-DD HH24:MI')
+        FROM "OpportunityMeeting" om
+        JOIN "Opportunity" o ON o.id = om."opportunityId"
+        JOIN "OpportunityContact" oc ON oc."opportunityId" = o.id
+       WHERE o."organizationId" = ${organizationId} AND oc.role <> 'HIDDEN'
+         AND (om."on" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone})::date BETWEEN ${first}::date AND ${last}::date
+      UNION ALL
+      SELECT a."contactId", to_char(a."occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone}, 'YYYY-MM-DD HH24:MI')
+        FROM "Activity" a
+       WHERE a."organizationId" = ${organizationId} AND a.marketing = false AND a.type = 'MEETING' AND a."contactId" IS NOT NULL
+         AND a."occurredAt" >= (${first}::date::timestamp AT TIME ZONE ${timeZone})
+         AND a."occurredAt" < (${after}::date::timestamp AT TIME ZONE ${timeZone})
+    ) x WHERE id IS NOT NULL GROUP BY id ORDER BY MIN(at), id LIMIT ${ID_CAP}`);
+  return rows.map((row) => row.id);
+}
+
+// ---- Pulse (round 2, Nov 11, 2026) -------------------------------------
+// The Contacts list's Pulse filter and Warmest first, from the SQL twin of
+// the health rules (src/lib/health-sql.ts), worked out once per view and
+// shared by the filter, the count and the page. Mine and Unowned only
+// work it out for their own people.
+const pulseCache = new WeakMap<ListParams, Promise<PulseSets>>();
+function pulseSetsFor(organizationId: string, p: ListParams): Promise<PulseSets> {
+  let sets = pulseCache.get(p);
+  if (!sets) {
+    sets = (async () => {
+      await touchesDue(organizationId);
+      const clock = await workspaceClock(organizationId);
+      const owner = p.scope === "mine" ? p.me || "__nobody__" : p.scope === "unowned" ? null : undefined;
+      return loadPulseSets(organizationId, { now: new Date(), timeZone: clock.timeZone, quietDays: clock.quietDays }, owner);
+    })();
+    pulseCache.set(p, sets);
+  }
+  return sets;
+}
+
+// Warmest first: Won, then Warm, Cooling and Cold, Trying, stalled, New,
+// Closed (warmth() in health.ts); inside each, the most recently touched
+// first. Each pulse is a where-clause, so a page is a count per pulse and
+// one or two plain reads.
+async function pulsePageIds(model: IdModel & { count(args: { where: object }): Promise<number> }, organizationId: string, where: object, p: ListParams, window: { skip: number }) {
+  const sets = await pulseSetsFor(organizationId, p);
+  const keys: readonly PulseKey[] = p.pulses.length ? PULSE_KEYS.filter((key) => p.pulses.includes(key)) : PULSE_KEYS;
+  const tiers = keys.map((key) => ({ AND: [where, pulseClause(key, sets)] }));
+  const counts = await Promise.all(tiers.map((tier) => model.count({ where: tier })));
+  const out: string[] = [];
+  let skip = window.skip;
+  for (let index = 0; index < tiers.length && out.length < p.per; index += 1) {
+    if (skip >= counts[index]) {
+      skip -= counts[index];
+      continue;
+    }
+    const rows = await model.findMany({
+      where: tiers[index],
+      orderBy: [{ lastTouchAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
+      skip,
+      take: p.per - out.length,
+      select: { id: true },
+    });
+    out.push(...rows.map((row) => row.id));
+    skip = 0;
+  }
+  return out;
+}
+
+// The ordered ids a preset reads in, when its order isn't a column
+// (Meetings this week). Cached per request by the caller.
+const presetOrder = new WeakMap<ListParams, string[]>();
+
+async function contactPresetClauses(organizationId: string, p: ListParams): Promise<object[]> {
+  if (!p.preset) return [];
+  const clock = await workspaceClock(organizationId);
+  switch (p.preset) {
+    case "call":
+      return [{ status: { in: [...CALL_STATUSES] } }, { id: { notIn: await bookedAheadContactIds(organizationId, clock.today) } }];
+    case "never":
+      await touchesDue(organizationId);
+      return [{ lastTouchAt: null }];
+    case "talked":
+      return [{ status: { in: [...TALKED_STATUSES] } }, { id: { notIn: await bookedAheadContactIds(organizationId, clock.today) } }];
+    case "week": {
+      const ids = await meetingWeekContactIds(organizationId, clock.today, clock.timeZone);
+      presetOrder.set(p, ids);
+      return [{ id: { in: ids } }];
+    }
+    default:
+      return [];
+  }
+}
+
+async function companyPresetClauses(organizationId: string, p: ListParams): Promise<object[]> {
+  if (!p.preset) return [];
+  const clock = await workspaceClock(organizationId);
+  switch (p.preset) {
+    case "accounts":
+      return [{ ownerId: p.me || "__nobody__" }, { status: { notIn: [...CLOSED_STATUSES] } }];
+    case "quiet": {
+      await touchesDue(organizationId);
+      // Whole days on the workspace's calendar, as the row's "8d" and the
+      // health rules count them (quiet is more than Q days; audit fix,
+      // Nov 11, 2026: rolling 24-hour days listed a company touched
+      // exactly Q days ago, earlier in the day).
+      const since = zonedMidnight(addDays(clock.today, -clock.quietDays), clock.timeZone);
+      return [{ lastTouchAt: { lt: since } }, { status: { notIn: [...CLOSED_STATUSES] } }];
+    }
+    case "talked":
+      return [{ status: { in: [...TALKED_STATUSES] } }, { id: { notIn: await bookedAheadCompanyIds(organizationId, clock.today) } }];
+    case "never":
+      await touchesDue(organizationId);
+      return [{ lastTouchAt: null }];
+    default:
+      return [];
+  }
+}
+
+// The order for a plain sort. A tie always falls back to the id, so a page
+// never repeats or skips a row.
+export function orderFor(sort: ListSort | "meeting"): object[] {
+  switch (sort) {
+    // Contacts only, through pulsePageIds; anywhere else it reads as added.
+    case "touch":
+      return [{ lastTouchAt: { sort: "asc", nulls: "first" } }, { id: "asc" }];
+    case "recent":
+      return [{ lastTouchAt: { sort: "desc", nulls: "last" } }, { id: "asc" }];
+    case "name":
+      return [{ name: "asc" }, { id: "asc" }];
+    case "edited":
+      return [{ updatedAt: "desc" }, { id: "asc" }];
+    default:
+      return [{ createdAt: "desc" }, { id: "asc" }];
+  }
+}
+
+type IdModel = {
+  findMany(args: { where: object; orderBy?: object[]; skip?: number; take?: number; select: { id: true } }): Promise<{ id: string }[]>;
+};
+
+// The ids of one page of a list, in the list's order. Most orders are a
+// column; two are not:
+// - Oldest touch first puts follow-ups gone late at the top (oldest late
+//   first), then never touched, then the oldest touch — My call list's
+//   order. The late ones are a short list read first; the rest page on
+//   after them.
+// - Meetings this week reads in the meetings' own order.
+export async function pageIds(
+  kind: "contacts" | "companies",
+  organizationId: string,
+  where: object,
+  p: ListParams,
+  window: { skip: number },
+): Promise<string[]> {
+  const model = (kind === "contacts" ? prisma.contact : prisma.company) as unknown as IdModel;
+  const sort = effectiveSort(p);
+  const take = p.per;
+  if (sort === "pulse" && kind === "contacts") {
+    return pulsePageIds(model as IdModel & { count(args: { where: object }): Promise<number> }, organizationId, where, p, window);
+  }
+  if (sort === "meeting") {
+    const order = presetOrder.get(p) ?? [];
+    const matching = new Set((await model.findMany({ where: { AND: [where, { id: { in: order } }] }, select: { id: true } })).map((row) => row.id));
+    return order.filter((id) => matching.has(id)).slice(window.skip, window.skip + take);
+  }
+  if (sort === "touch" || sort === "recent") await touchesDue(organizationId);
+  if (sort !== "touch") {
+    return (await model.findMany({ where, orderBy: orderFor(sort), skip: window.skip, take, select: { id: true } })).map((row) => row.id);
+  }
+  const clock = await workspaceClock(organizationId);
+  const late = kind === "contacts" ? await lateContactIds(organizationId, clock.today) : await lateCompanyIds(organizationId, clock.today);
+  const lateMatching = late.length
+    ? new Set((await model.findMany({ where: { AND: [where, { id: { in: late } }] }, select: { id: true } })).map((row) => row.id))
+    : new Set<string>();
+  const first = late.filter((id) => lateMatching.has(id));
+  const head = first.slice(window.skip, window.skip + take);
+  if (head.length === take) return head;
+  const rest = await model.findMany({
+    where: first.length ? { AND: [where, { id: { notIn: first } }] } : where,
+    orderBy: orderFor("touch"),
+    skip: Math.max(0, window.skip - first.length),
+    take: take - head.length,
+    select: { id: true },
+  });
+  return [...head, ...rest.map((row) => row.id)];
 }

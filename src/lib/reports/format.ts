@@ -7,6 +7,15 @@ import type { Headline } from "@/lib/reports/common";
 const dollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0, minimumFractionDigits: 0 });
 const count = new Intl.NumberFormat("en-US");
 
+// Tries and talks (Nov 11, 2026): every touch is a try; the part that
+// didn't connect is grey, the talks are the fixed health "good" colour
+// (the same in every workspace, like the health marks). Passed as `colors`
+// to the report and Stats charts; their four series colours stay the
+// default everywhere else. Kept here, out of the "use client" chart files,
+// so server pages can hand it over.
+export const TRY_TALK_COLORS = ["var(--health-none)", "var(--health-good)"] as const;
+export const TRY_TALK_SERIES = ["Attempts", "Talks"];
+
 export function money(cents: number) {
   return dollars.format(Math.round(cents / 100));
 }
@@ -39,7 +48,7 @@ export function headlineValue(headline: Headline) {
 }
 
 // How far a number moved, as "▲ 20%", "▼ 3 pts" or, from nothing,
-// "▲ up from 0" / "▲ up from $0". One rule for every screen (UX review,
+// "new this period". One rule for every screen (UX review,
 // Nov 10, 2026): a percent change from 0 can't be worked out, so a rise
 // from nothing is never "100%" (Stats said so) and the tile adds no
 // "vs 0" after it (the reports said "from 0 vs 0"). `fromZero` tells the
@@ -47,7 +56,10 @@ export function headlineValue(headline: Headline) {
 export function changeSize(now: number, before: number, format: Headline["format"]): { text: string; fromZero: boolean } {
   const arrow = now > before ? "▲" : "▼";
   if (format === "percent") return { text: `${arrow} ${Math.abs(Math.round((now - before) * 100))} pts`, fromZero: false };
-  if (before === 0) return { text: `${arrow} ${now > before ? "up" : "down"} from ${formatValue(0, format)}`, fromZero: true };
+  // A zero baseline reads "new this period" (plan R0, approved by Taylor
+  // after the Nov 10 "up from 0" rule; Nov 11, 2026). A fall below zero
+  // (a net figure) still says so.
+  if (before === 0) return { text: now > 0 ? "new this period" : `${arrow} down from ${formatValue(0, format)}`, fromZero: true };
   return { text: `${arrow} ${Math.abs(Math.round(((now - before) / before) * 100))}%`, fromZero: false };
 }
 

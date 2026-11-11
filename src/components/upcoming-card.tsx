@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { formatDay } from "@/lib/format";
 import { colorForType, formatTimeRange, eventDayCount } from "@/lib/calendar";
 import { Card, CardHeader, Badge } from "@/components/ui";
@@ -29,13 +29,27 @@ export function UpcomingCard({
   choices,
   defaults,
   label,
+  phoneFold = false,
+  rowActions,
+  typeOrder,
 }: {
   events: UpcomingEvent[];
   choices: EventChoices;
   defaults: { contactId?: string; companyId?: string; startOn: string; type?: string };
   label: string;
+  // Folded on a phone until tapped (the contact page, where the Next step
+  // strip already names the first thing booked).
+  phoneFold?: boolean;
+  // Buttons under a row (the contact page's Held / No-show / Move).
+  rowActions?: (event: UpcomingEvent) => ReactNode;
+  // The order "+ Event" lists its types in (a lead's page puts the sales
+  // ones first); the workspace's own order when not given.
+  typeOrder?: string[];
 }) {
+  const formChoices = typeOrder ? { ...choices, eventTypes: typeOrder } : choices;
   const [adding, setAdding] = useState(false);
+  const [unfolded, setUnfolded] = useState(false);
+  const folded = phoneFold && !unfolded && !adding;
 
   return (
     <Card lit>
@@ -43,21 +57,34 @@ export function UpcomingCard({
         title="Coming up"
         subtitle={events.length === 0 ? `Nothing booked with ${label} yet.` : `Days booked with ${label}.`}
         actions={
-          <button
-            type="button"
-            onClick={() => setAdding(!adding)}
-            className="btn btn-ghost btn-sm"
-            data-testid="upcoming-add-event"
-          >
-            <IconCalendar size={13} />
-            {adding ? "Close" : "+ Event"}
-          </button>
+          <>
+            {phoneFold && (
+              <button
+                type="button"
+                onClick={() => setUnfolded(!unfolded)}
+                aria-expanded={!folded}
+                className="btn btn-ghost btn-sm pointer-coarse:min-h-11 lg:hidden"
+                data-testid="upcoming-toggle"
+              >
+                {folded ? `Show${events.length ? ` ${events.length}` : ""}` : "Hide"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setAdding(!adding)}
+              className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
+              data-testid="upcoming-add-event"
+            >
+              <IconCalendar size={13} />
+              {adding ? "Close" : "+ Event"}
+            </button>
+          </>
         }
       />
-      <div className="space-y-2 p-5" data-testid="upcoming-card">
+      <div className={`space-y-2 p-5 ${folded ? "max-lg:hidden" : ""}`} data-testid="upcoming-card">
         {adding && (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
-            <EventForm choices={choices} defaults={defaults} onDone={() => setAdding(false)} />
+            <EventForm choices={formChoices} defaults={defaults} onDone={() => setAdding(false)} />
           </div>
         )}
         {events.length === 0 && !adding && (
@@ -91,6 +118,7 @@ export function UpcomingCard({
                   </Link>
                 )}
               </div>
+              {rowActions && <div className="flex basis-full flex-wrap items-center gap-1.5">{rowActions(event)}</div>}
             </div>
           );
         })}

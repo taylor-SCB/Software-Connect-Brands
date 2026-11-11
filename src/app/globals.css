@@ -3,6 +3,13 @@
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Type sizes (BDR redesign, "finish the feel"): five steps, used as
+     text-caption / text-body / text-lead / text-heading / text-display. */
+  --text-caption: var(--size-12);
+  --text-body: var(--size-14);
+  --text-lead: var(--size-16);
+  --text-heading: var(--size-20);
+  --text-display: var(--size-28);
 }
 
 :root {
@@ -84,6 +91,31 @@
   /* A custom Lead Label's letters: neon yellow on dark. */
   --lead-custom: #e8ff3a;
 
+  /* Health (BDR redesign, Nov 11, 2026): how warm a relationship is, on
+     the lifecycle meter, the health ring, dot and word. Fixed on every
+     tenant — never the partner's brand colour — so red means "act now"
+     for every customer (Taylor approved this white-label exception). The
+     four pass a colour-blind check in both looks; the older --ok / --warn
+     / --danger trio does not, which is why these are their own tokens.
+     Colour is never the only signal: each state also has a mark and a
+     word, and the words are always in text colours. */
+  --health-good: #0d9488;
+  --health-warn: #d97706;
+  --health-risk: #e11d48;
+  --health-none: #7e889c;
+  /* The faint track and the word chip's fill: the same colour at ~20%. */
+  --health-good-soft: color-mix(in srgb, var(--health-good) 20%, transparent);
+  --health-warn-soft: color-mix(in srgb, var(--health-warn) 20%, transparent);
+  --health-risk-soft: color-mix(in srgb, var(--health-risk) 20%, transparent);
+  --health-none-soft: color-mix(in srgb, var(--health-none) 20%, transparent);
+
+  /* Type sizes: 12 / 14 / 16 / 20 / 28. */
+  --size-12: 0.75rem;
+  --size-14: 0.875rem;
+  --size-16: 1rem;
+  --size-20: 1.25rem;
+  --size-28: 1.75rem;
+
   color-scheme: dark;
 }
 
@@ -154,6 +186,15 @@
 
   --ink: 40%;
   --lead-custom: #5b6b00;
+
+  /* Health in Light: the rose and grey darken to stay readable on white;
+     teal and amber are the same in both looks. */
+  --health-risk: #be123c;
+  --health-none: #5b6473;
+  --health-good-soft: color-mix(in srgb, var(--health-good) 16%, transparent);
+  --health-warn-soft: color-mix(in srgb, var(--health-warn) 18%, transparent);
+  --health-risk-soft: color-mix(in srgb, var(--health-risk) 14%, transparent);
+  --health-none-soft: color-mix(in srgb, var(--health-none) 16%, transparent);
 
   color-scheme: light;
 }
@@ -303,7 +344,15 @@
     color: var(--text-faint);
   }
 
+  /* Numbers, dates, money and phone numbers: the normal sans font with
+     even-width digits, so columns still line up (BDR redesign, "not so
+     coded"; it was Geist Mono). Only document numbers keep the mono look,
+     as .docnum (QUO-1000, CON-1000, INV-1000, PRJ-1000). */
   .num {
+    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .docnum {
     font-family: var(--font-geist-mono), ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
   }
@@ -581,6 +630,65 @@
   .table tbody tr {
     transition: background 0.14s ease;
   }
+  /* The quote editor's pinned Save bar (Nov 11, 2026): anything scrolled
+     into view — a catalog row reached with the arrow keys, a field with an
+     error — stops above it rather than under it. */
+  @media (min-width: 640px) {
+    html:has([data-testid="quote-save-bar"]) {
+      scroll-padding-bottom: 5rem;
+    }
+  }
+  /* A numbers table on a phone (Nov 11, 2026): each row becomes a small
+     two-column list — the row's name across the top, then label · value
+     pairs two to a line — so nothing scrolls sideways at 390px. Each cell
+     carries its column's name in data-label. One copy of the table, so
+     anything reading its rows reads the same cells at every width. */
+  @media (max-width: 767.98px) {
+    .table-stack thead {
+      display: none;
+    }
+    .table-stack,
+    .table-stack tbody {
+      display: block;
+      width: 100%;
+    }
+    .table-stack tbody tr {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.25rem 1rem;
+      padding: 0.6rem 0.25rem;
+      border-bottom: 1px solid var(--hairline-3);
+    }
+    .table-stack tbody tr:last-child {
+      border-bottom: none;
+    }
+    .table-stack tbody td {
+      display: flex;
+      min-width: 0;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0;
+      border-bottom: none;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    .table-stack tbody td::before {
+      content: attr(data-label);
+      color: var(--text-faint);
+      text-align: left;
+      font-weight: 400;
+    }
+    .table-stack tbody td:first-child {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+      text-align: left;
+      font-weight: 600;
+    }
+    .table-stack tbody td:first-child::before {
+      content: none;
+    }
+  }
   .table-hover tbody tr:hover {
     background: var(--tint-2);
   }
@@ -834,6 +942,506 @@
      review, Nov 10, 2026). */
   .fade-up {
     animation: fadeUp 0.32s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  /* ---------- Status chips: one brand ramp (BDR redesign) ----------
+     A status that still shows as words (the ladder, a quote, a contract,
+     a job) is one hue — the workspace's brand — getting stronger as the
+     thing moves along, light to dark. It used to be a rainbow (Contacted
+     and Interested both yellow, Meeting Set and Completed both cyan), and
+     amber and red now only ever mean "act now": health and late money.
+     The words are always the text colour, so every brand reads. */
+  .status-chip {
+    color: var(--text);
+    background: color-mix(in srgb, var(--brand) var(--sc-fill, 0%), transparent);
+    border-color: color-mix(in srgb, var(--brand) var(--sc-edge, 30%), transparent);
+  }
+  .status-chip .badge-dot {
+    background: color-mix(in srgb, var(--brand) var(--sc-dot, 40%), transparent);
+    box-shadow: none;
+  }
+  .status-chip[data-ramp="0"] { --sc-fill: 0%; --sc-edge: 34%; --sc-dot: 30%; }
+  .status-chip[data-ramp="1"] { --sc-fill: 5%; --sc-edge: 30%; --sc-dot: 42%; }
+  .status-chip[data-ramp="2"] { --sc-fill: 8%; --sc-edge: 34%; --sc-dot: 52%; }
+  .status-chip[data-ramp="3"] { --sc-fill: 11%; --sc-edge: 38%; --sc-dot: 60%; }
+  .status-chip[data-ramp="4"] { --sc-fill: 14%; --sc-edge: 44%; --sc-dot: 68%; }
+  .status-chip[data-ramp="5"] { --sc-fill: 18%; --sc-edge: 50%; --sc-dot: 76%; }
+  .status-chip[data-ramp="6"] { --sc-fill: 22%; --sc-edge: 56%; --sc-dot: 84%; }
+  .status-chip[data-ramp="7"] { --sc-fill: 26%; --sc-edge: 62%; --sc-dot: 92%; }
+  .status-chip[data-ramp="8"] { --sc-fill: 30%; --sc-edge: 70%; --sc-dot: 100%; }
+  /* Closed, lost, cancelled, paused: grey, quieter words. */
+  .status-chip[data-ramp="closed"] {
+    color: var(--text-dim);
+    background: var(--tint-2);
+    border-color: var(--hairline-3);
+  }
+  .status-chip[data-ramp="closed"] .badge-dot {
+    background: var(--health-none);
+  }
+  /* Late money is "act now": the health rose. */
+  .status-chip[data-ramp="late"] {
+    background: var(--health-risk-soft);
+    border-color: color-mix(in srgb, var(--health-risk) 55%, transparent);
+  }
+  .status-chip[data-ramp="late"] .badge-dot {
+    background: var(--health-risk);
+  }
+
+  /* ---------- Health: dot, ring, word (BDR redesign) ---------- */
+  [data-health="good"] { --hc: var(--health-good); --hs: var(--health-good-soft); }
+  [data-health="warn"] { --hc: var(--health-warn); --hs: var(--health-warn-soft); }
+  [data-health="risk"] { --hc: var(--health-risk); --hs: var(--health-risk-soft); }
+  [data-health="none"] { --hc: var(--health-none); --hs: var(--health-none-soft); }
+
+  .health-dot {
+    display: inline-block;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--hc);
+  }
+  /* New and Trying: an outline, not a fill — nobody has been reached. */
+  .health-dot[data-hollow] {
+    background: transparent;
+    box-shadow: inset 0 0 0 2px var(--hc);
+  }
+
+  /* A 3px ring in the health colour around an avatar or logo. */
+  .health-ring {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    padding: 3px;
+    border-radius: 999px;
+    background: var(--hc);
+  }
+  .health-ring[data-hollow] {
+    background: repeating-conic-gradient(var(--hc) 0 18deg, transparent 18deg 30deg);
+  }
+  .health-ring > * {
+    border-radius: 999px !important;
+    box-shadow: 0 0 0 2px var(--bg-elev);
+  }
+
+  /* "● Warm": the mark in the health colour, the word in text colour. */
+  .health-word {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font-size: var(--size-12);
+    font-weight: 650;
+    line-height: 1.3;
+    white-space: nowrap;
+    color: var(--text);
+    background: var(--hs);
+    border: 1px solid color-mix(in srgb, var(--hc) 50%, transparent);
+  }
+  button.health-word {
+    cursor: pointer;
+  }
+  .health-word-mark {
+    color: var(--hc);
+    font-size: 1.05em;
+    line-height: 1;
+  }
+
+  /* The breakdown that hover, long-press or keyboard focus opens. */
+  .health-details {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.75rem 0.85rem;
+    font-size: var(--size-12);
+    color: var(--text-dim);
+  }
+  .health-details-reason {
+    font-size: var(--size-14);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .health-details-score {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .health-details-steps {
+    display: grid;
+    gap: 0.15rem;
+    border-top: 1px solid var(--hairline-3);
+    padding-top: 0.45rem;
+  }
+  .health-details-steps li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .health-details-steps li[data-reached] {
+    color: var(--text);
+  }
+
+  /* ---------- The lifecycle meter (BDR redesign) ----------
+     Seven steps — Attempted, Connected, Meeting Set, Meeting Completed,
+     Quote Sent, Contract Sent, Won. Length is how far along; colour is
+     health. The next step is outlined; the current one breathes on the
+     big header size (never under reduced motion). Sits on card surfaces:
+     Light amber on the grey page is under 3:1. */
+  .lm {
+    --lm-track: color-mix(in srgb, var(--hc) 20%, transparent);
+    min-width: 0;
+  }
+  .lm-header {
+    container-type: inline-size;
+    display: grid;
+    gap: 0.4rem;
+    width: 100%;
+    max-width: 640px;
+  }
+  .lm-bars {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .lm-seg {
+    position: relative;
+    display: block;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--lm-track);
+  }
+  .lm-seg[data-state="done"],
+  .lm-seg[data-state="current"] {
+    background: var(--hc);
+  }
+  .lm-seg[data-state="next"] {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--hc);
+  }
+  .lm-seg[data-state="closed"] {
+    background: var(--health-none);
+  }
+  /* Interested: a small notch on the Connected step. */
+  .lm-seg[data-interested]::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    translate: 0 -50%;
+    border-radius: 999px;
+    background: var(--bg-elev);
+  }
+  .lm-names {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 3px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .lm-name {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    text-align: left;
+    font-size: var(--size-12);
+    line-height: 1.25;
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+  }
+  button.lm-name {
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  button.lm-name:hover {
+    color: var(--text);
+  }
+  .lm-name[data-state="done"],
+  .lm-name[data-state="closed"] {
+    color: var(--text-dim);
+  }
+  .lm-name[data-state="current"] {
+    color: var(--text);
+    font-weight: 650;
+  }
+  .lm-name[data-state="next"] {
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  .lm-date {
+    display: block;
+    color: var(--text-faint);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+  .lm-mark {
+    color: var(--hc);
+  }
+  .lm-closed {
+    font-size: var(--size-12);
+    color: var(--text-dim);
+  }
+  .lm-closed-mark {
+    color: var(--health-none);
+    font-weight: 700;
+  }
+  /* The phone header names only the current step and the next one. */
+  .lm-phone {
+    display: none;
+    font-size: var(--size-12);
+    color: var(--text-dim);
+  }
+  .lm-phone b {
+    color: var(--text);
+    font-weight: 650;
+  }
+  @container (max-width: 30rem) {
+    .lm-header .lm-names {
+      display: none;
+    }
+    .lm-header .lm-phone {
+      display: block;
+    }
+    .lm-header .lm-seg {
+      height: 8px;
+    }
+  }
+  .lm-reason {
+    font-size: var(--size-16);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .lm-caption {
+    font-size: var(--size-12);
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The mini size: list rows, Up next, People rows, Pipeline tiles.
+     Seven 10x5 segments (about 82px), the health dot beside them, the
+     counts under them. The whole cell is the tap target. */
+  .lm-mini {
+    display: inline-grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-content: start;
+    gap: 3px 6px;
+    min-width: 0;
+    padding: 3px 4px;
+    margin: -3px -4px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+  }
+  button.lm-mini {
+    cursor: pointer;
+  }
+  button.lm-mini:hover {
+    background: var(--hover);
+  }
+  .lm-mini .lm-bars {
+    grid-template-columns: repeat(7, 10px);
+    gap: 2px;
+  }
+  .lm-mini .lm-seg {
+    height: 5px;
+    border-radius: 1px;
+  }
+  .lm-mini .lm-seg[data-interested]::after {
+    right: 1px;
+    width: 3px;
+    height: 3px;
+  }
+  .lm-mini-caption {
+    grid-column: 1 / -1;
+    font-size: var(--size-12);
+    line-height: 1.2;
+    color: var(--text-dim);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (pointer: coarse) {
+    button.lm-mini {
+      min-height: 44px;
+    }
+    /* The word chip and the header's step names keep their size and get
+       a 44px reach for a thumb. */
+    button.health-word,
+    button.lm-name {
+      position: relative;
+    }
+    button.health-word::after,
+    button.lm-name::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 44px;
+      translate: 0 -50%;
+    }
+  }
+
+  /* ---------- DealJourney: the meter carried on to the money ---------- */
+  .dj {
+    container-type: inline-size;
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .dj-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem 1rem;
+  }
+  .dj-steps {
+    display: grid;
+    flex: 1 1 22rem;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 3px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    min-width: 0;
+  }
+  .dj-step {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 0;
+    font-size: var(--size-12);
+    color: var(--text-faint);
+  }
+  .dj-step .lm-seg {
+    height: 6px;
+  }
+  .dj-step[data-state="done"] {
+    color: var(--text-dim);
+  }
+  .dj-step[data-state="current"] {
+    color: var(--text);
+    font-weight: 650;
+  }
+  .dj-step-note {
+    display: block;
+    font-weight: 400;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .dj-dots {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--size-12);
+    color: var(--text-dim);
+  }
+  .dj-dots .health-dot {
+    width: 9px;
+    height: 9px;
+  }
+  .dj-next {
+    flex: none;
+  }
+  @container (max-width: 30rem) {
+    .dj-steps {
+      display: none;
+    }
+    .dj-dots {
+      display: flex;
+    }
+    .dj-next {
+      flex: 1 1 100%;
+    }
+    .dj-next > * {
+      width: 100%;
+      min-height: 44px;
+    }
+  }
+  @media (max-width: 639px) {
+    /* A size container is the box its position:fixed children are placed
+       against, so a strip with a pinned Next stops being one on a phone
+       and collapses by this media query instead (paperwork sprint). */
+    .dj:has(> .dj-row > .dj-next[data-sticky]) {
+      container-type: normal;
+    }
+    .dj:has(> .dj-row > .dj-next[data-sticky]) .dj-steps {
+      display: none;
+    }
+    .dj:has(> .dj-row > .dj-next[data-sticky]) .dj-dots {
+      display: flex;
+    }
+    .dj-next[data-sticky] {
+      position: fixed;
+      inset-inline: 0;
+      bottom: 0;
+      z-index: 40;
+      padding: 0.6rem 16px calc(0.6rem + env(safe-area-inset-bottom, 0px));
+      background: var(--overlay);
+      border-top: 1px solid var(--hairline-3);
+    }
+    .dj-next[data-sticky] > * {
+      width: 100%;
+      min-height: 48px;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lm-header .lm-seg[data-state="current"] {
+    animation: lmBreathe 2.4s ease-in-out infinite;
+  }
+  .lm-seg[data-fresh] {
+    transform-origin: left center;
+    animation: lmSweep 0.3s ease-out backwards;
+  }
+  .lm-header .lm-seg[data-state="current"][data-fresh] {
+    animation:
+      lmSweep 0.3s ease-out backwards,
+      lmBreathe 2.4s ease-in-out 0.3s infinite;
+  }
+}
+
+@keyframes lmBreathe {
+  50% {
+    opacity: 0.62;
+  }
+}
+
+@keyframes lmSweep {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* High-contrast (forced colours): reached steps are solid, the rest are
+   outlines, and the health marks keep a shape. */
+@media (forced-colors: active) {
+  .lm-seg {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    box-shadow: inset 0 0 0 1px CanvasText !important;
+    animation: none !important;
+  }
+  .lm-seg[data-state="done"],
+  .lm-seg[data-state="current"],
+  .lm-seg[data-state="closed"] {
+    background: CanvasText !important;
+  }
+  .health-dot,
+  .health-ring {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+  .health-dot[data-hollow] {
+    background: Canvas;
+    box-shadow: inset 0 0 0 2px CanvasText;
   }
 }
 

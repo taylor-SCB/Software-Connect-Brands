@@ -7,6 +7,7 @@ import { IconCopy, IconSparkles, IconX } from "@/components/icons";
 import { leadLabelInk, leadLabelStyle } from "@/lib/lead-labels";
 import { formatCents } from "@/lib/format";
 import { draftFollowUp, logFollowUpSent, suggestFromMeeting, suggestLeadLabel, type FollowUpDraft, type MeetingSuggestions } from "./ai-actions";
+import { undoLog } from "../contacts/actions";
 
 // The Pipeline's gone-quiet badge and AI helpers (Nov 10, 2026). Every AI
 // answer here is shown to edit, copy or accept; nothing is saved by the
@@ -44,7 +45,7 @@ export function FollowUpButton({ opportunityId, compact = false }: { opportunity
   );
 }
 
-function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onClose: () => void }) {
+export function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onClose: () => void }) {
   const router = useRouter();
   const [draft, setDraft] = useState<FollowUpDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,9 @@ function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onC
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  // The last "Log as sent", for Undo (BDR redesign: every save hands back
+  // its batchId).
+  const [batchId, setBatchId] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -110,6 +114,7 @@ function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onC
       }
       setError(null);
       setNotice(result.success ?? "Logged");
+      setBatchId(result.batchId ?? null);
       router.refresh();
     });
   }
@@ -184,8 +189,26 @@ function FollowUpDialog({ opportunityId, onClose }: { opportunityId: string; onC
           </div>
         )}
         {notice && (
-          <p className="mt-3 text-xs text-[var(--ok)]" role="status" data-testid="follow-up-notice">
+          <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--ok)]" role="status" data-testid="follow-up-notice">
             {notice}
+            {batchId && (
+              <button
+                type="button"
+                className="link text-xs"
+                onClick={() => {
+                  const id = batchId;
+                  setBatchId(null);
+                  start(async () => {
+                    const result = await undoLog(id);
+                    setNotice(result.error ?? "Undone");
+                    router.refresh();
+                  });
+                }}
+                data-testid="follow-up-undo"
+              >
+                Undo
+              </button>
+            )}
           </p>
         )}
       </div>

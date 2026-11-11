@@ -65,9 +65,11 @@ function Tooltip({ tip }: { tip: Tip }) {
 export function RepActivityBars({
   reps,
   series,
+  colors = SERIES_COLORS,
 }: {
   reps: { name: string; values: number[] }[];
   series: string[];
+  colors?: readonly string[];
 }) {
   // Drawn at the box's own width (useBoxWidth), so names and totals are
   // 11px on a phone too.
@@ -80,7 +82,7 @@ export function RepActivityBars({
 
   return (
     <div ref={box} className="relative" onPointerLeave={() => setTip(null)}>
-      <Legend series={series} />
+      <Legend series={series} colors={colors} />
       <svg viewBox={`0 0 ${width} ${Math.max(1, reps.length) * rowH + 4}`} className="block w-full" role="img" aria-label="Activity by rep">
         {reps.map((rep, index) => {
           const y = index * rowH + 6;
@@ -102,7 +104,7 @@ export function RepActivityBars({
                     width={w}
                     height={16}
                     rx={part === rep.values.length - 1 || rep.values.slice(part + 1).every((v) => !v) ? 4 : 0}
-                    fill={SERIES_COLORS[part]}
+                    fill={colors[part]}
                     className="cursor-default transition-opacity hover:opacity-80"
                     tabIndex={0}
                     onPointerMove={(event) => place(event.clientX, event.clientY, rep.name, part, value)}
@@ -130,16 +132,16 @@ export function RepActivityBars({
   function place(clientX: number, clientY: number, name: string, part: number, value: number) {
     const r = box.current?.getBoundingClientRect();
     if (!r) return;
-    setTip({ x: clientX - r.left, y: clientY - r.top, title: name, rows: [{ label: series[part], value: String(value), color: SERIES_COLORS[part] }] });
+    setTip({ x: clientX - r.left, y: clientY - r.top, title: name, rows: [{ label: series[part], value: String(value), color: colors[part] }] });
   }
 }
 
-function Legend({ series }: { series: string[] }) {
+function Legend({ series, colors = SERIES_COLORS }: { series: string[]; colors?: readonly string[] }) {
   return (
     <div className="mb-2 flex flex-wrap gap-3 text-[0.7rem] text-[var(--text-dim)]">
       {series.map((name, index) => (
         <span key={name} className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES_COLORS[index] }} />
+          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: colors[index] }} />
           {name}
         </span>
       ))}
@@ -258,14 +260,22 @@ export function DailyTrend({
 
 // The funnel: one bar per step, one colour (it is one series), the count
 // at the end and the step-to-step conversion between them.
-export function FunnelBars({ steps }: { steps: { label: string; value: number; rate: number | null; from: string | null }[] }) {
+// On a phone it is the same vertical list, the number at each step's end
+// and its rate under it, so nothing hangs on a hover.
+export function FunnelBars({ steps }: { steps: { key?: string; label: string; value: number; rate: number | null; from: string | null }[] }) {
   const box = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<Tip>(null);
   const max = Math.max(1, ...steps.map((s) => s.value));
   return (
     <div ref={box} className="relative space-y-1.5" onPointerLeave={() => setTip(null)} data-testid="stats-funnel">
       {steps.map((step) => (
-        <div key={step.label} className="grid grid-cols-[8.5rem_1fr_3rem] items-center gap-2 text-xs">
+        <div
+          key={step.label}
+          className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_3rem] items-center gap-2 text-xs sm:grid-cols-[8.5rem_1fr_3rem]"
+          data-testid="funnel-step"
+          data-step={step.key}
+          data-rate={step.rate ?? ""}
+        >
           <span className="truncate text-[var(--text-dim)]">{step.label}</span>
           <div className="relative h-5 rounded bg-[var(--tint-2)]">
             <div
@@ -295,7 +305,9 @@ export function FunnelBars({ steps }: { steps: { label: string; value: number; r
             {step.value}
           </span>
           {step.from && step.rate !== null && (
-            <span className="faint col-start-2 -mt-1 text-[0.62rem]">↳ {pct(step.rate)} from {step.from}</span>
+            <span className="faint col-span-2 col-start-2 -mt-1 text-[0.62rem]" data-testid="funnel-rate">
+              ↳ {pct(step.rate)} from {step.from}
+            </span>
           )}
         </div>
       ))}

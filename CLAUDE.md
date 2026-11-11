@@ -117,6 +117,11 @@ the model to follow.
   clicks Merge on GitHub, which deploys the same way.
 - Vercel keeps every past deployment. A bad release is undone with **Instant
   Rollback** in the Deployments tab — ten seconds, doesn't touch data.
+  **Before rolling back past the BDR release (Nov 11, 2026), first run
+  `scripts/before-rollback-to-pre-bdr.sql` in the Neon console's SQL editor
+  on the live database. Never skip it** (see Known gaps): without it the
+  older build can't open the lists, the record pages, the Pipeline or
+  Stats.
 - **You cannot change Vercel settings from here.** No tool exists for
   environment variables, domains or the production branch. Those are things
   Taylor has to click, so walk him through them.
@@ -131,7 +136,7 @@ the contact form too, with "+ Add new industry / company type" and
 Individual / Personal for a contact with no company (Sept 13, 2026),
 **Contacts and Companies lists** that page at 10 / 50 / 100 with a search
 bar, stacking multi-select filters (State, Industry, Company Type, Company),
-Favorites / With deals / Needs attention toggles, a favorite star, and
+Favorites / With deals / Missing info toggles (Needs attention until Nov 11, 2026; all three now in the Filters panel), a favorite star, and
 Favorite Contacts / Companies and Contacts / Companies with Deals sub-panes
 in the sidebar, plus **Import CSV** on both lists (one file of any size,
 batched with a progress bar, companies auto-created from a bare name,
@@ -204,8 +209,8 @@ Schedule tab that flips Awarded → Active, and a things-to-do checklist;
 **Calendar v2** (Sept 27, 2026: three layouts — Calendar, Log with a
 Previous Activity Log and an Upcoming Log side by side, and Calendar +
 Log on one screen; every day has an owner and a **Whose calendar**
-picker; the company view — Everyone / Just me / a multi-select of Users
-with Unassigned — plus multi-select Companies, Contacts and Projects
+picker; the company view — Mine | Team (Just me / Everyone until Nov 11,
+2026) and, under Filters, a multi-select of Users with Unassigned — plus multi-select Companies, Contacts and Projects
 filters that stack; activity types Call, Meeting, Email, Text, Quote
 sent / due / follow up, Contract sent / follow up / closed with "+ Add
 new activity"; a call logged from a contact or company lands on the
@@ -258,10 +263,11 @@ are approved, paused or deleted.
 the same three), **Closer's Club** (Pipeline, Quotes, Contracts with
 Contract Coordinator, Products with Ratesheets), Projects (Properties,
 Budgets, Crews), **Stats / Reporting**, Settings. Every deal has a **rep**
-(`Deal.ownerId`, whoever made it, changeable on its tile). Contacts and
-Companies open on **Last Contacted By** (who, when). Contacts carry a
-second email and phone, each **Personal / Work**. **Delete** sits in a
-contact's and a company's page header. A contact can belong to more
+(`Deal.ownerId`, whoever made it, changeable in its Pipeline panel). Contacts and
+Companies show who last touched each row, and when, in its Pulse caption
+(**Last Contacted By** is a Columns choice on Contacts since Nov 11, 2026). Contacts carry a
+second email and phone, each **Personal / Work**. **Delete** sits at the
+foot of ⋯ More in a contact's and a company's page header. A contact can belong to more
 companies than their main one (**+ Additional Account**, the
 `ContactAccount` table; the main `companyId` stays the one paperwork is
 filed under, and a linked company does not roll up their paperwork).
@@ -273,10 +279,13 @@ the lists (up to five, one transaction). **Custom industry / company
 type** with **Save for Future Use** (unticked: on that company only,
 marked Custom). A company page's activity form can tick its people or
 add a new contact. The **status ladder** on contacts and companies: Not
-Actioned → Contacted (first logged touch, automatic) → Not Interested /
-Interested (by hand) → Meeting Set (first meeting booked with that
-*contact*, automatic) → Meeting Completed (by hand) → Quote Sent →
-Contract Sent → Signed / Won → Lost, plus Archived (**a Status
+Actioned → Contacted, shown as **Attempted** (first logged touch,
+automatic) → **Connected** (first talk, reply or held meeting, automatic;
+Nov 11, 2026) → Not Interested / Interested (by hand or from the log
+sheet) → Meeting Set (first meeting booked with that *contact*,
+automatic) → Meeting Completed (automatic when the meeting is logged Held,
+or by hand) → Quote Sent → Contract Sent → Signed / Won → Lost, plus
+Archived (**a Status
 multi-select on the Contacts and Companies filter bars, Oct 4, 2026**);
 every move is a
 `StatusChange` row with the day it happened, and skipping a pipeline
@@ -297,17 +306,23 @@ follow-up?" under the form: tick any of the four, each with its own day
 becomes an open calendar entry "Follow up · Name" with the same people,
 under whoever logged it (`scheduleFollowUps` in
 `src/app/dashboard/contacts/actions.ts`, `FollowUpPrompt` in
-`src/components/follow-up-prompt.tsx`). A Meeting ticked sets Meeting
-Set. No thanks writes nothing; scheduling ahead opens no box. The
-calendar's own "How did it go?" box does not offer one yet — the next
-place to put it.
+`src/components/follow-up-prompt.tsx`). Its Meeting tick reads
+"Try to book a meeting" and writes a Call reminder "Try to book a meeting ·
+Name" that moves no status; booking goes through the Book meeting sheet
+(decision 5, Nov 11, 2026). No thanks writes nothing; scheduling ahead
+opens no box. Since Nov 11 the box is inside the How did it go? sheet (an
+outcome chip picks the next step instead), so the calendar's Done box,
+the same sheet, offers it too.
 
 **An activity on the company page is with a person (Oct 4, 2026).**
 Nobody ticked is refused (typed fields handed back via `kept`) unless
 "I'm choosing not to link a contact for these activities" is ticked
-(`bypass=1`); then it lands on the company alone and reads "<who>
-Bypassed" in the feed. Those sit under **Other Contacts** on the People
-card, grouped by who bypassed, with Claim / Claim all
+(`bypass=1`) or the log sheet's Front desk / main line chip is picked
+(always an attempt; Nov 11, 2026); then it lands on the company alone and reads "<who>
+Bypassed" in the feed. Those sit behind an amber "N calls not linked to a
+person yet" line on Who to call (**Other Contacts** on the People card
+until Nov 11, 2026), grouped by who bypassed, with Claim / Claim all and
+an Undo
 (`claimActivities` in `src/app/dashboard/companies/actions.ts`,
 `OtherContacts` in `src/components/other-contacts.tsx`): the activity
 moves onto the person (contactId set, companyId cleared, the same shape
@@ -673,13 +688,19 @@ open; Won or Lost closes it and the next meeting starts a new one. One
 deal per opportunity (`Opportunity.dealId`), and **no deal without one**
 (`ensureOpportunityForDeal` in `resolveDeal` and "Add deal"). Only a
 deal sits in Quote Sent or further — Taylor: converting is the only way
-there, no "no deal yet" tiles. Meeting Set ↔ Meeting Completed moves
-with no prompt; into a deal column opens "Do you want to convert this to
-a deal?" (Quote / Contract / Signed / Won / Lost, then Build Quote — the
-deal plus a new quote on it — or Manual Input with a value, then Save and
-Accept; Cancel is the way out); a deal never goes back to a meeting
-column; a deal moves between deal columns dated today. Drag, or the
-stage menu on the tile. Click a tile for its panel: name, Lead Label,
+there, no "no deal yet" tiles. A move forward out of Meeting
+Set marks its meeting Held, asking "Did it happen early?" when it is still
+ahead (Nov 11, 2026). Into a deal column opens "What happened after the
+meeting with <person> (<company>)?" with four cards (Building them a
+quote, Sending a contract, They signed with the amount required, Not
+moving forward with an optional reason); Quote and Contract keep Build
+Quote — the deal plus a new quote on it, opened straight away — or Manual
+Input with a value, then Save and Accept; Cancel is the way out. A Build
+Quote deal stays a meeting tile (stage LEAD, in Meeting Completed) until
+its quote is sent; moved by hand it goes through the same prompt, and its
+phone button is "Send the quote →". A deal never goes back to a meeting
+column; a deal moves between deal columns dated today. Drag, or Move to…
+under the tile's ⋯. Click a tile for its panel: name, Lead Label,
 rep, value (until it has quotes), meeting dates, quotes, and People with
 Primary POC / Associated POC / Do Not List (one each, the other two grey
 out, one Primary; ticking Primary moves the old one to Associated;
@@ -742,11 +763,11 @@ PDFs) carry no `data-theme` and stay as they were. Proven by `looks.cjs`;
 `overlay-readability.cjs` checks every overlay in both looks.
 
 **Reports on Overview (Nov 10, 2026).** Overview (`/dashboard`) has a
-report bar across the top: **Daily Rundown** (the default; it is the old
+report bar across the top: **Daily Rundown** (the default for Owners and Admins; a Member lands on My day; it is the old
 Overview — welcome, the Owed to you / pipeline tiles, recent activity, Jump
 in — with today's calendar for the team, overdue follow-ups, gone-quiet
 opportunities, payments in yesterday, quotes and contracts sent yesterday
-and new contacts yesterday inside it), **Pipeline** (open value and count by
+and new contacts yesterday inside it), **Pipeline report** (so named Nov 11, 2026, apart from the board; open value and count by
 stage as the board reads it, days in stage, what moved in the period from
 `StatusChange` — people for the meeting steps, deals for the paperwork —
 conversions, new opportunities, the oldest open items), **Activity**
@@ -800,11 +821,11 @@ hidden while `ANTHROPIC_API_KEY` is unset. All calls go through
 workspace (`AI_DAILY_CAPS` in `src/lib/ai-assist.ts`: FOLLOW_UP_DRAFT 200,
 MEETING_TO_OPPORTUNITY 150, QUOTE_DRAFT 100, IMPORT_HEADERS 50, LEAD_LABEL
 200); meeting notes go in fenced as data. **Gone quiet** (no AI): a "Quiet
-N days" badge on Pipeline tiles and in the panel from
-`goneQuietOpportunities`, a **Gone quiet** toggle on the filter bar
+Nd — call" next-step line on Pipeline tiles and a "Quiet N days" badge in
+the panel, from `goneQuietOpportunities`, a **Gone quiet** toggle on the filter bar
 (`?quiet=1`), and the day count (`Organization.quietDays`, 1–365) on
-Settings → General for Owners and Admins. **Draft a follow-up** on quiet
-tiles and in every panel: a text and an email (subject + body) to the
+Settings → General for Owners and Admins. **Draft a follow-up** under every
+tile's ⋯ and in every panel: a text and an email (subject + body) to the
 Primary POC from the latest meeting notes, the deal and its quote, shown
 to edit and Copy; **Log as sent** writes a one-to-one TEXT or EMAIL
 Activity on the person (a real touch: calendar entry, Contacted, the
@@ -832,8 +853,8 @@ company; `checkImportDuplicates`), counted and listed; with AI, "Suggest
 where they go" for the headers the planner left out (header + 3 sample
 values), ticked suggestions re-plan the preview through
 `planContactImport(text, mapped)`; nothing saved until Import. **Lead
-Label suggestion**: a faint dashed chip on tiles and the panel with no
-label, from rules first (`src/lib/lead-label-rules.ts`: company type
+Label suggestion**: a faint dashed chip in the panel of an opportunity with
+no label (off the tiles since Nov 11, 2026), from rules first (`src/lib/lead-label-rules.ts`: company type
 Distributor/Manufacturer → Vendor; no company and a personal email domain
 → Residential; a WON deal under one of its people → Client), and "Suggest
 label" asking Claude only when the rules say nothing; accepting calls
@@ -912,6 +933,106 @@ when blank. Migration `20261110171000_crm_data` (retiredAt columns,
 by, Added and last touch). `crm-data.cjs` (27 steps) covers it; `load-test.cjs` now seeds 110,000
 activities, reps and 500 Client opportunities and times every new filter,
 the Labels screen, the duplicate finder and a 1,000-record assign.
+
+**The BDR redesign, built (Nov 11, 2026).** All nineteen of Taylor's calls
+(under Testing) are built as one release, which goes live only after his
+"Ready to go live?" yes. The plan's single Closed column is not built and
+won't be: Taylor decided the Pipeline keeps Won and Lost as two columns
+under group headings (his decision is under Testing, after the nineteen).
+**Connected and outcomes**: `ContactStatus.CONNECTED` sits between Contacted
+(shown **Attempted**; the value and CSV import stay CONTACTED) and
+Interested. A touch can carry `Activity.outcome` (`OUTCOMES_BY_TYPE` in
+`src/lib/constants.ts`); Talked, They replied and Held are a connect
+(`isConnect`, the same rule as the triggers that keep
+`Contact/Company.lastConnectAt` beside `lastTouchAt`), and a no-show is no
+touch at all. Talks count from `Organization.outcomesSince`, the release
+day. Status moves go through `moveRecords` in
+`src/lib/status.ts`. Not interested and Lost take an optional reason
+(`StatusChange.reason`). **Health and the lifecycle meter**: `leadHealth()`
+/ `rollUpCompany()` in `src/lib/health.ts` (pure and never stored; loaders
+in `src/lib/health-load.ts`) give New, Trying, Warm, Cooling, Cold, Won or
+Closed, with a 0–100 score only once someone is reached, shown on hover or
+long-press, in teal / amber / rose / grey on every tenant (`--health-*`).
+`LifecycleMeter` (`src/components/lifecycle-meter.tsx`) is the seven steps
+Attempted → Won: its length is the stage, its colour the health, and it
+offers one next action. `src/lib/health-sql.ts` is the same rules in SQL
+for the lists' Pulse filter and Warmest first. **The two sheets**: every
+log is **How did it go?** (`src/components/how-did-it-go/`): one-tap outcome
+chips, then a next step already picked (Try again, Try again in 30 days
+after `parkAfterTries` tries with no connect, Book meeting, Try to book a
+meeting, Start a quote, Reschedule, Not moving forward), one save with one
+"Saved · Undo" (`undoLog`, `src/lib/undo-log.ts`). **Book meeting**
+(`src/components/book-meeting/`) books onto a tile, offering the one it was
+opened from first, and credits `OpportunityMeeting.bookedById`. How did it
+go? opens by itself after a `tel:` / `sms:` tap (`dial-return.ts`). Both
+take `opportunityId`, `onChanged` and `onToast`, so a screen can keep one
+toast slot. Every screen that logs or books mounts them; never build
+another form. **The ONE meeting rule**: which meeting waits for an answer
+is `waitingOf` in `src/lib/meeting-rule.ts`, fed by `waitingMeetings` in
+`src/lib/meetings.ts` (`ahead`, `due`, `missed`, `toAnswer`); every screen
+reads it, never another query. A meeting logged as having happened is Held
+and sets Meeting Completed. **Contact page**: a header band with one main
+button by stage, the meter, a Next step strip (Held / No-show / Move),
+history by day with paperwork lines read at render (Quote sent, Accepted
+by <name>, Contract sent; never Activity rows) and Edit on your own lines
+(`updateActivity`), Reach and Paperwork cards, and a phone bar. New quote,
+Edit, Add deal, status and Delete are under ⋯ More. **Company page**: Who
+to call first, the same header, one Opportunity card, Details folded, Book
+/ Reschedule on the person's own tile (`bookingTiles`), and claims undone
+by a signed token (`src/lib/claim-token.ts`). **Pipeline**: [Mine |
+Everyone], Needs a decision (`?decide=1`), tiles titled by the Primary
+person with the mini meter and one next-step line (`tile-line.ts`), Meeting
+Set split into Happened and Coming up, the DealJourney strip in the panel,
+and stage tabs on a phone (Set · Met · Quote · Contract · Closed; the
+Closed tab shows Won and Lost, each under its own heading).
+`/dashboard/deals?open=<id>` opens one tile's panel (`pipelineHref` in
+`src/lib/pipeline-link.ts`); never link with `?q=<name>`. **My day** (a
+Member's `/dashboard`; `my-day/load.ts`, `rankUpNext` in
+`src/lib/up-next.ts`): a greeting (AI Rewrite with the key set,
+`MY_DAY_GREETING`, 200 a day), week rings toward the **goals** (weekly
+tries, talks and meetings booked plus the try limit, set by Owners and
+Admins in Settings → General; "vs last week" until set), Up next with Call ·
+Text · Book · Log, "N new leads nobody owns · Take 10" with Undo, Meetings
+with Held / No-show, and Team & money folded. Owners and Admins keep the
+Daily Rundown with **Team today** on top (`loadTeamToday`, `repNumbers`;
+`sellingReps()` is the one definition of who counts as a rep; all in
+`src/lib/reports/daily.ts`). A Member's Rundown is Me unless `rep=all`. The
+Rundown's four money tiles are whole dollars (`wholeDollars`). The
+calendar gains the **Agenda** (the default for a Member and a phone), a
+[Mine | Team] toolbar with View and Filters, and "+ New" as a sheet. **The
+phone tab bar**: Today · Contacts · Companies · Pipeline · More, 56px
+(`PhoneTabBar` in `src/components/sidebar-nav.tsx`), with global search in
+the top bar. **Lists**: [Mine | Everyone | Unowned], presets (My call list,
+Never touched, Talked — no meeting, Meetings this week; My accounts, Going
+quiet), Filters (n), Sort, Columns, Pulse and Next step columns, phone
+cards with Call · Text · Log, Clean up ▾ holding Import CSV / Merge / Find
+duplicates / Fill in missing, and Bulk Assign that asks before taking a
+teammate's records and offers Undo (`resolveListView` in
+`src/lib/list-prefs.ts`, `src/lib/list-query.ts`). **Paperwork**: the
+**DealJourney** strip (Meeting · Quote · Contract · Signed · Deposit, one
+Next; `loadDealJourney` in `src/lib/deal-journey-load.ts`) on the quote,
+the Contract Coordinator, the contract and the panel. **Send quote** is a
+share sheet (Copy link · Text · Email · Just mark it sent; nothing is
+emailed). The customer **accepts on `/q`** with a typed name
+(`acceptQuoteByCustomer`, `Quote.acceptedByName`; refused past Valid until
+by `quoteExpired`). The quote editor has one Save (`quote-save.tsx`); a
+sent contract is locked until pulled back to draft; the Coordinator
+pre-ticks a first contract; Build Quote opens the new quote. **Stats**:
+tries, talks, connect rate, meetings booked, show rate and won $; the
+funnel Attempted → Won counts everyone who reached a step or a later one
+(`rollUpReached` in `src/lib/stats.ts`); a leaderboard with Columns; Members
+open on Me. The Activity report counts the same way, and a rise from zero
+reads "new this period" (`changeSize`). **One-to-one email**: Email on a
+contact's page (`ContactEmailButton`, `sendOneToOneEmail`) sends a plain
+email as the rep, logs an EMAIL touch, writes no `EmailSend` row (so it
+is outside the 40 a day) and refuses anyone unsubscribed. **uiPrefs**:
+`User.uiPrefs` is one object per screen: `calendar` (scope, view,
+showLogged), `myday` (teamMoney), `pipeline` (scope), `stats` (columns),
+`contacts` and `companies` (scope, preset, sort, columns). Write it only
+with `saveUiPref(ns, key, value)` (`src/app/dashboard/prefs-actions.ts`);
+read it with `readUiPrefs`, or `readUiPrefsWithLegacy` where the first
+build's top-level keys may still be stored (`src/lib/user-prefs.ts`). Schema:
+the `20261111*` migrations.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
@@ -994,8 +1115,11 @@ are all blocking before the first paying customer.
 - **An uploaded agreement keeps its words, not its look.** Bold, tables,
   columns and logos from the Word or PDF file don't come across; the
   Phase 4 PDF designer is where formatting lives.
-- **Email goes out for three things only:** password reset, Company Users
-  invitations and email marketing (Sept 27, 2026). No approval notice, no
+- **Email goes out for a handful of things only:** password reset, Company
+  Users invitations, email marketing (Sept 27, 2026), the operator, account
+  and report emails described above, and the one-to-one email from a
+  contact's page (Nov 11, 2026). Send quote's Text and Email open the rep's
+  own messages or mail app. No approval notice, no
   receipts, no invoices. Everything else waiting on email still is. That
   includes ratesheets:
   "Send to partner" makes a link to copy and text or email by hand, and
@@ -1265,10 +1389,11 @@ are all blocking before the first paying customer.
   opened.** A workspace nobody opens for a month catches up on the next
   visit, all at once.
 - **An import never unassigns, and an explicit assignee takes everyone in
-  the file** (Nov 10, 2026, Claude's call, to check with Taylor): with a
-  teammate picked, a person already owned by someone else is handed over;
-  a company already owned keeps its rep. Unassigned leaves every existing
-  rep alone.
+  the file** (Nov 10, 2026; Taylor confirmed Nov 11: "you can takeover
+  people and also fill people with no rep"): with a teammate picked, a
+  person already owned by someone else is handed over and an unowned one
+  is filled; a company already owned keeps its rep. Unassigned leaves
+  every existing rep alone.
 - **Bulk "all matching" takes 1,000 at a go, in list order, of the ones
   that don't already have that rep.** Past that the bar says how many are
   left; running it again does the next 1,000 (before the Nov 10 audit it
@@ -1294,6 +1419,49 @@ are all blocking before the first paying customer.
 - **A person linked to a second company is not rolled up there.** Their
   deals, quotes and notes stay with their main company; the linked one
   lists them under People with an "Additional account" tag only.
+- **Before any Instant Rollback past the BDR release (Nov 11, 2026), you
+  must run `scripts/before-rollback-to-pre-bdr.sql` in the Neon console
+  first.** Every time; it is not optional. The release added Connected to
+  the status list, and a build from before it can't read a contact or
+  company at Connected, so the Contacts and Companies lists, their pages,
+  the Pipeline and Stats would all fail to open. The script moves everyone
+  at Connected back to Contacted (shown Attempted), on contacts and
+  companies, in one transaction. Nothing is deleted: `StatusChange` still
+  dates each connect, rolling forward again needs nothing, and it is safe
+  to run twice. In order: open the Neon console's SQL editor on the live
+  database, paste the script in, run it, and only then click Instant
+  Rollback in Vercel. Connected is the only change that needs this (final
+  audit D17).
+- **A meeting logged Held on a different day from its booking is a second
+  meeting.** The booking stays open and keeps asking "how did it go?". Taylor
+  has to set the rule: was it that booking, early or late, or a different
+  meeting? The same-day case is handled (final audit D12, left open).
+- **Talks are counted from the release day.** Calls before it are attempts
+  and meetings before it are held (`Organization.outcomesSince`); Stats and
+  the Activity report say "Talks counted from <day>". Old lines stay "not
+  recorded". `scripts/label-old-attempts.cjs` labels old voicemail and
+  no-answer calls from their notes. It is a dry run unless given
+  `--apply --org <slug>`, and is for the demo only, with Taylor's yes. A
+  missed meeting rebooked counts as two bookings.
+- **Pulse and Warmest first are Contacts only.** A company's health is a
+  roll-up of its people, and its SQL twin isn't built. Inside a band,
+  Warmest first orders by most recent touch, not the exact score. Bulk
+  "all matching" on a Warmest-first view takes the first 1,000 by Recently
+  added. The Pulse id lists stop at 12,000 (`PULSE_ID_CAP`); past that, the
+  smaller pulses narrow a little less.
+- **An edited history line never re-runs status moves.** Changing Talked to
+  Voicemail fixes the line and leaves the person Connected; Undo on the
+  original save is what takes a move back.
+- **My day has no single toast slot.** The log sheet, the Book meeting
+  sheet and the Meetings card each draw their own "Saved · Undo", and two
+  can show in the same spot for up to ten seconds. The contact page and the
+  Pipeline have one slot each (`onToast`).
+- **The one-to-one email has no daily cap of its own.** Decision 16 keeps it
+  out of the 40 a day, so only Resend's plan limit, shared by every
+  workspace, stands behind it.
+- **The phone lists have no long-press**: a Select button starts Select
+  mode. **Contacts has no row expand**: the Pulse meter's popover shows
+  every step's date, the counts and the score instead.
 
 ## Testing
 
@@ -1306,7 +1474,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-eight** (plus `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
+suite, and the delete-confirmation suite. **Forty-six** (Nov 11, 2026; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1428,7 +1596,7 @@ Software offering no workspace unit, pictures made small in the browser,
 Make main, a Color, Safari's missing WebP faked so a cut-out lands as JPEG
 on white, the six cap, Remove closing the gap, the list's thumbnail and
 counts, clone and delete with shared files, a quote line's labels / unit
-/ picture, the customer's copy, Mark as sent freezing pictures, a rename
+/ picture, the customer's copy, Send quote (Just mark it sent) freezing pictures, a rename
 and another line's edit leaving a sent quote alone, a label offered back,
 a removed picture kept for the sent quote and dropped from a draft, an
 enum unit written by older code winning, the draft PDF with its picture,
@@ -1436,11 +1604,23 @@ the Coordinator and the contract printing labels, Order materials' purchase
 order carrying them with its body at cost, Labels & Units as a Member and
 as an Owner; three steps for the Nov 6 audit — Mark accepted keeping the
 picture a sent quote went out with, the editor showing pictures after
-Mark as sent, Back to draft letting go, another tab's label kept through a
+the quote is sent, Back to draft letting go, another tab's label kept through a
 refresh, a tag changed back keeping units, twelve labels on one line, a
 typed line linked by name taking the picture, a row signed with no labels
 staying that way on the purchase order, per-product counts; **it needs
-`STORAGE_DRIVER=local`** like `job-photos.cjs`). **`calendar.cjs` steps
+`STORAGE_DRIVER=local`** like `job-photos.cjs`).
+From Nov 11, 2026 (the BDR redesign): `connected.cjs` (59: outcomes,
+Connected on the ladder, the lastConnectAt triggers, Held / No-show /
+Reschedule, reasons, next steps and Undo; twenty-nine "audit fixes"
+steps), `health.cjs` (34: every health state, the main button per stage,
+⋯ More, the history by day, Pulse and Warmest first against each person's
+own meter, and `health-check.ts`), `how-did-it-go.cjs` (24: the log sheet
+and the Book meeting sheet, the dial return, the Done box, the phone
+sheet), `company-page.cjs` (24), `myday.cjs` (43: My day, Team today,
+goals, the Agenda and the calendar toolbar, the phone tab bar) and
+`round2-pages.cjs` (10: history Edit, Coming up rows, the phone meter
+sheet, Book it, + Event, Add person on a phone, one toast slot, the
+company's Book tile). **`calendar.cjs` steps
 29 and 30 read the Coming up card and pick the roofing day by its date**
 (Nov 6, 2026): a seeded November day now behind us sits under Already
 been. Since Nov 10, 2026 the suite is built around **August 2027** (moved
@@ -1597,8 +1777,8 @@ on phone and desktop, Dark and Light: 128 findings, 34 distinct confirmed
 bugs, all fixed with "audit fixes (UX review): …" steps in their module's
 suite (the step counts quoted elsewhere in these notes predate it; the
 suites are the source). The redesign it proposed (Connected, the
-lifecycle meter, health) is a plan waiting on Taylor's decisions, not
-built. What the fixes taught:
+lifecycle meter, health) was approved and built on Nov 11, 2026 ("The BDR
+redesign, built" under What is already built). What the fixes taught:
 - **Anything with a transform, filter or backdrop-filter is the box its
   position:fixed children are placed against, and so is an animation that
   keeps a transform after it ends.** `.fade-up` ran with fill-mode `both`
@@ -1629,8 +1809,11 @@ built. What the fixes taught:
   stay 11px on a phone.
 - **"N days ago" is counted on the workspace's calendar**:
   `daysSince(date, timeZone)` takes the zone.
-- **A change from zero reads "▲ up from 0"**, through `changeText()` in
-  reports/format.ts, Stats tiles included; never "100%" or "vs 0".
+- **A rise from zero reads "new this period"** (plan R0, Nov 11, 2026;
+  "▲ up from 0" before), through `changeSize()` in reports/format.ts:
+  Stats tiles, report tiles, the report email and the write-up alike;
+  never "100%" or "vs 0". A fall below zero on a net figure reads
+  "▼ down from $0".
 - **One touch logged on several people is one row each with a shared
   batchId**: anything counting or listing touches across people counts
   `COALESCE(batchId, id)`.
@@ -1643,11 +1826,13 @@ built. What the fixes taught:
   pickers still use `cleanSearch`.
 - **Signing a contract, Mark as signed and Award without paperwork accept
   the source quote** (`acceptSourceQuote` in src/lib/quote-accept.ts, kept
-  out of "use server" files). **After this goes live, run once against
-  the live database:** `npx tsx scripts/accept-signed-quotes.ts --check`,
-  then without `--check`, to catch up deals signed before it.
-- Mark as sent is refused with no saved line items, and waits while the
-  editor has unsaved edits. Delete quote and the calendar's trash ask
+  out of "use server" files). The catch-up for deals signed before
+  it is the migration `20261111140000_paperwork_accept_signed_quotes`,
+  which runs on release by itself and touches only quotes still Sent, so
+  a second run changes nothing. The hand-run script is gone.
+- **Send quote** (Mark as sent until Nov 11, 2026) is refused with no
+  saved line items, and waits while any card on the quote (lines, payment
+  table, details) has unsaved edits. Delete quote and the calendar's trash ask
   first, with Yes away from where the trash was. The opportunity panel's
   Stage menu saves the panel's edits first.
 - Lead label fills are Taylor's; built-in chips use black letters, N/A
@@ -1706,6 +1891,227 @@ said yes to, so later work doesn't ask again:
     sent; Manual Input still moves it straight away.
 The renames and moves listed per release in the plan are approved with
 it. Each release still goes live only after his "Ready to go live?" yes.
+All nineteen were built together on Nov 11, 2026 (decision 2's Connected
+shipped with the outcome chips, not in a release of its own) and wait on
+that yes as one release; see "The BDR redesign, built".
+
+**Taylor's decision on the Pipeline's columns (Nov 11, 2026).** The
+Pipeline keeps Won and Lost as two columns. Group headings sit above the
+columns: **BDR** over Meeting Set and Meeting Completed, **Closer** over
+Quote Sent and Contract Sent, **Closed** over Won and Lost. Never merge
+Won and Lost into one column. This replaces the plan's single Closed
+column; on a phone the Closed tab already shows Won and Lost, each under
+its own heading.
+
+The BDR sprint and its final audit (Nov 11, 2026): six area audits
+(data, money, pages, pipeline, today and lists) found 142 distinct
+problems, confirmed 119 and fixed 107 in their own areas, each fix with an
+"audit fixes:" step in its module's suite. Most of the ones that lived in
+another area's files were fixed after the merge, with steps of their own;
+what is still open is in Known gaps. Lessons worth keeping:
+
+- **Never wait on every animation's `finished`.** The header meter's
+  current step breathes forever (`lmBreathe`), so
+  `Promise.all(document.getAnimations().map(a => a.finished))` never
+  resolves, and `page.evaluate` has no timeout: pipeline-opportunities sat
+  for 11 minutes. Use `settle()` from `pipeline-opportunities.cjs`:
+  networkidle, then every animation finished or infinite.
+  `deal-tracker.cjs` and `quotes-improvement.cjs` still use the old wait,
+  on pages with no meter; move them over when touched.
+- **Settle before measuring.** The dashboard's `.fade-up` moves every page
+  6px as it opens, so a box measured mid-fade has float edges: a 44px
+  button reads 43.99997px. Any size or pixel check right after `goto`
+  calls `settle()` first.
+- **The shared sheets cover the page.** After a plain log, How did it go?
+  stays open on its next step: press Escape or click `follow-up-skip`
+  before touching anything under it. A toast's words change ("Booked"
+  becomes "Undone"), so find Undo by its words.
+- **Where the redesign moved things, for suites.** Contact page: New quote,
+  New contract, Edit, Add deal, Additional Account, the status picker and
+  Delete are under `record-more`. From Meeting Completed, Add deal is under
+  `paperwork-more` → `paperwork-add-deal-open`. Industry · Type, Title,
+  Birthday, City and State are under Reach → `more-details`. Setting
+  Meeting Set by hand there needs `status-set-anyway` past the Book it
+  offer. Email is `contact-email-button`, the one-to-one window; the
+  marketing window is `one-to-one-use-marketing` after it, and only for a
+  contact with an email. Company page: tags, phone, email, website and
+  address are in the folded `company-details` (`company-details-toggle`;
+  open only when the app auto-filled them). People are Who to call
+  (`person-row`, then `who-show-all`, 50 a page). On both pages
+  `page.locator("dl").first()` now reads the wrong list.
+- **More moved controls.** Pipeline: Move to… is `tile-more` →
+  `tile-move-menu`. The rep is `tile-rep` (`data-owner-id`), changed in
+  `panel-rep`. Quotes are in the panel. The journey strip is
+  `panel-journey` → `deal-journey`, with `journey-next`. Lists: Import CSV,
+  Merge and Fill in missing are `cleanup` then
+  `cleanup-import|merge|fill` (Find duplicates is `find-duplicates` in the
+  same menu; on a phone, Email is `cleanup-email` there too). A filter is reachable only after
+  `filters-toggle` (`openFilters`). Quote: `send-quote` then
+  `send-quote-mark`. There is one `quote-save` (`quote-save-phone` on a
+  phone). Wait for a details save by the exact text "Quote details saved"
+  ("Unsaved changes" contains "saved"), and for the whole bar by "All
+  changes saved" in `quote-save-status`. Coordinator: a first contract
+  starts with every row ticked (Contract A's Clear for a subset), and its
+  template, direction, terms and title are behind `column-change`.
+- **Read a money tile by its label, exactly.** The Overview's tiles are
+  whole dollars ($13,234.50 shows as $13,235), so match
+  `[data-testid=stat-tile][data-label="Owed to you"] p.num`, never page
+  text with cents.
+- **Only one of the phone cards and the desktop table is in the page**
+  (`ResponsiveList`). The server picks by user agent and the width decides
+  after load: at a narrow viewport without `isMobile`, wait for
+  `contact-card` / `company-card`.
+- **The calendar remembers Mine** (`calendar.scope`) for a bare address
+  only. A suite that clicks Mine clicks Team after it, or later bare visits
+  show one person's days. A filter other than Users ignores the remembered
+  Mine, so a shared link means the same thing to everyone.
+- **A "Search people and companies" button is on every page**, so
+  `getByLabel("Search people…")` needs `{ exact: true }`.
+- **The Agenda draws at most 60 entries a day** (`loadAgenda` in
+  `src/lib/calendar-data.ts`), with "Showing 60 of N · Show all" opening
+  that day in Week, and folds done entries behind "n done". Drawing every
+  entry of a busy team day (2,204 rows, 4 MB of HTML) took 3 s in the
+  browser at 200,000 contacts.
+- **A CTE the planner sizes at 1 row is read with `IN` / `NOT IN`, not
+  `EXISTS` / `NOT EXISTS`** (`my-day/load.ts`, 3.8 s → 0.13 s), or
+  aggregated once with a UNION ALL (`gone-quiet.ts`). Otherwise every join
+  onto it becomes a per-row loop.
+- **pipeline-opportunities step 19 (a drag to Quote Sent) can time out once**
+  with "element is not stable": the board scrolls sideways under the
+  drag. It passes when run again; a person's drag isn't affected.
+- **A fresh machine:** `bash scripts/browser-tests/setup-db.sh <db name>`
+  starts Postgres on 5433, makes the database, writes `.env` if it's
+  missing, generates Prisma and applies every migration.
+- **After a merge, check the suites both sides edited.** Run `node --check`
+  on every suite and look for a helper defined twice in one scope. The same
+  name inside separate `page.evaluate` bodies is fine (`looks.cjs`' colour
+  maths).
+- **A full run is one production build and six server starts, through
+  `scripts/browser-tests/run-suites.sh`.** Run `npx next build` first, then
+  `DB=<database url> bash scripts/browser-tests/run-suites.sh <group…>`.
+  `DB` is required. `PORT` (default 3400) is where each group's server
+  starts, and the runner stops whatever already holds that port, so give
+  each session its own. `LOG` (default `/tmp/sprint-run.txt`) gets one
+  PASS or FAIL line per suite, with a failure's last 30 lines; each
+  suite's full output lands beside it as `<log>-<suite>.log`, and the
+  server's as `<log>-server.log`. Every server gets
+  `STORAGE_DRIVER=local`; each group adds its own stand-ins. Suites are
+  named without `.cjs`, separated by commas:
+  - **`plain:a,b`**: the suites named, on a plain server. List every suite
+    not in another group, `round2-pages` included.
+  - **`email:a,b`**: fake Resend on :3999 for `password-reset`,
+    `account-types`, `email-marketing-users` and `job-photos`, plus
+    `crm-data` (the runner gives it `CATCHER_PORT=3999`).
+  - **`reports`** (`reports.cjs`), **`ai`** (`ai-assist.cjs`, :3995) and
+    **`template`** (`template-import.cjs`, :3998) take no list; the runner
+    starts their server with the settings described above.
+  - **`load`**: `load-test.cjs`.
+
+  `products-load-test.cjs` and `import-slow-db.cjs` run through the slow
+  proxy, outside the groups. After round 2 the 44 grouped suites,
+  `npx tsx scripts/health-check.ts` (leadHealth's 140 fixtures through the
+  SQL twin, the loader and the list filters) and
+  `npx tsx scripts/up-next-check.ts` all passed.
+- **The try / talk rule is written in several places**: `isConnect` in
+  `src/lib/constants.ts`, the triggers, `health-load.ts`, `health-sql.ts`,
+  `stats.ts`, `reports/activity.ts` and `reports/daily.ts`. A try is a
+  non-marketing touch that has happened and isn't a no-show. One save is
+  one try (`COALESCE(batchId, id)`). Change them together;
+  `health-check.ts` fails if the SQL twin drifts from `leadHealth()`.
+- **An Undo records what it changed and never guesses from time**
+  (`OpportunityMeeting.outcomeUndo`, `stashMeeting` in
+  `src/lib/undo-log.ts`). A save's writes are those between its batchId's
+  stamp and two minutes after its last row. Only whoever made it, or an
+  Owner or Admin, runs it, and a save with nobody on record needs an Owner
+  or Admin.
+  - What Undo acts on comes from the server: the batch's own rows or a
+    signed record (`src/lib/claim-token.ts`), never ids from the browser.
+  - An Undo takes back everything its toast names, or isn't offered.
+  - Its toast is keyed per action, expires, and lives outside anything its
+    action can unmount.
+- **Status moves go through `moveRecords`** (`src/lib/status.ts`): one
+  statement per starting status, only rows still at it, and StatusChange
+  rows for exactly those. Never read a status and then `updateMany` it.
+  Contacted and Connected never lift Lost.
+- **A public link's action re-checks state in the write itself.** Sign and
+  accept write WHERE status is what they expect, and treat a count of 0 as
+  "someone else won", so a double tap awards once. `/c` carries the
+  `sentAt` of the copy the customer read, and a stale one is refused.
+- **Postgres, learned this sprint:**
+  - An `UPDATE … FROM (SELECT … FROM the same table)` merge loses writes
+    under concurrency; merge against the target row.
+  - Anything taking ACCESS EXCLUSIVE (`ALTER … SET DEFAULT`) holds it until
+    the migration file commits, so it goes last.
+  - One log on many people is one `createManyAndReturn`, never an array
+    `$transaction`.
+  - Prisma refuses an `in` list past about 32,000 values (P2029).
+  - A per-row JSON subquery can price a big statement into JIT; use
+    `SET LOCAL jit = off` inside a `$transaction`.
+  - An index-plan check on a small test table needs `enable_seqscan`,
+    `enable_sort` and `enable_bitmapscan` off.
+  - A new enum value breaks Instant Rollback once a row uses it.
+- **Dates and times.** A booked meeting's moment is its entry's day and
+  time in the workspace's zone: `zonedMoment(day, time ?? "12:00", tz)`
+  wherever a meeting entry is written or moved, never a bare day (midnight
+  UTC is the evening before in the US). Never count "booked" by
+  `createdAt`: use the earliest of the row, its line and its day, and count
+  each meeting once.
+- **Fixed things on a phone.** The tab bar shows below `lg`. A bar or toast
+  at the foot sits on top of it with `bottom: var(--phone-tabbar-h, 0px)`
+  (set by the dashboard layout); test with `elementFromPoint` on the tab
+  bar. The phone top bar scrolls away with the page, so sticky headers can
+  use `top-0` (the Pipeline's stage tabs still measure it).
+  - A position:fixed child is also trapped by a `.card` (its blur), a size
+    container (`container-type`) and a still-running `.fade-up`. Pinned
+    buttons go outside the card or through a body portal.
+  - The dashboard layout puts the tenant's `--brand` on `<body>`, so a
+    portal needs nothing extra.
+  - The brand colour is never the colour of small words: mark the active
+    thing with a bar or an icon, and keep the words `--text-strong`.
+- **The keyboard on floating panels.** A FloatingMenu opened from a button
+  uses `usePanelFocus` (`src/components/panel-focus.ts`). A menu of buttons
+  uses `useMenuFocus` (`lead-label-chip.tsx`): focus two frames after
+  opening, arrows / Home / End, and focus back on close.
+  - A panel with menus over it ignores Escape and Tab while another
+    `[role=dialog]` or `.modal-backdrop` is open outside it.
+    `stopPropagation` can't help, because FloatingMenu listens on document
+    too.
+  - A capture-phase key listener stands down when a child window takes
+    over.
+- **Server rendering.** A "use client" component that opens by default
+  still renders on the server, so anything it portals into `document.body`
+  waits until mounted: `/dashboard/email/to/<id>` answered 500, and the
+  panel opened by `?open=` waits through `useSyncExternalStore`. React also
+  mounts a closed `<details>`' children, so My day's Team & money is built
+  only while its remembered state is open. A `"use server"` export no
+  client imports has no action id; harden it anyway.
+- **State in the sheets and panels:**
+  - State set after an `await` inside `start(async …)` isn't part of the
+    transition. Wrap it in `start(() => …)`, or the next step draws with
+    `pending` still true ("Saving…").
+  - A callback that needs something loaded in the background reads it from
+    a ref (`ctxNow`).
+  - A count shown after a save is read after the save; the park offer was
+    one try behind.
+  - A remembered dial tap is spent when the sheet opens by any route.
+  - A panel that re-reads after a sheet's save merges into its form:
+    untouched fields follow, and new people join.
+  - A panel writes the rep only when it was changed there
+    (`ownerOriginal`).
+- **A thrown server action doesn't mean nothing happened.** The answer can
+  be lost after the email went, so never say "nothing was sent".
+- **A card that joins the quote's one Save**
+  (`useQuoteSaveSection(key, { label, order, dirty, pending, save })`) also
+  needs its own Save on a phone, where the foot bar is hidden
+  (`PhoneSaveHere`).
+- **Numbers tables on a phone:** put `table-stack` on the table and
+  `data-label` on every cell after the first.
+- **A suite that clicks a button whose label changes while pending**
+  ("Sign contract" → "Signing…") waits for that label to go, or for the
+  database, before reading.
+- **"audit fixes" steps can collect failures and throw once at the end**,
+  so one run against the old code shows every step failing (`AUDIT_SOFT=1`
+  in `connected.cjs`).
 
 **Anything that floats over other content must be opaque.** The app's
 look is glass — `.card` is about 4% white with a blur behind it — which

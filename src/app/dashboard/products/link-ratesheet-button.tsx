@@ -64,7 +64,7 @@ export function LinkRatesheetButton({
 
   return (
     <>
-      <button type="button" onClick={show} className="btn btn-pink btn-sm">
+      <button type="button" onClick={show} className="btn btn-ghost btn-sm" data-testid="link-ratesheet">
         <IconPlus size={14} />
         Link Ratesheet
       </button>

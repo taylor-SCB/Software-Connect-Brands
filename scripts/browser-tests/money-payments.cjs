@@ -367,7 +367,7 @@ async function signAs(browser, token, name) {
   await shot(page, "07-owes-line");
 
   log("the Owes money filter keeps only the customers who owe");
-  await page.locator("[data-testid=filter-owed]").click();
+  await openFilters(page); await page.locator("[data-testid=filter-owed]").click();
   await page.waitForURL(/owed=1/);
   await page.locator("[data-testid=company-row]").first().waitFor();
   assert.equal(await page.locator("[data-testid=company-row]").count(), 1);
@@ -414,9 +414,10 @@ async function signAs(browser, token, name) {
 
   log("the dashboard's Owed to you tile adds up every customer");
   await page.goto(`${BASE}/dashboard`);
-  const tile = page.locator("text=Owed to you").locator("xpath=ancestor::*[self::a or self::div][1]");
-  // $1,800 from Harbor plus $750 from the homeowner.
-  assert.match(await tile.textContent(), /\$2,550\.00/);
+  const tile = page.locator('[data-testid=stat-tile][data-label="Owed to you"]');
+  // $1,800 from Harbor plus $750 from the homeowner, in whole dollars as the
+  // money tiles read since the BDR redesign's round 2 (Nov 11, 2026).
+  assert.equal(await tile.locator("p.num").textContent(), "$2,550");
 
   log("the numbers on the page agree with the database");
   const truth = (await sql(
@@ -524,7 +525,8 @@ async function signAs(browser, token, name) {
   await ppage.click("button[type=submit]");
   await ppage.waitForURL(/\/dashboard$/);
   await ppage.goto(`${BASE}/dashboard/companies`);
-  await ppage.locator("[data-testid=company-row]").first().waitFor();
+  // A card list on a phone since Nov 11, 2026.
+  await ppage.locator("[data-testid=company-card]").first().waitFor();
   assert.ok(
     await ppage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
     "the page itself does not scroll sideways on a phone",
@@ -538,3 +540,20 @@ async function signAs(browser, token, name) {
   console.error(error);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

@@ -24,11 +24,13 @@
  * 10, 2026), each an "audit fixes (UX review)" step: the calendar card
  * listing open entries first with the heading counting only those and the
  * write-up starting with the first open one (and the AI told which are
- * done); a rise from 0 reading "▲ up from 0", never "from 0 vs 0"; Owed by
+ * done); a rise from 0 reading "new this period", never "from 0 vs 0"; Owed by
  * rep with nothing in it saying so once; Overview on an isMobile phone
  * staying 390px wide with a long activity line cut with …; and the
  * Activity chart's labels at 11px on a phone and at 1440, bars at most
- * 28px, and the axis on round numbers.
+ * 28px, and the axis on round numbers. The final audit (Nov 11, 2026): the
+ * daily write-up is keyed on what is still open only, so a touch logged from
+ * a contact's page (a done calendar entry) doesn't ask Claude again.
  *
  * The server on BASE needs, in .env: RESEND_API_KEY (any), EMAIL_FROM,
  * RESEND_ENDPOINT=http://localhost:3993/emails, CRON_SECRET=test-cron-secret,
@@ -350,7 +352,7 @@ async function narrativeText(page) {
     await page.waitForURL(/\/dashboard$/);
     timings.daily = await open(page, `${BASE}/dashboard`, "daily");
     const tabs = await page.locator("[data-testid=report-tab]").allTextContents();
-    assert.deepEqual(tabs, ["Daily Rundown", "Pipeline", "Activity", "Closing", "Money Owed"]);
+    assert.deepEqual(tabs, ["Daily Rundown", "Pipeline report", "Activity", "Closing", "Money Owed"], "Sprint: the Pipeline report tab isn't named like the Pipeline board");
     assert.equal(await page.locator("[data-testid=report-tab][aria-current=page]").textContent(), "Daily Rundown");
     await page.getByText(/Welcome back, Taylor/).waitFor();
     await page.locator("[data-testid=owed-where]").waitFor();
@@ -380,7 +382,8 @@ async function narrativeText(page) {
     log("the Daily Rundown's write-up is the rules version, from the same numbers");
     assert.equal(await page.locator("[data-testid=report-narrative]").getAttribute("data-source"), "RULES");
     let words = await narrativeText(page);
-    assert.match(words, /The team has 2 things on the calendar today, starting with “Site walk at Acme” at 09:00\./);
+    // Final audit (Nov 11, 2026): the write-up counts only what is still open.
+    assert.match(words, /The team has 2 things still open on the calendar today, starting with “Site walk at Acme” at 09:00\./);
     assert.match(words, /1 follow-up is overdue — the oldest, “Follow up · Ann Acme” with Ann Acme, is 3 days late\./);
     assert.match(words, /Yesterday \$500 came in from 1 payment, the largest from Acme Plumbing\./);
     assert.match(words, /1 quote worth \$2,160 and 1 contract went out, and 1 new contact was added\./);
@@ -411,7 +414,8 @@ async function narrativeText(page) {
       [org, N],
     );
     assert.equal(await statValue("Signed"), String(nicSigned));
-    const nicActs = await count(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1 AND "userId"=$2 AND marketing=false`, [org, N]);
+    // One line per save, dated now or earlier (Round 2).
+    const nicActs = await count(`SELECT count(DISTINCT COALESCE("batchId", id))::int n FROM "Activity" WHERE "organizationId"=$1 AND "userId"=$2 AND marketing=false AND "occurredAt" <= now()`, [org, N]);
     await page.getByText("Logged by this rep").waitFor();
     const recent = page.locator(".card", { has: page.locator("h2", { hasText: "Recent activity" }) }).locator("ul > li");
     assert.equal(await recent.count(), Math.min(8, nicActs), "only what Nic logged");
@@ -434,23 +438,29 @@ async function narrativeText(page) {
     assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today · 2", "2 still open, not 11");
     assert.match(await page.locator("[data-testid=rundown-calendar]").textContent(), /Still open · 9 already done/);
     let calRows = await calendarRows();
-    assert.equal(calRows.length, 8);
-    assert.deepEqual(calRows.map((row) => row.done), [false, false, true, true, true, true, true, true], "open first, the done calls after");
+    // Round 2 (BDR redesign): the done entries fold into a collapsed "Done
+    // today" under the open ones (up to 8 of each), rather than sharing 8 rows.
+    assert.deepEqual(calRows.map((row) => row.done), [false, false, true, true, true, true, true, true, true, true], "open first, the done calls after");
+    assert.equal(await page.locator("[data-testid=rundown-calendar] [data-testid=rundown-done] li").count(), 8, "the done calls are under Done today");
+    assert.equal(await page.locator("[data-testid=rundown-done]").getAttribute("open"), null, "collapsed");
+    assert.match(await page.locator("[data-testid=rundown-done] summary").textContent(), /Done today \(9\)/);
     assert.match(calRows[0].text, /Site walk at Acme.*09:00/s);
     assert.match(calRows[1].text, /Call Bob/);
     // Follow-up: a done row is struck through but not faded (opacity 0.6
     // on faint text read 2.57:1 in Light).
     const doneLook = await page.locator("[data-testid=rundown-calendar] li[data-done=true] > span").first().evaluate((el) => ({ opacity: getComputedStyle(el).opacity, line: getComputedStyle(el).textDecorationLine }));
     assert.deepEqual(doneLook, { opacity: "1", line: "line-through" }, "done rows are struck through, not faded");
-    assert.match(await narrativeText(page), /The team has 11 things on the calendar today, 2 still open, starting with “Site walk at Acme” at 09:00\./);
+    // Final audit (Nov 11, 2026): only what is still open is counted, so
+    // nine done calls leave the write-up as it was.
+    assert.match(await narrativeText(page), /The team has 2 things still open on the calendar today, starting with “Site walk at Acme” at 09:00\./);
     await sql(`UPDATE "CalendarEvent" SET "doneAt"=now() WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
     await open(page, `${BASE}/dashboard`, "daily");
     assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today", "nothing open, no count");
     assert.match(await page.locator("[data-testid=rundown-calendar]").textContent(), /All 11 done/);
     calRows = await calendarRows();
-    assert.ok(calRows.length === 8 && calRows.every((row) => row.done), "the done entries are still listed");
+    assert.ok(calRows.length === 8 && calRows.every((row) => row.done), "the done entries are still listed, under Done today");
     words = await narrativeText(page);
-    assert.match(words, /The team has 11 things on the calendar today, all done\./);
+    assert.match(words, /Nothing is left open on the calendar today\./);
     assert.doesNotMatch(words, /starting with/);
     await sql(`UPDATE "CalendarEvent" SET "doneAt"=NULL WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
     await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_rpt_done_%'`);
@@ -498,6 +508,8 @@ async function narrativeText(page) {
     const aging = await page.locator("[data-testid=pipeline-aging]").textContent();
     assert.match(aging, /Under a week.*2.*8–30 days.*1.*31–60 days.*1.*Over 90 days.*1/s);
     assert.match(await page.locator("[data-testid=pipeline-stuck] li").first().textContent(), /Bolt rooftop units.*100 days.*\$3,000/s);
+    // Straight to its tile's panel on the board.
+    assert.equal(await page.locator("[data-testid=pipeline-stuck] li a").first().getAttribute("href"), "/dashboard/deals?open=opp_rpt_q2");
     assert.deepEqual(
       (await groupRows(page)).map((row) => [row[0], row[1], row[5]]),
       [
@@ -545,7 +557,7 @@ async function narrativeText(page) {
     assert.equal(await tile(page, "marketing"), 3);
     assert.equal(await tile(page, "untouched"), 3, "Cal, Dee and Eve");
     assert.deepEqual(
-      (await groupRows(page)).map((row) => [row[0], row[1], row[6]]),
+      (await groupRows(page)).map((row) => [row[0], row[1], row[7]]),
       [
         ["Taylor Test", "3", "0"],
         ["Nic Rivera", "2", "2"],
@@ -559,10 +571,10 @@ async function narrativeText(page) {
     assert.match(words, /3 of 5 people \(60%\) had no touch this week, the most under Nic Rivera \(2\)\./);
     assert.match(words, /3 marketing emails went out as well, counted on their own\./);
     await shot(page, "03-activity");
-    log("audit fixes (UX review): a rise from nothing reads 'up from 0', never '100%' or 'from 0 vs 0'");
+    log("Sprint: a rise from nothing reads 'new this period', never '100%', 'up from 0' or 'from 0 vs 0' (plan R0)");
     const meetingsTile = page.locator("[data-testid=report-tile][data-id=meetings]");
     assert.equal(Number(await meetingsTile.getAttribute("data-value")), 1, "one meeting this week, none the same days last week");
-    assert.equal((await meetingsTile.getByTestId("report-tile-change").textContent()).trim(), "▲ up from 0");
+    assert.equal((await meetingsTile.getByTestId("report-tile-change").textContent()).trim(), "new this period");
     assert.equal(
       (await page.locator("[data-testid=report-tile][data-id=touches]").getByTestId("report-tile-change").textContent()).trim(),
       "▲ 400% vs 1",
@@ -570,12 +582,12 @@ async function narrativeText(page) {
     );
     log("Activity: Break down by Job title and by State");
     await pick(page, "report-by", "title", "activity");
-    const titles = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[6]]]));
+    const titles = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[7]]]));
     assert.deepEqual(titles.Owner, ["3", "1"], "Ann and ' owner ' Dee are one title");
     assert.deepEqual(titles["Office Manager"], ["2", "0"]);
     assert.deepEqual(titles["No job title"], ["0", "2"]);
     await pick(page, "report-by", "state", "activity");
-    const states = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[6]]]));
+    const states = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[7]]]));
     assert.deepEqual(states.TX, ["3", "2"], "Ann and Dee through Acme, Cal on her own");
     assert.deepEqual(states.CO, ["2", "1"]);
 
@@ -755,7 +767,7 @@ async function narrativeText(page) {
     await page.goto(`${BASE}/dashboard/settings/account`);
     const mine = await page.locator("[data-testid=my-report-email]").allTextContents();
     assert.equal(mine.length, 3);
-    assert.match(mine.join("\n"), /Pipeline · Weekly, Mondays · Whole team/);
+    assert.match(mine.join("\n"), /Pipeline report · Weekly, Mondays · Whole team/);
     assert.match(mine.join("\n"), /Money Owed · Monthly, on the 1st · Whole team/);
     await page.locator("[data-testid=my-report-email]", { hasText: "Money Owed" }).locator("[data-testid=my-report-email-remove]").click();
     await page.waitForFunction(() => document.querySelectorAll("[data-testid=my-report-email]").length === 2);
@@ -809,7 +821,7 @@ async function narrativeText(page) {
     assert.equal(caught.length, 3);
     const pipelineMail = caught.find((message) => /Pipeline/.test(message.subject));
     assert.equal(pipelineMail.to[0], EMAIL);
-    assert.match(pipelineMail.subject, /^Test Reports Co · Pipeline — Last week · Nov 9 – Nov 15, 2026$/);
+    assert.match(pipelineMail.subject, /^Test Reports Co · Pipeline report — Last week · Nov 9 – Nov 15, 2026$/);
     assert.match(pipelineMail.from, /^"Test Reports Co" </);
     assert.match(pipelineMail.html, /Open pipeline/);
     assert.match(pipelineMail.html, new RegExp(`${BASE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/dashboard\\?report=pipeline&amp;period=last-week`));
@@ -919,12 +931,16 @@ async function narrativeText(page) {
       assert.equal((await sql(`SELECT source FROM "ReportNarrative" WHERE "organizationId"=$1 AND key LIKE 'MONEY|%'`, [org])).rows[0].source, "RULES");
     }
 
-    log("audit fixes (UX review): the AI write-up of the Daily Rundown is told which calendar entries are done, open ones first");
+    // Final audit (Nov 11, 2026): told only what is still open — the done
+    // entries' flags and counts moved the write-up's fingerprint on every
+    // logged touch. A call already made is still never "next up": it isn't
+    // listed at all.
+    log("audit fixes (UX review): the AI write-up of the Daily Rundown is told only the calendar entries still open, never the done ones");
     await sql(
       `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","doneAt","updatedAt") VALUES ('ev_rpt_ai_done',$1,'Early call','Call',$2::date,'07:00',$3,now(),now())`,
       [org, today, T],
     );
-    claudeReply = { paragraphs: ["The team has 3 things on the calendar today."] };
+    claudeReply = { paragraphs: ["The team has 2 things still open on the calendar today."] };
     const asksBefore = claudeRequests.length;
     await page.goto(`${AI_BASE}/dashboard`);
     for (let i = 0; claudeRequests.length === asksBefore; i += 1) {
@@ -935,19 +951,73 @@ async function narrativeText(page) {
     const dailyPrompt = typeof dailyAsk.content === "string" ? dailyAsk.content : dailyAsk.content.map((part) => part.text ?? "").join("");
     const dailyFacts = JSON.parse(dailyPrompt.slice(dailyPrompt.indexOf("{"), dailyPrompt.lastIndexOf("}") + 1));
     assert.equal(dailyFacts.report, "daily");
-    assert.equal(dailyFacts.calendarEntries, 3);
     assert.equal(dailyFacts.calendarStillOpen, 2);
-    assert.equal(dailyFacts.calendarAlreadyDone, 1);
+    assert.equal(dailyFacts.calendarEntries, undefined, "the day's total moves with every logged touch");
+    assert.equal(dailyFacts.calendarAlreadyDone, undefined, "so does the done count");
     assert.deepEqual(
-      dailyFacts.calendarToday.map((item) => [item.title, item.done]),
-      [
-        ["Site walk at Acme", false],
-        ["Call Bob", false],
-        ["Early call", true],
-      ],
+      dailyFacts.calendarToday.map((item) => item.title),
+      ["Site walk at Acme", "Call Bob"],
+      "the open entries only: the call already made isn't offered as next up",
     );
+    assert.ok(dailyFacts.calendarToday.every((item) => !("done" in item)), "no per-entry done flag");
+    assert.doesNotMatch(JSON.stringify(dailyFacts.headlines), /already done/, "nor the tile's done count");
     await page.waitForFunction(() => !document.querySelector("[data-testid=report-narrative]")?.getAttribute("aria-busy")?.includes("true"));
     await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_rpt_ai_done'`);
+
+    log("audit fixes: a touch logged from a contact's page doesn't make the Owner's Rundown ask Claude again; a new open entry does");
+    // Before the fix every logged touch wrote a done calendar entry for
+    // today, which changed the daily facts' fingerprint, so the next open
+    // of the Rundown asked Claude again (one of the workspace's 60 a day).
+    const dailyNarrative = async () =>
+      (await sql(`SELECT key, source, "createdAt" FROM "ReportNarrative" WHERE "organizationId"=$1 AND key LIKE 'DAILY|%' AND key LIKE '%|rep:all|%'`, [org])).rows;
+    for (let i = 0; (await dailyNarrative()).filter((row) => row.source === "CLAUDE").length !== 1; i += 1) {
+      if (i > 100) throw new Error("the Daily Rundown's AI write-up was not stored");
+      await page.waitForTimeout(200);
+    }
+    const [storedDaily] = await dailyNarrative();
+    await page.goto(`${AI_BASE}/dashboard/contacts/ct_rpt_eve`);
+    await page.locator("[data-testid=log-bar]").click();
+    const eveLog = page.locator("[data-testid=log-activity-form]");
+    await eveLog.locator("textarea[name=body]").fill("Left a message about the spring service");
+    await eveLog.getByRole("button", { name: "Log phone call" }).click();
+    await page.locator("#activity").getByText("Left a message about the spring service").waitFor();
+    await page.keyboard.press("Escape");
+    await eveLog.waitFor({ state: "detached" });
+    const eveEntry = (
+      await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve' AND "startOn"=$2::date AND "doneAt" IS NOT NULL`, [org, today])
+    ).rows[0].n;
+    assert.equal(eveEntry, 1, "the logged call is on today's calendar, ticked done (what used to re-key the write-up)");
+    const asksBeforeTouch = claudeRequests.length;
+    await page.goto(`${AI_BASE}/dashboard`);
+    await page.locator("[data-testid=report-narrative][data-source=CLAUDE]").waitFor({ timeout: 20000 });
+    assert.match(await page.locator("[data-testid=rundown-done] summary").textContent(), /Done today \(1\)/, "the Rundown itself shows the call");
+    await page.waitForTimeout(1000);
+    assert.equal(claudeRequests.length, asksBeforeTouch, "Claude wasn't asked again for a logged touch");
+    const afterTouch = await dailyNarrative();
+    assert.deepEqual(
+      afterTouch.map((row) => [row.key, row.source, row.createdAt.getTime()]),
+      [[storedDaily.key, "CLAUDE", storedDaily.createdAt.getTime()]],
+      "the same write-up, under the same fingerprint",
+    );
+    // Something that is still to do today does change it.
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","updatedAt") VALUES ('ev_rpt_ai_open',$1,'Call Cal','Call',$2::date,'15:00',$3,now())`,
+      [org, today, T],
+    );
+    claudeReply = { paragraphs: ["The team has 3 things still open on the calendar today."] };
+    await page.goto(`${AI_BASE}/dashboard`);
+    for (let i = 0; claudeRequests.length === asksBeforeTouch; i += 1) {
+      if (i > 100) throw new Error("a new open entry didn't ask for a new write-up");
+      await page.waitForTimeout(200);
+    }
+    await page.waitForFunction(() => !document.querySelector("[data-testid=report-narrative]")?.getAttribute("aria-busy")?.includes("true"));
+    assert.notEqual((await dailyNarrative())[0]?.key, storedDaily.key, "a new open entry is a new set of numbers");
+    await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_rpt_ai_open'`);
+    await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve'`, [org]);
+    await sql(`DELETE FROM "Activity" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve'`, [org]);
+    // The call moved Eve to Attempted; put her back as seeded for the steps after.
+    await sql(`DELETE FROM "StatusChange" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve'`, [org]);
+    await sql(`UPDATE "Contact" SET status='NOT_ACTIONED' WHERE id='ct_rpt_eve'`);
 
     log("each report opens inside its time budget");
     for (const [name, ms] of Object.entries(timings)) {
@@ -1040,7 +1110,8 @@ async function narrativeText(page) {
     await thumb.goto(`${BASE}/dashboard`);
     await thumb.locator("[data-testid=report][data-report=daily]").waitFor();
     const fit = await thumb.evaluate(() => {
-      const line = [...document.querySelectorAll("p.truncate")].find((p) => p.textContent.startsWith("Walked the whole building"));
+      // (Round 2: the people are named on the first line, the words under it.)
+      const line = [...document.querySelectorAll("p.truncate")].find((p) => p.textContent.includes("Walked the whole building"));
       return {
         inner: window.innerWidth,
         doc: document.documentElement.scrollWidth,
@@ -1058,7 +1129,7 @@ async function narrativeText(page) {
     const chart = async (p) => {
       await p.goto(`${BASE}/dashboard?report=activity&period=this-month`);
       await p.locator("[data-testid=report][data-report=activity]").waitFor();
-      const selector = "[data-testid=activity-daily] svg[role=img]";
+      const selector = "[data-testid=activity-tries-talks] svg[role=img]";
       await p.locator(selector).waitFor();
       // Drawn at the box's own width once the browser has measured it.
       await p
@@ -1108,6 +1179,114 @@ async function narrativeText(page) {
       await shot(small, `06-phone-${report}`);
     }
     await phone.close();
+
+    log("Sprint: on a phone every report's numbers table is a two-column list — no header row, each value with its label, nothing sideways");
+    const pocketCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const pocket = await pocketCtx.newPage();
+    for (const [report, selector] of [
+      ["pipeline", "[data-testid=pipeline-moves-table]"],
+      ["activity", "[data-testid=report-group-table]"],
+      ["closing", "[data-testid=closing-groups] [data-testid=report-group-table]"],
+    ]) {
+      await pocket.goto(`${BASE}/dashboard?report=${report}&period=this-year`);
+      await pocket.locator(`[data-testid=report][data-report=${report}]`).waitFor();
+      const opener = pocket.locator(`${selector}`).locator("xpath=ancestor::details[1]/summary");
+      if (await opener.count()) await opener.click();
+      await pocket.locator(selector).waitFor();
+      const shape = await pocket.locator(selector).evaluate((table) => {
+        const rows = [...table.querySelectorAll("tbody tr")];
+        const box = table.getBoundingClientRect();
+        return {
+          head: getComputedStyle(table.querySelector("thead")).display,
+          grid: rows.every((row) => getComputedStyle(row).display === "grid"),
+          labels: rows.every((row) => [...row.querySelectorAll("td")].slice(1).every((td) => td.dataset.label && getComputedStyle(td, "::before").content.includes(td.dataset.label))),
+          rows: rows.length,
+          inside: box.right <= window.innerWidth + 0.5 && table.scrollWidth <= table.clientWidth + 1,
+        };
+      });
+      assert.equal(shape.head, "none", `${report}: no header row on a phone`);
+      assert.ok(shape.rows > 0 && shape.grid && shape.labels, `${report}: ${JSON.stringify(shape)}`);
+      assert.ok(shape.inside, `${report}: the list fits the phone`);
+      const overflow = await pocket.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(overflow <= 0, `${report} scrolls sideways by ${overflow}px`);
+    }
+    await shot(pocket, "07-phone-table-as-list");
+    await pocketCtx.close();
+
+    log("Sprint: the Activity report splits tries from talks — a meeting that happened is a talk, calls and messages with no outcome are tries");
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.equal(await tile(page, "touches"), 5);
+    assert.match(await page.locator("[data-testid=report-tile][data-id=touches]").textContent(), /Tries/);
+    assert.equal(await tile(page, "talks"), 1, "Taylor's meeting with Ann");
+    assert.equal(await tile(page, "connect-rate"), 0.2);
+    assert.deepEqual(
+      (await groupRows(page)).filter((row) => row[0] !== "Unassigned").map((row) => [row[0], row[1], row[2]]),
+      [
+        ["Taylor Test", "3", "1"],
+        ["Nic Rivera", "2", "0"],
+      ],
+    );
+
+    log("Sprint: one save logged on three people is one try and one talk; a no-show is no touch at all");
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,marketing,"batchId","occurredAt") VALUES
+         ('a_rpt_s1',$1,'ct_rpt_ann',$3,'PHONE_CALL','Group call','TALKED',false,'b_rpt_sprint',${ago("3 minutes")}),
+         ('a_rpt_s2',$1,'ct_rpt_bob',$3,'PHONE_CALL','Group call','TALKED',false,'b_rpt_sprint',${ago("3 minutes")}),
+         ('a_rpt_s3',$1,'ct_rpt_cal',$3,'PHONE_CALL','Group call','TALKED',false,'b_rpt_sprint',${ago("3 minutes")}),
+         ('a_rpt_s4',$1,'ct_rpt_ann',$2,'MEETING','Did not show','NO_SHOW',false,NULL,${ago("3 minutes")}),
+         ('a_rpt_s5',$1,'ct_rpt_ann',$2,'PHONE_CALL','Voicemail','VOICEMAIL',false,NULL,${ago("3 minutes")})`,
+      [org, T, N],
+    );
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.equal(await tile(page, "touches"), 7, "5 + the group call once + the voicemail; the no-show is not a touch");
+    assert.equal(await tile(page, "talks"), 2, "the meeting and the group call");
+    assert.equal(await tile(page, "calls"), 4, "2 + the group call once + the voicemail");
+    assert.equal(await tile(page, "meetings"), 1, "the no-show isn't a meeting");
+    const sprintRows = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[2]]]));
+    assert.deepEqual(sprintRows["Taylor Test"], ["4", "1"]);
+    assert.deepEqual(sprintRows["Nic Rivera"], ["3", "1"]);
+    words = await narrativeText(page);
+    assert.match(words, /2 of them were talks \(29%\)\./);
+
+    log("Sprint: tries are grey and talks green, by day and by rep; marketing stays its own chart");
+    const fills = await page.locator("[data-testid=activity-tries-talks] svg rect").evaluateAll((rects) => [...new Set(rects.map((r) => r.getAttribute("fill")))]);
+    assert.deepEqual(fills.sort(), ["var(--health-good)", "var(--health-none)"]);
+    assert.match(await page.locator("[data-testid=activity-tries-talks]").textContent(), /Attempts.*Talks/);
+    const repBars = await page.locator("[data-testid=activity-groups-chart] [aria-label]").evaluateAll((bars) => bars.map((bar) => [bar.getAttribute("aria-label"), bar.style.background]));
+    assert.ok(repBars.some(([label, bg]) => /Nic Rivera, Talks: 1/.test(label) && /health-good/.test(bg)), JSON.stringify(repBars));
+    assert.ok(repBars.some(([label, bg]) => /Taylor Test, Attempts: 3/.test(label) && /health-none/.test(bg)), JSON.stringify(repBars));
+    assert.match(await page.locator("[data-testid=activity-marketing]").textContent(), /3 sent/);
+    assert.equal(await page.locator("[data-testid=activity-by-kind]").getAttribute("open"), null, "the kinds of touch are one tap down");
+    await page.locator("[data-testid=activity-by-kind] summary").click();
+    await page.locator("[data-testid=activity-by-kind] svg[aria-label='Touches over time by kind']").waitFor();
+
+    log("Sprint: 'Talks counted from' shows only when the period starts before outcomes were recorded");
+    const since = (await sql(`SELECT "outcomesSince" FROM "Organization" WHERE id=$1`, [org])).rows[0].outcomesSince;
+    await sql(`UPDATE "Organization" SET "outcomesSince" = '2020-01-01' WHERE id=$1`, [org]);
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.equal(await page.locator("[data-testid=activity-talks-since]").count(), 0);
+    await sql(`UPDATE "Organization" SET "outcomesSince" = now() - interval '1 hour' WHERE id=$1`, [org]);
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.match(await page.locator("[data-testid=activity-talks-since]").textContent(), /^Talks counted from [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+
+    log("audit fixes: 'Talks counted from' is the day in the workspace's zone, as Stats says it, not the UTC day");
+    {
+      // 8pm on Jan 1 in Chicago is 2am on Jan 2 in UTC.
+      const year = Number(localIso(new Date()).slice(0, 4));
+      await sql(`UPDATE "Organization" SET "outcomesSince" = $2 WHERE id=$1`, [org, `${year}-01-02T02:00:00Z`]);
+      await open(page, `${BASE}/dashboard?report=activity&period=this-year`, "activity");
+      assert.match(await page.locator("[data-testid=activity-talks-since]").textContent(), new RegExp(`^Talks counted from Jan 1, ${year}`));
+    }
+    await sql(`UPDATE "Organization" SET "outcomesSince" = $2 WHERE id=$1`, [org, since]);
+
+    log("Sprint: a chart's duplicate table is behind Show numbers");
+    await open(page, `${BASE}/dashboard?report=closing`, "closing");
+    const numbers = page.locator("[data-testid=closing-groups] [data-testid=report-show-numbers]");
+    assert.equal(await numbers.getAttribute("open"), null);
+    assert.equal(await numbers.locator("[data-testid=report-group-table]").isVisible(), false);
+    await numbers.locator("summary").click();
+    await numbers.locator("[data-testid=report-group-table]").waitFor();
+    await sql(`DELETE FROM "Activity" WHERE id LIKE 'a_rpt_s%'`);
 
     console.log(`\nAll ${step} steps passed.`);
   } finally {

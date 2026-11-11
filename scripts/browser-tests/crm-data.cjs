@@ -134,11 +134,11 @@ async function seedActivity(contactId, daysAgo, marketing = false, companyId = n
 // The names in the Contacts / Companies table on the page now.
 async function contactNames(page) {
   await page.locator("[data-testid=page-summary]").waitFor();
-  return (await page.locator("[data-testid=contact-row] td:nth-child(4) a.link").allTextContents()).map((t) => t.trim()).sort();
+  return (await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents()).map((t) => t.trim()).sort();
 }
 async function companyNames(page) {
   await page.locator("[data-testid=page-summary]").waitFor();
-  return (await page.locator("[data-testid=company-row] td:nth-child(3) a.link").allTextContents()).map((t) => t.trim()).sort();
+  return (await page.locator("[data-testid=company-row] td:nth-child(2) a.link").allTextContents()).map((t) => t.trim()).sort();
 }
 async function contactsAt(page, query) {
   await page.goto(`${BASE}/dashboard/contacts?${query}`);
@@ -151,6 +151,7 @@ async function companiesAt(page, query) {
 // A filter menu, opened and placed (FloatingMenu draws it hidden until it
 // has measured where it fits).
 async function openMenu(page, id) {
+  if (id.startsWith("filter-")) await openFilters(page);
   await page.getByTestId(id).click();
   const menu = page.getByTestId(`${id}-menu`);
   await menu.waitFor();
@@ -170,7 +171,7 @@ async function assertMenuInside(page, menu, what) {
   const wide = await page.evaluate(() => document.documentElement.scrollWidth);
   assert.ok(wide <= width + 1, `${what} widens the page to ${wide}px`);
 }
-const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: page.locator(`td:nth-child(4) a.link:text-is("${name}")`) });
+const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: page.locator(`td:nth-child(2) a.link:text-is("${name}")`) });
 
 (async () => {
   await db.connect();
@@ -220,6 +221,8 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.click("button:has-text('Save contact')");
   await page.waitForURL(/\/dashboard\/contacts\/(?!new)[^/]+$/);
   const annId = page.url().split("/").pop();
+  // Added by sits under Reach's "More details" since the BDR redesign.
+  await page.locator("[data-testid=more-details]").click();
   await page.locator("[data-testid=added-by]").waitFor();
   assert.match(await page.locator("[data-testid=added-by]").textContent(), /^Added by Taylor Test · /);
   assert.equal(await page.locator("[data-testid=rep-picker]").inputValue(), "");
@@ -295,19 +298,30 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual(markActs, [{ type: "EMAIL", marketing: true }]);
   assert.equal((await sql(`SELECT status FROM "Contact" WHERE id=$1`, [markId])).rows[0].status, "NOT_ACTIONED", "status untouched");
   await page.goto(`${BASE}/dashboard/contacts?q=Mark%20Mailer`);
+  // Marketing is a column the person brings back from Columns since the
+  // BDR redesign (Nov 11, 2026); Last Contacted By and the activity counts
+  // are the Pulse cell, which a marketing send leaves at New.
+  await showColumn(page, "marketing");
   const markRow = rowOf(page, "Mark Mailer");
-  assert.equal((await markRow.locator("td:nth-child(2)").textContent()).trim(), "Not yet", "Last Contacted By is untouched");
+  assert.equal(await markRow.locator("[data-testid=lifecycle-meter]").getAttribute("data-state"), "NEW", "the Pulse is untouched: no touch, no try");
+  assert.doesNotMatch(await markRow.locator("[data-testid=pulse-caption]").textContent(), /[1-9] tr(y|ies)/, "no try counted");
   assert.match(await markRow.locator("[data-testid=marketing-cell]").textContent(), /^1 email\s*last /);
-  assert.deepEqual((await markRow.locator("a[title$='logged']").allTextContents()).map((t) => t.trim()), ["0", "0", "0", "0"], "no activity counted");
   await page.goto(`${BASE}/dashboard/companies?q=Mail%20Co`);
+  await showColumn(page, "marketing");
   assert.match(await page.locator("[data-testid=company-row] [data-testid=marketing-cell]").textContent(), /^1 email/);
-  assert.equal((await page.locator("[data-testid=company-row] td:nth-child(2)").textContent()).trim(), "Not yet");
+  assert.equal((await page.locator("[data-testid=company-row] [data-testid=last-touch]").textContent()).trim(), "Not yet");
   await page.goto(`${BASE}/dashboard/contacts/${markId}`);
   const line = page.locator("[data-testid=activity-line][data-marketing='1']");
   await line.waitFor();
   assert.match(await line.textContent(), /Emailed “Fall offer”/);
   assert.equal(await line.locator("[data-testid=marketing-badge]").count(), 1, "the feed line wears a Marketing badge");
-  await page.locator("text=No touches yet").waitFor();
+  // A marketing send is no touch: the contact page's meter still reads "Not
+  // tried yet" and the history's chips count nothing (BDR redesign, Nov 11,
+  // 2026; the Activity overview's "No touches yet" sits behind Show counts).
+  await page.locator("[data-testid=lifecycle-reason]").getByText("Not tried yet").waitFor();
+  assert.equal(await page.locator("[data-testid=history-count-all]").count(), 0);
+  await page.locator("[data-testid=show-counts]").click();
+  assert.equal(await page.locator("[data-testid=activity-tile][data-label=Emails]").getAttribute("data-value"), "0");
   assert.deepEqual(await contactsAt(page, "q=Mark%20Mailer&act=never"), ["Mark Mailer"], "a marketing send leaves them Never touched");
   assert.deepEqual(await contactsAt(page, "q=Mark%20Mailer&act=t7"), [], "and not Touched in the last 7 days");
   await shot(page, "01-marketing");
@@ -317,7 +331,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   const fileA = path.join(OUT, "assign-a.csv");
   fs.writeFileSync(fileA, "Name,Email,Company Name\nIvy Import,ivy@crmdata.example.com,Import Co\nIan Import,ian@crmdata.example.com,Import Co\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(fileA);
   await page.getByTestId("import-summary").waitFor();
   assert.equal(await page.getByTestId("import-assign").inputValue(), "", "the file starts Unassigned");
@@ -334,7 +348,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual([importCo.ownerId, importCo.createdById], [nicId, taylor.id], "the new company goes to Nic too");
   const fileB = path.join(OUT, "assign-b.csv");
   fs.writeFileSync(fileB, "Name,Email,Title\nIvy Import,ivy@crmdata.example.com,Buyer\nIke Import,ike@crmdata.example.com,\n");
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(fileB);
   await page.getByTestId("import-summary").waitFor();
   await page.getByTestId("import-start").click();
@@ -353,6 +367,8 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await rowOf(page, "Ivy Import").locator("[data-testid=row-check]").check();
   assert.equal((await page.getByTestId("bulk-count").textContent()).trim(), "2 selected");
   await page.getByTestId("bulk-me").click();
+  // Ivy is Nic's: taking her asks first, naming him (BDR redesign, decision 15).
+  await sayYes(page, "1 of these belongs to Nic Rivera. Take them?");
   await page.getByTestId("bulk-message").filter({ hasText: "2 records → Taylor Test." }).waitFor();
   const owners = async () =>
     Object.fromEntries((await sql(`SELECT name, "ownerId" FROM "Contact" WHERE "organizationId"=$1 AND name LIKE 'I% Import'`, [org])).rows.map((r) => [r.name, r.ownerId]));
@@ -366,6 +382,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.getByTestId("page-check").check();
   assert.equal((await page.getByTestId("bulk-count").textContent()).trim(), "3 selected");
   await page.getByTestId("bulk-unassign").click();
+  await sayYes(page, "2 of these belong to Nic Rivera. Unassign them?");
   await page.getByTestId("bulk-message").filter({ hasText: "3 records → Unassigned." }).waitFor();
   assert.deepEqual(await owners(), { "Ike Import": null, "Ivy Import": null, "Ian Import": null });
   await page.reload();
@@ -400,6 +417,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.goto(`${BASE}/dashboard/contacts?q=Bulk%20Person&rep=${nicId}&per=10`);
   await page.getByTestId("page-check").check();
   await page.getByTestId("bulk-unassign").click();
+  await sayYes(page, "5 of these belong to Nic Rivera. Unassign them?");
   await page.getByTestId("bulk-message").filter({ hasText: "5 records → Unassigned." }).waitFor();
   await sql(`DELETE FROM "Contact" WHERE "organizationId"=$1 AND id LIKE 'cd_bulk_%'`, [org]);
 
@@ -407,6 +425,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.goto(`${BASE}/dashboard/companies?q=Import%20Co`);
   await page.locator("[data-testid=company-row] [data-testid=row-check]").first().check();
   await page.getByTestId("bulk-me").click();
+  await sayYes(page, "1 of these belongs to Nic Rivera. Take them?");
   await page.getByTestId("bulk-message").filter({ hasText: "1 record → Taylor Test." }).waitFor();
   assert.equal((await sql(`SELECT "ownerId" FROM "Company" WHERE "organizationId"=$1 AND name='Import Co'`, [org])).rows[0].ownerId, taylor.id);
 
@@ -439,7 +458,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual((await companiesAt(page, "act=n7")).filter((n) => ["Tower Living", "Quiet Partners"].includes(n)), ["Quiet Partners"]);
   // From the bar itself.
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-activity").click();
+  await openFilters(page); await page.getByTestId("filter-activity").click();
   await page.getByRole("radio", { name: "Not touched in the last 90 days" }).click();
   await page.waitForURL(/act=n90/);
   await page.locator("[data-testid=active-filters]", { hasText: "Not touched in the last 90 days" }).waitFor();
@@ -448,7 +467,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   log("filter: Job title, ignoring case, with counts in the dropdown");
   assert.deepEqual(only(await contactsAt(page, "title=OWNER")), ["Fay Fresh", "Moe Month"]);
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-job-title").click();
+  await openFilters(page); await page.getByTestId("filter-job-title").click();
   await page.getByRole("searchbox", { name: "Search job titles" }).fill("prop");
   const pmOption = page.locator("[aria-label='Job title'] label", { hasText: "Property Manager" });
   await pmOption.waitFor();
@@ -465,7 +484,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual(only(await contactsAt(page, "from=2026-01-01&to=2026-01-16")), ["Moe Month"]);
   assert.deepEqual(only(await contactsAt(page, "to=2026-01-31")), ["Max Marketing", "Moe Month"]);
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-added").click();
+  await openFilters(page); await page.getByTestId("filter-added").click();
   await page.getByTestId("added-from").fill("2026-01-18");
   await page.getByTestId("added-to").fill("2026-01-25");
   await page.getByTestId("added-apply").click();
@@ -482,7 +501,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual((await companiesAt(page, "phone=yes")), ["Tower Living"]);
   assert.ok((await companiesAt(page, "email=no")).includes("Quiet Partners"));
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-contact-info").click();
+  await openFilters(page); await page.getByTestId("filter-contact-info").click();
   await page.getByTestId("presence-mobile-no").click();
   await page.waitForURL(/mobile=no/);
   await page.locator("[data-testid=active-filters]", { hasText: "No mobile" }).waitFor();
@@ -494,8 +513,10 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
 
   log("a call logged from the page counts at once for the person and their company");
   await page.goto(`${BASE}/dashboard/contacts/${month}`);
-  await page.locator("textarea[name=body]").first().fill("Called about the renewal");
-  await page.click("button:has-text('Log phone call')");
+  // The log is the How did it go? sheet behind the "What happened?" bar (Nov 11, 2026).
+  await page.locator("[data-testid=log-bar]").click();
+  await page.locator("[data-testid=log-activity-form] textarea[name=body]").fill("Called about the renewal");
+  await page.locator("[data-testid=log-activity-form] [data-testid=activity-submit]").click();
   for (let i = 0; i < 40; i++) {
     if ((await sql(`SELECT "lastTouchAt" > now() - interval '1 hour' AS t FROM "Company" WHERE id=$1`, [quietCo])).rows[0].t) break;
     await page.waitForTimeout(150);
@@ -512,7 +533,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
     assert.ok(chips.includes(text), `chip ${text} in ${chips}`);
   }
   await page.locator("[data-testid=active-filters] button:has-text('Clear all')").click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
 
   // ---------------------------------------------------------------------
   log("Labels: Industry — merge Student Housing into Student, de-duplicated, off the pick list");
@@ -637,6 +658,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   const d2 = await seedContact({ name: "Dee  Dupe", email: "dee@dupe.example.com", mobile: "512.555.7000", companyId: dupCo });
   const d3 = await seedContact({ name: "D. Dupe", phone: "+1 512 555 7000" });
   await page.goto(`${BASE}/dashboard/contacts`);
+  await page.getByTestId("cleanup").click();
   await page.getByTestId("find-duplicates").click();
   await page.waitForURL(/\/dashboard\/contacts\/duplicates/);
   const groupFor = (key) => page.locator("[data-testid=dup-group]", { has: page.locator(`[data-testid=dup-key]:text-is("${key}")`) });
@@ -723,7 +745,16 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await dialog.getByTestId("merge-go").click();
   await dialog.getByTestId("merge-yes").click();
   await dialog.waitFor({ state: "detached" });
-  await groupFor("seven@dupe.example.com").locator("[data-testid=dup-record]").nth(2).waitFor();
+  // The group still has its old seven records drawn until the merge's
+  // refresh lands, so wait for three rather than for a third row.
+  await page.waitForFunction(
+    () => {
+      const group = [...document.querySelectorAll("[data-testid=dup-group]")].find((el) => el.querySelector("[data-testid=dup-key]")?.textContent === "seven@dupe.example.com");
+      return group && group.querySelectorAll("[data-testid=dup-record]").length === 3;
+    },
+    null,
+    { timeout: 15000 },
+  );
   assert.equal(await groupFor("seven@dupe.example.com").locator("[data-testid=dup-record]").count(), 3);
   await groupFor("seven@dupe.example.com").getByTestId("duplicate-merge").click();
   const pickedNow = (await dialog.locator("[data-testid=merge-picked] li .font-medium").allTextContents()).map((t) => t.trim());
@@ -812,8 +843,10 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
       await assertMenuInside(page, menu, `${list} ${id}`);
       if (id === "filter-rep") {
         const names = (await menu.locator("label span").allTextContents()).map((t) => t.trim());
-        assert.equal(names[0], "Unassigned");
-        assert.deepEqual(names.slice(1).sort(), ["Nic Rivera", "Taylor Test"], "every rep listed by their whole name");
+        // Me first, then Unassigned, then the rest (Nov 11, 2026).
+        assert.equal(names[0], "Me (Taylor Test)");
+        assert.equal(names[1], "Unassigned");
+        assert.deepEqual(names.slice(2).sort(), ["Nic Rivera"], "every rep listed by their whole name");
       }
       await page.keyboard.press("Escape");
       await menu.waitFor({ state: "detached" });
@@ -828,7 +861,7 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
 
   log("audit fixes (UX review): the Pipeline's Lead Label menu works from the keyboard — Enter puts the cursor on the first label, Space ticks it, Escape goes back to the button");
   await page.goto(`${BASE}/dashboard/deals`);
-  await page.getByTestId("filter-lead-label").focus();
+  await openFilters(page); await page.getByTestId("filter-lead-label").focus();
   await page.keyboard.press("Enter");
   const leadKeys = page.getByTestId("filter-lead-label-menu");
   await leadKeys.waitFor();
@@ -882,6 +915,359 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual(await contactsAt(page, "q=living%20fay"), ["Fay Fresh"], "either order");
 
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // BDR redesign, the lists (Nov 11, 2026).
+  log("Sprint: seed a call list — late, new, old, booked ahead, talked, a teammate's, nobody's, a meeting this week");
+  const sprToday = (await sql(`SELECT (now() AT TIME ZONE "timeZone")::date::text AS d FROM "Organization" WHERE id=$1`, [org])).rows[0].d;
+  const spr = {};
+  for (const [key, name, owner, status] of [
+    ["late", "Spr Late", taylor.id, "CONTACTED"],
+    ["fresh", "Spr New", taylor.id, "NOT_ACTIONED"],
+    ["old", "Spr Old", taylor.id, "CONTACTED"],
+    ["booked", "Spr Booked", taylor.id, "CONNECTED"],
+    ["talked", "Spr Talked", taylor.id, "CONNECTED"],
+    ["nics", "Spr Nics", nicId, "NOT_ACTIONED"],
+    ["nobody", "Spr Nobody", null, "NOT_ACTIONED"],
+    ["meet", "Spr Meet", taylor.id, "MEETING_SET"],
+  ]) {
+    spr[key] = await seedContact({ id: `cd_spr_${key}`, name, ownerId: owner, createdById: taylor.id });
+    await sql(`UPDATE "Contact" SET status=$2 WHERE id=$1`, [spr[key], status]);
+  }
+  const sprEvent = (id, contactId, type, offset) =>
+    sql(`INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","contactId","updatedAt") VALUES ($1,$2,$3,$4,$5::date + $6::int,$7,now())`, [id, org, `${type} · seeded`, type, sprToday, offset, contactId]);
+  await sprEvent("cd_spr_ev_late", spr.late, "Call", -3);
+  await sprEvent("cd_spr_ev_booked", spr.booked, "Call", 3);
+  await sprEvent("cd_spr_ev_meet", spr.meet, "Meeting", 0);
+  await seedActivity(spr.old, 10);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,outcome,"occurredAt") VALUES ('cd_spr_talk',$1,$2,$3,'PHONE_CALL','Talked',false,'TALKED',now() - interval '2 days')`,
+    [org, spr.talked, taylor.id],
+  );
+  const inOrder = async (p, query) => {
+    await p.goto(`${BASE}/dashboard/contacts?${query}`);
+    await p.locator("[data-testid=page-summary]").waitFor();
+    return (await p.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents()).map((t) => t.trim());
+  };
+
+  log("Sprint: Mine / Everyone / Unowned; Rep is hidden on Mine; the choice is remembered for a bare address");
+  await page.setViewportSize({ width: 1500, height: 950 });
+  assert.equal((await inOrder(page, "q=Spr")).length, 8, "an old-style link with a search opens on Everyone");
+  await page.getByTestId("scope-mine").click();
+  await page.waitForURL(/scope=mine/);
+  await page.locator("[data-testid=page-summary]", { hasText: "of 6 contacts" }).waitFor();
+  assert.equal(await page.locator("thead th", { hasText: /^Rep$/ }).count(), 0, "no Rep column on Mine");
+  for (let i = 0; i < 20 && !(await sql(`SELECT "uiPrefs"->'contacts'->>'scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s; i++) await page.waitForTimeout(100);
+  assert.equal((await sql(`SELECT "uiPrefs"->'contacts'->>'scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s, "mine");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  assert.equal(await page.getByTestId("scope-mine").getAttribute("aria-pressed"), "true", "a bare address opens on the saved scope");
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=unowned"), ["Spr Nobody"]);
+  await page.getByTestId("scope-all").click();
+  await page.waitForURL(/scope=all/);
+  await page.locator("thead th", { hasText: /^Rep$/ }).waitFor();
+
+  log("Sprint: a Member opens on Mine and My call list until they pick something else");
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id=$1`, [nicId]);
+  const sprMemberCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  const nicPage = await sprMemberCtx.newPage();
+  await login(nicPage, NIC_EMAIL);
+  await nicPage.goto(`${BASE}/dashboard/contacts`);
+  assert.equal(await nicPage.getByTestId("scope-mine").getAttribute("aria-pressed"), "true");
+  assert.equal(await nicPage.getByTestId("preset-call").getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await inOrder(nicPage, "q=Spr&scope=mine&preset=call"), ["Spr Nics"], "Nic's call list is Nic's");
+  await nicPage.goto(`${BASE}/dashboard/companies`);
+  assert.equal(await nicPage.getByTestId("scope-mine").getAttribute("aria-pressed"), "true", "companies open on Mine too");
+
+  log("Sprint: My call list — the follow-up gone late first, then never touched, then the oldest touch; nothing booked ahead, nobody past Interested");
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=mine&preset=call"), ["Spr Late", "Spr New", "Spr Old", "Spr Talked"]);
+  const lateCell = page.locator("[data-testid=contact-row]", { hasText: "Spr Late" }).getByTestId("next-step");
+  assert.match(await lateCell.textContent(), /Follow-up 3 days late/);
+  assert.match(await page.locator("[data-testid=contact-row]", { hasText: "Spr Old" }).getByTestId("pulse-caption").textContent(), /1 try · (9|10)d/, "counted on the workspace calendar");
+  assert.equal(await page.getByTestId("sort").inputValue(), "touch", "the call list reads Oldest touch first");
+
+  log("Sprint: Never touched, Talked — no meeting, Meetings this week");
+  const sprNever = await inOrder(page, "q=Spr&scope=all&preset=never");
+  assert.ok(sprNever.includes("Spr New") && sprNever.includes("Spr Nobody") && !sprNever.includes("Spr Old") && !sprNever.includes("Spr Talked"), `never touched: ${sprNever}`);
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=all&preset=talked"), ["Spr Talked"], "Booked has a call booked ahead");
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=all&preset=week"), ["Spr Meet"]);
+
+  log("Sprint: Activity gains Not connected in 7 / 30 days and Never connected (from lastConnectAt)");
+  // Round 2 (Nov 11, 2026): a status that already means a talk counts as
+  // one, so Spr Booked (Connected) and Spr Meet (Meeting Set) are off too.
+  const nconn = await inOrder(page, "q=Spr&scope=all&act=nconn");
+  assert.deepEqual([...nconn].sort(), ["Spr Late", "Spr New", "Spr Nics", "Spr Nobody", "Spr Old"], `everyone but Talked, Booked and Meet: ${nconn}`);
+  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc7")).length, 5);
+  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc30")).length, 5);
+  await openFilters(page);
+  const actMenu = await openMenu(page, "filter-activity");
+  for (const words of ["Not connected in 7 days", "Not connected in 30 days", "Never connected"]) await actMenu.getByText(words, { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal((await page.getByTestId("filter-attn").textContent()).trim(), "Missing info", "Needs attention reads Missing info");
+  const labelMenu = await openMenu(page, "filter-lead-label");
+  await labelMenu.getByText("On a deal, no label yet", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+
+  log("Sprint: Sort by Name is remembered; Columns brings back Email and is remembered");
+  await inOrder(page, "q=Spr&scope=all");
+  await page.getByTestId("sort").selectOption("name");
+  await page.waitForURL(/sort=name/);
+  const byName = await inOrder(page, "q=Spr&scope=all&sort=name");
+  assert.deepEqual(byName, [...byName].sort());
+  await showColumn(page, "email");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  assert.equal(await page.getByTestId("sort").inputValue(), "name", "the sort is remembered");
+  await page.locator("thead th", { hasText: /^Email$/ }).waitFor();
+  const sprPrefs = (await sql(`SELECT "uiPrefs" AS p FROM "User" WHERE id=$1`, [taylor.id])).rows[0].p;
+  assert.deepEqual([sprPrefs.contacts.sort, sprPrefs.contacts.columns], ["name", ["email", "marketing"]], "kept in the contacts namespace");
+  assert.equal(sprPrefs["contacts.sort"], undefined, "nothing written at the top level");
+  await page.getByTestId("columns").click();
+  await page.getByTestId("column-email").uncheck();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("sort").selectOption("added");
+  await page.waitForURL(/sort=added/);
+
+  log("Sprint: taking a teammate's records asks first, Cancel writes nothing, and Undo puts them back");
+  await inOrder(page, "q=Spr%20Nics&scope=all");
+  await rowOf(page, "Spr Nics").locator("[data-testid=row-check]").check();
+  await page.getByTestId("bulk-me").click();
+  await page.getByTestId("bulk-confirm").waitFor();
+  assert.match(await page.getByTestId("bulk-confirm").textContent(), /1 of these belongs to Nic Rivera\. Take them\?/);
+  await page.getByTestId("bulk-confirm-no").click();
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [spr.nics])).rows[0].ownerId, nicId, "Cancel writes nothing");
+  await page.getByTestId("bulk-me").click();
+  await page.getByTestId("bulk-confirm-yes").click();
+  await page.getByTestId("bulk-message").filter({ hasText: "1 record → Taylor Test." }).waitFor();
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [spr.nics])).rows[0].ownerId, taylor.id);
+  const barBox = await page.getByTestId("bulk-bar").boundingBox();
+  assert.ok(barBox.y + barBox.height <= 950, "the bar is on the screen");
+  await page.getByTestId("bulk-undo").click();
+  await page.getByTestId("bulk-message").filter({ hasText: "Undone · 1 record back" }).waitFor();
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [spr.nics])).rows[0].ownerId, nicId, "Undo gives Nic his lead back");
+
+  log("Sprint: Clean up holds Import CSV, Merge, Find duplicates and Fill in missing");
+  await page.goto(`${BASE}/dashboard/companies?scope=all`);
+  await page.getByTestId("cleanup").click();
+  for (const id of ["cleanup-import", "cleanup-merge", "find-duplicates", "cleanup-fill"]) await page.getByTestId(id).waitFor();
+  await page.keyboard.press("Escape");
+
+  log("Sprint: Companies — Reached, Last touch, a row opening to its top three people with Call, Going quiet");
+  const sprCo = await seedCompany({ name: "Spr Co", ownerId: taylor.id });
+  await sql(`UPDATE "Contact" SET "companyId"=$1 WHERE id = ANY($2)`, [sprCo, [spr.talked, spr.old, spr.fresh, spr.late]]);
+  const sprQuietCo = await seedCompany({ name: "Spr Quiet Co", ownerId: taylor.id });
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","companyId","userId",type,body,marketing,"occurredAt") VALUES ('cd_spr_quiet',$1,$2,$3,'PHONE_CALL','Old call',false,now() - interval '40 days')`,
+    [org, sprQuietCo, taylor.id],
+  );
+  await page.goto(`${BASE}/dashboard/companies?q=Spr&scope=all`);
+  const coRow = page.locator("[data-testid=company-row]", { hasText: "Spr Co" }).filter({ hasNotText: "Quiet" });
+  assert.equal((await coRow.getByTestId("reached").textContent()).trim(), "1 of 4 talked to");
+  assert.match(await coRow.getByTestId("last-touch").textContent(), /^[12]d · Taylor$/);
+  await coRow.getByTestId("row-expand").click();
+  const sprPeople = page.locator("[data-testid=company-people]:visible [data-testid=company-person]");
+  assert.equal(await sprPeople.count(), 3, "the top three");
+  assert.match(await sprPeople.first().textContent(), /Spr Talked/, "the one reached comes first");
+  await page.goto(`${BASE}/dashboard/companies?q=Spr&scope=all&preset=quiet`);
+  assert.deepEqual((await page.locator("[data-testid=company-row] td:nth-child(2) a.link").allTextContents()).map((t) => t.trim()), ["Spr Quiet Co"]);
+
+  log("Sprint: on a phone the list is cards with 44px Call · Text · Log, and Filters is a sheet that says how many it will show");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const ph = await ctx.newPage();
+    await login(ph, EMAIL);
+    await sql(`UPDATE "Contact" SET mobile='(512) 555-0142' WHERE id=$1`, [spr.old]);
+    await ph.goto(`${BASE}/dashboard/contacts?q=Spr&scope=all`);
+    const sprCard = ph.locator("[data-testid=contact-card]", { hasText: "Spr Old" });
+    for (const id of ["card-call", "row-log"]) assert.ok((await sprCard.getByTestId(id).boundingBox()).height >= 44, `${id} is 44px tall`);
+    const sprFirst = await ph.locator("[data-testid=contact-card]").first().boundingBox();
+    assert.ok(sprFirst.y < 480, `the first card starts ${Math.round(sprFirst.y)}px down`);
+    await ph.getByTestId("filters-toggle").tap();
+    assert.match(await ph.getByTestId("filters-show").textContent(), /^Show 8 people$/);
+    await ph.getByTestId("filters-show").tap();
+    await ph.getByTestId("filters-sheet").waitFor({ state: "detached" });
+    await sprCard.getByTestId("row-log").tap();
+    await ph.getByTestId("how-did-it-go").waitFor();
+    await shot(ph, "05-sprint-phone-log");
+    await ctx.close();
+  }
+
+  // ---------------------------------------------------------------------
+  // Round 2 of the lists (Nov 11, 2026).
+  log("Sprint: seed round 2 — warm, cold by status alone, a talk 12 days ago, trying, stalled, new, lost, won");
+  const r2 = {};
+  for (const [key, name, status] of [
+    ["warm", "Rtwo Warm", "CONNECTED"],
+    ["intold", "Rtwo IntOld", "INTERESTED"],
+    ["intnew", "Rtwo IntNew", "INTERESTED"],
+    ["bare", "Rtwo Bare", "MEETING_SET"],
+    ["talkold", "Rtwo TalkOld", "CONTACTED"],
+    ["trying", "Rtwo Trying", "CONTACTED"],
+    ["stalled", "Rtwo Stalled", "CONTACTED"],
+    ["fresh", "Rtwo New", "NOT_ACTIONED"],
+    ["lost", "Rtwo Lost", "LOST"],
+    ["won", "Rtwo Won", "WON"],
+  ]) {
+    r2[key] = await seedContact({ id: `cd_r2_${key}`, name, ownerId: taylor.id, createdById: taylor.id });
+    await sql(`UPDATE "Contact" SET status=$2 WHERE id=$1`, [r2[key], status]);
+  }
+  const r2Act = (id, contactId, outcome, ago) =>
+    sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,outcome,"occurredAt") VALUES ($1,$2,$3,$4,'PHONE_CALL','Seeded',false,$5,now() - $6::interval)`,
+      [id, org, contactId, taylor.id, outcome, ago],
+    );
+  await r2Act("cd_r2_a_warm", r2.warm, "TALKED", "1 hour");
+  await sprEvent("cd_r2_ev_warm", r2.warm, "Call", 2);
+  await r2Act("cd_r2_a_talkold", r2.talkold, "TALKED", "12 days");
+  await r2Act("cd_r2_a_trying", r2.trying, "NO_ANSWER", "1 day");
+  await r2Act("cd_r2_a_stalled", r2.stalled, "NO_ANSWER", "20 days");
+  await sql(
+    `INSERT INTO "StatusChange" (id,"organizationId","contactId","userId","fromStatus","toStatus","on") VALUES
+       ('cd_r2_sc_old',$1,$2,$4,'CONTACTED','INTERESTED',now() - interval '40 days'),
+       ('cd_r2_sc_new',$1,$3,$4,'CONTACTED','INTERESTED',now() - interval '3 days')`,
+    [org, r2.intold, r2.intnew, taylor.id],
+  );
+  assert.equal((await sql(`SELECT "quietDays" AS q FROM "Organization" WHERE id=$1`, [org])).rows[0].q, 8, "the scores below assume 8 quiet days");
+
+  log("Sprint: Not connected and Never connected leave out a status that already means a talk; its date is the latest move into a talk status");
+  const r2Names = (list) => [...list].sort();
+  assert.deepEqual(r2Names(await inOrder(page, "q=Rtwo&scope=all&act=nconn")), ["Rtwo Lost", "Rtwo New", "Rtwo Stalled", "Rtwo Trying"], "Interested / Meeting Set / Won count as talked; Lost says nothing");
+  assert.deepEqual(
+    r2Names(await inOrder(page, "q=Rtwo&scope=all&act=nc30")),
+    ["Rtwo IntOld", "Rtwo Lost", "Rtwo New", "Rtwo Stalled", "Rtwo Trying"],
+    "Interested 40 days ago is past 30; 3 days ago isn't; Meeting Set with no date is left out",
+  );
+  assert.deepEqual(
+    r2Names(await inOrder(page, "q=Rtwo&scope=all&act=nc7")),
+    ["Rtwo IntOld", "Rtwo Lost", "Rtwo New", "Rtwo Stalled", "Rtwo TalkOld", "Rtwo Trying"],
+    "a talk 12 days ago is past 7",
+  );
+
+  log("Sprint: the Pulse filter (the SQL twin of the health rules) — each choice lists exactly the people whose meter reads it, and stacks");
+  const r2Pulse = async (query) => r2Names(await inOrder(page, `q=Rtwo&scope=all&${query}`));
+  assert.deepEqual(await r2Pulse("pulse=warm"), ["Rtwo Warm"]);
+  assert.deepEqual(await r2Pulse("pulse=cold"), ["Rtwo Bare", "Rtwo IntNew", "Rtwo IntOld", "Rtwo TalkOld"]);
+  assert.deepEqual(await r2Pulse("pulse=trying"), ["Rtwo Trying"]);
+  assert.deepEqual(await r2Pulse("pulse=stalled"), ["Rtwo Stalled"]);
+  assert.deepEqual(await r2Pulse("pulse=new"), ["Rtwo New"]);
+  assert.deepEqual(await r2Pulse("pulse=closed"), ["Rtwo Lost"]);
+  assert.deepEqual(await r2Pulse("pulse=won"), ["Rtwo Won"]);
+  assert.deepEqual(await r2Pulse("pulse=cooling"), []);
+  assert.deepEqual(await r2Pulse("pulse=trying&pulse=stalled"), ["Rtwo Stalled", "Rtwo Trying"], "two choices stack as either");
+  // Every row's own meter reads what the filter said.
+  for (const [key, word] of [["warm", "Warm"], ["cold", "Cold"], ["trying", "Trying"], ["stalled", "Trying"], ["new", "New"], ["closed", "Closed"], ["won", "Won"]]) {
+    await inOrder(page, `q=Rtwo&scope=all&pulse=${key}`);
+    const labels = await page.locator("[data-testid=contact-row] [data-testid=pulse] [role=img]").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+    assert.ok(labels.length > 0 && labels.every((label) => label.includes(`Health: ${word}`)), `${key}: ${labels}`);
+  }
+  await page.goto(`${BASE}/dashboard/contacts?q=Rtwo&scope=all`);
+  await openFilters(page);
+  const pulseMenu = await openMenu(page, "filter-pulse");
+  await pulseMenu.getByText("Trying — stalled", { exact: true }).click();
+  await page.waitForURL(/pulse=stalled/);
+  await page.locator("[data-testid=page-summary]", { hasText: "of 1 contacts" }).waitFor();
+  await page.getByTestId("active-filters").getByText("Pulse: Trying — stalled").waitFor();
+  assert.equal(await page.locator("[data-testid=contact-row]").count(), 1);
+
+  log("Sprint: Warmest first — Won, Warm, Cooling, Cold, Trying, stalled, New, Closed; inside a pulse the most recently touched first");
+  assert.deepEqual(await inOrder(page, "q=Rtwo&scope=all&sort=pulse"), [
+    "Rtwo Won", "Rtwo Warm", "Rtwo TalkOld", "Rtwo Bare", "Rtwo IntNew", "Rtwo IntOld", "Rtwo Trying", "Rtwo Stalled", "Rtwo New", "Rtwo Lost",
+  ]);
+  assert.deepEqual(await inOrder(page, "q=Rtwo&scope=all&sort=pulse&per=10&page=1"), await inOrder(page, "q=Rtwo&scope=all&sort=pulse"), "one page holds them all");
+  // Page boundaries inside a pulse: everyone with an R, 10 a page.
+  const r2All = await inOrder(page, "q=R&scope=all&sort=pulse&per=100");
+  const r2Pages = [...(await inOrder(page, "q=R&scope=all&sort=pulse&per=10&page=1")), ...(await inOrder(page, "q=R&scope=all&sort=pulse&per=10&page=2")), ...(await inOrder(page, "q=R&scope=all&sort=pulse&per=10&page=3"))];
+  assert.ok(r2All.length > 10, `enough to page: ${r2All.length}`);
+  assert.deepEqual(r2Pages, r2All.slice(0, r2Pages.length), "paging never repeats or skips anyone");
+  assert.equal(await page.getByTestId("sort").inputValue(), "pulse");
+  await page.getByTestId("sort").selectOption("pulse");
+  for (let i = 0; i < 20 && (await sql(`SELECT "uiPrefs"->'contacts'->>'sort' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s !== "pulse"; i++) await page.waitForTimeout(100);
+  await page.goto(`${BASE}/dashboard/companies?scope=all`);
+  assert.equal(await page.getByTestId("sort").locator("option[value=pulse]").count(), 0, "Companies don't offer Warmest first");
+  await page.goto(`${BASE}/dashboard/companies?scope=all&sort=pulse&pulse=warm`);
+  await page.locator("[data-testid=company-row]").first().waitFor();
+  assert.equal(await page.getByTestId("sort").inputValue(), "added", "a pasted pulse sort on Companies reads as the default");
+
+  log("Sprint: Columns brings back Activity (four count chips) and Last Contacted By, loaded for the page in one go");
+  await page.goto(`${BASE}/dashboard/contacts?q=Rtwo&scope=all&sort=name`);
+  await page.locator("[data-testid=page-summary]").waitFor();
+  await showColumn(page, "activity");
+  await showColumn(page, "lastContacted");
+  const r2Row = rowOf(page, "Rtwo Stalled");
+  assert.deepEqual(
+    await r2Row.getByTestId("activity-chips").locator("a").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label"))),
+    ["1 Phone calls logged", "0 Texts logged", "0 Emails logged", "0 Meetings logged"],
+  );
+  assert.match(await r2Row.getByTestId("last-contacted").textContent(), /Taylor Test/);
+  assert.match(await rowOf(page, "Rtwo New").locator("td").filter({ hasText: "Not yet" }).first().textContent(), /Not yet/);
+  const r2Prefs = (await sql(`SELECT "uiPrefs"->'contacts'->'columns' AS c FROM "User" WHERE id=$1`, [taylor.id])).rows[0].c;
+  assert.ok(r2Prefs.includes("activity") && r2Prefs.includes("lastContacted"), `remembered: ${r2Prefs}`);
+  await page.getByTestId("columns").click();
+  await page.getByTestId("column-activity").uncheck();
+  await page.getByTestId("column-lastContacted").uncheck();
+  await page.keyboard.press("Escape");
+
+  log("Sprint: Per page sits in the list's footer, not the filter bar, and still pages");
+  await page.goto(`${BASE}/dashboard/contacts?q=R&scope=all&sort=name`);
+  await page.locator("[data-testid=page-summary]").waitFor();
+  assert.equal(await page.getByLabel("Rows per page").count(), 1, "one Per page, in the footer");
+  const perBox = await page.getByLabel("Rows per page").boundingBox();
+  const lastRow = await page.locator("[data-testid=contact-row]").last().boundingBox();
+  assert.ok(perBox.y > lastRow.y, "below the last row");
+  await page.getByLabel("Rows per page").selectOption("10");
+  await page.waitForURL(/per=10/);
+  assert.equal(await page.locator("[data-testid=contact-row]").count(), 10);
+
+  log("Sprint: a row's tick box shows on hover, keyboard focus, after the first tick, or in Select mode — and Tab still reaches it");
+  await page.goto(`${BASE}/dashboard/contacts?q=Rtwo&scope=all&sort=name`);
+  await page.locator("[data-testid=page-summary]").waitFor();
+  await page.mouse.move(5, 5);
+  const opacity = (loc) => loc.evaluate((el) => getComputedStyle(el).opacity);
+  const firstBox = page.locator("[data-testid=contact-row]").first().getByTestId("row-check");
+  const secondBox = page.locator("[data-testid=contact-row]").nth(1).getByTestId("row-check");
+  assert.equal(await opacity(firstBox), "0", "hidden until asked for");
+  await page.locator("[data-testid=contact-row]").first().locator("td").nth(3).hover();
+  assert.equal(await opacity(firstBox), "1", "hovering the row shows it");
+  assert.equal(await opacity(secondBox), "0", "only that row");
+  await page.mouse.move(5, 5);
+  await secondBox.focus();
+  assert.equal(await opacity(secondBox), "1", "keyboard focus shows it");
+  await page.keyboard.press("Space");
+  await page.getByTestId("bulk-bar").waitFor();
+  await page.mouse.move(5, 5);
+  assert.equal(await opacity(firstBox), "1", "after the first tick every box shows");
+  await page.keyboard.press("Space");
+  await page.getByTestId("bulk-bar").waitFor({ state: "detached" });
+  assert.equal(await opacity(firstBox), "0");
+  await page.getByTestId("select-mode").click();
+  assert.equal(await opacity(firstBox), "1", "Select mode shows them all");
+  await page.getByTestId("select-mode").click();
+  assert.equal(await opacity(firstBox), "0");
+  assert.equal(await page.getByTestId("page-check").evaluate((el) => getComputedStyle(el).opacity), "1", "the page box stays in the header");
+
+  log("Sprint: on a phone the first card starts about 180px down");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const ph = await ctx.newPage();
+    await login(ph, EMAIL);
+    for (const url of ["/dashboard/contacts?q=Spr&scope=all", "/dashboard/companies?q=Spr&scope=all", "/dashboard/contacts/favorites"]) {
+      if (url.includes("favorites")) await sql(`UPDATE "Contact" SET favorite=true WHERE id=$1`, [spr.old]);
+      await ph.goto(`${BASE}${url}`);
+      const card = ph.locator(url.includes("companies") ? "[data-testid=company-card]" : "[data-testid=contact-card]").first();
+      await card.waitFor();
+      const top = (await card.boundingBox()).y;
+      assert.ok(top <= 200, `${url}: the first card starts ${Math.round(top)}px down`);
+      const overflow = await ph.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(overflow <= 1, `${url} scrolls sideways by ${overflow}px`);
+    }
+    await sql(`UPDATE "Contact" SET favorite=false WHERE id=$1`, [spr.old]);
+    await ph.goto(`${BASE}/dashboard/contacts?q=Spr&scope=all`);
+    // Everything that was in the header is still one tap away.
+    for (const id of ["cleanup", "filters-toggle", "scope-mine", "preset-call"]) await ph.getByTestId(id).waitFor();
+    await ph.getByRole("link", { name: /Add contact/ }).first().waitFor();
+    await shot(ph, "06-round2-phone-top");
+    await ctx.close();
+  }
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id = ANY($1)`, [[taylor.id, nicId]]);
+  await sprMemberCtx.close();
+
   log("the phone width: lists, Labels and duplicates stay inside the screen");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const p = await phone.newPage();
@@ -893,12 +1279,205 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
     assert.ok(overflow <= 1, `${url} scrolls sideways by ${overflow}px`);
   }
   await p.goto(`${BASE}/dashboard/contacts`);
-  await p.locator("[data-testid=contact-row] [data-testid=row-check]").first().check();
+  // Cards on a phone, their boxes only in Select mode (Nov 11, 2026).
+  assert.equal(await p.locator("[data-testid=contact-card] [data-testid=card-check]").count(), 0, "no boxes until Select");
+  await p.getByTestId("select-mode").tap();
+  await p.locator("[data-testid=contact-card] [data-testid=card-check]").first().check();
   await p.getByTestId("bulk-bar").waitFor();
   const bar = await p.getByTestId("bulk-bar").boundingBox();
   assert.ok(bar.x >= 0 && bar.x + bar.width <= 391, "the bulk bar fits the phone");
   await shot(p, "04-phone");
   await phone.close();
+
+  // ---------------------------------------------------------------------
+  // The final audit of the BDR sprint (Nov 11, 2026), lists area.
+  await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago', "quietDays"=8 WHERE id=$1`, [org]);
+  const waitActive = async (pg, test, what) => {
+    for (let i = 0; i < 40; i++) {
+      if (await pg.evaluate(test)) return;
+      await pg.waitForTimeout(50);
+    }
+    assert.fail(`${what}: focus is on ${await pg.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))}`);
+  };
+  const activeIs = (pg, testId, what) => waitActive(pg, `document.activeElement?.dataset?.testid === ${JSON.stringify(testId)}`, what);
+
+  log("audit fixes: Meetings this week reads an opportunity meeting on the workspace's own day (Saturday 8 PM in Chicago is this week, last Saturday's is not)");
+  {
+    const wkSat = await seedContact({ name: "Wkmeet Saturday" });
+    const wkPrev = await seedContact({ name: "Wkmeet Lastweek" });
+    // This week's Saturday and last week's, at 8 PM on Chicago's clock,
+    // stored as UTC like every DateTime.
+    const at = (offset) =>
+      `(((((now() AT TIME ZONE 'America/Chicago')::date - extract(dow from (now() AT TIME ZONE 'America/Chicago'))::int + ${offset}) + time '20:00') AT TIME ZONE 'America/Chicago') AT TIME ZONE 'UTC')`;
+    for (const [id, contactId, offset] of [["cd_wk_sat", wkSat, 6], ["cd_wk_prev", wkPrev, -1]]) {
+      await sql(`INSERT INTO "Opportunity" (id, "organizationId", title, "updatedAt") VALUES ($1, $2, 'Wk meeting', now())`, [id, org]);
+      await sql(`INSERT INTO "OpportunityContact" (id, "opportunityId", "contactId", role) VALUES ($1, $1, $2, 'PRIMARY')`, [id, contactId]);
+      await sql(`INSERT INTO "OpportunityMeeting" (id, "opportunityId", "on") VALUES ($1, $1, ${at(offset)})`, [id]);
+    }
+    assert.deepEqual(await contactsAt(page, "scope=all&preset=week&q=Wkmeet"), ["Wkmeet Saturday"]);
+  }
+
+  log("audit fixes: Going quiet counts whole days on the workspace's calendar — touched exactly 8 days ago (earlier in the day) is not quiet yet, 9 days is");
+  {
+    const edge = await seedCompany({ name: "Quietaud Edge" });
+    const past = await seedCompany({ name: "Quietaud Past" });
+    const dayStart = (back) => `((((now() AT TIME ZONE 'America/Chicago')::date - ${back})::timestamp AT TIME ZONE 'America/Chicago') AT TIME ZONE 'UTC')`;
+    await sql(
+      `INSERT INTO "Activity" (id, "organizationId", "companyId", "userId", type, body, "occurredAt") VALUES
+         ('cd_quiet_edge', $1, $2, $4, 'PHONE_CALL', 'Edge', ${dayStart(8)} + interval '1 minute'),
+         ('cd_quiet_past', $1, $3, $4, 'PHONE_CALL', 'Past', ${dayStart(9)} + interval '12 hours')`,
+      [org, edge, past, taylor.id],
+    );
+    assert.deepEqual(await companiesAt(page, "scope=all&preset=quiet&q=Quietaud"), ["Quietaud Past"]);
+  }
+
+  log("audit fixes: bulk Assign 'all matching' takes the first 1,000 in the list's own order (Warmest first puts a tried lead added long ago ahead of 1,000 new ones)");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id, "organizationId", name, "updatedAt") SELECT 'cd_ord_' || g, $1, 'Bulkord New ' || g, now() FROM generate_series(1, 1001) g`,
+      [org],
+    );
+    const old = await seedContact({ name: "Bulkord Oldtried", createdAt: new Date(Date.now() - 30 * 86_400_000).toISOString() });
+    await seedActivity(old, 1);
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&sort=pulse&q=Bulkord`);
+    await page.locator("[data-testid=page-summary]").waitFor();
+    assert.equal((await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").first().textContent()).trim(), "Bulkord Oldtried", "Warmest first shows the tried lead on top");
+    await page.getByTestId("page-check").check();
+    await page.getByTestId("bulk-all").click();
+    await page.getByTestId("bulk-me").click();
+    await page.getByTestId("bulk-message").filter({ hasText: "1,000 records → Taylor Test." }).waitFor();
+    assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [old])).rows[0].ownerId, taylor.id, "the top of the list was in the 1,000");
+  }
+
+  log("audit fixes: bulk Assign 'all matching' keeps every filter on the list — with Favorites and an Activity window on, only those records are assigned");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id, "organizationId", name, favorite, "updatedAt")
+       SELECT 'cd_favaud_' || g, $1, 'Favaud ' || g, g <= 12, now() FROM generate_series(1, 17) g`,
+      [org],
+    );
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&fav=1&act=never&q=Favaud&per=10`);
+    assert.match(await page.getByTestId("page-summary").textContent(), /of 12 contacts/);
+    await page.getByTestId("page-check").check();
+    await page.getByTestId("bulk-all").click();
+    await page.getByTestId("bulk-me").click();
+    await page.getByTestId("bulk-message").filter({ hasText: "12 records → Taylor Test." }).waitFor();
+    const owned = (await sql(`SELECT favorite, count(*)::int AS n FROM "Contact" WHERE id LIKE 'cd_favaud_%' AND "ownerId"=$1 GROUP BY favorite`, [taylor.id])).rows;
+    assert.deepEqual(owned.map((row) => ({ ...row })), [{ favorite: true, n: 12 }], "only the favorites the list showed");
+  }
+
+  log("audit fixes: Last Contacted By leaves out a no-show, like every other touch count");
+  {
+    const lc = await seedContact({ name: "Lcnoshow Person" });
+    await seedActivity(lc, 6);
+    await sql(
+      `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, outcome, "occurredAt") VALUES ('cd_lc_noshow', $1, $2, $3, 'MEETING', 'No-show', 'NO_SHOW', now() - interval '1 day')`,
+      [org, lc, nicId],
+    );
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&q=Lcnoshow`);
+    await showColumn(page, "lastContacted");
+    const cell = await rowOf(page, "Lcnoshow Person").getByTestId("last-contacted").textContent();
+    assert.match(cell, /Taylor/, `the call, not the no-show: ${cell}`);
+    assert.doesNotMatch(cell, /Nic/);
+  }
+
+  log("audit fixes: a number with an extension dials the number then the extension, and texts the number alone");
+  const extn = await seedContact({ name: "Extn Person", phone: "(512) 555-0100 x204" });
+  await sql(`UPDATE "Contact" SET status='INTERESTED' WHERE id=$1`, [extn]);
+  await page.goto(`${BASE}/dashboard/contacts?scope=all&q=Extn`);
+  assert.equal(await rowOf(page, "Extn Person").locator('a[href^="tel:"]').first().getAttribute("href"), "tel:5125550100,204");
+
+  log("audit fixes: a filter chip's ✕ says which filter it removes");
+  await page.goto(`${BASE}/dashboard/contacts?scope=all&state=TX`);
+  await page.getByRole("button", { name: /^Remove filter .*TX/ }).waitFor();
+
+  log("audit fixes: Clean up is walked from the keyboard (Enter to Import CSV, Escape back to the button)");
+  await page.goto(`${BASE}/dashboard/contacts?scope=all`);
+  await page.getByTestId("cleanup").focus();
+  await page.keyboard.press("Enter");
+  await activeIs(page, "cleanup-import", "Enter on Clean up");
+  await page.keyboard.press("Escape");
+  await activeIs(page, "cleanup", "Escape in Clean up");
+
+  log("audit fixes: the bulk bar keeps the keyboard — the question takes it, Cancel gives it back to Assign to me, Yes and Undo to the message");
+  {
+    await seedContact({ name: "Kbfocus Nicsown", ownerId: nicId });
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&q=Kbfocus`);
+    await page.getByTestId("row-check").first().check();
+    await page.getByTestId("bulk-me").focus();
+    await page.keyboard.press("Enter");
+    await activeIs(page, "bulk-confirm-yes", "the question");
+    await page.getByTestId("bulk-confirm-no").focus();
+    await page.keyboard.press("Enter");
+    await activeIs(page, "bulk-me", "after Cancel");
+    await page.keyboard.press("Enter");
+    await activeIs(page, "bulk-confirm-yes", "the question again");
+    await page.keyboard.press("Enter");
+    await waitActive(page, `document.activeElement?.getAttribute("role") === "status"`, "after Yes");
+    await page.getByTestId("bulk-undo").focus();
+    await page.keyboard.press("Enter");
+    await waitActive(page, `document.activeElement?.getAttribute("role") === "status"`, "after Undo");
+  }
+
+  log("audit fixes (phone): the bulk bar sits above the tab bar with 44px buttons; cards are inset and their boxes inside; page links, chips and filter choices are 44px; the Filters sheet holds the keyboard and Escape in a menu closes only the menu; the card's call and caption");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const q = await ctx.newPage();
+    await login(q, EMAIL);
+    const tall = async (loc, what) => {
+      const box = await loc.boundingBox();
+      assert.ok(box && box.height >= 43.5, `${what} is ${box && Math.round(box.height)}px tall`);
+    };
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&q=Bulkord`);
+    await q.locator("[data-testid=contact-card]").first().waitFor();
+    await q.getByTestId("select-mode").tap();
+    await q.locator("[data-testid=card-check]").first().check();
+    await q.getByTestId("bulk-bar").waitFor();
+    const barBox = await q.getByTestId("bulk-bar").boundingBox();
+    const tabs = await q.getByTestId("phone-tabs").boundingBox();
+    assert.ok(barBox.y + barBox.height <= tabs.y + 0.5, `the bar ends at ${Math.round(barBox.y + barBox.height)}, the tabs start at ${Math.round(tabs.y)}`);
+    for (const id of ["bulk-me", "bulk-to", "bulk-assign", "bulk-unassign"]) await tall(q.getByTestId(id), id);
+    const inside = await q.locator("[data-testid=card-check]").first().evaluate((box) => {
+      const label = box.closest("label").getBoundingClientRect();
+      const card = box.closest(".card").getBoundingClientRect();
+      const text = box.closest("li").querySelector("a").getBoundingClientRect();
+      return { label: label.left >= card.left, text: text.left - card.left };
+    });
+    assert.ok(inside.label, "the Select box sits inside the card");
+    assert.ok(inside.text >= 12, `the card's words are inset ${Math.round(inside.text)}px`);
+    await tall(q.locator('a[aria-label="Next page"]'), "Next page");
+    // Many pages of 44px links wrap rather than widen the phone's page.
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&q=Bulkord&per=10&page=50`);
+    await q.locator("[data-testid=contact-card]").first().waitFor();
+    assert.ok(await q.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "the pager wraps on a phone");
+    await q.getByTestId("select-mode").tap();
+
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&state=TX`);
+    await tall(q.getByRole("button", { name: /^Remove filter .*TX/ }), "a chip's ✕");
+
+    await q.goto(`${BASE}/dashboard/contacts?scope=all`);
+    await q.getByTestId("filters-toggle").tap();
+    await q.getByTestId("filters-sheet").waitFor();
+    await waitActive(q, `!!document.querySelector('[data-testid=filters-sheet]')?.contains(document.activeElement)`, "the opened sheet");
+    await q.getByTestId("filter-status").tap();
+    const menu = q.getByTestId("filter-status-menu");
+    await menu.waitFor();
+    await tall(menu.locator("label").first(), "a Status choice");
+    await q.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
+    assert.ok(await q.getByTestId("filters-sheet").isVisible(), "Escape in the menu leaves the sheet open");
+    await q.keyboard.press("Escape");
+    await q.getByTestId("filters-sheet").waitFor({ state: "detached" });
+    await activeIs(q, "filters-toggle", "the closed sheet");
+
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&q=Extn`);
+    const card = q.locator("[data-testid=contact-card]").first();
+    await card.waitFor();
+    assert.equal(await card.getByTestId("card-call").getAttribute("href"), "tel:5125550100,204");
+    assert.equal(await card.getByTestId("card-text").getAttribute("href"), "sms:5125550100");
+    assert.doesNotMatch(await card.textContent(), /Not tried yet/, "an Interested contact isn't 'Not tried yet'");
+    await ctx.close();
+  }
 
   await browser.close();
   catcher.close();
@@ -908,3 +1487,41 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}
+
+// Ticks a column on in the list's Columns menu, if it isn't on, and waits
+// for the list to show it (Nov 11, 2026).
+async function showColumn(page, key) {
+  await page.getByTestId("columns").click();
+  const box = page.getByTestId(`column-${key}`);
+  if (!(await box.isChecked())) {
+    await box.check();
+  }
+  await page.keyboard.press("Escape");
+  await page.locator("th", { hasText: { marketing: "Marketing", email: "Email", status: "Status", industry: "Industry", location: "Location", notes: "Notes", phone: "Phone", people: "People", added: "Added", activity: "Activity", lastContacted: "Last Contacted By" }[key] ?? key }).first().waitFor();
+}
+
+// Bulk Assign asks before taking a teammate's records (Nov 11, 2026): the
+// question names them; nothing is written until Yes.
+async function sayYes(page, words) {
+  const ask = page.getByTestId("bulk-confirm");
+  await ask.waitFor();
+  assert.match((await ask.textContent()).replace(/\s+/g, " "), new RegExp(words.replace(/[.?()]/g, "\\$&")));
+  await page.getByTestId("bulk-confirm-yes").click();
+}

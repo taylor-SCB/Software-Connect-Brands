@@ -31,6 +31,9 @@ import { PaymentScheduleEditor } from "./payment-schedule-editor";
 import { SignerForm } from "./signer-form";
 import { setContractStatus, deleteContract } from "../actions";
 import { cancelContract, reopenContract } from "@/app/dashboard/deals/tracker/actions";
+import { DealJourney } from "@/components/deal-journey";
+import { loadDealJourney } from "@/lib/deal-journey-load";
+import { JourneyNext, DepositInvoiceButton } from "../journey-next";
 
 export default async function ContractDetailPage({
   params,
@@ -99,8 +102,48 @@ export default async function ContractDetailPage({
         ).map((user) => user.name)
       : [];
 
+  // The DealJourney strip (BDR redesign, Release 8): a money-in contract
+  // on a deal. A purchase order, or a contract with no deal, keeps its
+  // badges in the header as before.
+  const journey =
+    contract.deal && !contract.payable
+      ? await loadDealJourney(organizationId, timeZone, {
+          dealId: contract.deal.id,
+          quoteId: contract.quoteId,
+          contractId: contract.id,
+          page: "contract",
+        })
+      : null;
+  const sendForSignature =
+    contract.status === "DRAFT" && canSend ? (
+      <form action={setContractStatus} className="max-sm:w-full">
+        <input type="hidden" name="contractId" value={contract.id} />
+        <input type="hidden" name="status" value="SENT" />
+        <button type="submit" className="btn btn-primary btn-sm max-sm:min-h-11 max-sm:w-full" data-testid="journey-next">
+          <IconSend size={13} />
+          Send for signature
+        </button>
+      </form>
+    ) : contract.status === "DRAFT" ? (
+      <span className="faint text-xs">Only the people on its template can send it</span>
+    ) : null;
+  // "Send deposit invoice" is the main button on a signed money-in
+  // contract whose first payment row is still owed.
+  const depositRow = contract.payments[0] ?? null;
+  const depositDue = signed && !contract.payable && depositRow && !depositRow.paidAt && depositRow.amountCents > 0;
+  const badges = (
+    <>
+      <Badge>{contract.type}</Badge>
+      <span data-testid="contract-direction">
+        <Badge color={contract.payable ? "#fb7185" : "#34d399"}>{direction}</Badge>
+      </span>
+      <StatusBadge status={contract.status} />
+    </>
+  );
+
   return (
-    <div>
+    // Room at the foot of a phone for the strip's pinned Next button.
+    <div className={journey?.journey.next ? "max-sm:pb-24" : undefined}>
       <BackLink href="/dashboard/contracts" label="Contracts" current={`CON-${contract.number} ${contract.title}`} />
 
       <PageHeader
@@ -109,11 +152,7 @@ export default async function ContractDetailPage({
         leading={<Avatar url={recipient?.logoUrl} name={recipient?.name ?? contract.contact.name} size={48} />}
         actions={
           <>
-            <Badge>{contract.type}</Badge>
-            <span data-testid="contract-direction">
-              <Badge color={contract.payable ? "#fb7185" : "#34d399"}>{direction}</Badge>
-            </span>
-            <StatusBadge status={contract.status} />
+            {!journey && badges}
             <Link
               href={publicPath}
               target="_blank"
@@ -140,7 +179,7 @@ export default async function ContractDetailPage({
                 <CreateProjectButton contractId={contract.id} />
               )
             )}
-            {contract.status === "DRAFT" && canSend && (
+            {!journey && contract.status === "DRAFT" && canSend && (
               <form action={setContractStatus}>
                 <input type="hidden" name="contractId" value={contract.id} />
                 <input type="hidden" name="status" value="SENT" />
@@ -150,9 +189,30 @@ export default async function ContractDetailPage({
                 </button>
               </form>
             )}
+            {!journey && depositDue && depositRow && (
+              <DepositInvoiceButton rowId={depositRow.id} token={depositRow.invoiceToken} label="Send deposit invoice" />
+            )}
           </>
         }
       />
+
+      {journey && (
+        <div className="mb-5">
+          <DealJourney
+            journey={journey.journey}
+            stickyNext
+            next={
+              <JourneyNext
+                next={journey.journey.next}
+                refs={journey.refs}
+                page="contract"
+                here={sendForSignature ? { "send-contract": sendForSignature } : undefined}
+              />
+            }
+            details={badges}
+          />
+        </div>
+      )}
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch">
         {/* ---------------------------- Agreement ---------------------------- */}
@@ -182,7 +242,9 @@ export default async function ContractDetailPage({
               subtitle={
                 signed
                   ? "Locked — a signed contract can't be edited."
-                  : "Fields are already filled in. Edit anything before you send it."
+                  : contract.status === "SENT"
+                    ? "Locked while it is out for signature."
+                    : "Fields are already filled in. Edit anything before you send it."
               }
             />
             <ContractBodyForm
@@ -190,6 +252,7 @@ export default async function ContractDetailPage({
               title={contract.title}
               body={contract.body}
               locked={signed}
+              sent={contract.status === "SENT"}
             />
           </Card>
 

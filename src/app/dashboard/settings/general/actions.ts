@@ -134,3 +134,36 @@ export async function updateQuietDays(_prev: ActionState, formData: FormData): P
   revalidatePath("/dashboard/deals");
   return { success: `Saved: quiet after ${parsed.data.quietDays} ${parsed.data.quietDays === 1 ? "day" : "days"}` };
 }
+
+// Team goals and the try limit (BDR redesign, Nov 11, 2026; decisions 11
+// and 12). Weekly tries, talks and meetings booked are optional: blank
+// means no goal, and My day's rings then read "vs last week". The try
+// limit is how many tries with no talk before Up next offers "Try again in
+// 30 days". Owners and admins only.
+const goal = z
+  .string()
+  .trim()
+  .transform((value) => (value === "" ? null : Number(value)))
+  .pipe(z.number().int("Use a whole number").min(1, "A goal is at least 1").max(10000, "A goal is at most 10,000").nullable());
+
+export async function updateTeamGoals(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const fields = ["weeklyTryGoal", "weeklyTalkGoal", "weeklyMeetingGoal", "parkAfterTries"];
+  const kept = keepFields(formData, fields);
+  const session = await requireAdminSession();
+  if (!session.allowed) return { error: "Only owners and admins can change this.", kept };
+  const parsed = parseForm(
+    z.object({
+      weeklyTryGoal: goal,
+      weeklyTalkGoal: goal,
+      weeklyMeetingGoal: goal,
+      parkAfterTries: z.coerce.number().int("Use a whole number of tries").min(1, "At least 1 try").max(50, "At most 50 tries"),
+    }),
+    Object.fromEntries(fields.map((field) => [field, String(formData.get(field) ?? "")])),
+  );
+  if (!parsed.ok) return { error: parsed.error, kept };
+  await prisma.organization.update({ where: { id: session.organizationId }, data: parsed.data });
+  revalidatePath(PATH);
+  revalidatePath("/dashboard");
+  const set = [parsed.data.weeklyTryGoal, parsed.data.weeklyTalkGoal, parsed.data.weeklyMeetingGoal].filter((value) => value !== null).length;
+  return { success: set ? `Saved: ${set} weekly ${set === 1 ? "goal" : "goals"}, try limit ${parsed.data.parkAfterTries}` : `Saved: no weekly goals, try limit ${parsed.data.parkAfterTries}` };
+}

@@ -6,6 +6,7 @@ import { CompanyTiles } from "../company-tiles";
 import { CompanyInfoForm } from "./form";
 import { AccountTypeCard } from "./account-type-card";
 import { QuietDaysCard } from "./quiet-days-card";
+import { TeamGoalsCard } from "./team-goals-card";
 
 // How long an answered type request is still mentioned on the card.
 const ANSWER_SHOWN_DAYS = 30;
@@ -76,6 +77,19 @@ export default async function CompanyGeneralPage() {
                 }
               : null
           }
+        />
+      </Card>
+
+      <Card lit className="mb-5" id="team-goals">
+        <CardHeader title="Team goals" subtitle="What My day's rings fill toward, and when a lead is offered a 30-day rest." />
+        <TeamGoalsCard
+          goals={{
+            weeklyTryGoal: organization.weeklyTryGoal,
+            weeklyTalkGoal: organization.weeklyTalkGoal,
+            weeklyMeetingGoal: organization.weeklyMeetingGoal,
+            parkAfterTries: organization.parkAfterTries,
+          }}
+          canEdit={canEdit}
         />
       </Card>
 

@@ -4,29 +4,40 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { MultiSelect } from "@/components/list-filters";
 import { IconSearch } from "@/components/icons";
+import { saveUiPref } from "@/app/dashboard/prefs-actions";
 
-// The Pipeline's search and Lead Label filter (Oct 27, 2026). The search
-// finds a tile by any listed person's name or company, or its own name;
-// the labels stack, N/A being the tiles with none. Both live in the
-// address bar, so a filtered board can be bookmarked or shared.
+// The Pipeline's bar (Oct 27, 2026; reordered for the BDR redesign, Nov
+// 11, 2026): Mine | Everyone first (Members open on Mine, approved
+// decision 17, remembered per person), then Search, Gone quiet, Needs a
+// decision (Meeting Set tiles whose meeting has passed) and the Lead
+// Label filter. The search finds a tile by any listed person's name or
+// company, or its own name; the labels stack, N/A being the tiles with
+// none. Everything lives in the address bar, so a filtered board can be
+// bookmarked or shared.
 export function PipelineFilters({
   q,
   labels,
   labelChoices,
   shown,
+  scope,
   quiet = false,
   quietCount = 0,
   quietDays = 8,
+  decide = false,
+  decideCount = 0,
 }: {
   q: string;
   labels: string[];
   labelChoices: string[];
   shown: number;
+  scope: "mine" | "all";
   // The "Gone quiet" toggle (Nov 10, 2026): open opportunities nobody has
   // touched in the workspace's quietDays.
   quiet?: boolean;
   quietCount?: number;
   quietDays?: number;
+  decide?: boolean;
+  decideCount?: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -37,12 +48,15 @@ export function PipelineFilters({
   const picked = ticked.base === labels ? ticked.values : labels;
   const setPicked = (values: string[]) => setTicked({ base: labels, values });
 
-  function go(next: { q?: string; labels?: string[]; quiet?: boolean }) {
+  function go(next: { q?: string; labels?: string[]; quiet?: boolean; decide?: boolean; scope?: "mine" | "all" }) {
     const query = new URLSearchParams(params.toString());
-    if (next.quiet !== undefined) {
-      if (next.quiet) query.set("quiet", "1");
-      else query.delete("quiet");
+    for (const key of ["quiet", "decide"] as const) {
+      const value = next[key];
+      if (value === undefined) continue;
+      if (value) query.set(key, "1");
+      else query.delete(key);
     }
+    if (next.scope) query.set("scope", next.scope);
     const text = (next.q ?? typed).trim();
     if (text) query.set("q", text);
     else query.delete("q");
@@ -60,10 +74,36 @@ export function PipelineFilters({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- go reads the latest params on purpose
   }, [typed]);
 
-  const filtered = Boolean(q) || labels.length > 0 || quiet;
+  function pickScope(next: "mine" | "all") {
+    if (next === scope) return;
+    go({ scope: next });
+    // Remembered for next time as uiPrefs pipeline.scope; the address bar
+    // already says it.
+    void saveUiPref("pipeline", "scope", next).catch(() => {});
+  }
+
+  const filtered = Boolean(q) || labels.length > 0 || quiet || decide;
+  const segment = (on: boolean) =>
+    `min-h-9 [@media(pointer:coarse)]:min-h-11 px-3 text-xs font-medium transition-colors focus-visible:relative focus-visible:z-10 ${
+      on ? "bg-[var(--brand)] text-white" : "text-[var(--text-dim)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
+    }`;
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="pipeline-filters">
-      <label className="relative min-w-[14rem] flex-1 sm:max-w-sm">
+      <div role="group" aria-label="Whose tiles" className="inline-flex overflow-hidden rounded-lg border border-[var(--border)]" data-testid="pipeline-scope">
+        <button type="button" aria-pressed={scope === "mine"} onClick={() => pickScope("mine")} className={segment(scope === "mine")} data-testid="pipeline-scope-mine">
+          Mine
+        </button>
+        <button
+          type="button"
+          aria-pressed={scope === "all"}
+          onClick={() => pickScope("all")}
+          className={`${segment(scope === "all")} border-l border-[var(--border)]`}
+          data-testid="pipeline-scope-all"
+        >
+          Everyone
+        </button>
+      </div>
+      <label className="relative min-w-[12rem] flex-1 sm:max-w-sm">
         <IconSearch size={14} className="faint pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2" />
         <input
           type="search"
@@ -75,6 +115,26 @@ export function PipelineFilters({
           data-testid="pipeline-search"
         />
       </label>
+      <button
+        type="button"
+        onClick={() => go({ quiet: !quiet })}
+        aria-pressed={quiet}
+        title={`Open opportunities with no call, text, email or meeting in ${quietDays} days`}
+        className={`btn btn-sm [@media(pointer:coarse)]:min-h-11 ${quiet ? "btn-primary" : "btn-ghost"}`}
+        data-testid="pipeline-quiet-toggle"
+      >
+        Gone quiet{quietCount ? ` (${quietCount})` : ""}
+      </button>
+      <button
+        type="button"
+        onClick={() => go({ decide: !decide })}
+        aria-pressed={decide}
+        title="Meetings that have passed with nobody saying how they went"
+        className={`btn btn-sm [@media(pointer:coarse)]:min-h-11 ${decide ? "btn-primary" : "btn-ghost"}`}
+        data-testid="pipeline-decide-toggle"
+      >
+        Needs a decision{decideCount ? ` (${decideCount})` : ""}
+      </button>
       <MultiSelect
         label="Lead Label"
         values={picked}
@@ -90,16 +150,6 @@ export function PipelineFilters({
         }}
         empty="No labels yet"
       />
-      <button
-        type="button"
-        onClick={() => go({ quiet: !quiet })}
-        aria-pressed={quiet}
-        title={`Open opportunities with no call, text, email or meeting in ${quietDays} days`}
-        className={`btn btn-sm ${quiet ? "btn-primary" : "btn-ghost"}`}
-        data-testid="pipeline-quiet-toggle"
-      >
-        Gone quiet{quietCount ? ` (${quietCount})` : ""}
-      </button>
       {filtered && (
         <>
           <span className="faint text-xs" data-testid="pipeline-shown">
@@ -110,9 +160,9 @@ export function PipelineFilters({
             onClick={() => {
               setTyped("");
               setPicked([]);
-              go({ q: "", labels: [], quiet: false });
+              go({ q: "", labels: [], quiet: false, decide: false });
             }}
-            className="link text-xs"
+            className="link text-xs [@media(pointer:coarse)]:min-h-11"
           >
             Clear
           </button>

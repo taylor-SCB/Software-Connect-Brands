@@ -117,6 +117,40 @@ const readableDay = (iso) =>
     timeZone: "UTC",
   }).format(new Date(`${iso}T12:00:00Z`))}`;
 
+
+// The log is the How did it go? sheet behind the "What happened with …?"
+// bar, with When and Time behind "Just now ▾" (BDR redesign, Nov 11,
+// 2026). After a save it moves on to the next step; Skip closes it.
+async function openLog(p) {
+  const logForm = p.locator("[data-testid=log-activity-form]");
+  if (await p.locator("[data-testid=follow-up-skip]").isVisible().catch(() => false)) {
+    await p.locator("[data-testid=follow-up-skip]").click();
+    await logForm.waitFor({ state: "detached" });
+  }
+  if (!(await logForm.isVisible().catch(() => false))) await p.locator("[data-testid=log-bar]").click();
+  await logForm.waitFor();
+  if (await logForm.locator("[data-testid=activity-when-toggle]").isVisible().catch(() => false)) {
+    await logForm.locator("[data-testid=activity-when-toggle]").click();
+  }
+  return logForm;
+}
+
+// BDR redesign (Nov 11, 2026): the Team week, the layouts and Copy this
+// week into next sit in the View menu; the filters in a Filters sheet;
+// "+ New" opens a sheet whose who / where / job / notes are under More.
+async function openView(page) {
+  if (!(await page.locator("[data-testid=cal-view-panel]").count())) await page.locator("[data-testid=cal-view-menu]").click();
+  await page.locator("[data-testid=cal-view-panel]").waitFor();
+}
+async function openFilters(page) {
+  if (!(await page.locator("[data-testid=cal-filters-sheet]").count())) await page.locator("[data-testid=cal-filters-open]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor();
+}
+async function closeFilters(page) {
+  if (await page.locator("[data-testid=cal-filters-sheet]").count()) await page.locator("[data-testid=cal-filters-done]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor({ state: "detached" });
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -180,10 +214,9 @@ const readableDay = (iso) =>
 
   log("a call logged five days ago, with a time, lands on the calendar that day, done");
   await page.goto(`${BASE}/dashboard/contacts/ctc_calv2`);
-  const logForm = page.locator("[data-testid=log-activity-form]");
-  await logForm.waitFor();
+  const logForm = await openLog(page);
   assert.equal(await logForm.locator("[data-testid=activity-when]").inputValue(), TODAY, "When defaults to today");
-  await logForm.getByRole("button", { name: "Phone Call", exact: true }).click();
+  await logForm.getByRole("button", { name: "Call", exact: true }).click();
   await logForm.locator("textarea[name=body]").fill("Walked through the roof scope on the phone");
   await logForm.locator("[data-testid=activity-when]").fill(daysAgo(5));
   await logForm.locator("[data-testid=activity-time]").fill("10:30");
@@ -210,10 +243,11 @@ const readableDay = (iso) =>
   assert.equal(dayInZone(call.occurredAt), daysAgo(5), "the Activity itself is dated that day too");
 
   log("logged on two contacts at once it is one entry, with the other expected");
+  await openLog(page);
   await logForm.getByRole("button", { name: "Meeting", exact: true }).click();
   await logForm.locator("textarea[name=body]").fill("Site meeting with both of them");
   await logForm.locator("[data-testid=activity-when]").fill(daysAgo(2));
-  await logForm.getByRole("button", { name: "+ Include multiple contacts" }).click();
+  await logForm.getByRole("button", { name: "+ others" }).click();
   await page.getByRole("dialog").getByLabel("Search contacts").fill("Priya");
   await page.getByRole("dialog").getByText("Priya Menon").click();
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
@@ -237,7 +271,8 @@ const readableDay = (iso) =>
 
   log("a call dated ahead is scheduled, not logged: on the calendar, open, nothing in the history");
   const activitiesBefore = (await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE "organizationId"=$1`, [org])).rows[0].n;
-  await logForm.getByRole("button", { name: "Phone Call", exact: true }).click();
+  await openLog(page);
+  await logForm.getByRole("button", { name: "Call", exact: true }).click();
   await logForm.locator("textarea[name=body]").fill("Call back about the deposit");
   await logForm.locator("[data-testid=activity-when]").fill(daysOn(4));
   await logForm.locator("[data-testid=activity-time]").fill("14:00");
@@ -259,6 +294,9 @@ const readableDay = (iso) =>
     activitiesBefore,
     "nothing was written to the history for a call that has not happened",
   );
+  // The sheet says so as soon as the save lands; the page behind it
+  // refreshes a moment later.
+  await page.locator("[data-testid=upcoming-card]").getByText(/Call · Dana Ruiz/).first().waitFor();
   const comingUp = await page.locator("[data-testid=upcoming-card]").textContent();
   assert.match(comingUp, /Call · Dana Ruiz/, "and Coming up on her page shows it");
   assert.doesNotMatch(comingUp, /Meeting · Dana Ruiz/, "the meeting that already happened is not coming up");
@@ -267,7 +305,9 @@ const readableDay = (iso) =>
 
   log("marking a quote sent puts Quote sent, Quote follow up and Quote due on the calendar");
   await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   const quoteRows = (
     await sql(
@@ -302,13 +342,15 @@ const readableDay = (iso) =>
 
   log("sending it again does not double the milestones");
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
+  await page.getByTestId("send-quote").waitFor();
   assert.equal(
     (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
     1,
     "back to draft takes the open follow-up and due off, and keeps the sent one",
   );
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   assert.equal(
     (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
@@ -318,8 +360,10 @@ const readableDay = (iso) =>
 
   log("changing the quote's valid-until day moves Quote due");
   await page.locator("[name=validUntil]").fill(daysOn(20));
-  await page.locator("[name=validUntil]").locator("xpath=ancestor::form").getByRole("button", { name: /Save/ }).click();
-  await page.getByText("Quote details saved").waitFor();
+  // One Save for the whole quote editor since the BDR redesign's round 2
+  // (Nov 11, 2026): the Quote details card no longer has its own button.
+  await page.getByTestId("quote-save").click();
+  await page.getByText("Quote details saved", { exact: true }).waitFor();
   assert.equal(
     isoOf((await sql(`SELECT "startOn" FROM "CalendarEvent" WHERE "quoteId"='quo_calv2' AND type='Quote due'`)).rows[0].startOn),
     daysOn(20),
@@ -342,8 +386,10 @@ const readableDay = (iso) =>
   // Re-sending the quote picks the new rhythm up.
   await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  await page.getByTestId("send-quote").waitFor();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   const rhythm = (
     await sql(`SELECT title, "startOn" FROM "CalendarEvent" WHERE "quoteId"='quo_calv2' AND type='Quote follow up' ORDER BY "startOn"`)
@@ -432,7 +478,9 @@ const readableDay = (iso) =>
 
   log("the Calendar layout is the landing spot: the grid, no log");
   await page.goto(`${BASE}/dashboard/calendar`);
+  await openView(page);
   await page.locator("[data-testid=cal-layout-calendar][aria-selected=true]").waitFor();
+  await page.keyboard.press("Escape");
   assert.ok((await page.locator("[data-testid=month-day]").count()) === 42, "the six-week grid");
   assert.equal(await page.locator("[data-testid=log-columns]").count(), 0);
   const todayCell = page.locator(`[data-testid=month-day][data-day="${TODAY}"]`);
@@ -447,6 +495,7 @@ const readableDay = (iso) =>
   await shot(page, "02-calendar");
 
   log("Calendar + Log puts the grid on top and the two columns beneath");
+  await openView(page);
   await page.locator("[data-testid=cal-layout-both]").click();
   await page.waitForURL(/layout=both/);
   await page.locator("[data-testid=log-columns]").waitFor();
@@ -489,6 +538,7 @@ const readableDay = (iso) =>
   assert.equal(await page.locator("[data-testid=log-previous]").getAttribute("data-count"), "1");
   assert.match(await page.locator("[data-testid=log-previous]").textContent(), /Meeting · Dana Ruiz/);
   assert.match(await page.locator("[data-testid=cal-active-filters]").textContent(), /Sam Teammate/, "a chip names the teammate");
+  await openFilters(page);
   await page.locator("[data-testid=cal-users]").click();
   await page.getByRole("listbox", { name: "Users" }).getByText("Unassigned").click();
   await page.waitForURL(/users=usr_calv2_sam%2Cnone|users=usr_calv2_sam,none/);
@@ -497,8 +547,9 @@ const readableDay = (iso) =>
   await page.keyboard.press("Escape");
 
   log("the filter menu paints the opaque overlay colour, not the glass card");
+  await openFilters(page);
   await page.locator("[data-testid=cal-companies]").click();
-  const menu = page.locator(".popover").first();
+  const menu = page.locator("[data-testid=cal-filters] .popover").first();
   await menu.waitFor();
   const paint = await menu.evaluate((el) => {
     const styles = getComputedStyle(el);
@@ -544,7 +595,7 @@ const readableDay = (iso) =>
   log("Clear takes every filter off at once");
   await page.goto(`${BASE}/dashboard/calendar?layout=log&projects=${projectId}&users=usr_calv2_sam&type=Call`);
   await page.locator("[data-testid=log-columns]").waitFor();
-  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await page.waitForURL((url) => !url.search.includes("projects=") && !url.search.includes("users=") && !url.search.includes("type="));
   await page.locator("[data-testid=cal-everyone][aria-pressed=true]").waitFor();
 
@@ -657,7 +708,9 @@ const readableDay = (iso) =>
   log("the Team view: a row per teammate with the week's load, and a cell opens the day");
   await page.goto(`${BASE}/dashboard/calendar?view=team&on=${TODAY}`);
   await page.locator("[data-testid=team-grid]").waitFor();
+  await openView(page);
   await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+  await page.keyboard.press("Escape");
   const myRow = page.locator(`[data-testid=team-row][data-row="u-${me.id}"]`);
   const samRow = page.locator("[data-testid=team-row][data-row=u-usr_calv2_sam]");
   assert.ok(Number(await myRow.getAttribute("data-things")) >= 3, "the three milestones sent today are mine");
@@ -690,6 +743,7 @@ const readableDay = (iso) =>
   await page.locator("[data-testid=event-title]").fill("Lunch with Ben");
   await page.locator("[data-testid=event-type]").selectOption("Meeting");
   await page.locator("[data-testid=event-start-on]").fill(daysOn(6));
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-owner]").selectOption("usr_calv2_sam");
   await page.locator("[data-testid=event-company]").selectOption("cmp_calv2_b");
   await page.locator("[data-testid=event-contact]").selectOption("ctc_calv2_b");

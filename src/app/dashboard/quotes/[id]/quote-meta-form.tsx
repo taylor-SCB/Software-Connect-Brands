@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { PhoneSaveHere, useQuoteSaveSection } from "./quote-save";
 import {
   Field,
   SelectField,
@@ -30,10 +31,34 @@ export function QuoteMetaForm({
   };
   users: WorkspaceUser[];
 }) {
-  const [state, formAction, pending] = useActionState<ActionState, FormData>(
-    updateQuoteMeta,
-    {},
-  );
+  // Saved through the quote's one Save (quote-save.tsx), last after the
+  // lines and the payment table, or Enter in a box. Sent from here rather
+  // than as the form's action, so React never resets the form after it.
+  const [state, setState] = useState<ActionState>({});
+  const [pending, startTransition] = useTransition();
+  const [dirty, setDirty] = useState(false);
+  const editedDuringSave = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const edited = () => {
+    editedDuringSave.current = true;
+    setDirty(true);
+  };
+  function save(): Promise<boolean> {
+    const form = formRef.current;
+    if (!form) return Promise.resolve(true);
+    const data = new FormData(form);
+    editedDuringSave.current = false;
+    return new Promise<boolean>((resolve) =>
+      startTransition(async () => {
+        const result = await updateQuoteMeta({}, data).catch(() => ({ error: "Couldn't reach the server. Nothing was saved; try again." }) as ActionState);
+        setState(result);
+        const ok = !result.error;
+        if (ok && !editedDuringSave.current) setDirty(false);
+        resolve(ok);
+      }),
+    );
+  }
+  const joined = useQuoteSaveSection("details", { label: "Quote details", order: 2, dirty, pending, save });
 
   // Held here rather than handed back by the server on a refusal. React
   // empties a form whose action is a server function even when it refuses,
@@ -57,6 +82,7 @@ export function QuoteMetaForm({
   }, [state, leadSalesRepId, contractSignerId]);
 
   function toggleTeamMember(id: string) {
+    edited();
     setTeamUserIds((current) =>
       current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
     );
@@ -74,7 +100,16 @@ export function QuoteMetaForm({
     state?.kept ? state.kept[field] ?? "" : fallback;
 
   return (
-    <form action={formAction} className="space-y-4 p-5">
+    <form
+      ref={formRef}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      onChange={edited}
+      className="space-y-4 p-5"
+      data-testid="quote-details-form"
+    >
       <input type="hidden" name="quoteId" value={quoteId} />
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -196,9 +231,18 @@ export function QuoteMetaForm({
       <FormError message={state?.error} />
       <FormSuccess message={state?.success} />
 
-      <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
-        {pending ? "Saving…" : "Save details"}
-      </button>
+      {joined ? (
+        dirty && (
+          <>
+            <p className="faint text-xs max-sm:hidden">Unsaved changes — Save at the foot of the page.</p>
+            <PhoneSaveHere dirty={dirty} testId="quote-details-phone-save" />
+          </>
+        )
+      ) : (
+        <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
+          {pending ? "Saving…" : "Save details"}
+        </button>
+      )}
     </form>
   );
 }

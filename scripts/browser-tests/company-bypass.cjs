@@ -13,7 +13,10 @@
  * rest, a new contact can be added and claimed in one go, and a person
  * from another company is refused; an activity logged on the company
  * before today (seeded with SQL) is claimable too; and Notes on the
- * company page split into All / Company / People / Personal.
+ * company page split into All / Company / People / Personal. Fix phase of
+ * the final audit (Nov 11, 2026): a claim that moved nobody can't be
+ * undone by a Member who didn't make it (its token, its batchId, a forged
+ * token), and its maker still can.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
@@ -78,6 +81,41 @@ const status = async (table, id) => (await sql(`SELECT status FROM "${table}" WH
 const activity = async (body, org) =>
   (await sql(`SELECT id, "contactId", "companyId", type FROM "Activity" WHERE "organizationId"=$1 AND body=$2`, [org, body])).rows[0];
 
+// A server action called the way the browser calls it (as connected.cjs
+// does): POST with its id in the Next-Action header and the arguments as
+// JSON. The id is looked up by file and export in the build's manifest.
+let MANIFEST = null;
+async function action(p, file, name, ...args) {
+  MANIFEST ??= JSON.parse(fs.readFileSync(path.join(process.cwd(), ".next/server/server-reference-manifest.json"), "utf8"));
+  const found = Object.entries(MANIFEST.node).find(([, entry]) => entry.filename === file && entry.exportedName === name);
+  if (!found) throw new Error(`no server action ${name} in ${file} (rebuild?)`);
+  const [id, entry] = found;
+  const workers = Object.keys(entry.workers);
+  const pick = workers.find((w) => !w.includes("[")) ?? workers[0];
+  const url = pick.replace(/^app/, "").replace(/\/page$/, "").replace(/\[[^\]]+\]/g, "x") || "/";
+  const response = await p.request.post(`${BASE}${url}`, {
+    headers: { "Next-Action": id, "Content-Type": "text/plain;charset=UTF-8", Accept: "text/x-component", Origin: BASE },
+    data: JSON.stringify(args),
+  });
+  const text = await response.text();
+  const rows = new Map();
+  for (const line of text.split("\n")) {
+    const match = /^([0-9a-f]+):(.*)$/.exec(line);
+    if (match) {
+      try {
+        rows.set(match[1], JSON.parse(match[2]));
+      } catch {
+        rows.set(match[1], match[2]);
+      }
+    }
+  }
+  const head = rows.get("0");
+  const pointer = head && typeof head.a === "string" ? head.a.replace(/^\$@/, "") : null;
+  const result = pointer !== null ? rows.get(pointer) : head;
+  if (result === undefined) throw new Error(`${name}: unreadable answer (${response.status()}): ${text.slice(0, 300)}`);
+  return result;
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
   await sql(`DELETE FROM "User" WHERE email = $1`, [NIC_EMAIL]);
@@ -139,10 +177,23 @@ const activity = async (body, org) =>
   const form = page.locator("[data-testid=log-activity-form]");
   const picker = form.locator("[data-testid=company-people-picker]");
   const other = page.locator("[data-testid=other-contacts]");
+  // The log is the How did it go? sheet behind "Log a touch" on the
+  // company page (Nov 11, 2026); When and Time sit behind "Just now ▾".
+  // The not-linked list sits behind its one amber line.
+  const openLog = async () => {
+    if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=company-log-toggle]").click();
+    await form.waitFor();
+  };
+  const openNotLinked = async () => {
+    const toggle = other.locator("[data-testid=not-linked-toggle]");
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  };
 
   log("nobody ticked: refused, and what was typed is still there");
   await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+  await openLog();
   await form.locator("textarea[name=body]").fill("Spoke to reception about parking");
+  await form.locator("[data-testid=activity-when-toggle]").click();
   await form.locator("[data-testid=activity-time]").fill("10:15");
   await form.locator("[data-testid=activity-submit]").click();
   await form.getByRole("alert").waitFor();
@@ -152,11 +203,11 @@ const activity = async (body, org) =>
   assert.equal((await sql(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1`, [org])).rows[0].n, 1, "nothing written");
   await shot(page, "01-refused");
 
-  log("ticking the bypass box lets it through; the feed reads 'Taylor Test Bypassed'");
+  log("the Front desk / main line chip (the old bypass box) lets it through; the feed reads 'Taylor Test Bypassed'");
   const bypass = form.locator("[data-testid=company-bypass]");
-  assert.match(await bypass.textContent(), /I'm choosing not to link a contact for these activities/);
+  assert.match(await bypass.textContent(), /Front desk \/ main line/);
   await form.locator("[data-testid=company-bypass-tick]").check();
-  assert.match(await bypass.textContent(), /as “Taylor Test Bypassed” until someone claims it/);
+  assert.match(await form.locator("[data-testid=company-bypass-note]").textContent(), /as “Taylor Test Bypassed” until someone claims it/);
   await form.locator("[data-testid=activity-submit]").click();
   await page.locator("[data-testid=follow-up-prompt]").waitFor();
   const parking = await activity("Spoke to reception about parking", org);
@@ -168,23 +219,30 @@ const activity = async (body, org) =>
   assert.match(await feedRow.locator("[data-testid=activity-bypassed]").textContent(), /^Taylor Test Bypassed$/);
   await shot(page, "02-bypassed-feed");
 
-  log("Other Contacts lists it under Taylor Test Bypassed, and Nic's old email under Nic Steffl Bypassed");
+  log("Other Contacts (now the not-linked line) lists it under Taylor Test, and Nic's old email under Nic Steffl");
   await other.waitFor();
-  assert.match(await other.textContent(), /2 activities logged here with nobody linked/);
+  assert.match(await other.textContent(), /2 touches not linked to a person yet/);
+  await openNotLinked();
   const taylorGroup = other.locator(`[data-testid=bypass-group][data-user-id="${taylor.id}"]`);
   const nicGroup = other.locator(`[data-testid=bypass-group][data-user-id="${nicId}"]`);
-  assert.match(await taylorGroup.textContent(), /Taylor Test Bypassed/);
+  assert.match(await taylorGroup.textContent(), /Logged by Taylor Test/);
   assert.match(await taylorGroup.textContent(), /Spoke to reception about parking/);
-  assert.match(await nicGroup.textContent(), /Nic Steffl Bypassed/);
+  assert.match(await nicGroup.textContent(), /Logged by Nic Steffl/);
   assert.match(await nicGroup.textContent(), /Old email to the office/);
   assert.equal(await taylorGroup.locator("[data-testid=claim-all]").count(), 0, "one activity: no Claim all");
   await shot(page, "03-other-contacts");
 
-  log("ticking a person clears the bypass, and the log lands on them as before");
+  log("ticking a person clears Front desk, Front desk unticks people, and the log lands on the person as before");
+  await openLog();
   await form.locator("[data-testid=company-bypass-tick]").check();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   assert.equal(await form.locator("[data-testid=company-bypass-tick]").isChecked(), false, "bypass unticked by the tick");
-  assert.ok(await form.locator("[data-testid=company-bypass-tick]").isDisabled(), "and disabled while somebody is ticked");
+  await form.locator("[data-testid=company-bypass-tick]").check();
+  assert.equal(await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).getAttribute("aria-checked"), "false", "Front desk unticks Dana");
+  assert.equal(await form.locator("input[name=bypass]").count(), 1, "and posts the bypass");
+  await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
+  assert.equal(await form.locator("[data-testid=company-bypass-tick]").isChecked(), false, "never both at once");
+  assert.equal(await form.locator("input[name=bypass]").count(), 0, "no bypass posted with somebody ticked");
   await form.locator("textarea[name=body]").fill("Dana confirmed the appointment");
   await form.locator("[data-testid=activity-submit]").click();
   await page.locator("[data-testid=follow-up-prompt]").waitFor();
@@ -195,6 +253,7 @@ const activity = async (body, org) =>
   log("bypass two more as Taylor, so the group has three and a Claim all");
   for (const body of ["Front desk said call back Monday", "Left a brochure"]) {
     await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+    await openLog();
     await form.locator("textarea[name=body]").fill(body);
     await form.locator("[data-testid=company-bypass-tick]").check();
     await form.locator("[data-testid=activity-submit]").click();
@@ -202,6 +261,7 @@ const activity = async (body, org) =>
     await page.locator("[data-testid=follow-up-skip]").click();
   }
   await page.reload();
+  await openNotLinked();
   await until(async () => (await taylorGroup.locator("[data-testid=unclaimed-row]").count()) === 3, "three unclaimed");
   assert.equal(await taylorGroup.locator("[data-testid=claim-all]").count(), 1);
 
@@ -226,6 +286,7 @@ const activity = async (body, org) =>
 
   log("a person from another company is refused");
   await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+  await openNotLinked();
   await taylorGroup.locator("[data-testid=claim-one]").first().click();
   const box2 = taylorGroup.locator("[data-testid=claim-box]");
   await box2.locator("input[type=search]").fill("Zed");
@@ -255,7 +316,10 @@ const activity = async (body, org) =>
   await nicGroup.locator("[data-testid=claim-one]").click();
   await nicGroup.locator("[data-testid=claim-person]", { hasText: "Dana Ruiz" }).click();
   await until(async () => (await activity("Old email to the office", org)).contactId === "ctc_by_dana", "old one claimed");
-  await until(async () => (await other.count()) === 0, "Other Contacts gone when empty");
+  // The line goes when nothing is left; "Moved onto … · Undo" stays its
+  // ten seconds.
+  await until(async () => (await other.locator("[data-testid=not-linked-toggle]").count()) === 0, "the not-linked line gone when empty");
+  await other.locator("[data-testid=claim-undo]").waitFor();
 
   log("Notes on the company page split: All 2 · Company 1 · People 1 · Personal 1");
   const tabs = page.locator("[data-testid=notes-tabs]");
@@ -271,6 +335,41 @@ const activity = async (body, org) =>
   await page.goto(`${BASE}/dashboard/contacts/ctc_by_dana`);
   await page.locator("[data-testid=notes-tabs]").waitFor();
   assert.deepEqual((await page.locator("[data-testid=notes-tabs] button").allTextContents()).map((t) => t.replace(/\s+/g, "").trim()), ["All1", "Personal1"]);
+
+  log("audit fixes: a claim that moved nobody (nothing of it on record) can't be undone by a Member who didn't make it — not with its token, its batchId or a forged token");
+  const COMPANY_ACTIONS = "src/app/dashboard/companies/actions.ts";
+  const CLAIM_ACTIONS = "src/app/dashboard/companies/[id]/claim-actions.ts";
+  const CONTACT_ACTIONS = "src/app/dashboard/contacts/actions.ts";
+  // Fay is already at Meeting Set, so a front-desk try claimed onto her
+  // moves no status: the claim's save writes no ladder row naming anyone.
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",status,"updatedAt") VALUES ('ctc_by_fay',$1,'Fay Further','cmp_by_harbor','MEETING_SET',now())`, [org]);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","companyId","userId",type,outcome,body,"occurredAt")
+     VALUES ('act_by_fx',$1,'cmp_by_harbor',$2,'PHONE_CALL','GATEKEEPER','Front desk took a message for Fay',now() - interval '1 day')`,
+    [org, taylor.id],
+  );
+  const claim = await action(page, COMPANY_ACTIONS, "claimActivities", { activityIds: ["act_by_fx"], contactId: "ctc_by_fay" });
+  assert.ok(claim.batchId && claim.claimToken, JSON.stringify(claim));
+  assert.equal((await sql(`SELECT count(*)::int n FROM "StatusChange" WHERE "batchId"=$1`, [claim.batchId])).rows[0].n, 0, "nobody on record for this save");
+  assert.equal(await status("Contact", "ctc_by_fay"), "MEETING_SET");
+  const nicContext = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+  const nic = await nicContext.newPage();
+  await login(nic, NIC_EMAIL);
+  const replayed = await action(nic, CLAIM_ACTIONS, "undoClaim", { token: claim.claimToken });
+  assert.match(replayed.error ?? "", /Only whoever claimed it, or an Owner or Admin/, JSON.stringify(replayed));
+  const byBatch = await action(nic, CONTACT_ACTIONS, "undoLog", claim.batchId);
+  assert.ok(byBatch.error, `undoLog on the claim's batchId does nothing for Nic: ${JSON.stringify(byBatch)}`);
+  const tampered = claim.claimToken.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+  const forged = await action(nic, CLAIM_ACTIONS, "undoClaim", { token: tampered });
+  assert.match(forged.error ?? "", /can no longer be undone/, JSON.stringify(forged));
+  const made = await action(nic, CLAIM_ACTIONS, "undoClaim", { token: "e30.bad" });
+  assert.ok(made.error, JSON.stringify(made));
+  assert.equal((await activity("Front desk took a message for Fay", org)).contactId, "ctc_by_fay", "the claim stands");
+  await nicContext.close();
+  const own = await action(page, CLAIM_ACTIONS, "undoClaim", { token: claim.claimToken });
+  assert.ok(own.success, `Taylor can undo his own: ${JSON.stringify(own)}`);
+  const back = await activity("Front desk took a message for Fay", org);
+  assert.deepEqual({ contactId: back.contactId, companyId: back.companyId }, { contactId: null, companyId: "cmp_by_harbor" });
 
   await browser.close();
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);

@@ -62,6 +62,16 @@ function log(msg) {
 async function shot(page, name) {
   await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true });
 }
+// Wait for the page's entrance animations (the dashboard's fade-up moves the
+// page 6px) before measuring anything: a box read mid-transform comes back a
+// hair off (43.99997px for a 44px button). Animations that run forever, like
+// the meter's breathing segment, are left to run.
+async function settle(page) {
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity),
+  );
+}
 async function sql(text, params) {
   const client = new Client({ connectionString: DB });
   await client.connect();
@@ -78,6 +88,37 @@ async function login(page) {
   await page.click("button[type=submit]");
   await page.waitForURL(/\/dashboard$/);
 }
+// The company page's Details card (folded unless the app filled values in),
+// opened when it is closed.
+async function companyDetails(page) {
+  const card = page.locator("[data-testid=company-details]");
+  await card.waitFor();
+  if ((await card.getAttribute("data-open")) === null) await card.getByTestId("company-details-toggle").click();
+  const list = card.locator("dl");
+  await list.waitFor();
+  return list;
+}
+// Add deal: in the Paperwork card's ⋯ from Meeting Completed on, else under
+// the header's ⋯ More (BDR redesign, Nov 11, 2026).
+async function openAddDeal(p) {
+  await p.locator("[data-testid=contact-header]").waitFor();
+  if (await p.locator("[data-testid=paperwork-more]").count()) {
+    await p.locator("[data-testid=paperwork-more]").click();
+    await p.locator("[data-testid=paperwork-add-deal-open]").click();
+  } else {
+    await p.locator("[data-testid=record-more]").click();
+    await p.locator("[data-testid=more-add-deal]").click();
+  }
+  await p.locator("#deal-title").waitFor();
+}
+// The contact page's Reach card → More details, opened.
+async function contactDetails(page) {
+  const reach = page.locator("[data-testid=reach]");
+  const list = reach.locator("[data-testid=more-details-list]");
+  if (!(await list.isVisible())) await reach.locator("[data-testid=more-details]").click();
+  await list.waitFor();
+  return list;
+}
 function chip(page, name) {
   return page.getByRole("checkbox", { name, exact: true });
 }
@@ -90,6 +131,7 @@ async function rowCount(page, testId) {
 // A filter menu, opened and placed (FloatingMenu draws it hidden until it
 // has measured where it fits).
 async function openMenu(page, id) {
+  if (id.startsWith("filter-")) await openFilters(page);
   await page.getByTestId(id).click();
   const menu = page.getByTestId(`${id}-menu`);
   await menu.waitFor();
@@ -159,7 +201,8 @@ async function assertMenuInside(page, menu, what) {
   await page.getByRole("button", { name: "Save company" }).click();
   await page.waitForURL(/\/dashboard\/companies\/(?!new$)[a-z0-9]+$/);
   const acmeUrl = page.url();
-  const acmeDetails = page.locator("dl").first();
+  // The company page's Details card is folded (BDR redesign, Nov 11, 2026).
+  const acmeDetails = await companyDetails(page);
   for (const tag of ["MDU", "Hospitality", "Owner", "REIT"]) assert.ok(await acmeDetails.getByText(tag, { exact: true }).isVisible(), `${tag} on company page`);
   assert.ok(await acmeDetails.getByText("TX", { exact: true }).isVisible(), "'texas' saved as TX");
   const opts = await sql(
@@ -178,6 +221,7 @@ async function assertMenuInside(page, menu, what) {
   await page.locator("aside").getByRole("link", { name: "Favorite Companies" }).click();
   await page.waitForURL(/\/dashboard\/companies\/favorites$/);
   await page.locator("tr", { hasText: "Acme Towers" }).waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-fav").count(), 0, "Favorites toggle hidden on the sub-pane");
   await shot(page, "02-favorite-companies");
 
@@ -196,7 +240,8 @@ async function assertMenuInside(page, menu, what) {
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
   const danaUrl = page.url();
-  const danaDetails = page.locator("dl").first();
+  // The contact page's tags sit in Reach → More details (BDR redesign).
+  const danaDetails = await contactDetails(page);
   assert.ok(await danaDetails.getByText("Developer", { exact: true }).isVisible(), "tag added from the contact form shows on the contact");
   const acmeTypes = (await sql(`SELECT "companyTypes" FROM "Company" WHERE name='Acme Towers' AND "organizationId"=$1`, [org])).rows[0].companyTypes;
   assert.ok(acmeTypes.includes("Developer"), "saving the contact tagged the company");
@@ -207,7 +252,7 @@ async function assertMenuInside(page, menu, what) {
   await page.fill("#phone", "512-555-0199");
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
-  assert.ok(await page.locator("dl").first().getByText("Individual / Personal").isVisible());
+  assert.ok(await (await contactDetails(page)).getByText("Individual / Personal").isVisible());
 
   log("template download has the system's field names, contact first then company");
   const template = await page.request.get(`${BASE}/dashboard/contacts/import-template`);
@@ -235,7 +280,7 @@ async function assertMenuInside(page, menu, what) {
   const csvPath = path.join(OUT, "import.csv");
   fs.writeFileSync(csvPath, rows.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   const summary = await page.getByTestId("import-summary").textContent();
   assert.match(summary, /65 contacts and 5 companies found/, summary); // Dana, Sam, Pat, Lee, Ivy + 60
@@ -268,7 +313,7 @@ async function assertMenuInside(page, menu, what) {
   assert.equal(seededGeneral, 1, "Construction has General");
 
   log("re-importing the same file updates instead of doubling");
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-start").click();
   await page.getByText("Imported 66 rows").waitFor({ timeout: 60000 });
@@ -305,15 +350,15 @@ async function assertMenuInside(page, menu, what) {
 
   log("State, Industry, Company Type and Company filters stack; Individual / Personal is a company type; chips remove; Clear all");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-state").click();
+  await openFilters(page); await page.getByTestId("filter-state").click();
   await page.getByRole("checkbox", { name: "TX" }).check();
   await page.waitForURL(/state=TX/);
   assert.equal(await pageSummary(page), "Showing 1–50 of 62 contacts", "TX: Dana + Sam + 60 at Big Co");
-  await page.getByTestId("filter-industry").click();
+  await openFilters(page); await page.getByTestId("filter-industry").click();
   await page.getByRole("checkbox", { name: "Construction" }).check();
   await page.waitForURL(/industry=Construction/);
   assert.equal(await pageSummary(page), "Showing 1–50 of 60 contacts", "TX + Construction = Big Co");
-  await page.getByTestId("filter-company-type").click();
+  await openFilters(page); await page.getByTestId("filter-company-type").click();
   const typeChoices = await page.getByRole("listbox", { name: "Company type" }).getByRole("checkbox").allTextContents();
   void typeChoices;
   await page.getByRole("checkbox", { name: "Individual / Personal" }).check();
@@ -326,9 +371,9 @@ async function assertMenuInside(page, menu, what) {
   await page.waitForURL(/^(?!.*state=)/);
   assert.equal(await pageSummary(page), "Showing 1–3 of 3 contacts", "Individual / Personal = Taylor Homeowner + Pat Solo + Ivy Blank");
   await page.getByRole("button", { name: "Clear all" }).click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
   assert.equal(await pageSummary(page), "Showing 1–50 of 66 contacts");
-  await page.getByTestId("filter-company").click();
+  await openFilters(page); await page.getByTestId("filter-company").click();
   await page.getByLabel("Search companies").fill("blue");
   await page.getByRole("checkbox", { name: /Bluebird ISP/ }).check();
   await page.waitForURL(/company=/);
@@ -340,7 +385,7 @@ async function assertMenuInside(page, menu, what) {
   await page.locator("tr", { hasText: "Sam Rivera" }).getByTestId("star").click();
   await page.waitForTimeout(400);
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-fav").click();
+  await openFilters(page); await page.getByTestId("filter-fav").click();
   await page.waitForURL(/fav=1/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 contacts");
   await page.locator("aside").getByRole("link", { name: "Favorite Contacts" }).click();
@@ -349,9 +394,13 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/contacts?attn=1`);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 contacts", "needs attention: Ivy has no email and no phone");
   // Give Dana a deal, then the deal views light up.
+  // Add deal sits under ⋯ More on a new lead's page since the contact
+  // page's redesign (Nov 11, 2026): one tap deeper.
+  // (From Meeting Completed on it is in the Paperwork card's ⋯ instead.)
   await page.goto(danaUrl);
-  await page.fill("[name=title]", "Lobby access control");
-  await page.fill("[name=value]", "2500");
+  await openAddDeal(page);
+  await page.fill("#deal-title", "Lobby access control");
+  await page.fill("#deal-value", "2500");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByText("Lobby access control").first().waitFor();
   await page.goto(`${BASE}/dashboard/contacts?deals=1`);
@@ -359,6 +408,7 @@ async function assertMenuInside(page, menu, what) {
   await page.locator("aside").getByRole("link", { name: "Contacts with Deals" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/with-deals$/);
   await page.locator("tr", { hasText: "Dana Owner" }).waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-deals").count(), 0, "With deals toggle hidden on the sub-pane");
   await page.goto(`${BASE}/dashboard/companies/with-deals`);
   await page.locator("tr", { hasText: "Acme Towers" }).waitFor();
@@ -368,11 +418,11 @@ async function assertMenuInside(page, menu, what) {
   log("companies list: filters and the Industry · Type column; a company page pages its people");
   await page.goto(`${BASE}/dashboard/companies`);
   assert.equal(await pageSummary(page), "Showing 1–5 of 5 companies");
-  await page.getByTestId("filter-industry").click();
+  await openFilters(page); await page.getByTestId("filter-industry").click();
   await page.getByRole("checkbox", { name: "Service Provider" }).check();
   await page.waitForURL(/industry=Service/);
   assert.equal(await pageSummary(page), "Showing 1–2 of 2 companies", "Bluebird + Gates");
-  await page.getByTestId("filter-company-type").click();
+  await openFilters(page); await page.getByTestId("filter-company-type").click();
   await page.getByRole("checkbox", { name: "Gates" }).check();
   await page.waitForURL(/type=Gates/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies");
@@ -385,12 +435,17 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/companies`);
   await page.locator("tr", { hasText: "Big Co" }).getByRole("link", { name: "Big Co" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
-  await page.getByText("60 at this company").waitFor();
-  await page.getByText("Page 1 of 2").waitFor();
+  // The company page's people are "Who to call" since the BDR redesign
+  // (Nov 11, 2026): the first few, then Show all with the pages.
+  const people = page.locator("#people");
+  await people.getByText("60 people here").waitFor();
+  await people.getByTestId("who-show-all").click();
+  await people.getByText("Page 1 of 2").waitFor();
+  assert.equal(await people.getByTestId("person-row").count(), 50, "fifty to a page");
   await page.getByRole("link", { name: "Next people" }).click();
   await page.waitForURL(/people=2/);
-  await page.getByText("Page 2 of 2").waitFor();
-  assert.equal(await page.locator("#people li").count(), 10);
+  await people.getByText("Page 2 of 2").waitFor();
+  assert.equal(await people.getByTestId("person-row").count(), 10);
   await shot(page, "08-company-people-paged");
 
   log("audit fixes: Enter-key save with a typed company name keeps the company's tags; an untouched edit keeps them too");
@@ -420,7 +475,7 @@ async function assertMenuInside(page, menu, what) {
   const messyPath = path.join(OUT, "messy.csv");
   fs.writeFileSync(messyPath, messy.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(messyPath);
   const messySummary = await page.getByTestId("import-summary").textContent();
   assert.match(messySummary, /4 contacts and 4 companies found/, messySummary);
@@ -475,8 +530,8 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/contacts?q=r%25a`);
   assert.equal(await pageSummary(page), "No contacts", "% is not a wildcard");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-fav").click();
-  await page.getByTestId("filter-attn").click();
+  await openFilters(page); await page.getByTestId("filter-fav").click();
+  await openFilters(page); await page.getByTestId("filter-attn").click();
   await page.waitForURL(/fav=1.*attn=1|attn=1.*fav=1/);
 
   log("import v2 (Sept 27, 2026): Mailing City / Mailing State and a Location column land in City and State, Job Title beats Outlook's Mr./Ms. Title, the preview shows Title and City, State and names the columns it leaves out");
@@ -487,7 +542,7 @@ async function assertMenuInside(page, menu, what) {
   const v2Path = path.join(OUT, "mailing.csv");
   fs.writeFileSync(v2Path, v2.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(v2Path);
   await page.getByTestId("import-summary").waitFor();
   const previewRow = page.locator("tr", { hasText: "Mia Mailing" });
@@ -505,7 +560,7 @@ async function assertMenuInside(page, menu, what) {
     'Mr.,Lou,Location,Site Lead,lou@location.test,"Dallas, Texas, United States"',
   ];
   fs.writeFileSync(v2Path, v2b.join("\r\n") + "\r\n");
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(v2Path);
   await page.getByTestId("import-start").click();
   await page.getByText("Imported 1 row").waitFor({ timeout: 60000 });
@@ -516,7 +571,7 @@ async function assertMenuInside(page, menu, what) {
   log("mobile width: filter bar wraps, table scrolls, nothing overflows the page");
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-state").waitFor();
+  await openFilters(page); await page.getByTestId("filter-state").waitFor();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);
   await shot(page, "09-mobile");
@@ -540,7 +595,7 @@ async function assertMenuInside(page, menu, what) {
   const found = async (list, q) => {
     await page.goto(`${BASE}/dashboard/${list}?q=${encodeURIComponent(q)}`);
     await page.getByTestId("page-summary").waitFor();
-    const cell = list === "contacts" ? "[data-testid=contact-row] td:nth-child(4) a.link" : "[data-testid=company-row] td:nth-child(3) a.link";
+    const cell = list === "contacts" ? "[data-testid=contact-row] td:nth-child(2) a.link" : "[data-testid=company-row] td:nth-child(2) a.link";
     return (await page.locator(cell).allTextContents()).map((t) => t.trim()).sort();
   };
   for (const typed of ["(870) 555-0123", "870-555-0123", "8705550123", "870.555.0123", "+1 870 555 0123", "555-0123"]) {
@@ -650,6 +705,7 @@ async function assertMenuInside(page, menu, what) {
       return { id: el?.getAttribute("data-testid") ?? "", label: (el?.closest("label")?.textContent ?? "").trim(), menu: el?.closest("[data-testid$='-menu']")?.getAttribute("data-testid") ?? "" };
     });
   const keyOpen = async (id) => {
+    await openFilters(page);
     await page.getByTestId(id).focus();
     await page.keyboard.press("Enter");
     const menu = page.getByTestId(`${id}-menu`);
@@ -699,7 +755,8 @@ async function assertMenuInside(page, menu, what) {
   assert.equal((await cursor()).label, "Touched in the last 7 days");
   await page.keyboard.press("Tab");
   await page.getByTestId("filter-activity-menu").waitFor({ state: "detached" });
-  assert.equal((await cursor()).id, "filter-job-title", "Tab past the last choice moves on to the next filter");
+  // Activity sits in the Filters panel's Stage group, before Lead Label (Nov 11, 2026).
+  assert.equal((await cursor()).id, "filter-lead-label", "Tab past the last choice moves on to the next filter");
   // A date box's month / day / year are walked by the browser, inside the menu.
   await keyOpen("filter-added");
   assert.equal((await cursor()).id, "added-from");
@@ -710,25 +767,37 @@ async function assertMenuInside(page, menu, what) {
   await page.getByTestId("filter-added-menu").waitFor({ state: "detached" });
   assert.equal((await cursor()).id, "filter-added");
   // Opened with a click the cursor stays on the button, as before; Tab goes in.
-  await page.getByTestId("filter-rep").click();
+  await openFilters(page); await page.getByTestId("filter-rep").click();
   await page.getByTestId("filter-rep-menu").waitFor();
   await page.waitForTimeout(100);
   assert.equal((await cursor()).id, "filter-rep", "a click leaves the cursor on the button");
   await page.keyboard.press("Tab");
-  assert.deepEqual(await cursor(), { id: "", label: "Unassigned", menu: "filter-rep-menu" }, "Tab from the clicked-open button goes into its menu");
+  // "Me" is the Rep filter's first choice since Nov 11, 2026.
+  const firstRep = await cursor();
+  assert.equal(firstRep.menu, "filter-rep-menu", "Tab from the clicked-open button goes into its menu");
+  assert.match(firstRep.label, /^Me \(/, "Me comes first");
   await page.keyboard.press("Space");
-  await page.waitForURL(/rep=none/);
+  await page.waitForURL(/rep=/);
   await page.keyboard.press("Escape");
   await page.getByTestId("filter-rep-menu").waitFor({ state: "detached" });
   assert.equal((await cursor()).id, "filter-rep");
 
   log("audit fixes (UX review): Companies list phone numbers stay on one line; its last columns are reached by scrolling the table, as on Contacts");
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto(`${BASE}/dashboard/companies`);
+  // Phone and Status are Columns-menu columns since the BDR redesign (Nov
+  // 11, 2026), and below 768px the list is cards with a Call button.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${BASE}/dashboard/companies`);
+  for (const key of ["phone", "status"]) {
+    await page.getByTestId("columns").click();
+    const box = page.getByTestId(`column-${key}`);
+    if (!(await box.isChecked())) await box.check();
+    await page.keyboard.press("Escape");
+  }
+  await page.locator("thead th", { hasText: "Status" }).waitFor();
+  {
     const phones = await page.locator("[data-testid=company-row-phone] a").evaluateAll((links) => links.map((a) => [a.textContent.trim(), a.getClientRects().length]));
     assert.ok(phones.length >= 4, `phones listed: ${JSON.stringify(phones)}`);
-    for (const [number, lines] of phones) assert.equal(lines, 1, `${number} breaks onto ${lines} lines at ${width}px`);
+    for (const [number, lines] of phones) assert.equal(lines, 1, `${number} breaks onto ${lines} lines at 1440px`);
     const reach = await page.evaluate(() => {
       const box = document.querySelector("table").parentElement;
       box.scrollLeft = box.scrollWidth;
@@ -740,10 +809,179 @@ async function assertMenuInside(page, menu, what) {
     });
     assert.equal(reach.name, "Status");
     assert.equal(reach.overflow, "auto", "the table scrolls inside its card, like the Contacts list");
-    assert.ok(reach.inside, `at ${width}px the Status column can be scrolled into view`);
-    assert.ok(reach.page <= reach.window + 1, `at ${width}px the page itself scrolls sideways (${reach.page}px)`);
+    assert.ok(reach.inside, "at 1440px the Status column can be scrolled into view");
+    assert.ok(reach.page <= reach.window + 1, `at 1440px the page itself scrolls sideways (${reach.page}px)`);
   }
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto(`${BASE}/dashboard/companies`);
+  await page.locator("[data-testid=company-card]").first().waitFor();
+  await settle(page);
+  const calls = await page.locator("[data-testid=company-card] [data-testid=card-call]").evaluateAll((links) =>
+    links.map((a) => ({ height: a.getBoundingClientRect().height, right: a.getBoundingClientRect().right })),
+  );
+  assert.ok(calls.length >= 4, `Call buttons on the cards: ${calls.length}`);
+  for (const call of calls) {
+    assert.ok(call.height >= 44, `a Call button is ${call.height}px tall`);
+    assert.ok(call.right <= 390, "and on the screen");
+  }
+  assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 391, "the page doesn't scroll sideways at 390px");
   await shot(page, "11-ux-companies-phone");
+
+
+  // ---------------------------------------------------------------------
+  // Round 2 of the lists (Nov 11, 2026).
+  log("Sprint: the import preview reads Person · Reach · Company, names who a row updates, sits the duplicate summary above the table, and offers to keep Notes and Lead Source");
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const r2File = [
+    "Name,Email,Phone,Mobile,Company Name,Company Phone,Notes,Lead Source",
+    "Mia Mailing,mia@mailing.test,512-555-0111,,,,Met at the expo,Trade show",
+    "Nora Notes,nora@notes.test,,512-555-0122,Notes Co,512-555-0199,Wants a quote in spring,Website",
+    "Ned Nothing,ned@notes.test,,,Notes Co,,,",
+  ];
+  const r2Path = path.join(OUT, "round2.csv");
+  fs.writeFileSync(r2Path, r2File.join("\r\n") + "\r\n");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await cleanUp(page, "import");
+  await page.getByTestId("import-file").setInputFiles(r2Path);
+  await page.getByTestId("import-summary").waitFor();
+  const preview = page.getByTestId("import-preview");
+  assert.deepEqual((await preview.locator("thead th").allTextContents()).map((t) => t.trim()), ["Person", "Reach", "Company"]);
+  const r2Row = (name) => preview.locator("[data-testid=import-preview-row]", { hasText: name });
+  await r2Row("Mia Mailing").getByTestId("import-updates-badge").waitFor();
+  assert.equal((await r2Row("Mia Mailing").getByTestId("import-updates-badge").textContent()).trim(), "Updates Mia Mailing");
+  assert.equal(await r2Row("Nora Notes").getByTestId("import-updates-badge").count(), 0, "a new person has no badge");
+  assert.match(await r2Row("Nora Notes").textContent(), /Mobile 512-555-0122/);
+  assert.match(await r2Row("Nora Notes").textContent(), /Main 512-555-0199/, "the business line sits under the company, not as the person's phone");
+  const dupBox = await page.getByTestId("import-cleanup").boundingBox();
+  const tableBox = await preview.boundingBox();
+  assert.ok(dupBox.y + dupBox.height <= tableBox.y, "the duplicate summary is above the table");
+  const dialogBox = await page.getByRole("dialog", { name: "Import CSV" }).boundingBox();
+  assert.ok(tableBox.x >= dialogBox.x && tableBox.x + tableBox.width <= dialogBox.x + dialogBox.width + 1, "the preview fits the dialog");
+  assert.equal(await preview.evaluate((el) => el.parentElement.scrollWidth - el.parentElement.clientWidth), 0, "and doesn't scroll sideways");
+  const offer = page.getByTestId("import-keep-notes-offer");
+  assert.match(await offer.textContent(), /Keep “Notes” and “Lead Source” as a note on each contact/);
+  assert.equal(await page.getByTestId("import-keep-notes").isChecked(), false, "an offer, not a default");
+  await shot(page, "12-round2-import-preview");
+  await page.getByTestId("import-keep-notes").check();
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 3 rows").waitFor({ timeout: 60000 });
+  assert.match(await page.getByTestId("import-notes-kept").textContent(), /2 notes kept/);
+  await page.getByTestId("import-done").click();
+  const keptNotes = async () =>
+    (
+      await sql(
+        `SELECT c.name, n.body, n.label FROM "Note" n JOIN "Contact" c ON c.id = n."contactId" WHERE n."organizationId"=$1 AND c.email IN ('mia@mailing.test','nora@notes.test','ned@notes.test') ORDER BY c.name`,
+        [org],
+      )
+    ).rows.map((row) => ({ ...row }));
+  assert.deepEqual(await keptNotes(), [
+    { name: "Mia Mailing", body: "Notes: Met at the expo\nLead Source: Trade show", label: "GENERAL" },
+    { name: "Nora Notes", body: "Notes: Wants a quote in spring\nLead Source: Website", label: "GENERAL" },
+  ]);
+  // The same file again, ticked: nobody gets the note twice.
+  await cleanUp(page, "import");
+  await page.getByTestId("import-file").setInputFiles(r2Path);
+  await page.getByTestId("import-keep-notes").check();
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 3 rows").waitFor({ timeout: 60000 });
+  assert.equal(await page.getByTestId("import-notes-kept").count(), 0, "nothing new kept");
+  await page.getByTestId("import-done").click();
+  assert.equal((await keptNotes()).length, 2);
+
+  log("Sprint: a Member's Import my list (?import=1) starts Assign everyone in this file on them; everywhere else it starts Unassigned");
+  const ownerRow = (await sql(`SELECT id, "passwordHash" FROM "User" WHERE email=$1`, [EMAIL])).rows[0];
+  const memberId = "cif_member";
+  await sql(`INSERT INTO "User" (id, name, email, "passwordHash", role, "organizationId") VALUES ($1,'Mo Member','test-cif-member@example.com',$2,'MEMBER',$3)`, [
+    memberId,
+    ownerRow.passwordHash,
+    org,
+  ]);
+  const memberCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const mp = await memberCtx.newPage();
+  await mp.goto(`${BASE}/login`);
+  await mp.fill("#email", "test-cif-member@example.com");
+  await mp.fill("#password", PASSWORD);
+  await mp.click("button[type=submit]");
+  await mp.waitForURL(/\/dashboard$/);
+  await mp.goto(`${BASE}/dashboard/contacts?import=1`);
+  await mp.getByTestId("import-file").setInputFiles(r2Path);
+  await mp.getByTestId("import-summary").waitFor();
+  assert.equal(await mp.getByTestId("import-assign").inputValue(), memberId, "Import my list: the Member's own");
+  await mp.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
+  await mp.goto(`${BASE}/dashboard/contacts?scope=all`);
+  await cleanUp(mp, "import");
+  await mp.getByTestId("import-file").setInputFiles(r2Path);
+  await mp.getByTestId("import-summary").waitFor();
+  assert.equal(await mp.getByTestId("import-assign").inputValue(), "", "Clean up → Import CSV starts Unassigned");
+  await memberCtx.close();
+  await page.goto(`${BASE}/dashboard/contacts?import=1`);
+  await page.getByTestId("import-file").setInputFiles(r2Path);
+  await page.getByTestId("import-summary").waitFor();
+  assert.equal(await page.getByTestId("import-assign").inputValue(), "", "an Owner's ?import=1 starts Unassigned");
+  await page.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
+
+  // ---------------------------------------------------------------------
+  // The final audit of the BDR sprint (Nov 11, 2026), lists area.
+  log("audit fixes: a Member's Import my list default ends with that dialog; Clean up → Import CSV on the same page starts Unassigned");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const mp2 = await ctx.newPage();
+    await mp2.goto(`${BASE}/login`);
+    await mp2.fill("#email", "test-cif-member@example.com");
+    await mp2.fill("#password", PASSWORD);
+    await mp2.click("button[type=submit]");
+    await mp2.waitForURL(/\/dashboard$/);
+    await mp2.goto(`${BASE}/dashboard/contacts?import=1`);
+    await mp2.getByTestId("import-file").setInputFiles(r2Path);
+    await mp2.getByTestId("import-summary").waitFor();
+    assert.equal(await mp2.getByTestId("import-assign").inputValue(), memberId, "the arrival dialog starts on the Member");
+    await mp2.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
+    // No navigation: the same page, the same mounted button.
+    await cleanUp(mp2, "import");
+    await mp2.getByTestId("import-file").setInputFiles(r2Path);
+    await mp2.getByTestId("import-summary").waitFor();
+    assert.equal(await mp2.getByTestId("import-assign").inputValue(), "", "a later Import CSV starts Unassigned");
+    await ctx.close();
+  }
+
+  log("audit fixes: a kept note lands on the person its row updated (two share an email), a NUL in a note is dropped and never doubled, and 'Spoke to gatekeeper' imports as Attempted");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id, "organizationId", name, email, "createdAt", "updatedAt") VALUES
+         ('cif_pat_old', $1, 'Pat Shared', 'pat@shared.test', now() - interval '3 days', now()),
+         ('cif_pat_new', $1, 'Pat Shared', 'pat@shared.test', now() - interval '1 day', now())`,
+      [org],
+    );
+    const auditFile = [
+      "Name,Email,Title,Status,Notes",
+      "Pat Shared,pat@shared.test,Buyer,,Called back Tuesday",
+      "Gina Gate,gina@gate.test,,Spoke to gatekeeper,",
+      "Nul Note,nul@note.test,,,Said hi\u0000 then left",
+    ];
+    const auditPath = path.join(OUT, "audit-notes.csv");
+    fs.writeFileSync(auditPath, auditFile.join("\r\n") + "\r\n");
+    const runImport = async () => {
+      await page.goto(`${BASE}/dashboard/contacts`);
+      await cleanUp(page, "import");
+      await page.getByTestId("import-file").setInputFiles(auditPath);
+      await page.getByTestId("import-keep-notes").check();
+      await page.getByTestId("import-start").click();
+      await page.getByText("Imported 3 rows").waitFor({ timeout: 60000 });
+      await page.getByTestId("import-done").click();
+    };
+    await runImport();
+    const pats = (await sql(`SELECT c.id, c.title, (SELECT count(*)::int FROM "Note" n WHERE n."contactId" = c.id) AS notes FROM "Contact" c WHERE c."organizationId"=$1 AND c.email='pat@shared.test' ORDER BY c.id`, [org])).rows;
+    const updated = pats.find((row) => row.title === "Buyer");
+    assert.ok(updated, `one Pat was updated: ${JSON.stringify(pats)}`);
+    assert.equal(updated.id, "cif_pat_old", "the oldest of two sharing an email is the one updated");
+    assert.deepEqual(pats.map((row) => [row.id, row.notes]), [["cif_pat_new", 0], ["cif_pat_old", 1]], "and the note went on that same person");
+    assert.equal((await sql(`SELECT status FROM "Contact" WHERE "organizationId"=$1 AND email='gina@gate.test'`, [org])).rows[0].status, "CONTACTED", "a front desk is an attempt, not a talk");
+    const nulNotes = async () => (await sql(`SELECT n.body FROM "Note" n JOIN "Contact" c ON c.id = n."contactId" WHERE c."organizationId"=$1 AND c.email='nul@note.test'`, [org])).rows.map((row) => row.body);
+    assert.deepEqual(await nulNotes(), ["Notes: Said hi then left"], "the whole note, without the NUL");
+    await runImport();
+    assert.deepEqual(await nulNotes(), ["Notes: Said hi then left"], "a re-import adds nothing");
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM "Note" WHERE "contactId" IN ('cif_pat_old','cif_pat_new')`)).rows[0].n, 1, "nor to Pat");
+  }
 
   void acmeUrl;
   await browser.close();
@@ -752,3 +990,20 @@ async function assertMenuInside(page, menu, what) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

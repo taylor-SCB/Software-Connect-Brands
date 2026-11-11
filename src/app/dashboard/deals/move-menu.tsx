@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { CONTACT_COLUMNS, PIPELINE_COLUMNS, PIPELINE_COLUMN_COLORS, PIPELINE_COLUMN_LABELS, type PipelineColumn } from "@/lib/constants";
 import { FloatingMenu } from "@/components/floating-menu";
 import { IconChevronDown } from "@/components/icons";
+import { useMenuFocus } from "@/components/lead-label-chip";
 
 export const isMeetingColumn = (column: string) => (CONTACT_COLUMNS as readonly string[]).includes(column);
 
@@ -25,13 +26,14 @@ export function MoveMenu({
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const accent = PIPELINE_COLUMN_COLORS[current];
+  useMenuFocus(open, "tile-move-menu", button);
   return (
     <>
       <button
         ref={button}
         type="button"
         onClick={() => setOpen(!open)}
-        className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.7rem] font-medium"
+        className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.7rem] font-medium [@media(pointer:coarse)]:min-h-11"
         style={{ borderColor: `color-mix(in srgb, ${accent} 45%, transparent)`, color: ink(accent) }}
         aria-label={`Stage: ${archived ? "Archived" : PIPELINE_COLUMN_LABELS[current]}. Move it`}
         data-testid="tile-move"
@@ -56,7 +58,8 @@ export function MoveMenu({
                     setOpen(false);
                     onMove(column);
                   }}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-40 ${
+                  data-current={column === current ? "true" : undefined}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] focus-visible:bg-[var(--hover)] [@media(pointer:coarse)]:min-h-11 disabled:cursor-not-allowed disabled:opacity-40 ${
                     column === current ? "font-semibold" : ""
                   }`}
                   data-testid={`tile-move-${column}`}

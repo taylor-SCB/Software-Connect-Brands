@@ -42,6 +42,9 @@ const rowSchema = z.object({
   status: statusSchema,
   company: companySchema.nullable(),
   notes: z.array(z.string()).optional(),
+  // The file's Notes / Lead Source columns as one note (round 2), only when
+  // the preview's offer was ticked.
+  keptNote: z.string().transform((value) => value.replace(/\u0000/g, "").trim()).pipe(z.string().max(4000)).nullable().optional(),
 });
 
 const batchSchema = z.array(rowSchema).min(1).max(IMPORT_BATCH_SIZE);
@@ -227,6 +230,7 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
       ? prisma.contact.findMany({
           where: { organizationId, email: { in: emails, mode: "insensitive" } },
           select: { id: true, email: true },
+          orderBy: { createdAt: "asc" },
         })
       : [],
     // Name + company matching covers contacts with an email too: a phone
@@ -237,7 +241,10 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
       orderBy: { createdAt: "asc" },
     }),
   ]);
-  const emailIds = new Map(byEmail.map((contact) => [lower(contact.email!), contact.id]));
+  // Two people can share an email; the oldest is the one a row updates
+  // (and keepNotes below goes by the same choice).
+  const emailIds = new Map<string, string>();
+  for (const contact of byEmail) if (!emailIds.has(lower(contact.email!))) emailIds.set(lower(contact.email!), contact.id);
   const nameIds = new Map<string, string>();
   for (const contact of byName) {
     const k = `${lower(contact.name)}|${contact.companyId ?? ""}`;
@@ -251,6 +258,11 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
   // says about them counts for their company whether the row became a new
   // contact or updated one, and however many people the company has.
   const batchRows = new Map<string, ContactHint[]>();
+  // The rows that landed, with the contact each updated: kept notes go on
+  // exactly that person, and never for a row that was skipped (audit fix,
+  // Nov 11, 2026: a separate lookup could pick another contact sharing the
+  // email, or a same-named one for a row whose company failed).
+  const landed: { row: (typeof people)[number]; companyId: string | null; id?: string }[] = [];
   for (const row of people) {
     const companyId = row.company ? (companyIds.get(lower(row.company.name)) ?? null) : null;
     if (row.company && !companyId) {
@@ -269,6 +281,7 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
       // Written below, the whole batch at once. A later row for the same
       // person replaces an earlier one, as when they were written in turn.
       updates.set(existingId, { id: existingId, row, companyId });
+      landed.push({ row, companyId, id: existingId });
       result.contactsUpdated += 1;
       continue;
     }
@@ -279,6 +292,7 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
       continue;
     }
     seenNew.add(newKey);
+    landed.push({ row, companyId });
     creates.push({
       organizationId,
       companyId,
@@ -301,10 +315,79 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
     await prisma.contact.createMany({ data: creates });
     result.contactsCreated += creates.length;
   }
+  result.notesKept += await keepNotes(organizationId, userId, landed);
 
   await fillInBlanks(organizationId, Array.from(companyIds.values()), result, batchRows);
   revalidateLists();
   return result;
+}
+
+// The preview's "Keep Notes and Lead Source as a note" (round 2, Nov 11,
+// 2026): one GENERAL note a person, written once the batch's contacts are
+// in, on whoever the row became or updated (found by the same rule: email,
+// else name at the company). A person who already has that exact note
+// isn't given it again, so re-importing the same file adds nothing.
+async function keepNotes(
+  organizationId: string,
+  userId: string,
+  landed: { row: z.infer<typeof rowSchema>; companyId: string | null; id?: string }[],
+): Promise<number> {
+  const rows = landed.filter((item) => item.row.keptNote);
+  if (rows.length === 0) return 0;
+  // Rows that made a new contact: found the way the batch wrote them
+  // (email, else name at the company), oldest first like the update match.
+  const fresh = rows.filter((item) => !item.id);
+  const emails = fresh.map((item) => item.row.email).filter((email): email is string => Boolean(email));
+  const found = fresh.length
+    ? await prisma.contact.findMany({
+        where: {
+          organizationId,
+          OR: [
+            ...(emails.length ? [{ email: { in: emails, mode: "insensitive" as const } }] : []),
+            { name: { in: fresh.map((item) => item.row.name!), mode: "insensitive" } },
+          ],
+        },
+        select: { id: true, email: true, name: true, companyId: true },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const byEmail = new Map<string, string>();
+  const byName = new Map<string, string>();
+  for (const contact of found) {
+    if (contact.email && !byEmail.has(lower(contact.email))) byEmail.set(lower(contact.email), contact.id);
+    const key = `${lower(contact.name)}|${contact.companyId ?? ""}`;
+    if (!byName.has(key)) byName.set(key, contact.id);
+  }
+  // Keyed by person and note; the body is carried beside the key, never
+  // read back out of it.
+  const wanted = new Map<string, { contactId: string; body: string }>();
+  for (const { row, companyId, id: updated } of rows) {
+    const id =
+      updated ?? (row.email ? byEmail.get(lower(row.email)) : undefined) ?? byName.get(`${lower(row.name!)}|${companyId ?? ""}`);
+    const body = row.keptNote!;
+    if (id) wanted.set(JSON.stringify([id, body]), { contactId: id, body });
+  }
+  if (wanted.size === 0) return 0;
+  const existing = await prisma.note.findMany({
+    where: {
+      organizationId,
+      contactId: { in: Array.from(new Set(Array.from(wanted.values(), (note) => note.contactId))) },
+      body: { in: Array.from(new Set(Array.from(wanted.values(), (note) => note.body))) },
+    },
+    select: { contactId: true, body: true },
+  });
+  for (const note of existing) wanted.delete(JSON.stringify([note.contactId, note.body]));
+  if (wanted.size === 0) return 0;
+  await prisma.note.createMany({
+    data: Array.from(wanted.values(), ({ contactId, body }) => ({
+      organizationId,
+      contactId,
+      authorId: userId,
+      body,
+      label: "GENERAL" as const,
+    })),
+  });
+  return wanted.size;
 }
 
 // After the file's own values are in: tag every company this batch

@@ -62,7 +62,7 @@ async function importFile(page, name, lines) {
   const file = path.join(OUT, name);
   fs.writeFileSync(file, lines.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(file);
   await page.getByTestId("import-summary").waitFor();
 }
@@ -195,9 +195,11 @@ async function runImport(page, rows) {
   await page.locator("[data-testid=contact-row]", { hasText: "Ann Real" }).waitFor();
   assert.equal(await page.locator("[data-testid=contact-row]").count(), 1);
 
-  log("the Contacts list shows Mobile in its own column, just left of Phone");
+  // Since Nov 11, 2026 the list's Best phone column is the mobile first; the
+  // other numbers are the Phone 2 column, from Columns.
+  log("the Contacts list calls the mobile first, in Best phone");
   const listHeaders = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-  assert.equal(listHeaders.indexOf("Mobile") + 1, listHeaders.indexOf("Phone"), listHeaders.join(" | "));
+  assert.ok(listHeaders.includes("Best phone"), listHeaders.join(" | "));
   const annRow = page.locator("[data-testid=contact-row]", { hasText: "Ann Real" });
   assert.equal(await annRow.locator("[data-testid=contact-row-mobile]").textContent(), "512-555-0111");
   await shot(page, "05-list");
@@ -208,7 +210,7 @@ async function runImport(page, rows) {
   for (const sub of ["favorites", "interested", "with-deals"]) {
     await page.goto(`${BASE}/dashboard/contacts/${sub}`);
     const heads = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-    assert.equal(heads.indexOf("Mobile") + 1, heads.indexOf("Phone"), `${sub}: ${heads.join(" | ")}`);
+    assert.ok(heads.includes("Best phone"), `${sub}: ${heads.join(" | ")}`);
     const row = page.locator("[data-testid=contact-row]", { hasText: "Ann Real" });
     assert.equal(await row.locator("[data-testid=contact-row-mobile]").textContent(), "512-555-0111", sub);
   }
@@ -216,7 +218,7 @@ async function runImport(page, rows) {
   log("merging keeps a mobile the kept contact lacked");
   const bob = (await contact(org, "bob@mobile.test"))[0];
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.locator("[data-testid=merge-open]").click();
+  await cleanUp(page, "merge");
   const merge = page.locator("[data-testid=merge-dialog]");
   const results = merge.locator("[data-testid=merge-results] label");
   // The first ticked is kept: Bob, who has no mobile.
@@ -236,6 +238,11 @@ async function runImport(page, rows) {
   log("phone width: the contact page fits without sideways scrolling");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/dashboard/contacts/mob-ann`);
+  // The phone's bar calls the mobile first; Reach starts folded there (BDR
+  // redesign, Nov 11, 2026) and opens with a tap.
+  const mobileNumber = await page.getByTestId("contact-mobile").textContent();
+  assert.equal(await page.getByTestId("phone-bar-call").getAttribute("href"), `tel:${mobileNumber}`);
+  await page.getByTestId("reach-toggle").click();
   await page.getByTestId("contact-mobile").waitFor();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);
@@ -247,3 +254,20 @@ async function runImport(page, rows) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

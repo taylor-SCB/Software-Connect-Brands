@@ -62,6 +62,37 @@ async function login(page, email) {
   await page.waitForURL(/\/dashboard$/);
 }
 
+
+// The log is the How did it go? sheet behind the "What happened with …?"
+// bar (BDR redesign, Nov 11, 2026): open it unless it is open.
+async function openLog(p) {
+  const sheet = p.locator("[data-testid=log-activity-form]");
+  if (!(await sheet.isVisible().catch(() => false))) await p.locator("[data-testid=log-bar]").click();
+  await sheet.waitFor();
+  return sheet;
+}
+// New quote, Additional Account, the status picker and Delete sit under
+// ⋯ More on the contact page (BDR redesign, Release 4).
+async function openMore(p) {
+  const more = p.locator("[data-testid=record-more]");
+  if ((await more.count()) && !(await p.locator("[data-testid=record-more-menu]").count())) await more.click();
+}
+
+
+// Add deal: in the Paperwork card's ⋯ from Meeting Completed on, else under
+// the header's ⋯ More (BDR redesign, Nov 11, 2026).
+async function openAddDeal(p) {
+  await p.locator("[data-testid=contact-header]").waitFor();
+  if (await p.locator("[data-testid=paperwork-more]").count()) {
+    await p.locator("[data-testid=paperwork-more]").click();
+    await p.locator("[data-testid=paperwork-add-deal-open]").click();
+  } else {
+    await p.locator("[data-testid=record-more]").click();
+    await p.locator("[data-testid=more-add-deal]").click();
+  }
+  await p.locator("#deal-title").waitFor();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE 'test-crm-reps-co%'`);
   await sql(`DELETE FROM "User" WHERE email = $1`, [NIC_EMAIL]);
@@ -153,12 +184,14 @@ async function login(page, email) {
   await page.goto(`${BASE}/dashboard/contacts?q=alex.morgan%40gmail`);
   await page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).waitFor();
 
-  log("before anyone reaches out, Last Contacted By is the first column and reads Not yet");
+  // Last Contacted By folded into the Pulse cell, right after the person,
+  // in the BDR redesign (Nov 11, 2026).
+  log("before anyone reaches out, the Pulse sits next to the person and reads Not tried yet");
   await page.goto(`${BASE}/dashboard/contacts`);
   const headers = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-  assert.equal(headers[1], "Last Contacted By", `first column was ${headers[1]}`);
+  assert.deepEqual(headers.slice(1, 3), ["Person", "Pulse"], `first columns were ${headers.slice(1, 3)}`);
   const alexRow = page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" });
-  assert.ok(await alexRow.getByText("Not yet").isVisible());
+  assert.equal((await alexRow.locator("[data-testid=pulse-caption]").textContent()).trim(), "Not tried yet");
 
   // Nic signs in on his own browser and does the work.
   const nicContext = await browser.newContext({ viewport: { width: 1360, height: 900 } });
@@ -168,6 +201,7 @@ async function login(page, email) {
 
   log("Nic logs a call on Alex");
   await nic.goto(alexUrl);
+  await openLog(nic);
   const activityForm = nic.locator("[data-testid=log-activity-form]");
   await activityForm.locator("textarea[name=body]").fill("Intro call, wants a walkthrough");
   await activityForm.locator("[data-testid=activity-submit]").click();
@@ -175,16 +209,17 @@ async function login(page, email) {
 
   log("Contacts and Companies both say Nic reached out, and when");
   await page.goto(`${BASE}/dashboard/contacts`);
-  const alexCell = page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=last-contacted]");
-  await alexCell.getByText("Nic Rivera").waitFor();
-  assert.match(await alexCell.textContent(), /\d{4}/, "a date under the name");
+  // Alex has no rep, so the Pulse names who touched last, with how long ago.
+  const alexCell = page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=pulse-caption]");
+  await alexCell.getByText(/Nic$/).waitFor();
+  assert.match(await alexCell.textContent(), /^1 try · (0d|today)/i, "how many tries and when, before the name");
   await page.goto(`${BASE}/dashboard/companies`);
   const companyHeaders = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-  assert.equal(companyHeaders[1], "Last Contacted By");
+  assert.deepEqual(companyHeaders.slice(1, 6), ["Company", "Pulse", "Reached", "Last touch", "Next step"]);
   await page
     .locator("[data-testid=company-row]", { hasText: "Rivera Ventures" })
-    .locator("[data-testid=last-contacted]")
-    .getByText("Nic Rivera")
+    .locator("[data-testid=last-touch]")
+    .getByText("Today · Nic")
     .waitFor();
   await shot(page, "03-companies-last-contacted");
 
@@ -194,11 +229,12 @@ async function login(page, email) {
     [org, alexId, taylor.id],
   );
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=last-contacted]").getByText("Nic Rivera").waitFor();
+  await page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=pulse-caption]").getByText(/Nic$/).waitFor();
   await sql(`DELETE FROM "Activity" WHERE id = 'act_crmreps_future'`);
 
   log("Nic adds a deal; the pipeline tile names him as the rep");
   await nic.goto(alexUrl);
+  await openAddDeal(nic);
   await nic.fill("#deal-title", "Rivera office build-out");
   await nic.fill("#deal-value", "12000");
   await nic.getByRole("button", { name: "Add", exact: true }).click();
@@ -209,14 +245,20 @@ async function login(page, email) {
   // Deals join the board at Quote Sent (Sept 30, 2026); put this one there.
   await sql(`UPDATE "Deal" SET stage='QUOTE_SENT' WHERE id=$1`, [deal.id]);
   await page.goto(`${BASE}/dashboard/deals`);
-  const tile = page.locator("div.rounded-lg", { hasText: "Rivera office build-out" });
-  const rep = tile.locator("[data-testid=deal-owner] select");
-  assert.equal(await rep.inputValue(), nicId);
-  assert.equal(await rep.locator("option:checked").textContent(), "Nic Rivera");
+  // The tile shows the rep's initials (BDR redesign, Nov 11, 2026); the
+  // picker moved into the tile's panel.
+  const tile = page.locator("[data-testid=pipeline-tile]", { hasText: "Rivera office build-out" });
+  const rep = tile.locator("[data-testid=tile-rep]");
+  assert.equal(await rep.getAttribute("data-owner-id"), nicId);
+  assert.equal(await rep.getAttribute("title"), "Rep: Nic Rivera");
   await shot(page, "04-pipeline-rep");
 
-  log("Taylor hands the deal to himself from the tile, and it sticks");
-  await rep.selectOption(taylor.id);
+  log("Taylor hands the deal to himself from the tile's panel, and it sticks");
+  await tile.locator("[data-testid=tile-open]").click();
+  const panel = page.locator("[data-testid=opportunity-panel]");
+  await panel.locator("[data-testid=panel-rep]").selectOption(taylor.id);
+  await panel.locator("[data-testid=panel-save]").click();
+  await panel.waitFor({ state: "detached" });
   for (let i = 0; i < 20; i += 1) {
     const now = (await sql(`SELECT "ownerId" FROM "Deal" WHERE id = $1`, [deal.id])).rows[0].ownerId;
     if (now === taylor.id) break;
@@ -224,7 +266,7 @@ async function login(page, email) {
   }
   assert.equal((await sql(`SELECT "ownerId" FROM "Deal" WHERE id = $1`, [deal.id])).rows[0].ownerId, taylor.id);
   await page.reload();
-  assert.equal(await page.locator("div.rounded-lg", { hasText: "Rivera office build-out" }).locator("[data-testid=deal-owner] select").inputValue(), taylor.id);
+  assert.equal(await page.locator("[data-testid=pipeline-tile]", { hasText: "Rivera office build-out" }).locator("[data-testid=tile-rep]").getAttribute("data-owner-id"), taylor.id);
 
   log("a quote made on a brand-new deal names its maker as the rep");
   await nic.goto(`${BASE}/dashboard/quotes/new?contactId=${alexId}`);
@@ -243,12 +285,13 @@ async function login(page, email) {
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
   const throwawayId = page.url().split("/").pop();
+  await openMore(page);
   await page.locator("[data-testid=header-delete]").click();
   await page.getByText("Delete Throwaway Person, with their notes").waitFor();
   await page.getByRole("button", { name: "Cancel" }).click();
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE id = $1`, [throwawayId])).rows[0].n, 0);
 
   log("Delete in the company page header keeps its people");
@@ -256,9 +299,11 @@ async function login(page, email) {
   await page.locator("[data-testid=company-row]", { hasText: "Rivera Ventures" }).getByRole("link", { name: "Rivera Ventures" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
   const companyId = page.url().split("/").pop();
+  // At the foot of the header's ⋯ More since Nov 11, 2026.
+  await page.locator("[data-testid=company-more]").click();
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Company" WHERE id = $1`, [companyId])).rows[0].n, 0);
   assert.equal((await sql(`SELECT "companyId" FROM "Contact" WHERE id = $1`, [alexId])).rows[0].companyId, null, "Alex stays, with no company");
 
@@ -275,6 +320,7 @@ async function login(page, email) {
   );
   await sql(`UPDATE "Organization" SET "nextContractNumber" = GREATEST("nextContractNumber", 990002) WHERE id = $1`, [org]);
   await page.goto(alexUrl);
+  await openMore(page);
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
   await page.locator("[data-testid=header-delete-error]").waitFor();

@@ -1,0 +1,25 @@
+-- Final audit, cross-area index on Activity (Nov 11, 2026; audit-today F3).
+-- Index only: no row is read or changed, so it is safe for every row the
+-- live database already holds, and IF NOT EXISTS makes a re-run a no-op.
+--
+-- One table per migration file (fix review, Nov 11, 2026). Prisma runs a
+-- file in one transaction and CREATE INDEX holds its table's SHARE lock
+-- (writes wait, reads carry on) until the file commits. With this and the
+-- calendar indexes in one file, CalendarEvent's lock was held while Activity
+-- was built, in the opposite order to the app's own transactions (Activity,
+-- then CalendarEvent: editing a logged line, the sheet's note, a claim, a
+-- merge), so a deploy under traffic could deadlock and Postgres could abort
+-- the migration, leaving a failed row that refuses every later deploy until
+-- `prisma migrate resolve`. Each file now commits on its own and holds one
+-- table's lock for its own build only: this one 0.5 s at 400,000
+-- activities. Not CONCURRENTLY: Postgres refuses it inside a transaction.
+--
+-- Rollback: DROP INDEX; nothing reads it by name.
+
+-- F3. Who logged what, when it was saved: Team today's "last logged"
+-- (repNumbers) and sellingReps' "logged a touch in the last 30 days".
+-- Activity had no index on userId at all, so a teammate with nothing in the
+-- last 30 days (an owner who doesn't sell) read the whole table: 25 ms at
+-- 400,000 activities, 0.03 ms with this. In schema.prisma as
+-- @@index([organizationId, userId, createdAt]).
+CREATE INDEX IF NOT EXISTS "Activity_organizationId_userId_createdAt_idx" ON "Activity"("organizationId", "userId", "createdAt");

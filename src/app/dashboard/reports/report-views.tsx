@@ -9,8 +9,10 @@ import type { ClosingReport } from "@/lib/reports/closing";
 import type { MoneyReport } from "@/lib/reports/money";
 import type { PeriodRange } from "@/lib/reports/period";
 import { formatIsoDay } from "@/lib/reports/period";
-import { changeText, formatValue, headlineValue, money, percent, plural } from "@/lib/reports/format";
+import { changeText, formatValue, headlineValue, money, percent, plural, TRY_TALK_COLORS, TRY_TALK_SERIES } from "@/lib/reports/format";
 import { Columns, HBars } from "./charts";
+import { pipelineHref } from "@/lib/pipeline-link";
+import { telHref } from "@/lib/dial";
 
 // The body of each report under its write-up: headline tiles with the
 // comparison, the charts, and a compact table behind every chart.
@@ -34,7 +36,7 @@ export function ReportBody({ report, range, by }: { report: AnyReport } & ViewPr
 
 export function HeadlineTiles({ headlines, compareLabel }: { headlines: Headline[]; compareLabel?: string }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6" data-testid="report-tiles">
+    <div className={`grid grid-cols-2 gap-3 ${headlines.length === 8 ? "md:grid-cols-4" : "md:grid-cols-3 xl:grid-cols-6"}`} data-testid="report-tiles">
       {headlines.map((headline) => {
         const moved = changeText(headline);
         return (
@@ -77,7 +79,7 @@ function Table({ table, testId }: { table: SummaryTable; testId?: string }) {
   if (table.rows.length === 0) return <p className="faint text-sm">Nothing here for this period.</p>;
   return (
     <div className="-mx-1 overflow-x-auto">
-      <table className="table text-xs" data-testid={testId}>
+      <table className="table table-stack text-xs" data-testid={testId}>
         <thead>
           <tr>
             {table.columns.map((column, index) => (
@@ -91,7 +93,7 @@ function Table({ table, testId }: { table: SummaryTable; testId?: string }) {
           {table.rows.map((row, r) => (
             <tr key={r} data-testid={testId ? `${testId}-row` : undefined}>
               {row.map((cell, index) => (
-                <td key={index} className={index ? "num text-right" : "font-medium"}>
+                <td key={index} className={index ? "num text-right" : "font-medium"} data-label={table.columns[index]?.label}>
                   {typeof cell === "number" && table.columns[index]?.format !== "text" ? formatValue(cell, table.columns[index].format as Headline["format"]) : cell}
                 </td>
               ))}
@@ -112,7 +114,11 @@ function ChartAndTable({ empty, chart, table }: { empty: boolean; chart: React.R
   return (
     <>
       {chart}
-      <div className="mt-3">{table}</div>
+      {/* The same numbers as the chart, one tap away (Nov 11, 2026). */}
+      <details className="mt-3" data-testid="report-show-numbers">
+        <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">Show numbers</summary>
+        <div className="mt-2">{table}</div>
+      </details>
     </>
   );
 }
@@ -125,22 +131,82 @@ function Delta({ now, before }: { now: number; before: number }) {
 /* ------------------------------- Daily ------------------------------- */
 
 // `count` goes in the heading; `listed` (default: count) says whether there
-// are rows to show — the calendar's heading counts only what is still open
-// while its done entries are listed after them.
-function RundownList({ title, sub, empty, children, count, listed = count, testId, href }: { title: string; sub?: string; empty: string; children: React.ReactNode; count: number; listed?: number; testId: string; href?: string }) {
+// are rows to show.
+function RundownList({
+  title,
+  sub,
+  empty,
+  children,
+  count,
+  listed = count,
+  testId,
+  href,
+  hrefLabel = "See all",
+  className = "",
+  after,
+}: {
+  title: string;
+  sub?: string;
+  empty: string;
+  children: React.ReactNode;
+  count: number;
+  listed?: number;
+  testId: string;
+  href?: string;
+  hrefLabel?: string;
+  className?: string;
+  after?: React.ReactNode;
+}) {
   return (
-    <Panel title={`${title}${count ? ` · ${count}` : ""}`} sub={sub} testId={testId}>
+    <Panel title={`${title}${count ? ` · ${count}` : ""}`} sub={sub} testId={testId} className={className}>
       {listed === 0 ? <p className="faint text-sm">{empty}</p> : <ul className="divide-y divide-[var(--hairline-3)] text-sm">{children}</ul>}
-      {href && listed > 0 && (
-        <Link href={href} className="link mt-2 inline-block text-xs">
-          See all
+      {after}
+      {href && (listed > 0 || count > 0) && (
+        <Link href={href} className="link mt-2 inline-flex min-h-11 items-center text-xs sm:min-h-0" data-testid={`${testId}-all`}>
+          {hrefLabel}
         </Link>
       )}
     </Panel>
   );
 }
 
+// A row's person (or company) as a link, and a Call button when there is a
+// number (BDR redesign, Round 2: every Rundown row leads to someone).
+function Who({ contactId, companyId, name, sub }: { contactId: string | null; companyId?: string | null; name: string | null; sub?: string | null }) {
+  if (!name) return null;
+  const href = contactId ? `/dashboard/contacts/${contactId}` : companyId ? `/dashboard/companies/${companyId}` : null;
+  return (
+    <>
+      {href ? (
+        <Link href={href} className="link" data-testid="rundown-person">
+          {name}
+        </Link>
+      ) : (
+        name
+      )}
+      {sub ? <span className="faint"> · {sub}</span> : null}
+    </>
+  );
+}
+
+function CallButton({ phone, name, contactId }: { phone: string | null; name: string | null; contactId: string | null }) {
+  if (!phone) return null;
+  return (
+    <a
+      href={telHref(phone)}
+      className="btn btn-ghost btn-sm min-h-11 shrink-0 sm:min-h-0"
+      aria-label={`Call ${name ?? ""}`}
+      data-contact-id={contactId ?? undefined}
+      data-testid="rundown-call"
+    >
+      Call
+    </a>
+  );
+}
+
 function DailyView({ report }: { report: DailyReport }) {
+  const open = report.calendar.items.filter((item) => !item.done);
+  const done = report.calendar.doneItems;
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <RundownList
@@ -153,35 +219,83 @@ function DailyView({ report }: { report: DailyReport }) {
             : undefined
         }
         count={report.calendar.open}
-        listed={report.calendar.count}
-        empty="Nothing on the calendar today."
+        listed={open.length}
+        empty={report.calendar.count ? "Everything on today is done." : "Nothing on the calendar today."}
         testId="rundown-calendar"
         href="/dashboard/calendar"
+        after={
+          done.length > 0 && (
+            <details className="mt-2" data-testid="rundown-done">
+              <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">
+                Done today ({report.calendar.count - report.calendar.open})
+              </summary>
+              <ul className="mt-1 divide-y divide-[var(--hairline-3)] text-sm">
+                {done.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-done="true">
+                    <span className="min-w-0 truncate line-through">
+                      {item.title}
+                      <span className="faint block text-[0.7rem]">
+                        {item.type} · {item.owner}
+                        {item.who ? " · " : ""}
+                        <Who contactId={item.contactId} companyId={item.companyId} name={item.who} />
+                      </span>
+                    </span>
+                    <span className="num faint shrink-0 text-xs">{item.time ?? "No time set"}</span>
+                  </li>
+                ))}
+              </ul>
+              {/* The fold lists the first few (audit, Nov 11, 2026): "Done
+                  today (14)" opened on 8 with no word of the rest. */}
+              {report.calendar.count - report.calendar.open > done.length && (
+                <p className="faint pt-1 text-xs" data-testid="rundown-done-more">
+                  and {report.calendar.count - report.calendar.open - done.length} more on the calendar
+                </p>
+              )}
+            </details>
+          )
+        }
       >
-        {report.calendar.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2" data-done={item.done ? "true" : undefined}>
-            <span className={`min-w-0 truncate ${item.done ? "line-through" : ""}`}>
+        {open.map((item) => (
+          <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-testid="rundown-row">
+            <span className="min-w-0 truncate">
               {item.title}
-              <span className="faint block text-[0.7rem]">
+              <span className="faint block truncate text-[0.7rem]">
                 {item.type} · {item.owner}
-                {item.who ? ` · ${item.who}` : ""}
+                {item.who ? " · " : ""}
+                <Who contactId={item.contactId} companyId={item.companyId} name={item.who} />
               </span>
             </span>
-            <span className="num faint shrink-0 text-xs">{item.time ?? "No time set"}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="num faint text-xs">{item.time ?? "No time set"}</span>
+              <CallButton phone={item.phone} name={item.who} contactId={item.contactId} />
+            </span>
           </li>
         ))}
       </RundownList>
-      <RundownList title="Overdue follow-ups" count={report.overdue.count} empty="Nothing overdue. Nice." testId="rundown-overdue" href="/dashboard/calendar">
+      {/* On a phone Overdue comes first (BDR redesign, Round 2). */}
+      <RundownList
+        title="Overdue follow-ups"
+        count={report.overdue.count}
+        empty="Nothing overdue. Nice."
+        testId="rundown-overdue"
+        href={`/dashboard/calendar?view=agenda&${report.repId ? `users=${encodeURIComponent(report.repId)}` : "scope=team"}`}
+        hrefLabel={report.overdue.count > report.overdue.items.length ? `See all ${report.overdue.count}` : "See all"}
+        className="max-md:-order-1"
+      >
         {report.overdue.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2">
+          <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-testid="rundown-row">
             <span className="min-w-0 truncate">
               {item.title}
-              <span className="faint block text-[0.7rem]">
+              <span className="faint block truncate text-[0.7rem]">
                 {item.owner}
-                {item.who ? ` · ${item.who}` : ""} · due {formatIsoDay(item.on)}
+                {item.who ? " · " : ""}
+                <Who contactId={item.contactId} companyId={item.companyId} name={item.who} /> · due {formatIsoDay(item.on)}
               </span>
             </span>
-            <span className="num shrink-0 text-xs text-[var(--danger)]">{item.days}d late</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="num text-xs text-[var(--danger)]">{item.days}d late</span>
+              <CallButton phone={item.phone} name={item.who} contactId={item.contactId} />
+            </span>
           </li>
         ))}
       </RundownList>
@@ -191,15 +305,20 @@ function DailyView({ report }: { report: DailyReport }) {
         count={report.quiet.count}
         empty="Every open opportunity has been touched recently."
         testId="rundown-quiet"
-        href="/dashboard/deals"
+        href="/dashboard/deals?quiet=1"
       >
         {report.quiet.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2">
+          <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-testid="rundown-row">
             <span className="min-w-0 truncate">
-              {item.title}
-              <span className="faint block text-[0.7rem]">{item.owner}</span>
+              {item.person ? <Who contactId={item.person.id} name={item.person.name} /> : <Link href={pipelineHref(item.id)} className="link">{item.title}</Link>}
+              <span className="faint block truncate text-[0.7rem]" data-testid="rundown-quiet-sub">
+                {[item.company, item.owner].filter(Boolean).join(" · ")}
+              </span>
             </span>
-            <span className="num faint shrink-0 text-xs">{item.days} days</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="num faint text-xs">{item.days} days</span>
+              <CallButton phone={item.person?.phone ?? null} name={item.person?.name ?? null} contactId={item.person?.id ?? null} />
+            </span>
           </li>
         ))}
       </RundownList>
@@ -269,7 +388,7 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
       </Panel>
       <Panel title={`What moved · ${range.label.toLowerCase()}`} sub={`Against ${range.compareLabel}. Meetings count people; paperwork counts deals.`} testId="pipeline-moves">
         <div className="-mx-1 overflow-x-auto">
-          <table className="table text-xs" data-testid="pipeline-moves-table">
+          <table className="table table-stack text-xs" data-testid="pipeline-moves-table">
             <thead>
               <tr>
                 <th>Step</th>
@@ -283,12 +402,12 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
               {report.moves.map((move) => (
                 <tr key={move.step} data-step={move.step}>
                   <td className="font-medium">{move.label}</td>
-                  <td className="num text-right">{move.count}</td>
-                  <td className="num text-right">{move.previous}</td>
-                  <td className="num text-right">
+                  <td className="num text-right" data-label="Now">{move.count}</td>
+                  <td className="num text-right" data-label="Before">{move.previous}</td>
+                  <td className="num text-right" data-label="Change">
                     <Delta now={move.count} before={move.previous} />
                   </td>
-                  <td className="num text-right">{move.step === "MEETING_SET" || move.step === "MEETING_COMPLETED" ? "—" : money(move.valueCents)}</td>
+                  <td className="num text-right" data-label="Value">{move.step === "MEETING_SET" || move.step === "MEETING_COMPLETED" ? "—" : money(move.valueCents)}</td>
                 </tr>
               ))}
             </tbody>
@@ -367,13 +486,43 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
 
 function ActivityView({ report, by }: { report: ActivityReport } & ViewProps) {
   const series = ACTIVITY_TYPES.map((type) => ACTIVITY_LABELS[type]);
+  // Tries (grey) and talks (green), stacked: each bar is the tries, the
+  // green part the ones that connected (Nov 11, 2026). The kinds of touch
+  // are one tap down, under "By kind".
+  const split = (tries: number, talks: number) => [Math.max(0, tries - talks), talks];
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title={`Touches by ${report.bucket}`} sub="Calls, emails, texts and meetings logged" className="xl:col-span-2" testId="activity-daily">
-        <Columns buckets={report.series.map((bucket) => ({ label: bucket.start, parts: bucket.parts }))} series={series} format="count" label="Touches over time by kind" bucketWord={report.bucket} />
+      <Panel title={`Tries and talks by ${report.bucket}`} sub="Every bar is the tries logged; the green part connected" className="xl:col-span-2" testId="activity-daily">
+        {report.talksSince && (
+          <p className="faint mb-2 text-xs" data-testid="activity-talks-since">
+            Talks counted from {formatIsoDay(report.talksSince.slice(0, 10), true)}, when the app started recording how each touch went.
+          </p>
+        )}
+        <Columns
+          buckets={report.series.map((bucket) => ({ label: bucket.start, parts: split(bucket.parts.reduce((a, b) => a + b, 0), bucket.talks) }))}
+          series={TRY_TALK_SERIES}
+          colors={TRY_TALK_COLORS}
+          format="count"
+          label="Tries and talks over time"
+          bucketWord={report.bucket}
+          testId="activity-tries-talks"
+        />
+        <details className="mt-3" data-testid="activity-by-kind">
+          <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">By kind</summary>
+          <div className="mt-2">
+            <Columns buckets={report.series.map((bucket) => ({ label: bucket.start, parts: bucket.parts }))} series={series} format="count" label="Touches over time by kind" bucketWord={report.bucket} />
+          </div>
+        </details>
       </Panel>
-      <Panel title={`Touches by ${BREAKDOWN_LABELS[by].toLowerCase()}`} sub={by === "rep" ? "Who logged them" : "Who they were with"} testId="activity-groups">
-        <HBars rows={report.groups.filter((group) => group.touches > 0 || by === "rep").map((group) => ({ label: group.name, values: group.parts }))} series={series} format="count" label={`Touches by ${BREAKDOWN_LABELS[by]}`} />
+      <Panel title={`Tries and talks by ${BREAKDOWN_LABELS[by].toLowerCase()}`} sub={by === "rep" ? "Who logged them" : "Who they were with"} testId="activity-groups">
+        <HBars
+          rows={report.groups.filter((group) => group.touches > 0 || by === "rep").map((group) => ({ label: group.name, values: split(group.touches, group.talks), note: group.touches ? `${percent(group.talks / group.touches)} talks` : undefined }))}
+          series={TRY_TALK_SERIES}
+          colors={TRY_TALK_COLORS}
+          format="count"
+          label={`Tries and talks by ${BREAKDOWN_LABELS[by]}`}
+          testId="activity-groups-chart"
+        />
       </Panel>
       <Panel title="Marketing emails" sub="Their own series — never counted as a touch" testId="activity-marketing">
         <p className="mb-2 text-sm">
@@ -463,7 +612,7 @@ function MoneyView({ report, by }: { report: MoneyReport } & ViewProps) {
           <p className="faint text-sm">Nobody owes anything right now.</p>
         ) : (
           <div className="-mx-1 overflow-x-auto">
-            <table className="table text-xs" data-testid="money-debtor-table">
+            <table className="table table-stack text-xs" data-testid="money-debtor-table">
               <thead>
                 <tr>
                   <th>Customer</th>
@@ -480,9 +629,9 @@ function MoneyView({ report, by }: { report: MoneyReport } & ViewProps) {
                         {row.name}
                       </Link>
                     </td>
-                    <td className="num text-right">{money(row.owedCents)}</td>
-                    <td className={`num text-right ${row.overdueCents ? "text-[var(--danger)]" : ""}`}>{money(row.overdueCents)}</td>
-                    <td className="num text-right">{row.oldestDue ? `${formatIsoDay(row.oldestDue)}${row.daysLate ? ` · ${row.daysLate}d late` : ""}` : "—"}</td>
+                    <td className="num text-right" data-label="Owed">{money(row.owedCents)}</td>
+                    <td className={`num text-right ${row.overdueCents ? "text-[var(--danger)]" : ""}`} data-label="Past due">{money(row.overdueCents)}</td>
+                    <td className="num text-right" data-label="Oldest due">{row.oldestDue ? `${formatIsoDay(row.oldestDue)}${row.daysLate ? ` · ${row.daysLate}d late` : ""}` : "—"}</td>
                   </tr>
                 ))}
               </tbody>

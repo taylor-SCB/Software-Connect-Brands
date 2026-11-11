@@ -74,7 +74,7 @@ export function PickJobs({
                   onChange={() => toggle(job.id)}
                   aria-label={`Put PRJ-${job.number} ${job.name} at this property`}
                 />
-                <span className="num faint text-xs">PRJ-{job.number}</span>
+                <span className="docnum faint text-xs">PRJ-{job.number}</span>
                 <span>{job.name}</span>
                 <Badge color="#94a3b8">{PROJECT_STAGE_LABELS[job.stage as never] ?? job.stage}</Badge>
                 <span className="num faint text-xs">{formatCents(job.awardedCents)}</span>

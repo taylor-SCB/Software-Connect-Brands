@@ -19,6 +19,7 @@ import {
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
 import { syncQuoteEvents } from "@/lib/calendar-auto";
+import { quoteExpired } from "@/lib/quote-accept";
 import { computeSchedule, isoToDate } from "@/lib/payments";
 import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
 import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
@@ -822,7 +823,8 @@ export async function setQuoteStatus(formData: FormData) {
   await changeQuoteStatus(formData);
 }
 
-// Mark as sent, with the reason on screen when it won't (no saved lines).
+// Send quote's share sheet, with the reason on screen when it won't (no
+// saved lines).
 export async function markQuoteSent(_prev: ActionState, formData: FormData): Promise<ActionState> {
   formData.set("status", "SENT");
   return changeQuoteStatus(formData);
@@ -867,6 +869,10 @@ async function changeQuoteStatus(formData: FormData): Promise<ActionState> {
       sentAt: status === "SENT" ? new Date() : undefined,
       respondedAt:
         status === "ACCEPTED" || status === "DECLINED" ? new Date() : undefined,
+      // The name a customer accepted under online belongs to that answer
+      // only (audit, Nov 11, 2026): any other move — back to draft,
+      // declined, accepted by the team — must not print it again later.
+      acceptedByName: status !== quote.status ? null : undefined,
     },
   });
 
@@ -879,6 +885,8 @@ async function changeQuoteStatus(formData: FormData): Promise<ActionState> {
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath("/dashboard/contracts/tracker");
   revalidatePath("/dashboard/calendar");
   revalidatePath(`/dashboard/contacts/${quote.contactId}`);
   revalidatePath("/dashboard");
@@ -896,4 +904,126 @@ export async function deleteQuote(_prev: ActionState, formData: FormData): Promi
   if (deleted.count === 0) return { error: "Quote not found" };
   revalidatePath("/dashboard/quotes");
   redirect("/dashboard/quotes");
+}
+
+/* ------------------------- The customer says yes ------------------------- */
+
+// "Accept this quote" on the customer's own copy (/q/<token>; BDR redesign,
+// Release 8, ux-gaps): no login, the token is the key. The customer types
+// their name; the quote becomes Accepted, dated now, with that name kept on
+// it, and its follow-up and due date come off the calendar. Safe to press
+// twice (a second press on an accepted quote is a success that changes
+// nothing), and only a quote that is out with them can be accepted: a
+// draft is not theirs to see, and a declined one is answered.
+export async function acceptQuoteByCustomer(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const parsed = parseForm(
+    z.object({
+      token: z.string().trim().min(10).max(200),
+      name: z.string().trim().min(2, "Type your full name to accept").max(120),
+    }),
+    { token: formData.get("token"), name: formData.get("name") },
+  );
+  if (!parsed.ok) return { error: parsed.error };
+
+  const quote = await prisma.quote.findUnique({
+    where: { publicToken: parsed.data.token },
+    select: { id: true, status: true, organizationId: true, contactId: true, dealId: true, validUntil: true, organization: { select: { timeZone: true } } },
+  });
+  if (!quote || quote.status === "DRAFT") return { error: "This quote isn't available" };
+  if (quote.status === "ACCEPTED") {
+    revalidatePath(`/q/${parsed.data.token}`);
+    return { success: "Accepted" };
+  }
+  if (quote.status !== "SENT") return { error: "This quote can't be accepted online any more. Reply to us directly." };
+  // Past its Valid until day the prices aren't promised any more (audit,
+  // Nov 11, 2026): the customer asks for an updated quote instead.
+  if (quoteExpired(quote.validUntil, quote.organization.timeZone)) {
+    revalidatePath(`/q/${parsed.data.token}`);
+    return { error: "This quote has expired. Reply to us for an updated one." };
+  }
+
+  const accepted = await prisma.quote.updateMany({
+    where: { id: quote.id, organizationId: quote.organizationId, status: "SENT" },
+    data: { status: "ACCEPTED", respondedAt: new Date(), acceptedByName: parsed.data.name },
+  });
+  if (accepted.count === 0) {
+    // Answered between the read and the write: a second tap, or the team
+    // marking it at the same moment.
+    const now = await prisma.quote.findUnique({ where: { id: quote.id }, select: { status: true } });
+    revalidatePath(`/q/${parsed.data.token}`);
+    return now?.status === "ACCEPTED" ? { success: "Accepted" } : { error: "This quote can't be accepted online any more. Reply to us directly." };
+  }
+
+  // Nobody is logged in: the quote's milestones keep the owner they have.
+  await syncQuoteEvents(quote.organizationId, quote.id, null);
+  revalidatePath(`/q/${parsed.data.token}`);
+  revalidatePath(`/dashboard/quotes/${quote.id}`);
+  revalidatePath("/dashboard/quotes");
+  revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/contracts/tracker");
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath(`/dashboard/contacts/${quote.contactId}`);
+  revalidatePath("/dashboard");
+  return { success: "Accepted" };
+}
+
+/* ---------------------- Build Quote, straight to the quote ---------------------- */
+
+// Build Quote (the Pipeline's convert prompt) and "New quote" for a deal
+// that has no quote yet open /dashboard/quotes/new with the deal picked;
+// that page now starts the quote itself rather than asking for a title and
+// template it already knows (ux-gaps): titled after the deal, the default
+// template, its rep the deal's rep (else whoever opened it). Called from
+// the page once it is on screen, never while it renders, so a prefetch
+// writes nothing. A second call for the same deal within two minutes —
+// a double mount, a reload, a second tab — gets the same quote back
+// rather than a second one.
+export async function startQuoteForDeal(input: { dealId: string; contactId?: string | null }): Promise<{ quoteId: string } | { error: string }> {
+  const { organizationId, userId } = await requireSession();
+  const dealId = idSchema.safeParse(input.dealId);
+  if (!dealId.success) return { error: "Missing deal reference" };
+
+  const deal = await prisma.deal.findFirst({
+    where: { id: dealId.data, organizationId },
+    select: { id: true, title: true, contactId: true, ownerId: true },
+  });
+  if (!deal) return { error: "Deal not found" };
+
+  const recent = await prisma.quote.findFirst({
+    where: {
+      organizationId,
+      dealId: deal.id,
+      status: "DRAFT",
+      createdAt: { gte: new Date(Date.now() - 2 * 60 * 1000) },
+      lineItems: { none: {} },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (recent) return { quoteId: recent.id };
+
+  // The person picked on the way in, if they are in this workspace, else
+  // the deal's own contact.
+  const wanted = input.contactId
+    ? await prisma.contact.findFirst({ where: { id: input.contactId, organizationId }, select: { id: true } })
+    : null;
+  const contactId = wanted?.id ?? deal.contactId;
+
+  const quote = await prisma.quote.create({
+    data: {
+      organizationId,
+      contactId,
+      dealId: deal.id,
+      title: deal.title.slice(0, 160) || "Quote",
+      number: await nextQuoteNumber(organizationId),
+      publicToken: publicToken(),
+      leadSalesRepId: deal.ownerId ?? userId,
+    },
+    select: { id: true },
+  });
+
+  revalidatePath("/dashboard/quotes");
+  revalidatePath("/dashboard/deals");
+  revalidatePath(`/dashboard/contacts/${contactId}`);
+  return { quoteId: quote.id };
 }

@@ -156,6 +156,7 @@ export function TrackerGrid({
   pickers,
   today,
   returnTo,
+  firstContract = false,
 }: {
   dealId: string;
   quote: TrackerQuote;
@@ -163,6 +164,9 @@ export function TrackerGrid({
   pickers: TrackerPickers;
   today: string;
   returnTo: SplitInput["returnTo"];
+  // Nothing made from this deal yet: Contract A starts with every open row
+  // ticked, so the first contract is one button (BDR redesign, Release 8).
+  firstContract?: boolean;
 }) {
   const templateOfType = (type: string) => pickers.templates.find((t) => t.type === type)?.id;
   const firstTemplate = pickers.templates[0]?.id ?? "";
@@ -263,7 +267,13 @@ export function TrackerGrid({
       : { templateId, direction: directionForType(typeOfTemplate(templateId)) };
   }
 
-  const [columns, setColumns] = useState<Column[]>(() => [blankColumn(1, true)]);
+  const [columns, setColumns] = useState<Column[]>(() => {
+    const first = blankColumn(1, true);
+    if (firstContract) {
+      first.selected = quote.lineItems.filter((row) => !row.cancelled && row.onContracts.length === 0).map((row) => row.id);
+    }
+    return [first];
+  });
   const [nextKey, setNextKey] = useState(2);
   const [signerName, setSignerName] = useState(pickers.ownerName);
   const [error, setError] = useState<string | undefined>();
@@ -703,7 +713,7 @@ export function TrackerGrid({
                       className="btn btn-ghost btn-sm shrink-0"
                       data-testid={row.cancelled ? "restore-row" : "cancel-row"}
                     >
-                      {row.cancelled ? "Restore" : "Cancel"}
+                      {row.cancelled ? "Restore" : "Drop line"}
                     </button>
                   </td>
                 </tr>
@@ -713,7 +723,7 @@ export function TrackerGrid({
           <tfoot>
             <tr>
               <td colSpan={4} className="faint text-xs">
-                {openCount} open · {cancelledCount} cancelled
+                {openCount} open · {cancelledCount} dropped
               </td>
               <td className="num text-right text-xs font-semibold" data-testid="lines-total">
                 {formatCents(quoteSubtotalCents)}
@@ -811,7 +821,10 @@ export function TrackerGrid({
         ))}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4 sm:flex-row sm:items-end sm:justify-between">
+      <div
+        id="make-contracts"
+        className="flex scroll-mt-24 flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4 sm:flex-row sm:items-end sm:justify-between"
+      >
         <div className="sm:w-80">
           <label className="label" htmlFor="signerName">
             Your Company Signer
@@ -839,7 +852,9 @@ export function TrackerGrid({
               ? "Creating…"
               : ticked === 0
                 ? "Tick rows to create contracts"
-                : `Create ${ticked} ${ticked === 1 ? "contract" : "contracts"}`}
+                : ticked === 1
+                  ? `Create contract for ${formatCents(columnTotal(columns.find((column) => column.selected.length > 0)!))} →`
+                  : `Create ${ticked} contracts`}
           </button>
         </div>
       </div>
@@ -900,6 +915,7 @@ function ContractCard({
   const discount = discountFromInput(discountState, subtotalCents);
   const totalCents = subtotalCents - discount.discountCents;
   const selectedRows = column.selected.map((lineId) => rows.find((row) => row.id === lineId)).filter((row) => row !== undefined);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     // min-w-0: a grid item is otherwise as wide as its widest content —
@@ -981,6 +997,32 @@ function ContractCard({
           )}
         </div>
 
+      </div>
+
+      {/* Template, direction, terms and title fold into one line with
+          Change (BDR redesign, Release 8): they start right for most
+          contracts. The fields stay in the page, hidden, so a post and
+          the totals read them as before. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs" data-testid="column-summary">
+        <p className="muted min-w-0">
+          {pickers.templates.find((template) => template.id === column.templateId)?.name ?? "No template"} ·{" "}
+          {DIRECTION_LABEL[column.direction]} · {column.paymentTerms || "No terms"}
+          {column.title ? ` · “${column.title}”` : ""}
+        </p>
+        <button
+          type="button"
+          // 44px to tap on a phone (audit, Nov 11, 2026): it is the only
+          // way to the card's template, direction, terms and title.
+          className="link inline-flex min-h-11 shrink-0 items-center px-1 text-xs sm:min-h-0 sm:px-0"
+          aria-expanded={settingsOpen}
+          aria-controls={id("settings")}
+          onClick={() => setSettingsOpen((value) => !value)}
+          data-testid="column-change"
+        >
+          {settingsOpen ? "Done" : "Change"}
+        </button>
+      </div>
+      <div id={id("settings")} className="grid gap-2.5 sm:grid-cols-2" hidden={!settingsOpen}>
         <div>
           <label className="label" htmlFor={id("template")}>Template</label>
           <select
@@ -1034,7 +1076,6 @@ function ContractCard({
           />
         </div>
       </div>
-
       <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3" data-testid="column-money">
         <div className="flex flex-wrap items-center gap-1.5" data-testid="column-rows">
           {selectedRows.length === 0 ? (
