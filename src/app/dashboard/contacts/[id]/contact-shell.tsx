@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ActivityTypeValue } from "@/lib/constants";
-import { HowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
+import { useRouter } from "next/navigation";
+import { HowDidItGo, type SheetToast } from "@/components/how-did-it-go/how-did-it-go";
 import { useDialReturn } from "@/components/how-did-it-go/dial-return";
 import { UndoToast } from "@/components/how-did-it-go/undo-toast";
 import { BookMeetingSheet } from "@/components/book-meeting/book-meeting";
@@ -79,6 +80,15 @@ export function ContactShell({
   const openLog = useCallback((type?: ActivityTypeValue) => setLog({ open: true, type: kindOf(type) }), []);
   const closeLog = useCallback(() => setLog((prev) => ({ ...prev, open: false })), []);
   const dismiss = useCallback(() => setToast(null), []);
+  const router = useRouter();
+  // One toast slot on the page (round 2, Nov 11, 2026): the How did it go?
+  // sheet, the Book meeting sheet and the page's own saves all hand their
+  // "Saved · Undo" here, so a booking made from the log sheet never stacks
+  // a second and third toast over the first. A newer one replaces it.
+  const sheetToast = useCallback((next: SheetToast) => {
+    setToast({ batchId: next.batchId ?? "", words: next.words, href: next.href ?? null, hrefLabel: next.hrefLabel, at: Date.now() });
+  }, []);
+  const changed = useCallback(() => router.refresh(), [router]);
 
   // Back from the phone app: the shared dial watcher (a tel: or sms: link
   // anywhere on this page, the page hidden and shown again).
@@ -147,6 +157,8 @@ export function ContactShell({
         name={name}
         today={today}
         current={{ id: contactId, name, company: companyName }}
+        onToast={sheetToast}
+        onChanged={changed}
       />
       <BookMeetingSheet
         open={bookOpen}
@@ -155,8 +167,10 @@ export function ContactShell({
         name={name}
         today={today}
         opportunityId={bookOpportunityId}
+        onToast={sheetToast}
+        onChanged={changed}
       />
-      <UndoToast saved={toast} onDone={dismiss} />
+      <UndoToast saved={toast} onDone={dismiss} onUndone={changed} />
     </Context.Provider>
   );
 }

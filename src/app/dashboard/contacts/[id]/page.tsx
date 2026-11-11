@@ -236,6 +236,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
           outcome: activity.outcome,
           connect: activity.marketing ? undefined : isConnect(activity, now),
           undoBatchId: activity.batchId && !activity.marketing && (activity.userId === userId || canManage) ? activity.batchId : null,
+          edit: !activity.marketing && (activity.userId === userId || canManage) ? { on: day, time: zoneTime(activity.occurredAt, timeZone), today } : null,
           day,
           dayLabel: dayLabel(day),
           channel: activity.marketing ? null : CHANNEL[activity.type as ActivityTypeValue],

@@ -71,7 +71,8 @@ export default async function CompanyDetailPage({
 }) {
   const { id } = await params;
   const { people: peopleParam } = await searchParams;
-  const { organizationId, userId, name: userName } = await requireSession();
+  const { organizationId, userId, name: userName, role } = await requireSession();
+  const canManage = role === "OWNER" || role === "ADMIN";
 
   const settings = await healthSettings(organizationId);
   const timeZone = settings.timeZone;
@@ -346,6 +347,9 @@ export default async function CompanyDetailPage({
       via: activity.people.length ? activity.people : null,
       bypassedBy: activity.contact ? null : activity.user.name,
       marketing: activity.marketing,
+      outcome: activity.outcome,
+      // Edit on your own lines (round 2), as on a contact's page.
+      edit: !activity.marketing && (activity.userId === userId || canManage) ? { on: day, time: zoneTime(activity.occurredAt, timeZone), today } : null,
     };
     const last = blocks[blocks.length - 1];
     if (last && last.tier === tier && last.day === day) last.items.push(item);
