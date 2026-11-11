@@ -420,6 +420,50 @@ const ladder = async (contactId) =>
   await toast.getByText(/Rescheduled to/).waitFor();
   assert.equal(await count(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1 AND outcome IS NULL`, [krisOm.opportunityId]), 1, "a new meeting on the same tile");
 
+  log("audit fixes: a chip tapped before the sheet knows the person still picks 'Try again in 30 days', and step 2 opens with its own Save, never 'Saving…'");
+  // The full run (Nov 11, 2026) failed step 9 two ways: the tap beat the
+  // sheet's context, so the save's callback saw no six tries and picked Try
+  // again; and step 2 showed while the save was still landing, its Save
+  // reading "Saving…". Hold the context back, tap at once, and record every
+  // word the step-2 Save ever shows.
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",phone,"updatedAt") VALUES ('ctc_hd_quinn',$1,'Quinn Quick','cmp_hd_red','5125550106',now())`, [org]);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,"occurredAt")
+     SELECT 'act_hd_quinn_' || g, $1, 'ctc_hd_quinn', $2, 'PHONE_CALL', 'Left voicemail', 'VOICEMAIL', now() - (g || ' days')::interval
+       FROM generate_series(2, 7) g`,
+    [org, taylor.id],
+  );
+  await page.goto(`${BASE}/dashboard/contacts/ctc_hd_quinn`);
+  await page.locator("[data-testid=log-bar]").waitFor();
+  await page.evaluate(() => {
+    window.__saveWords = [];
+    new MutationObserver(() => {
+      const button = document.querySelector("[data-testid=follow-up-save]");
+      const words = button ? button.textContent.trim() : null;
+      if (words && window.__saveWords[window.__saveWords.length - 1] !== words) window.__saveWords.push(words);
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  // The first server call after the sheet opens is its context; hold it.
+  let held = 0;
+  const hold = async (route) => {
+    if (route.request().method() === "POST" && route.request().headers()["next-action"] && held++ === 0) await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  };
+  await page.route(/\/dashboard\/contacts\/ctc_hd_quinn/, hold);
+  await openBar();
+  await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await next.locator("[data-testid=next-park]").waitFor();
+  await page.unroute(/\/dashboard\/contacts\/ctc_hd_quinn/, hold);
+  assert.ok(held >= 2, "the context was held and the save came after it");
+  assert.equal(await next.locator("[data-testid=next-park]").getAttribute("aria-checked"), "true", "parking is picked though the tap beat the context");
+  const saveWords = await page.evaluate(() => window.__saveWords);
+  assert.deepEqual(saveWords, ["Try again in 30 days"], `step 2's Save only ever read its own words: ${JSON.stringify(saveWords)}`);
+  assert.equal(await page.locator("[data-testid=follow-up-save]").isEnabled(), true);
+  await page.locator("[data-testid=follow-up-save]").click();
+  await toast.getByText(/Parked/).waitFor();
+  const quinnPark = await one(`SELECT to_char("startOn",'YYYY-MM-DD') AS day, title FROM "CalendarEvent" WHERE "contactId"='ctc_hd_quinn' AND "doneAt" IS NULL`);
+  assert.deepEqual({ ...quinnPark }, { day: shift(TODAY, 30), title: "Try again · Quinn Quick" });
+
   log("Sprint: on a phone the sheet is a bottom sheet — 56px chips two to a row, Save pinned, nothing sideways");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const mobile = await phone.newPage();

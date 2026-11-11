@@ -225,6 +225,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const company = Boolean(target?.companyId) && !eventMode;
 
   const [ctx, setCtx] = useState<LogContext | null>(null);
+  // The context as it is now, for a save that was started before it
+  // arrived (a chip tapped the moment the sheet opened): the save's
+  // callback holds the render it was tapped in, where ctx was still null.
+  const ctxNow = useRef<LogContext | null>(null);
   const [fallbackToday] = useState(browserToday);
   const today = props.today ?? ctx?.today ?? fallbackToday;
   const [type, setType] = useState<ActivityTypeValue>(props.type ?? (event ? guessType(event.type) : "PHONE_CALL"));
@@ -261,7 +265,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
         ? { contactId: target.contactId, opportunityId }
         : { companyId: target?.companyId ?? null };
     logContext(ask).then((answer) => {
-      if (live && !("error" in answer)) setCtx(answer);
+      if (live && !("error" in answer)) {
+        ctxNow.current = answer;
+        setCtx(answer);
+      }
     });
     return () => {
       live = false;
@@ -306,7 +313,14 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     onClose();
   }
 
+  // Called after the save's await: its updates go in the save's transition,
+  // so step 2 shows when the save has landed (pending false), never with its
+  // button still reading "Saving…" from step 1.
   function enterNext(next: SavedLog, chip: ChipDef | null, followUp: FollowUpSeed | null) {
+    start(() => showNext(next, chip, followUp));
+  }
+
+  function showNext(next: SavedLog, chip: ChipDef | null, followUp: FollowUpSeed | null) {
     setSaved(next);
     setUndoLeft(true);
     setSeed(followUp);
@@ -328,7 +342,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     }
     setPhase("next");
     if (key && TRIES.has(key)) {
-      setChoice(ctx?.park ? "park" : "follow");
+      setChoice(ctxNow.current?.park ? "park" : "follow");
       setNextType(key === "BAD_NUMBER" ? "EMAIL" : "PHONE_CALL");
     } else if (key === "TALKED" || key === "REPLIED") setChoice("meeting");
     else if (key === "NOT_INTERESTED") setChoice("none");
