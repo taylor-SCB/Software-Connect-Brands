@@ -1,0 +1,585 @@
+<title>BDR Flow Redesign</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: one reading column for the argument, widening to a two-pane "screen" for the live meter mock. */
+  :root {
+    --paper: #f7f8fb; --paper-2: #eceff5; --card: #ffffff; --ink: #141720; --ink-2: #4a4f60; --ink-3: #6b7185;
+    --rule: #dde1ea; --rule-2: #c6cbd8; --brand: #5457d3; --brand-ink: #ffffff; --brand-soft: #ecedfb;
+    /* Health tokens proposed for the app: fixed on every tenant, colour-blind checked. */
+    --h-good: #0d9488; --h-warn: #d97706; --h-risk: #be123c; --h-none: #5b6473;
+    --h-good-soft: #d9f2ef; --h-warn-soft: #fbecd6; --h-risk-soft: #f9dde3; --h-none-soft: #e4e7ed;
+    --ok: #1e7f56; --ok-soft: #e4f4ec; --bad: #b4233a; --bad-soft: #fbe7ea;
+    --display: "Bricolage Grotesque", "Segoe UI", Arial, sans-serif;
+    --serif: "Source Serif 4", Georgia, serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0d0f15; --paper-2: #161922; --card: #12151d; --ink: #e8eaf1; --ink-2: #b3b8c8; --ink-3: #8a90a3;
+      --rule: #252a36; --rule-2: #343a4a; --brand: #8b8df5; --brand-ink: #0d0f15; --brand-soft: #1e2040;
+      --h-good: #0d9488; --h-warn: #d97706; --h-risk: #e11d48; --h-none: #7e889c;
+      --h-good-soft: #0f2a28; --h-warn-soft: #2d2210; --h-risk-soft: #2f121b; --h-none-soft: #1f232d;
+      --ok: #4fc48c; --ok-soft: #12291f; --bad: #f2788c; --bad-soft: #2d151b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0d0f15; --paper-2: #161922; --card: #12151d; --ink: #e8eaf1; --ink-2: #b3b8c8; --ink-3: #8a90a3;
+    --rule: #252a36; --rule-2: #343a4a; --brand: #8b8df5; --brand-ink: #0d0f15; --brand-soft: #1e2040;
+    --h-good: #0d9488; --h-warn: #d97706; --h-risk: #e11d48; --h-none: #7e889c;
+    --h-good-soft: #0f2a28; --h-warn-soft: #2d2210; --h-risk-soft: #2f121b; --h-none-soft: #1f232d;
+    --ok: #4fc48c; --ok-soft: #12291f; --bad: #f2788c; --bad-soft: #2d151b;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--serif); font-size: 17px; line-height: 1.6;
+    padding-block: 0 5rem;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; }
+  .wide { max-width: 64rem; margin: 0 auto; }
+  h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -0.015em; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(2.1rem, 5.4vw, 3rem); font-weight: 700; line-height: 1.04; }
+  h2 { font-size: 1.55rem; font-weight: 700; line-height: 1.15; }
+  h3 { font-size: 1.08rem; font-weight: 600; line-height: 1.25; }
+  h4 { font-size: 0.95rem; font-weight: 600; }
+  p { margin: 0; }
+  p + p { margin-top: 0.8em; }
+  ul { margin: 0; padding-left: 1.15rem; display: grid; gap: 0.35rem; }
+  .eyebrow { font-family: var(--display); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  .muted { color: var(--ink-2); }
+  .small { font-size: 0.92rem; }
+  .ui { font-family: var(--display); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header.mast { padding-block: 3.2rem 2rem; display: grid; gap: 1rem; border-bottom: 1px solid var(--rule); }
+  .lede { font-size: 1.12rem; color: var(--ink-2); max-width: 40rem; }
+  .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem; margin-top: 0.6rem; }
+  .fact { border-top: 2px solid var(--ink); padding-top: 0.5rem; display: grid; gap: 0.15rem; }
+  .fact b { font-family: var(--display); font-size: 1.65rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .fact span { font-family: var(--display); font-size: 0.8rem; color: var(--ink-2); line-height: 1.3; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; font-family: var(--display); font-size: 0.86rem; font-weight: 600; }
+  nav.toc a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--rule-2); }
+  nav.toc a:hover { color: var(--brand); border-color: var(--brand); }
+
+  section { padding-block: 3rem 0; scroll-margin-top: 1rem; }
+  .sec-head { display: grid; gap: 0.4rem; margin-bottom: 1.3rem; }
+  .sec-head p { color: var(--ink-2); }
+
+  /* The seven steps */
+  .ladder { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-top: 0.4rem; }
+  .rung { display: grid; gap: 0.4rem; }
+  .rung .bar { height: 10px; border-radius: 3px; background: var(--brand); }
+  .rung.bdr .bar { background: var(--h-good); }
+  .rung.new .bar { background: repeating-linear-gradient(135deg, var(--h-good) 0 6px, transparent 6px 9px); outline: 1.5px solid var(--h-good); outline-offset: -1.5px; }
+  .rung .name { font-family: var(--display); font-weight: 600; font-size: 0.82rem; line-height: 1.2; }
+  .rung .who { font-family: var(--display); font-size: 0.72rem; color: var(--ink-3); }
+  .key { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.9rem; font-family: var(--display); font-size: 0.8rem; color: var(--ink-2); }
+  .key i { display: inline-block; width: 18px; height: 8px; border-radius: 2px; vertical-align: middle; margin-right: 0.35rem; }
+
+  /* Connected */
+  .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  .panel { border: 1px solid var(--rule); border-radius: 12px; background: var(--card); padding: 1rem 1.1rem; display: grid; gap: 0.6rem; align-content: start; min-width: 0; }
+  .panel h3 { display: flex; align-items: center; gap: 0.5rem; }
+  .tick { width: 1.3rem; height: 1.3rem; border-radius: 999px; display: inline-grid; place-items: center; font-size: 0.8rem; font-weight: 700; font-family: var(--display); flex: none; }
+  .tick.yes { background: var(--h-good-soft); color: var(--h-good); }
+  .tick.no { background: var(--h-none-soft); color: var(--h-none); }
+  .panel li { font-size: 0.95rem; }
+
+  .sheet { margin-top: 1.1rem; border: 1px solid var(--rule); border-radius: 14px; background: var(--paper-2); padding: 1rem; display: grid; gap: 0.75rem; }
+  .sheet .t { font-family: var(--display); font-weight: 700; font-size: 1rem; }
+  .chiprow { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+  .chip { font-family: var(--display); font-size: 0.86rem; font-weight: 600; padding: 0.5rem 0.85rem; border-radius: 10px; border: 1.5px solid var(--rule-2); background: var(--card); color: var(--ink); min-height: 44px; display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+  .chip:focus-visible, button:focus-visible, .row:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .chip.connect { border-color: var(--h-good); }
+  .chip.connect::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--h-good); }
+  .chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  .chip.on::before { background: var(--brand-ink); }
+  .sheet .result { font-family: var(--display); font-size: 0.88rem; color: var(--ink-2); min-height: 1.4em; }
+  .sheet .lbl { font-family: var(--display); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* Meter mock */
+  .mock { margin-top: 1.2rem; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+  .screen { border: 1px solid var(--rule); border-radius: 14px; background: var(--card); overflow: hidden; min-width: 0; }
+  .screen .bar-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--rule); font-family: var(--display); font-size: 0.75rem; color: var(--ink-3); }
+  .hdr { padding: 1.1rem 1.1rem 1.2rem; display: grid; gap: 0.9rem; }
+  .who-line { display: flex; align-items: center; gap: 0.8rem; }
+  .ring { width: 54px; height: 54px; border-radius: 999px; padding: 3px; background: var(--hc); flex: none; display: grid; }
+  .ring.hollow { background: conic-gradient(var(--hc) 0 100%); }
+  .ring span { border-radius: 999px; background: var(--paper-2); display: grid; place-items: center; font-family: var(--display); font-weight: 700; font-size: 1.15rem; color: var(--ink); border: 2px solid var(--card); }
+  .ring.trying { background: repeating-conic-gradient(var(--hc) 0 18deg, transparent 18deg 30deg); }
+  .who-line .n { font-family: var(--display); font-weight: 700; font-size: 1.3rem; line-height: 1.1; }
+  .who-line .c { font-family: var(--display); font-size: 0.84rem; color: var(--ink-3); }
+  .word { margin-left: auto; font-family: var(--display); font-size: 0.8rem; font-weight: 700; padding: 0.28rem 0.65rem; border-radius: 999px; background: var(--hs); color: var(--ink); display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+  .word .mk { color: var(--hc); font-size: 0.85rem; }
+  .meter { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+  .seg { display: grid; gap: 0.3rem; min-width: 0; }
+  .seg i { height: 10px; border-radius: 3px; background: color-mix(in srgb, var(--hc) 20%, transparent); display: block; }
+  .seg.done i { background: var(--hc); }
+  .seg.next i { background: transparent; outline: 1.5px solid var(--hc); outline-offset: -1.5px; }
+  .seg.closed i { background: var(--h-none); }
+  .seg small { font-family: var(--display); font-size: 0.66rem; line-height: 1.2; color: var(--ink-3); overflow-wrap: anywhere; }
+  .seg.done small, .seg.cur small { color: var(--ink-2); }
+  .seg.cur small { font-weight: 700; color: var(--ink); }
+  @media (prefers-reduced-motion: no-preference) {
+    .seg.cur i { animation: breathe 2.4s ease-in-out infinite; }
+    .seg i { transition: background-color .3s ease; }
+  }
+  @keyframes breathe { 50% { opacity: .62; } }
+  .reason { font-family: var(--display); font-weight: 600; font-size: 1rem; }
+  .caption { font-family: var(--display); font-size: 0.82rem; color: var(--ink-3); }
+  .actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+  .btn { font-family: var(--display); font-weight: 600; font-size: 0.86rem; border-radius: 9px; padding: 0.55rem 0.9rem; border: 1px solid var(--rule-2); background: var(--card); color: var(--ink); min-height: 40px; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  .score { font-family: var(--display); font-size: 0.78rem; color: var(--ink-3); border-top: 1px dashed var(--rule-2); padding-top: 0.6rem; }
+  .score b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .list { display: grid; }
+  .list .head { padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--rule); font-family: var(--display); font-size: 0.8rem; font-weight: 700; display: flex; justify-content: space-between; gap: 0.5rem; }
+  .row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 0.15rem 0.6rem; align-items: center; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--rule); cursor: pointer; background: transparent; border-left: 0; border-right: 0; border-top: 0; text-align: left; color: inherit; font: inherit; width: 100%; }
+  .row:last-child { border-bottom: 0; }
+  .row:hover { background: var(--paper-2); }
+  .row[aria-pressed="true"] { background: var(--brand-soft); }
+  .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--hc); grid-row: span 2; align-self: start; margin-top: 0.4rem; }
+  .dot.hollow { background: transparent; border: 2px solid var(--hc); }
+  .row .nm { font-family: var(--display); font-weight: 600; font-size: 0.9rem; line-height: 1.2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .rs { font-family: var(--display); font-size: 0.78rem; color: var(--ink-2); grid-column: 2; line-height: 1.25; }
+  .mini { display: grid; grid-template-columns: repeat(7, 10px); gap: 2px; grid-row: span 2; }
+  .mini i { height: 5px; border-radius: 1px; background: color-mix(in srgb, var(--hc) 22%, transparent); }
+  .mini i.d { background: var(--hc); }
+  .mini i.x { background: var(--h-none); }
+
+  /* Health formula */
+  table { border-collapse: collapse; width: 100%; font-family: var(--display); font-size: 0.88rem; }
+  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+  .states { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.6rem; }
+  .state { border: 1px solid var(--rule); border-radius: 10px; padding: 0.7rem 0.8rem; background: var(--card); display: grid; gap: 0.25rem; }
+  .state .tt { font-family: var(--display); font-weight: 700; display: flex; align-items: center; gap: 0.45rem; }
+  .state p { font-size: 0.88rem; color: var(--ink-2); font-family: var(--display); }
+  .formula { font-family: var(--mono); font-size: 0.86rem; background: var(--paper-2); border-radius: 10px; padding: 0.8rem 0.9rem; overflow-x: auto; }
+
+  /* Screens */
+  .screens { display: grid; gap: 0.9rem; }
+  .scr { border: 1px solid var(--rule); border-radius: 12px; background: var(--card); padding: 1rem 1.1rem; display: grid; gap: 0.7rem; }
+  .scr .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  .scr .cols > div { min-width: 0; display: grid; gap: 0.35rem; align-content: start; }
+  .scr li { font-size: 0.93rem; }
+  .tag { font-family: var(--display); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }
+  .tag.today { color: var(--bad); }
+  .tag.next { color: var(--ok); }
+  .phone { font-family: var(--display); font-size: 0.86rem; color: var(--ink-2); border-top: 1px dashed var(--rule-2); padding-top: 0.55rem; }
+  .phone b { color: var(--ink); }
+
+  /* Decisions */
+  ol.decisions { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; counter-reset: d; }
+  ol.decisions > li { counter-increment: d; display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); gap: 0.2rem 0.6rem; padding: 0.95rem 0; border-top: 1px solid var(--rule); }
+  ol.decisions > li::before { content: counter(d); font-family: var(--display); font-weight: 700; font-size: 1.05rem; color: var(--brand); grid-row: span 3; font-variant-numeric: tabular-nums; }
+  .q { font-family: var(--display); font-weight: 600; line-height: 1.35; }
+  .rec { font-size: 0.95rem; }
+  .rec b { font-family: var(--display); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ok); margin-right: 0.35rem; }
+  .why2 { font-size: 0.9rem; color: var(--ink-2); }
+  .new-badge { font-family: var(--display); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--h-warn); margin-left: 0.4rem; }
+
+  /* Releases */
+  .rel { margin-top: 0.9rem; border: 1px solid var(--rule); border-radius: 12px; background: var(--card); padding: 1rem 1.15rem; display: grid; gap: 0.6rem; }
+  .rel.now { border-color: var(--h-good); box-shadow: inset 4px 0 0 var(--h-good); }
+  .rel .top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.3rem 0.8rem; }
+  .rel .size { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-3); }
+  .rel .status { font-family: var(--display); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .rel .status.go { color: var(--h-good); }
+  .rel .status.wait { color: var(--ink-3); }
+  .rel li { font-size: 0.93rem; }
+  .ok-list li { font-size: 0.93rem; }
+
+  .answer { margin-top: 2.6rem; border: 1.5px solid var(--brand); border-radius: 14px; padding: 1.1rem 1.2rem; background: var(--brand-soft); display: grid; gap: 0.5rem; }
+  .answer h2 { font-size: 1.25rem; }
+  code { font-family: var(--mono); font-size: 0.86em; background: var(--paper-2); padding: 0.05rem 0.3rem; border-radius: 4px; }
+
+  @media (max-width: 760px) {
+    .mock { grid-template-columns: minmax(0, 1fr); }
+    .two, .scr .cols { grid-template-columns: minmax(0, 1fr); }
+    .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 520px) {
+    body { font-size: 16px; }
+    .ladder { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+    .rung .name { font-size: 0.66rem; }
+    .rung .who { display: none; }
+    .seg small { font-size: 0.58rem; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">Software Connect Brands · UX review · Nov 10, 2026</p>
+    <h1>BDR Flow Redesign</h1>
+    <p class="lede">A new BDR should open the app and know three things at once: who to call next, what happened last time, and the one next step. Today the app records what a rep did but not how it went. A voicemail and a real conversation both make someone "Contacted". This plan makes Connected a real step, shows every person as one lifecycle meter coloured by health, and strips each screen back to what a rep needs today. Nothing gets deleted. Nothing is built until you say yes.</p>
+    <div class="facts">
+      <div class="fact"><b class="num">8</b><span>walks through the app, phone and desktop, Dark and Light</span></div>
+      <div class="fact"><b class="num">128</b><span>things that make a screen harder than it needs to be</span></div>
+      <div class="fact"><b class="num">34</b><span>real bugs, being fixed now in Release 0</span></div>
+      <div class="fact"><b class="num">38 of 46</b><span>"Contacted" people in the demo were never actually reached</span></div>
+    </div>
+    <nav class="toc" aria-label="Sections">
+      <a href="#steps">The seven steps</a><a href="#connected">Connected</a><a href="#meter">The meter</a><a href="#health">Health score</a><a href="#screens">Screen by screen</a><a href="#kept">Kept, one tap deeper</a><a href="#decisions">Your calls</a><a href="#releases">Releases</a>
+    </nav>
+  </header>
+
+  <section id="steps">
+    <div class="sec-head">
+      <p class="eyebrow">The flow</p>
+      <h2>Seven steps a first-week rep can say out loud</h2>
+      <p>Attempted, Connected, Meeting Set, Meeting Completed, Quote Sent, Contract Sent, Won. The BDR owns the first four. The closer usually owns the last three. Both see the whole chain on the same meter, so a rep can watch how far their lead got after the hand-off.</p>
+    </div>
+    <div class="ladder" role="img" aria-label="Attempted, Connected (new), Meeting Set, Meeting Completed: the BDR's steps. Quote Sent, Contract Sent, Won: the closer's steps.">
+      <div class="rung bdr"><div class="bar"></div><span class="name">Attempted</span><span class="who">BDR</span></div>
+      <div class="rung bdr new"><div class="bar"></div><span class="name">Connected</span><span class="who">BDR · new</span></div>
+      <div class="rung bdr"><div class="bar"></div><span class="name">Meeting Set</span><span class="who">BDR</span></div>
+      <div class="rung bdr"><div class="bar"></div><span class="name">Meeting Completed</span><span class="who">BDR</span></div>
+      <div class="rung"><div class="bar"></div><span class="name">Quote Sent</span><span class="who">Closer</span></div>
+      <div class="rung"><div class="bar"></div><span class="name">Contract Sent</span><span class="who">Closer</span></div>
+      <div class="rung"><div class="bar"></div><span class="name">Won</span><span class="who">Closer</span></div>
+    </div>
+    <div class="key"><span><i style="background:var(--h-good)"></i>BDR's part</span><span><i style="background:repeating-linear-gradient(135deg,var(--h-good) 0 6px,transparent 6px 9px);outline:1.5px solid var(--h-good);outline-offset:-1.5px"></i>The new step</span><span><i style="background:var(--brand)"></i>Closer's part, unchanged</span></div>
+    <p class="small muted" style="margin-top:0.9rem">Your ladder keeps every value it has. "Attempted" is the existing Contacted value, shown under a clearer name only if you agree (decision 3). Connected is the one new value. It goes in last, in its own small release, after the outcome buttons have run for a while.</p>
+  </section>
+
+  <section id="connected">
+    <div class="sec-head">
+      <p class="eyebrow">You asked for this one</p>
+      <h2>What "Connected" means</h2>
+      <p>A two-way exchange with that actual person. Logging activity is an attempt. Connecting is the next step. Booking the meeting is the goal.</p>
+    </div>
+    <div class="two">
+      <div class="panel">
+        <h3><span class="tick yes" aria-hidden="true">✓</span>Counts as Connected</h3>
+        <ul>
+          <li>A call where you talked live, however short. That includes "not interested" and "call me next week".</li>
+          <li>They replied by text or email. The rep taps "They replied", because the app doesn't read inboxes yet.</li>
+          <li>A meeting that was held. Every past meeting already in the system counts.</li>
+          <li>Booking a meeting, or marking someone Interested or Not interested. You had to talk to do that.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3><span class="tick no" aria-hidden="true">–</span>Is only an attempt</h3>
+        <ul>
+          <li>No answer, voicemail or busy</li>
+          <li>Front desk or "took a message"</li>
+          <li>Wrong number (the app also offers "Fix number")</li>
+          <li>A text or email you sent that got no reply</li>
+          <li>A no-show</li>
+        </ul>
+        <p class="small muted">Marketing sends stay what they are today: neither an attempt nor a connect.</p>
+      </div>
+    </div>
+
+    <div class="sheet" aria-label="Mock of the How did it go? sheet">
+      <div><p class="lbl">Mock · after a call</p><p class="t">How did it go with Kristen?</p></div>
+      <div class="chiprow" role="group" aria-label="Call outcome">
+        <button class="chip" type="button" data-out="No answer" data-next="Try again Thu is ticked. Kristen drops off Up next until then.">No answer</button>
+        <button class="chip" type="button" data-out="Left voicemail" data-next="Try again Thu is ticked. An attempt, not a connect.">Left voicemail</button>
+        <button class="chip connect" type="button" data-out="Talked" data-next="Connected. Next step already picked: Book meeting · Call back on… · Interested.">Talked</button>
+        <button class="chip connect" type="button" data-out="Meeting booked" data-next="Connected. Opens Book meeting: day chips, time chips, who else. Puts Kristen on your Pipeline in Meeting Set.">Meeting booked</button>
+        <button class="chip connect" type="button" data-out="Not interested" data-next="Connected. One optional reason chip (Price · Timing · Has a vendor · No budget · Other) and Check back in 90 days?">Not interested</button>
+        <button class="chip" type="button" data-out="More" data-next="More holds Busy · Front desk · Wrong number. All attempts.">More…</button>
+      </div>
+      <p class="result" id="out-result" aria-live="polite">Tap an outcome. One tap saves it, with "Saved · Undo" for 10 seconds. Green-edged chips count as Connected.</p>
+    </div>
+    <p class="small muted" style="margin-top:0.8rem">The chips open on their own when a rep comes back from tapping Call or Text. The chip's words become the note, so a required note never blocks a log. Texts and emails get Sent · They replied · Meeting booked · Not interested. Meetings get Held · No-show · Rescheduled. Old history is never guessed: old calls count as attempts, old meetings as held, and Stats says "Talks counted from" the launch day.</p>
+  </section>
+</div>
+
+<section id="meter" class="wide">
+  <div class="wrap sec-head">
+    <p class="eyebrow">The visual you asked for</p>
+    <h2>One lifecycle meter, coloured by health</h2>
+    <p>The meter's length is how far along someone is. Its colour is how warm they are, with one plain word and one sentence beside it. The number only shows when you hover or long-press. Pick a person on the right to see it change. These are demo people from the review's seeded workspace.</p>
+  </div>
+  <div class="mock">
+    <div class="screen" aria-label="Mock of a contact page header">
+      <div class="bar-top"><span>Contact page · header (mock)</span><span id="m-step">Step 3 of 7</span></div>
+      <div class="hdr" id="hdr">
+        <div class="who-line">
+          <div class="ring" id="m-ring"><span id="m-init">K</span></div>
+          <div style="min-width:0"><div class="n" id="m-name">Kristen Vaughn</div><div class="c" id="m-co">Preconstruction Manager · Ironwood General Contractors</div></div>
+          <span class="word" id="m-word"><span class="mk" id="m-mark" aria-hidden="true">●</span><span id="m-wordtxt">Warm</span></span>
+        </div>
+        <div class="meter" id="m-meter" role="img" aria-label=""></div>
+        <p class="reason" id="m-reason">Talked today · meeting Tue 10:00 AM</p>
+        <p class="caption" id="m-cap">3 tries · 1 talk · last touch today</p>
+        <div class="actions"><span class="btn primary" id="m-btn">Meeting Tue 10:00 AM</span><span class="btn">Call ▾</span><span class="btn">Text</span><span class="btn">Email</span><span class="btn">⋯ More</span></div>
+        <p class="score" id="m-score">Hover or long-press shows: <b>Recent 40 · Talk 30 · Next step 30 = 100</b></p>
+      </div>
+    </div>
+    <div class="screen">
+      <div class="list" id="list" role="group" aria-label="Up next on My day (mock). Pick a person to show their header.">
+        <div class="head"><span>Up next (mock)</span><span class="muted" style="font-weight:500">8 rows, then "Show all"</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <p class="small muted" style="margin-top:0.9rem">The same meter comes in two sizes. The header size goes on contact, company and opportunity pages. The mini size (about 82px) goes on list rows, Up next, company People rows and Pipeline tiles. On a phone, the header names only the current step and the next one ("Meeting Set → next: Meeting Completed"), with a full-width button. It replaces the 23px status pill and the six-tile Activity overview, both still one tap away. Quote, Contract and Won stay read-only on the meter ("Moves when the quote goes out"), so the paperwork keeps driving them as it does today.</p>
+  </div>
+</section>
+
+<div class="wrap">
+  <section id="health">
+    <div class="sec-head">
+      <p class="eyebrow">How warm, in one word</p>
+      <h2>The health score</h2>
+      <p>Health is worked out each time a page loads, from data the app already keeps, and never stored, so it can be tuned without touching the database. It has one dial: the "quiet after" days in Settings → General (8 today), the same number that drives Gone quiet. Days are counted in your workspace's time zone.</p>
+    </div>
+    <div class="states">
+      <div class="state"><span class="tt"><span class="dot hollow" style="--hc:var(--h-none);margin:0"></span>New</span><p>Never touched. Grey outline, "Not tried yet". A fresh lead is never red.</p></div>
+      <div class="state"><span class="tt"><span class="dot hollow" style="--hc:var(--h-warn);margin:0"></span>Trying</span><p>Touched but never reached. Grey, turning amber when stalled. No number, never red: a score for someone nobody has spoken to would be made up.</p></div>
+      <div class="state"><span class="tt"><span class="dot" style="--hc:var(--h-good);margin:0"></span>Warm · 70+</span><p>Reached, recently touched, something booked.</p></div>
+      <div class="state"><span class="tt"><span class="dot" style="--hc:var(--h-warn);margin:0"></span>Cooling · 40–69</span><p>Reached, but the touches or the next step are slipping.</p></div>
+      <div class="state"><span class="tt"><span class="dot" style="--hc:var(--h-risk);margin:0"></span>Cold · under 40</span><p>A relationship that went quiet. In the demo, red lands on just 10 of 140 people, so red still means act now.</p></div>
+      <div class="state"><span class="tt"><span class="dot" style="--hc:var(--h-good);margin:0"></span>Won · Closed</span><p>Won shows ✓, then turns red if a payment is past due ("Owes $3,377 · 12 days late"). Closed is grey ×, with the reason.</p></div>
+    </div>
+    <p class="formula" style="margin-top:1rem">Score = Recent touch (0–40) + Last talk (0–30) + Next step (0–30) − Drag (15)</p>
+    <div class="scroll" style="margin-top:0.6rem">
+      <table>
+        <thead><tr><th>Part</th><th>How it scores (quiet days Q = 8)</th></tr></thead>
+        <tbody>
+          <tr><td>Recent touch</td><td>Any call, text, email or meeting: 0–2 days 40 · up to 4 days 25 · up to 8 days 10 · longer 0. It hits 0 the day Gone quiet would fire.</td></tr>
+          <tr><td>Last talk</td><td>Talked, replied or met: within 8 days 30 · within 16 days 20 · longer 10. Minus 10 after 5 or more tries since the last talk.</td></tr>
+          <tr><td>Next step</td><td>A meeting, call or follow-up booked ahead, or paperwork sent in the last 8 days, with nothing late 30 · something booked but something else late 15 · nothing booked 0.</td></tr>
+          <tr><td>Drag</td><td>Minus 15 when a quote or contract has been out more than 8 days with no touch since.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted" style="margin-top:0.8rem">The reason sentence picks the first of these that applies: owes money · follow-up late · "Did the Nov 6 meeting happen?" · contract out and unsigned · quiet and nothing booked · tries since the last talk · talked and booked · still trying · not tried yet. A company takes its warmest person's health plus "2 of 7 reached". A Pipeline tile reads its listed people plus the paperwork drag. The colours are fixed on every white-label tenant and pass a colour-blind check in both looks. Colour is never the only signal: each state also has a mark and a word.</p>
+  </section>
+
+  <section id="screens">
+    <div class="sec-head">
+      <p class="eyebrow">Today, and what changes</p>
+      <h2>Screen by screen</h2>
+      <p>Every screen answers the same three questions in the same order. What a rep doesn't need today moves exactly one tap deeper. Nothing is removed.</p>
+    </div>
+    <div class="screens">
+      <article class="scr">
+        <h3>My day: the BDR's home (new first tab for Members)</h3>
+        <div class="cols">
+          <div><span class="tag today">Today</span><ul><li>A Member lands on a whole-team Daily Rundown: a 60-word paragraph, then seven money tiles that mostly read $0.00.</li><li>"On the calendar today · 12" starts with 8 calls already done. The 3 still to make are behind See all.</li><li>No row can be tapped and none has a Call button.</li></ul></div>
+          <div><span class="tag next">Proposed</span><ul><li>One sentence: "Morning, Marcus · 2 follow-ups late · 9 to call · Redbud quiet 17 days."</li><li>Three rings for the week: Tries · Talks · Meetings booked.</li><li>Up next: one ranked list with a reason on each row and Call / Text / Log. Meetings to close out first, then late, due today, talked but no meeting, new, still trying.</li><li>Done today folds away. Money and reports sit collapsed at the foot. Owners and Admins keep Daily Rundown, with a Team today strip on top.</li></ul></div>
+        </div>
+        <p class="phone"><b>Phone:</b> one column. Up next starts about 220px down instead of about 2,250px, with a sticky "Next: Kelsey Dawson · Call" bar.</p>
+      </article>
+      <article class="scr">
+        <h3>Contacts and Companies lists</h3>
+        <div class="cols">
+          <div><span class="tag today">Today</span><ul><li>Contacts: 14 columns at 1,939px wide, Status off-screen, about 168 pills a page.</li><li>"My people I haven't reached this week" takes 5 to 11 clicks.</li><li>Rows reorder whenever anyone edits anything. On a phone it's the desktop table.</li></ul></div>
+          <div><span class="tag next">Proposed</span><ul><li>[Mine | Everyone] + search + presets: My call list · Never touched · Talked, no meeting · Meetings this week · Filters (n).</li><li>Six columns: Person · Pulse (mini meter, "4 tries · 1 talk · 6d") · Next step · Best phone · Rep. The rest come back from a Columns menu.</li><li>Companies show "2 of 7 reached". Under 20 pills a page.</li></ul></div>
+        </div>
+        <p class="phone"><b>Phone:</b> a card list with 44px Call · Text · Log. Filters open as a sheet with "Show 27 people".</p>
+      </article>
+      <article class="scr">
+        <h3>Contact page</h3>
+        <div class="cols">
+          <div><span class="tag today">Today</span><ul><li>Seven equal header buttons and a red Delete, but no Call, Text or Book meeting.</li><li>15 cards. For a new lead, 5 on the right are empty or $0.00.</li><li>On a phone the number to call is about 1,660px down.</li></ul></div>
+          <div><span class="tag next">Proposed</span><ul><li>Header: health ring, name, Rep chip, the meter, the reason, and one main button that follows the stage (Call → Book meeting → Mark held → Start a quote).</li><li>"What happened with Kristen?" opens the outcome sheet. History grouped by day, connects tagged green.</li><li>Paperwork cards appear only once something exists. 15 cards to 5.</li></ul></div>
+        </div>
+        <p class="phone"><b>Phone:</b> a sticky bottom bar: Call · Text · Log · Book · ⋯. A new lead's page shrinks from about 3,500px to about 1,600px.</p>
+      </article>
+      <article class="scr">
+        <h3>Company page</h3>
+        <div class="cols">
+          <div><span class="tag today">Today</span><ul><li>The first thing on the page is a 480px log form. People is the fifth card and shows no mobiles.</li><li>Eleven cards that can contradict each other ("Contract Sent" beside "No contracts yet").</li></ul></div>
+          <div><span class="tag next">Proposed</span><ul><li>"Who to call" first: people by stage and health, with mobile, "Last: VM · 3d · 4 tries" and Call / Text / Log.</li><li>One Opportunity card replaces the empty paperwork cards. 16 cards to 6.</li></ul></div>
+        </div>
+        <p class="phone"><b>Phone:</b> fits the screen (that part is a Release 0 fix). Sticky bar: Call main line · Log · Book · ⋯.</p>
+      </article>
+      <article class="scr">
+        <h3>Pipeline</h3>
+        <div class="cols">
+          <div><span class="tag today">Today</span><ul><li>No Mine filter. Meeting Set mixes meetings that already happened with next week's: 7 of 13 in the demo had passed.</li><li>A red N/A chip on 19 of 23 tiles, and a stage chip that repeats the column name.</li></ul></div>
+          <div><span class="tag next">Proposed</span><ul><li>Tiles: the person, the mini meter, one next-step line ("Met Nov 6, how did it go?"), a health-colour top edge.</li><li>Meeting Set splits into "Coming up" and "Happened, how did it go?" with Held / No-show / Reschedule. Same column name.</li><li>34 pills to under 10.</li></ul></div>
+        </div>
+        <p class="phone"><b>Phone:</b> stage tabs with counts above one stage's cards, each with a full-width next-step button.</p>
+      </article>
+      <article class="scr">
+        <h3>Calendar, Stats and paperwork</h3>
+        <div class="cols">
+          <div><span class="tag today">Today</span><ul><li>Calendar opens on a whole-team month of 147 entries. The Done box asks no outcome and books no next follow-up.</li><li>Stats funnel has no Connected step, and "Phone Call 216" is mostly voicemails.</li><li>Deal to signed contract takes about 20 taps across five screens.</li></ul></div>
+          <div><span class="tag next">Proposed</span><ul><li>Members and phones open on an Agenda: Overdue, Today, next 7 days. Done opens the outcome sheet with the next follow-up.</li><li>Stats: Tries · Talks · Connect rate · Meetings booked · Show rate · Won $.</li><li>One "Meeting · Quote · Contract · Signed · Deposit" strip on the quote, Coordinator and contract, with one Next button.</li></ul></div>
+        </div>
+        <p class="phone"><b>Phone navigation:</b> today it's one 3,159px sideways strip of 24 links. Proposed: a bottom tab bar (Today · Contacts · Companies · Pipeline · More) with every link kept, in today's order, under More.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="kept">
+    <div class="sec-head">
+      <p class="eyebrow">Nothing deleted</p>
+      <h2>Kept, one tap deeper</h2>
+    </div>
+    <ul class="ok-list">
+      <li><b class="ui">Lists:</b> Status, Activity counts, Last Contacted By and Notes fold into the Pulse cell. Every column comes back from a per-person Columns menu. The 12 filter dropdowns move into one Filters panel.</li>
+      <li><b class="ui">Record headers:</b> New quote, New contract, Edit, Additional Account and Delete move into ⋯ More, with Delete's confirm kept. The full status picker stays under ⋯ More → "Set status by hand".</li>
+      <li><b class="ui">Activity overview:</b> the six count tiles sit behind "Show counts".</li>
+      <li><b class="ui">Pipeline tiles:</b> the stage chip moves into the tile's ⋯; drag still works. The label chip shows only when a label is set.</li>
+      <li><b class="ui">Overview for Members:</b> money tiles, Recent activity and the report bar collapse into "Team & money" and "Reports ▸".</li>
+      <li><b class="ui">Calendar:</b> Calendar / Log / Calendar+Log and "Copy this week into next" move into a View menu.</li>
+      <li><b class="ui">Reports and Stats:</b> the duplicate table under each chart sits behind "Show numbers".</li>
+    </ul>
+  </section>
+
+  <section id="decisions">
+    <div class="sec-head">
+      <p class="eyebrow">Only you can answer these</p>
+      <h2>Your calls</h2>
+      <p>Each has a recommendation. Reply with "approve the recommendations", or name the numbers you'd change.</p>
+    </div>
+    <ol class="decisions">
+      <li><p class="q">Approve this definition of Connected: a live talk, a reply by text or email, a held meeting, or booking one. Voicemail, no answer, front desk, wrong number, an unanswered text or email, and a no-show don't count.</p><p class="rec"><b>Recommended</b>Yes, as written, with the one-tap chip words.</p><p class="why2">Without it the app can't tell dialing from talking, which is the gap you named.</p></li>
+      <li><p class="q">Should Connected become a real step on the status ladder (Status filter, Stats funnel, rolling up to the company), or live only on the meter?</p><p class="rec"><b>Recommended</b>A real step, shipped in its own small release after the outcome chips have run a while.</p><p class="why2">It adds one value and renames nothing. A database status value is hard to take back, so it goes last and small.</p></li>
+      <li><p class="q">Should "Contacted" read "Attempted"?</p><p class="rec"><b>Recommended</b>Yes. Only the label; the stored value and CSV import stay the same.</p><p class="why2">Next to Connected, "Contacted" after a voicemail tells a new rep something untrue.</p></li>
+      <li><p class="q">Should Meeting Completed be set automatically when a meeting is logged Held or ticked done?</p><p class="rec"><b>Recommended</b>Yes, with a check when the meeting date is still ahead.</p><p class="why2">7 of 13 Meeting Set tiles in the demo were meetings that had already happened and were never closed out.</p></li>
+      <li><p class="q">The follow-up box's "Meeting" tick sets Meeting Set today (your Oct 4 rule). Should it become "Try to book a meeting", a reminder that doesn't move the status, with real booking going through a Book meeting sheet?</p><p class="rec"><b>Recommended</b>Yes.</p><p class="why2">A rep who ticks it as a reminder fills Meeting Set and the Pipeline with meetings that don't exist.</p></li>
+      <li><p class="q">How should health show: a word plus a coloured dot or ring, or the 0–100 number everywhere?</p><p class="rec"><b>Recommended</b>Word and colour everywhere. The number only on hover or long-press, as a breakdown.</p><p class="why2">Numbers on every row are the "coded" feeling you described.</p></li>
+      <li><p class="q">Should the health colours stay the same on every white-label tenant instead of following the partner's brand colour?</p><p class="rec"><b>Recommended</b>Yes, fixed.</p><p class="why2">Red has to mean "act now" for every customer, and these colours pass a colour-blind check that the app's current green / amber / red don't.</p></li>
+      <li><p class="q">Should people who've never been reached get a 0–100 score too?</p><p class="rec"><b>Recommended</b>No. Show them as "Trying": grey, amber when stalled, never red, no number.</p><p class="why2">One design tried it and painted 43 of 46 Contacted people red.</p></li>
+      <li><p class="q">What should a Member see first: the new "My day" or the Daily Rundown?</p><p class="rec"><b>Recommended</b>My day, for Members only. Owners and Admins keep Daily Rundown with Team today on top.</p><p class="why2">A BDR's first question is who to call now. Today the answer is about 2,250px down a phone screen.</p></li>
+      <li><p class="q">Old activities: leave them "not recorded" (counted as attempts), or run a one-time script that labels obvious voicemails from their notes?</p><p class="rec"><b>Recommended</b>Leave real data as it is. Run the script on the demo only. Neither ever guesses a connect.</p><p class="why2">A wrong guess on a customer's history is worse than a blank.</p></li>
+      <li><p class="q">Team goals for tries, talks and meetings booked: who sets them?</p><p class="rec"><b>Recommended</b>Optional, per workspace, set by Owners and Admins in Settings → General. Until set, the rings show "vs last week".</p><p class="why2">A scoreboard worth winning, without forcing a number on a team that doesn't want one.</p></li>
+      <li><p class="q">After how many tries with no connect should the app suggest parking a lead?</p><p class="rec"><b>Recommended</b>6 tries. Parking only books "Try again in 30 days". No new status.</p><p class="why2">Stops endless redialing without adding a step to the ladder.</p></li>
+      <li><p class="q">When a closer runs a meeting a BDR booked, who gets credit for the held meeting?</p><p class="rec"><b>Recommended</b>The rep who booked it gets meetings held and show rate. The deal and its money stay with the deal's rep, as today.</p><p class="why2">A BDR's job ends at a held meeting. This needs one new field recording who booked each meeting.</p></li>
+      <li><p class="q">Should Not interested and Lost ask for a one-tap reason?</p><p class="rec"><b>Recommended</b>Yes, optional chips: Price · Timing · Has a vendor · No budget · Other.</p><p class="why2">One tap, and it tells you why deals die.</p></li>
+      <li><p class="q">Can a Member bulk "Assign to me" a teammate's records?</p><p class="rec"><b>Recommended</b>Yes, with a confirm that names the owner ("12 of these belong to Priya. Take them?") and an Undo.</p><p class="why2">Today one mis-click silently takes a teammate's whole territory.</p></li>
+      <li><p class="q">The marketing email (the noreply@ sender) is separate from a one-to-one email. Should the Email button on a single contact's page become a plain one-to-one send that counts as a touch, while the marketing sender stays exactly as it is?<span class="new-badge">Added by the review's critic</span></p><p class="rec"><b>Recommended</b>Yes: a separate one-to-one Email (no template, no unsubscribe footer, not counted in the 40-a-day limit) that logs a Sent email. Marketing stays untouched.</p><p class="why2">You said today that marketing sends must stay out of touches. This keeps that rule and still lets a rep's real email count.</p></li>
+      <li><p class="q">You ruled "everyone sees everyone". Should Members still open their lists, Pipeline and Calendar on "Mine", with Everyone one tap away?<span class="new-badge">Added by the review's critic</span></p><p class="rec"><b>Recommended</b>Yes: Mine is the default view, nothing is hidden, and Everyone is one tap away.</p><p class="why2">Visibility doesn't change; only the starting view does. If you'd rather, Everyone stays the default and "Mine" becomes the first preset.</p></li>
+      <li><p class="q">Unowned leads: with no auto-assign, most new leads have no rep, so they'd never reach anyone's call list. Should Up next show "43 new leads nobody owns · Take 10"?<span class="new-badge">Added by the review's critic</span></p><p class="rec"><b>Recommended</b>Yes. Taking them is a manual claim with a confirm and Undo, so nothing is assigned automatically.</p><p class="why2">It respects your no-auto-assign rule and still gets fresh leads called.</p></li>
+      <li><p class="q">"Build Quote" in the convert prompt puts the deal in Quote Sent before any quote exists. Should the stage move happen when the quote is actually sent instead?<span class="new-badge">Added by the review's critic</span></p><p class="rec"><b>Recommended</b>Yes: Build Quote leaves the deal at Meeting Completed until "Send quote". Manual Input still moves it straight away, as you designed.</p><p class="why2">Otherwise the meter and the Pipeline show "Quote Sent" with no quote, which is the contradiction the review kept hitting.</p></li>
+    </ol>
+  </section>
+
+  <section id="releases">
+    <div class="sec-head">
+      <p class="eyebrow">In order, one at a time</p>
+      <h2>Releases</h2>
+      <p>Each release goes live only after your usual "Ready to go live?" Every visual change gets a clickable mock in Dark and Light before it's built. Renames and moves are listed under the release that makes them, so you approve each one where it happens.</p>
+    </div>
+
+    <div class="rel now">
+      <div class="top"><h3>R0 · Stop the breakage</h3><span class="status go">Being fixed now</span></div>
+      <p class="small">Bug fixes only, nothing renamed, moved or redesigned. 34 confirmed bugs, each getting its own browser test:</p>
+      <ul>
+        <li>Windows like Import CSV and Email open on screen (today they open off-screen, below the fold).</li>
+        <li>Overview, the company page and the Contract Coordinator fit a 390px phone. Filter menus and the Add person panel stay on screen.</li>
+        <li>Search finds a phone number however it's typed, and searches job titles. "Yesterday" means the calendar day.</li>
+        <li>Signing a contract marks its quote Accepted and clears its follow-up (today a won deal can show $0).</li>
+        <li>Quote line boxes show their full numbers (16 hours no longer reads "1"). Mark as sent can't drop unsaved lines.</li>
+        <li>Calendar trash and Delete quote ask first. Light-mode outlines and lead label chips become readable outdoors.</li>
+      </ul>
+    </div>
+    <div class="rel"><div class="top"><h3>R1 · See it at a glance</h3><span class="size">S–M · about 5 days · mock first</span></div><ul><li>The meter and health colour on contact, company and opportunity headers and Pipeline tiles, built from data already stored. No database change.</li><li>Needs your OK: the meter replaces the status pill and Activity overview on headers; Pipeline tile chips move into ⋯; fixed health colours.</li></ul></div>
+    <div class="rel"><div class="top"><h3>R2 · "How did it go?"</h3><span class="size">M · about 6–7 days · needs decision 1</span></div><ul><li>One-tap outcomes on the contact log, the company log and the calendar's Done box, with the next step pre-picked and Undo.</li><li>Real connects light up the meter, new filters ("Never connected", "Not connected in 7 / 30 days"), and Stats splits tries from talks.</li><li>Database: an outcome on each activity, a last-connect date kept like last-touch, a reason on status changes. Proven at 200,000 contacts before it ships.</li></ul></div>
+    <div class="rel"><div class="top"><h3>R3 · Connected on the ladder</h3><span class="size">S · about 2–3 days · only with your yes</span></div><ul><li>The CONNECTED status value, rolling up to the company and into the Stats funnel. If approved, "Attempted" as the label and automatic Meeting Completed on Held.</li></ul></div>
+    <div class="rel"><div class="top"><h3>R4 · Book the meeting</h3><span class="size">M · about 6–7 days</span></div><ul><li>The contact page rebuilt around the next step: action bar, a Book meeting sheet (about 6 taps from dial to booked), Paperwork card, sticky phone bar.</li></ul></div>
+    <div class="rel"><div class="top"><h3>R5 · My day</h3><span class="size">M · about 6–7 days</span></div><ul><li>The BDR's home, Team today for owners, optional goals, the calendar Agenda, and the phone tab bar (if approved).</li></ul></div>
+    <div class="rel"><div class="top"><h3>R6 · Lists that read like a call list</h3><span class="size">L · about 8–10 days</span></div><ul><li>Contacts and Companies: presets, Pulse column, Filters panel, Columns menu, phone cards. Each person's choices remembered across devices.</li></ul></div>
+    <div class="rel"><div class="top"><h3>R7 · Pipeline and company page speak BDR</h3><span class="size">M–L · about 7–8 days</span></div><ul><li>Mine | Everyone, three-line tiles, Coming up / Happened in Meeting Set, Who to call first on the company page.</li></ul></div>
+    <div class="rel"><div class="top"><h3>R8 · Carry it to the money</h3><span class="size">M · about 6 days</span></div><ul><li>The Meeting · Quote · Contract · Signed · Deposit strip with one Next button, a share sheet for "Send quote", and the finishing touches on type and colour.</li></ul></div>
+
+    <div class="answer">
+      <h2>What I need from you</h2>
+      <p>Answer the 19 calls above. "Approve the recommendations" works, or list the numbers you'd change. Release 0 is already underway because it only fixes bugs. Release 1 starts with a clickable mock of the meter in Dark and Light for you to react to before anything is built.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var STEPS = ["Attempted", "Connected", "Meeting Set", "Meeting Completed", "Quote Sent", "Contract Sent", "Won"];
+  var H = {
+    warm:   { c: "var(--h-good)", s: "var(--h-good-soft)", w: "Warm", m: "●" },
+    cool:   { c: "var(--h-warn)", s: "var(--h-warn-soft)", w: "Cooling", m: "◐" },
+    cold:   { c: "var(--h-risk)", s: "var(--h-risk-soft)", w: "Cold", m: "▲" },
+    trying: { c: "var(--h-warn)", s: "var(--h-warn-soft)", w: "Trying", m: "○" },
+    fresh:  { c: "var(--h-none)", s: "var(--h-none-soft)", w: "New", m: "○" }
+  };
+  // Worked examples from the plan's test run on the demo workspace.
+  var PEOPLE = [
+    { name: "Jessica Moreno", co: "Regional Property Manager · Ridgeline Property Group", step: 2, h: "cool", reason: "Did the Nov 6 meeting happen?", cap: "4 tries · 2 talks · 1 meeting · last touch 4d", btn: "Mark held", score: "Recent 25 · Talk 30 · Next step 0 = 55", why: "Met Nov 6, how did it go?" },
+    { name: "Kristen Vaughn", co: "Preconstruction Manager · Ironwood General Contractors", step: 2, h: "warm", reason: "Talked today · meeting Tue 10:00 AM", cap: "3 tries · 1 talk · last touch today", btn: "Meeting Tue 10:00 AM", score: "Recent 40 · Talk 30 · Next step 30 = 100", why: "Meeting Tue 10:00 AM" },
+    { name: "Olivia Wolfe", co: "Asset Manager · Ozark Ridge Properties", step: 0, h: "trying", reason: "1 try, 29 days ago · try again", cap: "1 try · no talks yet · last touch 29d", btn: "Call", score: "No score until someone is reached", why: "1 try, 29 days ago" },
+    { name: "Rachel Nguyen", co: "Property Manager · Pecan Grove Communities", step: 4, h: "warm", reason: "Quote out 7 days · follow-up Thu", cap: "9 tries · 4 talks · 1 meeting · last touch 4d", btn: "Customer said yes", score: "Recent 25 · Talk 20 · Next step 30 = 75", why: "Quote $11.8k · sent 7d" },
+    { name: "Steven Park", co: "Asset Manager · Redbud Capital Partners", step: 3, h: "cold", reason: "Quiet 17 days · nothing booked", cap: "6 tries · 2 talks · 1 meeting · last touch 17d", btn: "Start a quote", score: "Recent 0 · Talk 10 · Next step 0 = 10", why: "Quiet 17 days" },
+    { name: "Gregory Shaw", co: "Facilities Director · Lone Oak Business Park", step: 5, h: "cold", reason: "Contract out 12 days, not signed", cap: "7 tries · 3 talks · 1 meeting · last touch 12d", btn: "Copy signing link", score: "Recent 0 · Talk 20 · Next step 0 − Drag 15 = 5", why: "Contract out 12 days" },
+    { name: "Seth Tucker", co: "Operations Manager · Pinnacle Fitness Club", step: -1, h: "fresh", reason: "Not tried yet", cap: "New lead · added Oct 8", btn: "Call", score: "No score until someone is reached", why: "New lead, yours" }
+  ];
+  var list = document.getElementById("list");
+  var current = 1;
+
+  function miniHtml(p) {
+    var out = "";
+    for (var i = 0; i < 7; i++) out += '<i class="' + (i <= p.step ? "d" : "") + '"></i>';
+    return out;
+  }
+  PEOPLE.forEach(function (p, i) {
+    var h = H[p.h];
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "row";
+    b.style.setProperty("--hc", h.c);
+    b.setAttribute("aria-pressed", "false");
+    b.setAttribute("aria-label", p.name + ". " + h.w + ". " + p.why);
+    b.innerHTML = '<span class="dot' + (p.h === "trying" || p.h === "fresh" ? " hollow" : "") + '"></span>' +
+      '<span class="nm">' + p.name + '</span><span class="mini" aria-hidden="true">' + miniHtml(p) + '</span>' +
+      '<span class="rs">' + p.why + '</span>';
+    b.addEventListener("click", function () { show(i); });
+    list.appendChild(b);
+  });
+
+  function show(i) {
+    current = i;
+    var p = PEOPLE[i], h = H[p.h];
+    var hdr = document.getElementById("hdr");
+    hdr.style.setProperty("--hc", h.c);
+    hdr.style.setProperty("--hs", h.s);
+    document.getElementById("m-init").textContent = p.name.charAt(0);
+    document.getElementById("m-name").textContent = p.name;
+    document.getElementById("m-co").textContent = p.co;
+    document.getElementById("m-wordtxt").textContent = h.w;
+    document.getElementById("m-mark").textContent = h.m;
+    document.getElementById("m-reason").textContent = p.reason;
+    document.getElementById("m-cap").textContent = p.cap;
+    document.getElementById("m-btn").textContent = p.btn;
+    document.getElementById("m-score").innerHTML = "Hover or long-press shows: <b>" + p.score + "</b>";
+    document.getElementById("m-step").textContent = p.step < 0 ? "Not touched yet" : "Step " + (p.step + 1) + " of 7";
+    var ring = document.getElementById("m-ring");
+    ring.className = "ring" + (p.h === "trying" || p.h === "fresh" ? " trying" : "");
+    var meter = document.getElementById("m-meter");
+    meter.innerHTML = "";
+    STEPS.forEach(function (name, k) {
+      var s = document.createElement("div");
+      s.className = "seg" + (k <= p.step ? " done" : "") + (k === p.step ? " cur" : "") + (k === p.step + 1 ? " next" : "");
+      s.innerHTML = "<i></i><small>" + name + "</small>";
+      meter.appendChild(s);
+    });
+    meter.setAttribute("aria-label", "Stage: " + (p.step < 0 ? "not touched yet" : STEPS[p.step] + ", " + (p.step + 1) + " of 7") + ". Health: " + h.w + ". " + p.reason);
+    Array.prototype.forEach.call(list.querySelectorAll(".row"), function (r, k) { r.setAttribute("aria-pressed", k === i ? "true" : "false"); });
+  }
+  show(current);
+
+  var result = document.getElementById("out-result");
+  Array.prototype.forEach.call(document.querySelectorAll(".chip[data-out]"), function (chip) {
+    chip.addEventListener("click", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".chip[data-out]"), function (c) { c.classList.remove("on"); });
+      chip.classList.add("on");
+      result.textContent = chip.getAttribute("data-out") + " · " + chip.getAttribute("data-next");
+    });
+  });
+})();
+</script>
