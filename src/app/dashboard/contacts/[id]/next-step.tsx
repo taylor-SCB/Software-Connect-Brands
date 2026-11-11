@@ -11,6 +11,7 @@ import { useContactPage } from "./contact-shell";
 import { EarlyConfirm, MoveButton, useMeetingActions } from "./meeting-actions";
 import { Chip } from "./sheet";
 import { dayChips, plusDays } from "@/components/how-did-it-go/dates";
+import { usePanelFocus } from "@/components/panel-focus";
 
 // The first thing booked with them, from Coming up.
 export type NextItem = { eventId: string; title: string; when: string; meeting: boolean };
@@ -140,6 +141,7 @@ function FollowUpButton() {
   const [on, setOn] = useState(chips[0].on);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
+  usePanelFocus(open, "next-follow-up-menu", anchor);
   return (
     <>
       <button ref={anchor} type="button" className={BTN} aria-expanded={open} onClick={() => setOpen(!open)} data-testid="next-follow-up">

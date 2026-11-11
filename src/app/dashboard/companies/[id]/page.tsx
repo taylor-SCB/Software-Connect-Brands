@@ -289,7 +289,7 @@ export default async function CompanyDetailPage({
         const meeting = about ? await meetingFor(organizationId, about.id, now, today, timeZone) : null;
         if (step.key === "meeting") {
           const day = meeting?.aheadOn ?? today;
-          return { kind: "meeting", label: step.label, href: `/dashboard/calendar?on=${day}`, meetingId: meeting?.aheadMeetingId ?? null, on: day };
+          return { kind: "meeting", label: step.label, href: `/dashboard/calendar?on=${day}`, meetingId: meeting?.aheadMeetingId ?? null, on: day, time: meeting?.aheadTime ?? null };
         }
         return { kind: "mark-held", label: step.label, meetingId: meeting?.pastMeetingId ?? null, entryId: meeting?.entryId ?? null, contactId: about?.id ?? null };
       }

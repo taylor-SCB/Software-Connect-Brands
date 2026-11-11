@@ -9,6 +9,7 @@ import type { ContactMeeting } from "./contact-data";
 import { useContactPage } from "./contact-shell";
 import { Chip } from "./sheet";
 import { clock, dayChips, TIME_CHIPS } from "@/components/how-did-it-go/dates";
+import { usePanelFocus } from "@/components/panel-focus";
 
 // Held · No-show · Move for one meeting (BDR redesign, Nov 11, 2026). A
 // meeting on the Pipeline goes through markMeetingHeld / markMeetingNoShow
@@ -120,6 +121,7 @@ export function MoveButton({
   const chips = dayChips(page.today);
   const [on, setOn] = useState(chips[0].on);
   const [time, setTime] = useState<string | null>(initialTime ?? "10:00");
+  usePanelFocus(open, `${testId}-menu`, anchor);
   return (
     <>
       <button ref={anchor} type="button" className={className} aria-expanded={open} onClick={() => setOpen(!open)} data-testid={testId}>

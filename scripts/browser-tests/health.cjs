@@ -794,7 +794,18 @@ async function contrastReport(page, scope) {
   const barBox = await bar.boundingBox();
   assert.equal(Math.round(barBox.height), 56);
   const viewH = await mobile.evaluate(() => window.innerHeight);
-  assert.ok(Math.abs(barBox.y + barBox.height - viewH) <= 1, `pinned to the foot of the screen (${JSON.stringify(barBox)} in ${viewH})`);
+  // audit fixes (pages): it was pinned to the foot of the screen, over the
+  // app's tab bar (Today / Contacts / …). It sits right on top of it.
+  const tabsBox = await mobile.locator("[data-testid=phone-tabs]").boundingBox();
+  assert.ok(tabsBox && Math.abs(tabsBox.y + tabsBox.height - viewH) <= 1, `the tab bar is at the foot (${JSON.stringify(tabsBox)} in ${viewH})`);
+  assert.ok(Math.abs(barBox.y + barBox.height - tabsBox.y) <= 1, `on top of the tab bar (${JSON.stringify(barBox)} over ${tabsBox.y})`);
+  assert.ok(
+    await mobile.evaluate(() => {
+      const tabs = document.querySelector("[data-testid=phone-tabs]").getBoundingClientRect();
+      return Boolean(document.elementFromPoint(tabs.left + tabs.width / 2, tabs.top + tabs.height / 2)?.closest("[data-testid=phone-tabs]"));
+    }),
+    "a tap on the tab bar reaches it",
+  );
   for (const id of ["phone-bar-call", "phone-bar-text", "phone-bar-log", "phone-bar-main", "phone-bar-more"]) {
     const box = await bar.locator(`[data-testid=${id}]`).boundingBox();
     assert.ok(box && box.height >= 44, `${id} is a 44px target`);
@@ -825,6 +836,57 @@ async function contrastReport(page, scope) {
   await mobile.locator("[data-testid=phone-bar-more-menu] [data-testid=status-picker]").waitFor();
   await phone.close();
 
+
+  log("audit fixes (pages): Reschedule, Call ▾ and Set follow-up take the keyboard into their panels; on a phone the meeting's day and time wrap inside the main button");
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"createdAt","updatedAt") VALUES ('hl_co_aud',$1,'Birchline Audit Co',now(),now())`, [org]);
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,status,mobile,phone,"createdAt","updatedAt") VALUES
+       ('hl_aud',$1,'hl_co_aud','Ava Audit','CONNECTED','512-555-1101','512-555-1102',now(),now()),
+       ('hl_aud2',$1,'hl_co_aud','Abe Audit','CONTACTED','512-555-1201',null,now(),now())`,
+    [org],
+  );
+  // A talk an hour ago: Book meeting is Ava's main button.
+  await act("hla_aud_talk", "hl_aud", "PHONE_CALL", "TALKED", "1 hour", "Talked about the bid");
+  const inside = (testId) => page.evaluate((id) => Boolean(document.activeElement?.closest(`[data-testid=${id}]`)), testId);
+  await open(page, "hl_aud");
+  await main(page).click();
+  const audSheet = page.locator("[data-testid=book-meeting]");
+  await audSheet.waitFor();
+  await bookTomorrow(audSheet);
+  await audSheet.locator("[data-testid='book-time-10:00']").click();
+  await audSheet.locator("[data-testid=book-submit]").click();
+  await until(async () => (await status("hl_aud")) === "MEETING_SET", "Ava Meeting Set");
+  await open(page, "hl_aud");
+  await page.locator("[data-testid=contact-reschedule]").focus();
+  await page.keyboard.press("Enter");
+  await page.locator("[data-testid=contact-reschedule-menu]").waitFor();
+  await until(() => inside("contact-reschedule-menu"), "focus in Reschedule's panel");
+  await page.keyboard.press("Escape");
+  await page.locator("[data-testid=contact-call-more]").focus();
+  await page.keyboard.press("Enter");
+  await page.locator("[data-testid=contact-call-menu]").waitFor();
+  await until(() => inside("contact-call-menu"), "focus in the Call menu");
+  assert.match(await page.evaluate(() => document.activeElement.getAttribute("href")), /^tel:/, "the first number is focused");
+  await page.keyboard.press("Escape");
+  await open(page, "hl_aud2");
+  await page.locator("[data-testid=next-follow-up]").focus();
+  await page.keyboard.press("Enter");
+  await page.locator("[data-testid=next-follow-up-menu]").waitFor();
+  await until(() => inside("next-follow-up-menu"), "focus in Set follow-up's panel");
+  await page.keyboard.press("Escape");
+  {
+    const phone2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await page.context().storageState() });
+    const m = await phone2.newPage();
+    await open(m, "hl_aud");
+    await settle(m);
+    const slot = m.locator("[data-testid=phone-bar-main]");
+    assert.match((await slot.textContent()).trim(), /Tomorrow\s*10:00 AM/);
+    const fit = await slot.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+    assert.ok(fit.scroll <= fit.client + 1, `the words stay inside the button (${fit.scroll} > ${fit.client})`);
+    const box = await slot.boundingBox();
+    assert.ok(box.height >= 44 && box.height <= 56, `still a 44px target inside the 56px bar (${box.height})`);
+    await phone2.close();
+  }
 
   log("Sprint: the Contacts list's Pulse filter and Warmest first (the SQL twin) put every person here exactly where their own meter says, and the twin agrees with leadHealth() on every fixture");
   {

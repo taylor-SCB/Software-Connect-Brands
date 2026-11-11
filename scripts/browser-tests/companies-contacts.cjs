@@ -533,8 +533,16 @@ function backLink(page) {
   await page.check("[name=agree]");
   await page.getByRole("button", { name: "Sign contract" }).click();
   await page.getByRole("button", { name: "Sign contract" }).waitFor({ state: "detached" });
+  // The button reads "Signing…" while the save runs, so "Sign contract"
+  // goes the moment it is pressed; wait for the save, not the words
+  // (flaky once in the Nov 11, 2026 audit run: read mid-save).
+  await page.getByRole("button", { name: "Signing…" }).waitFor({ state: "detached" });
   await page.waitForLoadState("networkidle");
-  stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
+  for (let i = 0; i < 40; i += 1) {
+    stage = await sql(`SELECT stage FROM "Deal" WHERE title='Fiber install' AND "organizationId"=$1`, [org]);
+    if (stage.rows[0].stage === "WON") break;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
   assert.equal(stage.rows[0].stage, "WON", "a signature wins the deal");
 
   log("a residential quote works with no company anywhere");

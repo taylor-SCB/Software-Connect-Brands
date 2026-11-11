@@ -464,6 +464,125 @@ const ladder = async (contactId) =>
   const quinnPark = await one(`SELECT to_char("startOn",'YYYY-MM-DD') AS day, title FROM "CalendarEvent" WHERE "contactId"='ctc_hd_quinn' AND "doneAt" IS NULL`);
   assert.deepEqual({ ...quinnPark }, { day: shift(TODAY, 30), title: "Try again · Quinn Quick" });
 
+  log("audit fixes (pages): with the try limit at 3, the third try offers 'Try again in 30 days' at once, and says 3 tries, not 6");
+  await sql(`UPDATE "Organization" SET "parkAfterTries"=3 WHERE id=$1`, [org]);
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",phone,"updatedAt") VALUES ('ctc_hd_rae',$1,'Rae Rowe','cmp_hd_red','5125550107',now())`, [org]);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,"occurredAt")
+     SELECT 'act_hd_rae_' || g, $1, 'ctc_hd_rae', $2, 'PHONE_CALL', 'Left voicemail', 'VOICEMAIL', now() - (g || ' days')::interval
+       FROM generate_series(2, 3) g`,
+    [org, taylor.id],
+  );
+  await page.goto(`${BASE}/dashboard/contacts/ctc_hd_rae`);
+  await openBar();
+  await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await next.waitFor();
+  assert.equal(await next.locator("[data-testid=next-park]").count(), 1, "the try that reaches the limit offers parking (it came one try late)");
+  assert.equal(await next.locator("[data-testid=next-park]").getAttribute("aria-checked"), "true");
+  assert.match(await next.locator("[data-testid=next-park]").textContent(), /3 tries, never reached/, "the workspace's own limit, not a fixed 6");
+  await page.locator("[data-testid=follow-up-skip]").click();
+  await form.waitFor({ state: "detached" });
+  await sql(`UPDATE "Organization" SET "parkAfterTries"=6 WHERE id=$1`, [org]);
+
+  log("audit fixes (pages): a dial tap answered by a sheet opened another way never opens the sheet again on the next trip away from the tab");
+  await page.reload();
+  await page.locator("[data-testid=log-bar]").waitFor();
+  // The tap (as the header's Call does on a desktop), then the sheet opened
+  // by hand (as the desktop timer does), the call logged and closed.
+  await page.evaluate(() => {
+    document.addEventListener("click", (event) => event.preventDefault(), { once: true });
+    const a = document.createElement("a");
+    a.href = "tel:5125550107";
+    a.textContent = "dial";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+  await openBar();
+  await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await next.waitFor();
+  await page.locator("[data-testid=follow-up-skip]").click();
+  await form.waitFor({ state: "detached" });
+  // Twenty minutes later the rep switches tabs and comes back.
+  await page.evaluate(() => {
+    const set = (state) => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+    set("hidden");
+    set("visible");
+  });
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(await form.count(), 0, "the sheet stays closed: that call was already logged");
+
+  log("audit fixes (pages): Front desk / main line turns off the talk chips (Talked, Not interested, Held), so a front-desk log is always a try");
+  await page.goto(`${BASE}/dashboard/companies/cmp_hd_red`);
+  await openBar();
+  await form.locator("[data-testid=company-bypass-tick]").check();
+  for (const key of ["TALKED", "NOT_INTERESTED", "BOOKED"]) assert.ok(await form.locator(`[data-testid=outcome-${key}]`).isDisabled(), `${key} is off at the front desk`);
+  assert.ok(await form.locator("[data-testid=outcome-NO_ANSWER]").isEnabled(), "a try is still one tap");
+  await form.locator("[data-testid=log-type-TEXT]").click();
+  assert.ok(await form.locator("[data-testid=outcome-REPLIED]").isDisabled(), "They replied is a talk too");
+  await form.locator("[data-testid=log-type-MEETING]").click();
+  assert.ok(await form.locator("[data-testid=outcome-HELD]").isDisabled(), "Held is a talk too");
+  await page.keyboard.press("Escape");
+  await form.waitFor({ state: "detached" });
+  assert.equal(await count(`SELECT count(*)::int n FROM "Activity" WHERE "companyId"='cmp_hd_red' AND outcome IN ('TALKED','REPLIED','HELD')`), 0);
+
+  log("audit fixes (pages): Rescheduled keeps the meeting's time; Not moving forward moves the tile to Lost with no half-true Undo");
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('cmp_hd_oak',$1,'Oakline Roofing',now())`, [org]);
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",phone,"updatedAt") VALUES ('ctc_hd_lee',$1,'Lee Lane','cmp_hd_oak','5125550108',now())`, [org]);
+  await page.goto(`${BASE}/dashboard/contacts/ctc_hd_lee`);
+  await openBar();
+  await form.locator("[data-testid=outcome-TALKED]").click();
+  await next.waitFor();
+  await next.locator("[data-testid=book-day-week]").click();
+  await next.locator("[data-testid=book-time-09\\:00]").click();
+  await page.locator("[data-testid=follow-up-save]").click();
+  await toast.getByText(/is on your Pipeline in Meeting Set/).waitFor();
+  const leeEvent = await one(`SELECT id FROM "CalendarEvent" WHERE "organizationId"=$1 AND title='Meeting · Lee Lane'`, [org]);
+  const leeOm = await one(`SELECT id, "opportunityId" FROM "OpportunityMeeting" WHERE "eventId"=$1`, [leeEvent.id]);
+  await page.reload();
+  await openBar();
+  await form.locator("[data-testid=log-type-MEETING]").click();
+  await form.locator("[data-testid=log-meeting-line]").waitFor();
+  await form.locator("[data-testid=outcome-RESCHEDULED]").click();
+  await form.locator("[data-testid=book-time-09\\:00]").waitFor();
+  assert.equal(await form.locator("[data-testid=book-time-09\\:00]").getAttribute("aria-pressed"), "true", "moving it starts at the booked 9:00, not blank");
+  await page.keyboard.press("Escape");
+  await form.waitFor({ state: "detached" });
+  await sql(`UPDATE "CalendarEvent" SET "startOn"=$2::date WHERE id=$1`, [leeEvent.id, shift(TODAY, -1)]);
+  await sql(`UPDATE "OpportunityMeeting" SET "on"=now() - interval '1 day' WHERE id=$1`, [leeOm.id]);
+  await page.reload();
+  await openBar();
+  await form.locator("[data-testid=log-type-MEETING]").click();
+  await form.locator("[data-testid=log-meeting-line]").waitFor();
+  await form.locator("[data-testid=outcome-HELD]").click();
+  await next.waitFor();
+  await next.locator("[data-testid=next-lost]").click();
+  await next.locator("[data-testid=next-lost-note]").waitFor();
+  await next.locator("[data-testid=reason-PRICE]").click();
+  await page.locator("[data-testid=follow-up-save]").click();
+  await toast.getByText(/moved to Lost/).waitFor();
+  assert.equal(await toast.locator("[data-testid=log-toast-undo]").count(), 0, "no Undo that would leave the tile Lost and say Undone");
+  assert.equal(await toast.locator("[data-testid=log-toast-link]").getAttribute("href"), `/dashboard/deals?open=${leeOm.opportunityId}`, "the tile, to move it back");
+  const leeDeal = await one(`SELECT d.stage FROM "Opportunity" o JOIN "Deal" d ON d.id=o."dealId" WHERE o.id=$1`, [leeOm.opportunityId]);
+  assert.equal(leeDeal.stage, "LOST");
+
+  log("audit fixes (pages): from 640px to 1023px 'Saved · Undo' sits above the tab bar, not on it");
+  const tablet = await browser.newContext({ viewport: { width: 768, height: 1000 } });
+  const tab = await tablet.newPage();
+  await login(tab, EMAIL);
+  await tab.goto(`${BASE}/dashboard/contacts/ctc_hd_olivia`);
+  await tab.locator("[data-testid=log-bar]").click();
+  await tab.locator("[data-testid=outcome-VOICEMAIL]").click();
+  await tab.locator("[data-testid=follow-up-skip]").click();
+  const tToast = await tab.locator("[data-testid=log-toast]").boundingBox();
+  const tTabs = await tab.locator("[data-testid=phone-tabs]").boundingBox();
+  assert.ok(tTabs && tTabs.height > 0, "the tab bar shows at 768");
+  assert.ok(tToast.y + tToast.height <= tTabs.y, `the toast ends above the tab bar (${tToast.y + tToast.height} vs ${tTabs.y})`);
+  await tablet.close();
+
   log("Sprint: on a phone the sheet is a bottom sheet — 56px chips two to a row, Save pinned, nothing sideways");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const mobile = await phone.newPage();

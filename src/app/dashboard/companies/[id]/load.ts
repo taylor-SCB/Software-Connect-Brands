@@ -216,6 +216,7 @@ export async function meetingFor(organizationId: string, contactId: string, now:
     pastMeetingId: waiting?.due?.id ?? null,
     aheadMeetingId: waiting?.ahead?.id ?? null,
     aheadOn: waiting?.ahead?.day ?? null,
+    aheadTime: waiting?.ahead?.time ?? null,
     entryId: entry?.id ?? null,
   };
 }

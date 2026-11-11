@@ -58,6 +58,14 @@ function listen() {
   });
 }
 
+// The sheet is open (however it got there: the desktop dialler's
+// focus-back, Who to call, a Log button): the tap it answers is spent, so
+// a later trip away from the tab doesn't open it a second time.
+export function clearDialReturn() {
+  pending = null;
+  hiddenSince = 0;
+}
+
 // Registers a sheet for the people it logs on. `page`: this is the page's
 // own log, which takes a tap on a link that names nobody. `any`: a list
 // (Up next) that opens the sheet for whoever the tapped link names.

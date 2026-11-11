@@ -26,7 +26,7 @@ import { afterLog, logContext, notMovingForward, rescheduleEntry } from "./actio
 import { Chip, ChipGrid, Sheet } from "./sheet";
 import { UndoToast, UNDO_MS } from "./undo-toast";
 import { browserToday, dayChips, longDay, plusDays, whenWords } from "./dates";
-import { useDialReturn } from "./dial-return";
+import { clearDialReturn, useDialReturn } from "./dial-return";
 import { pipelineHref } from "@/lib/pipeline-link";
 import type { AfterLogInput, LogContext, SavedLog } from "./types";
 
@@ -51,7 +51,9 @@ import type { AfterLogInput, LogContext, SavedLog } from "./types";
 // talk, a reason and "Check back in 90 days?" after Not interested, Start
 // a quote / Book next meeting / Not moving forward after Held, Reschedule
 // after a no-show. Dates are chips. Skip writes nothing. It goes into the
-// same save, so the one Undo takes both.
+// same save, so the one Undo takes both — except Not moving forward, whose
+// Lost move makes a deal Undo can't take back: its toast has no Undo and
+// links to the tile instead.
 
 export type LogTargetProps =
   | { contactId: string; companyId?: undefined }
@@ -219,6 +221,12 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const { target, event, onClose, emit: onToast } = props;
   // A booking from a tile's panel starts on that tile.
   const freshBooking = (): BookingValue => (props.opportunityId ? { ...EMPTY_BOOKING, opportunity: props.opportunityId } : EMPTY_BOOKING);
+  // A meeting being moved keeps its time unless a new one is picked (audit,
+  // Nov 11, 2026: it started blank and Move it saved the meeting untimed).
+  const movedBooking = (): BookingValue => {
+    const time = ctxNow.current?.meeting?.time ?? event?.startTime ?? null;
+    return time ? { ...freshBooking(), time } : freshBooking();
+  };
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const eventMode = Boolean(event);
@@ -244,6 +252,9 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const [seed, setSeed] = useState<FollowUpSeed | null>(null);
   const [undoLeft, setUndoLeft] = useState(false);
   const [people, setPeople] = useState<string[]>(props.pickContactIds ?? []);
+  // "Front desk / main line" on a company page: always a try, never a talk
+  // (the plan), so the connect chips are off while it is on.
+  const [frontDesk, setFrontDesk] = useState(false);
   const [book, setBook] = useState<BookingValue>(freshBooking);
   const [bookMode, setBookMode] = useState<"log" | "reschedule" | "new" | "entry">("log");
   const [early, setEarly] = useState<{ day: string; retry: () => void } | null>(null);
@@ -256,7 +267,27 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const [reason, setReason] = useState<StatusReasonValue | null>(null);
   const [checkBack, setCheckBack] = useState(false);
 
+  // Whatever opened the sheet, a pending tel:/sms: tap is now answered.
+  useEffect(() => {
+    clearDialReturn();
+  }, []);
+
   const opportunityId = props.opportunityId ?? null;
+  const contextAsk = () =>
+    event
+      ? { eventId: event.id }
+      : target?.contactId
+        ? { contactId: target.contactId, opportunityId }
+        : { companyId: target?.companyId ?? null };
+  // After a try is saved: the try limit may have just been reached, and
+  // "Try again in 30 days" is offered from the count with this try in it.
+  async function rereadContext() {
+    const answer = await logContext(contextAsk());
+    if (!("error" in answer)) {
+      ctxNow.current = answer;
+      setCtx(answer);
+    }
+  }
   useEffect(() => {
     let live = true;
     const ask = event
@@ -349,7 +380,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     else if (key === "HELD") setChoice("quote");
     else if (key === "NO_SHOW") setChoice("reschedule");
     else setChoice("none");
-    setBook(freshBooking());
+    setBook(key === "NO_SHOW" ? movedBooking() : freshBooking());
   }
 
   // The touch, from the form (with whatever is on it) plus the chip.
@@ -426,6 +457,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
         }
         // A meeting ticked done with no outcome was held.
         const read = chip ?? (type === "MEETING" ? MEETING[0] : null);
+        if (read && TRIES.has(read.key)) await rereadContext();
         enterNext(
           { batchId: result.batchId, words: chip?.label ?? `${ACTIVITY_LABELS[type]} logged`, type, outcome, chip: read?.key ?? null, opportunityId: null, note: typed, at: Date.now() },
           read,
@@ -471,6 +503,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
         });
         return;
       }
+      if (chip && TRIES.has(chip.key)) await rereadContext();
       enterNext(
         { batchId: result.batchId, words, type, outcome, chip: chip?.key ?? null, opportunityId: result.opportunityId ?? null, note: typed || (data.get("body") as string) || "", at: Date.now() },
         chip,
@@ -484,7 +517,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     if (chip.book || chip.reschedule) {
       if (chip.reschedule) setBookMode(meeting ? "reschedule" : eventMode ? "entry" : "new");
       else setBookMode("log");
-      setBook(freshBooking());
+      setBook(chip.reschedule ? movedBooking() : freshBooking());
       setError(undefined);
       setPhase("book");
       return;
@@ -546,7 +579,12 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
       if (choice === "lost") {
         const result = await notMovingForward({ opportunityId: saved.opportunityId, batchId: saved.batchId, reason });
         if (result.error) return setError(result.error);
-        toastAndClose({ batchId: saved.batchId, words: `${saved.words} · ${result.success}`, at: saved.at, opportunityId: saved.opportunityId });
+        // No Undo here: Undo takes back the save (the Held line), not the
+        // Lost move, which makes a deal. An Undo that left the tile Lost
+        // would say "Undone" and be half true (audit, Nov 11, 2026). The
+        // tile is one tap away to move back.
+        const tile = result.opportunityId ?? saved.opportunityId;
+        toastAndClose({ batchId: "", words: `${saved.words} · ${result.success}`, at: saved.at, href: pipelineHref(tile), hrefLabel: "Pipeline →", opportunityId: tile });
         return;
       }
       if (choice === "reschedule" && book.on) {
@@ -779,7 +817,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                   people={props.companyPeople ?? []}
                   userName={props.userName}
                   initial={props.pickContactIds}
-                  onChange={(ids) => setPeople(ids)}
+                  onChange={(ids, desk) => {
+                    setPeople(ids);
+                    setFrontDesk(desk);
+                  }}
                 />
               </section>
             )}
@@ -826,8 +867,14 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                       key={chip.key}
                       connect={chip.connect}
                       onClick={() => tapChip(chip)}
-                      disabled={pending || meetingWaiting || (chip.book && !bookWith)}
-                      title={chip.book && !bookWith ? "Pick who it was with first" : undefined}
+                      disabled={pending || meetingWaiting || (chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule))}
+                      title={
+                        frontDesk && (chip.connect || chip.reschedule)
+                          ? "The front desk is a try. Tick who you spoke with to log a talk."
+                          : chip.book && !bookWith
+                            ? "Pick who it was with first"
+                            : undefined
+                      }
                       testId={`outcome-${chip.key}`}
                     >
                       {chip.label}
@@ -921,7 +968,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
             ) : (
               <>
                 <ChipGrid label="Next step">
-                  {nextChoices(saved.chip, Boolean(ctx?.park), Boolean(bookWith)).map((option) => (
+                  {nextChoices(saved.chip, Boolean(ctx?.park), Boolean(bookWith), ctx?.tries ?? 0).map((option) => (
                     <Chip
                       key={option.key}
                       role="radio"
@@ -1000,7 +1047,14 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                   />
                 )}
 
-                {choice === "lost" && <ReasonChips value={reason} onChange={setReason} />}
+                {choice === "lost" && (
+                  <>
+                    <ReasonChips value={reason} onChange={setReason} />
+                    <p className="faint text-xs" data-testid="next-lost-note">
+                      Moves it to Lost on the Pipeline. Undo won&apos;t take that back; move the tile there instead.
+                    </p>
+                  </>
+                )}
 
                 {seed && (
                   <button type="button" onClick={() => setPhase("several")} className="link text-xs" data-testid="next-several">
@@ -1071,7 +1125,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   );
 }
 
-function nextChoices(chip: string | null, park: boolean, canBook: boolean): { key: Choice; label: string; sub?: string }[] {
+function nextChoices(chip: string | null, park: boolean, canBook: boolean, tries: number): { key: Choice; label: string; sub?: string }[] {
   if (chip === "TALKED" || chip === "REPLIED") {
     return [
       ...(canBook ? [{ key: "meeting" as const, label: "Book meeting" }] : []),
@@ -1091,7 +1145,7 @@ function nextChoices(chip: string | null, park: boolean, canBook: boolean): { ke
   if (chip && TRIES.has(chip)) {
     return [
       { key: "follow", label: "Try again" },
-      ...(park ? [{ key: "park" as const, label: "Try again in 30 days", sub: "6 tries, never reached" }] : []),
+      ...(park ? [{ key: "park" as const, label: "Try again in 30 days", sub: `${tries} ${tries === 1 ? "try" : "tries"}, never reached` }] : []),
       { key: "book", label: "Try to book a meeting", sub: "a reminder" },
     ];
   }

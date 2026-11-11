@@ -12,6 +12,7 @@ import { markMeetingHeld, markMeetingNoShow, rescheduleMeeting } from "@/app/das
 import { completeEventWithLog } from "@/app/dashboard/calendar/actions";
 import { useCompanyShell } from "./company-shell";
 import { StatusPicker } from "@/components/status-picker";
+import { usePanelFocus } from "@/components/panel-focus";
 
 // What the one filled button does on a company page, worked out on the
 // server from the meter's next step (meter.action) and the person it is
@@ -19,7 +20,7 @@ import { StatusPicker } from "@/components/status-picker";
 export type MainAction =
   | { kind: "call"; label: string; tel: string | null; contactId: string | null }
   | { kind: "book"; label: string; contactId: string | null }
-  | { kind: "meeting"; label: string; href: string; meetingId: string | null; on: string }
+  | { kind: "meeting"; label: string; href: string; meetingId: string | null; on: string; time?: string | null }
   | { kind: "mark-held"; label: string; meetingId: string | null; entryId: string | null; contactId: string | null }
   | { kind: "link"; label: string; href: string }
   // "Copy signing link": the customer's signing page, copied.
@@ -219,7 +220,9 @@ function MainButton({ action, run }: { action: MainAction; run: ReturnType<typeo
           <IconCalendar size={14} />
           {action.label}
         </Link>
-        {action.meetingId && <Reschedule meetingId={action.meetingId} on={action.on} />}
+        {action.meetingId && (
+          <Reschedule key={`${action.meetingId}:${action.on}:${action.time ?? ""}`} meetingId={action.meetingId} on={action.on} time={action.time ?? null} />
+        )}
       </>
     );
   }
@@ -248,14 +251,17 @@ function MainButton({ action, run }: { action: MainAction; run: ReturnType<typeo
 
 // "Meeting Tue 10:00 AM" with Reschedule: a new day (and time) for the
 // meeting on the Pipeline.
-function Reschedule({ meetingId, on }: { meetingId: string; on: string }) {
+function Reschedule({ meetingId, on, time: bookedTime }: { meetingId: string; on: string; time: string | null }) {
   const shell = useCompanyShell();
   const [open, setOpen] = useState(false);
   const [day, setDay] = useState(on);
-  const [time, setTime] = useState("");
+  // Starts at the booked time, so moving only the day keeps it (audit,
+  // Nov 11, 2026: it started empty and Move it wiped a 10:00 AM).
+  const [time, setTime] = useState(bookedTime ?? "");
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
   const button = useRef<HTMLButtonElement>(null);
+  usePanelFocus(open, "company-reschedule-panel", button);
   return (
     <>
       <button ref={button} type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="btn btn-ghost btn-sm pointer-coarse:min-h-11" data-testid="company-reschedule">
@@ -265,11 +271,11 @@ function Reschedule({ meetingId, on }: { meetingId: string; on: string }) {
         <div className="space-y-2 p-3">
           <label className="block text-xs">
             <span className="faint mb-1 block">New day</span>
-            <input type="date" value={day} onChange={(event) => setDay(event.target.value)} className="input input-sm" />
+            <input type="date" value={day} onChange={(event) => setDay(event.target.value)} className="input input-sm" data-testid="company-reschedule-day" />
           </label>
           <label className="block text-xs">
             <span className="faint mb-1 block">Time · optional</span>
-            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="input input-sm" />
+            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="input input-sm" data-testid="company-reschedule-time" />
           </label>
           <FormError message={error} />
           <button

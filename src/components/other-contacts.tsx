@@ -29,7 +29,7 @@ export type UnclaimedActivity = { id: string; type: string; body: string; when: 
 export type BypassGroup = { userId: string; userName: string; activities: UnclaimedActivity[] };
 
 // A claim just made, for "Moved onto Eli Park · Undo".
-type Claimed = { batchId: string; ids: string[]; contactId: string; message: string };
+type Claimed = { token: string; message: string };
 
 // "1 call not linked to a person yet": the words for what is waiting.
 function waitingWords(groups: BypassGroup[]) {
@@ -71,7 +71,7 @@ export function OtherContacts({ companyId, people, groups }: { companyId: string
   const undo = (row: Claimed) =>
     startUndo(async () => {
       setUndoError(undefined);
-      const result = await undoClaim({ batchId: row.batchId, activityIds: row.ids, contactId: row.contactId, companyId });
+      const result = await undoClaim({ token: row.token });
       if (result.error) setUndoError(result.error);
       setClaimed(null);
       router.refresh();
@@ -215,7 +215,7 @@ function ClaimBox({
       const result = await claimActivities({ activityIds: ids, contactId });
       if (result?.error) setError(result.error);
       else {
-        if (result.batchId) onClaimed({ batchId: result.batchId, ids, contactId, message: result.success ?? "Claimed" });
+        if (result.claimToken) onClaimed({ token: result.claimToken, message: result.success ?? "Claimed" });
         onClose();
       }
     });
@@ -231,7 +231,7 @@ function ClaimBox({
       const made = await claimActivities({ activityIds: ids, contactId: result.contact.id });
       if (made?.error) setError(made.error);
       else {
-        if (made.batchId) onClaimed({ batchId: made.batchId, ids, contactId: result.contact.id, message: made.success ?? "Claimed" });
+        if (made.claimToken) onClaimed({ token: made.claimToken, message: made.success ?? "Claimed" });
         onClose();
       }
     });

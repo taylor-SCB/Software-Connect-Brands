@@ -286,7 +286,11 @@ export async function afterLog(input: AfterLogInput): Promise<AfterLogResult> {
 // "Not moving forward" after a held meeting: the opportunity goes to Lost
 // (converted with no paperwork when it is not a deal yet, as the
 // Pipeline's "Yes – Move to Lost" does) with the optional reason.
-export async function notMovingForward(input: { opportunityId?: string | null; batchId?: string | null; reason?: string | null }): Promise<{ success?: string; error?: string }> {
+export async function notMovingForward(input: {
+  opportunityId?: string | null;
+  batchId?: string | null;
+  reason?: string | null;
+}): Promise<{ success?: string; error?: string; opportunityId?: string }> {
   const { organizationId } = await requireSession();
   const parsed = z
     .object({ opportunityId: idSchema.nullish(), batchId: batchSchema.nullish(), reason: z.enum(STATUS_REASONS).nullish() })
@@ -328,7 +332,7 @@ export async function notMovingForward(input: { opportunityId?: string | null; b
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard");
-  return { success: `${opportunity.title} moved to Lost` };
+  return { success: `${opportunity.title} moved to Lost`, opportunityId: opportunity.id };
 }
 
 // Rescheduled, for a calendar meeting with no Pipeline meeting behind it:
