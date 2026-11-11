@@ -84,6 +84,7 @@ export function pulseRulesSql(source: Prisma.Sql, clock: PulseClock): Prisma.Sql
            END AS pulse,
            CASE WHEN s.state = 'REACHED' THEN sc.score END AS score,
            (s.state = 'TRYING' AND f.stalled) AS stalled,
+           d.late, b.booked,
            CASE s.state
              WHEN 'WON' THEN 400
              WHEN 'REACHED' THEN 200 + sc.score
@@ -230,44 +231,75 @@ export function contactPulseInputs(organizationId: string, clock: PulseClock, ow
 
 // ---- The list's side --------------------------------------------------
 
-// What the Contacts list needs to filter and order by Pulse. The state is
-// a where-clause on stored columns (status, lastTouchAt, lastConnectAt);
-// inside a state the pulses are told apart by ids: for each state the
-// twin returns every person whose pulse isn't that state's biggest one,
-// so the biggest is "the state, less those". A list of ids never passes
-// PULSE_ID_CAP (Postgres takes about 32,000 values in one statement);
-// past it the smaller pulses narrow a little less, as the presets' lists do.
-export const PULSE_ID_CAP = 20_000;
+// What the Contacts list needs to filter and order by Pulse. Everything a
+// stored column can say is a where-clause on it:
+// - the state (status, lastTouchAt, lastConnectAt — leadHealth()'s step 1);
+// - Trying vs stalled: stalled is a follow-up gone late, or nothing booked
+//   and the last try more than Q days ago — lastTouchAt against the first
+//   moment of the day Q days back, plus the ids of the people being tried
+//   who have something late or booked (a short list: calendar entries and
+//   paperwork).
+// Only the score needs ids: inside Reached, and Won with or without late
+// money, the twin returns everyone whose pulse isn't that state's biggest,
+// so the biggest is "the state, less those". Together the lists never pass
+// PULSE_ID_CAP: Postgres takes about 32,000 values in one statement, and a
+// preset's list (10,000) and Owes money's (10,000) can sit beside it. Past
+// the cap the warmest are kept and the rest narrow a little less, as the
+// presets' lists do; `capped` says so.
+export const PULSE_ID_CAP = 12_000;
 
 export type PulseSets = {
-  // Per state: its biggest pulse, and the ids of each of the others.
+  // Reached and Won: the biggest pulse, and the ids of each of the others.
   big: Partial<Record<PulseState, PulseKey>>;
   ids: Partial<Record<PulseKey, string[]>>;
+  // Trying: who has something late, who has something booked, and the
+  // last moment a try can be and still be "more than Q days ago".
+  late: string[];
+  booked: string[];
+  staleBefore: Date;
   capped: boolean;
 };
 
 export async function loadPulseSets(organizationId: string, clock: PulseClock, owner?: string | null): Promise<PulseSets> {
-  const rows = await prisma.$queryRaw<{ id: string | null; state: string; pulse: string; n: number | null }[]>(Prisma.sql`
+  const tz = clock.timeZone;
+  const q = Prisma.raw(String(Math.max(1, Math.round(clock.quietDays || 8))));
+  const today = Prisma.sql`((${clock.now.toISOString()}::timestamptz) AT TIME ZONE ${tz})::date`;
+  const rows = await prisma.$queryRaw<{ id: string | null; kind: string; value: string }[]>(Prisma.sql`
     WITH tw AS MATERIALIZED (${pulseRulesSql(contactPulseInputs(organizationId, clock, owner), clock)}),
-    counts AS (SELECT state, pulse, COUNT(*)::int AS n FROM tw WHERE state IN ('WON', 'REACHED', 'TRYING') GROUP BY 1, 2),
+    counts AS (SELECT state, pulse, COUNT(*)::int AS n FROM tw WHERE state IN ('WON', 'REACHED') GROUP BY 1, 2),
     big AS (SELECT DISTINCT ON (state) state, pulse FROM counts ORDER BY state, n DESC, pulse)
-    SELECT NULL AS id, state, pulse, NULL::int AS n FROM big
+    SELECT NULL AS id, 'big' AS kind, state || ':' || pulse AS value FROM big
     UNION ALL
-    (SELECT tw.key, tw.state, tw.pulse, NULL FROM tw JOIN big ON big.state = tw.state
-      WHERE tw.pulse <> big.pulse ORDER BY tw.warmth DESC, tw.key LIMIT ${PULSE_ID_CAP + 1})`);
-  const sets: PulseSets = { big: {}, ids: {}, capped: false };
+    SELECT NULL, 'stale', to_char(((${today} - ${q})::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    UNION ALL
+    (SELECT id, kind, value FROM (
+       SELECT tw.key AS id, 'pulse' AS kind, tw.pulse AS value, tw.warmth AS w FROM tw JOIN big ON big.state = tw.state
+        WHERE tw.pulse <> big.pulse
+       UNION ALL
+       SELECT tw.key, 'late', '', 150 FROM tw WHERE tw.state = 'TRYING' AND tw.late
+       UNION ALL
+       SELECT tw.key, 'booked', '', 150 FROM tw WHERE tw.state = 'TRYING' AND tw.booked
+     ) x ORDER BY w DESC, id LIMIT ${PULSE_ID_CAP + 1})`);
+  const sets: PulseSets = { big: {}, ids: {}, late: [], booked: [], staleBefore: new Date(0), capped: false };
   let count = 0;
   for (const row of rows) {
-    if (row.id === null) {
-      sets.big[row.state as PulseState] = row.pulse as PulseKey;
+    if (row.kind === "big") {
+      const [state, pulse] = row.value.split(":");
+      sets.big[state as PulseState] = pulse as PulseKey;
+      continue;
+    }
+    if (row.kind === "stale") {
+      sets.staleBefore = new Date(row.value);
       continue;
     }
     count += 1;
     if (count > PULSE_ID_CAP) {
       sets.capped = true;
-      break;
+      continue;
     }
-    (sets.ids[row.pulse as PulseKey] ??= []).push(row.id);
+    if (row.kind === "late") sets.late.push(row.id!);
+    else if (row.kind === "booked") sets.booked.push(row.id!);
+    else (sets.ids[row.value as PulseKey] ??= []).push(row.id!);
   }
   return sets;
 }
@@ -295,14 +327,64 @@ export function pulseStateClause(state: PulseState): object {
   }
 }
 
-// The where-clause for one pulse.
+// Trying, stalled: a follow-up late, or nothing booked and the last try
+// more than Q days ago.
+function stalledClause(sets: PulseSets): object {
+  return {
+    OR: [
+      ...(sets.late.length ? [{ id: { in: sets.late } }] : []),
+      { AND: [...(sets.booked.length ? [{ id: { notIn: sets.booked } }] : []), { lastTouchAt: { lt: sets.staleBefore } }] },
+    ],
+  };
+}
+function notStalledClause(sets: PulseSets): object {
+  return {
+    AND: [
+      ...(sets.late.length ? [{ id: { notIn: sets.late } }] : []),
+      {
+        OR: [
+          ...(sets.booked.length ? [{ id: { in: sets.booked } }] : []),
+          { lastTouchAt: null },
+          { lastTouchAt: { gte: sets.staleBefore } },
+        ],
+      },
+    ],
+  };
+}
+
+// The where-clause for any set of pulses, each id written at most once.
+export function pulseWhere(keys: readonly PulseKey[], sets: PulseSets): object {
+  const wanted = new Set(keys);
+  const or: object[] = [];
+  for (const state of ["WON", "REACHED", "TRYING", "NEW", "CLOSED"] as PulseState[]) {
+    const mine = PULSE_KEYS.filter((key) => STATE_OF_PULSE[key] === state);
+    const picked = mine.filter((key) => wanted.has(key));
+    if (picked.length === 0) continue;
+    const base = pulseStateClause(state);
+    if (picked.length === mine.length) {
+      or.push(base);
+      continue;
+    }
+    if (state === "TRYING") {
+      or.push({ AND: [base, picked[0] === "stalled" ? stalledClause(sets) : notStalledClause(sets)] });
+      continue;
+    }
+    // Reached and Won, by ids around the state's biggest pulse.
+    const big = sets.big[state];
+    if (big === undefined) continue;
+    if (picked.includes(big)) {
+      const left = mine.filter((key) => !picked.includes(key)).flatMap((key) => sets.ids[key] ?? []);
+      or.push(left.length ? { AND: [base, { id: { notIn: left } }] } : base);
+    } else {
+      const ids = picked.flatMap((key) => sets.ids[key] ?? []);
+      if (ids.length) or.push({ AND: [base, { id: { in: ids } }] });
+    }
+  }
+  if (or.length === 0) return { id: { in: [] as string[] } };
+  return or.length === 1 ? or[0] : { OR: or };
+}
+
+// One pulse (a tier of Warmest first).
 export function pulseClause(key: PulseKey, sets: PulseSets): object {
-  const state = STATE_OF_PULSE[key];
-  const base = pulseStateClause(state);
-  if (state === "NEW" || state === "CLOSED") return base;
-  const big = sets.big[state];
-  if (big === undefined) return { AND: [base, { id: { in: [] as string[] } }] };
-  if (key !== big) return { AND: [base, { id: { in: sets.ids[key] ?? [] } }] };
-  const others = PULSE_KEYS.filter((other) => other !== key && STATE_OF_PULSE[other] === state).flatMap((other) => sets.ids[other] ?? []);
-  return others.length ? { AND: [base, { id: { notIn: others } }] } : base;
+  return pulseWhere([key], sets);
 }

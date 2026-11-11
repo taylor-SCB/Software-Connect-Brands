@@ -43,8 +43,8 @@ export type FilterBarOptions = {
 
 // Below this the list is a card list and the Filters panel a bottom sheet.
 const PHONE_QUERY = "(max-width: 767px)";
-function useIsPhone() {
-  const [phone, setPhone] = useState(false);
+function useIsPhone(initial = false) {
+  const [phone, setPhone] = useState(initial);
   useEffect(() => {
     const query = window.matchMedia(PHONE_QUERY);
     const update = () => setPhone(query.matches);
@@ -78,6 +78,7 @@ export function ListFilters({
   leadLabels = [],
   total = 0,
   columns,
+  initialPhone = false,
 }: {
   basePath: string;
   params: ListParams;
@@ -94,9 +95,12 @@ export function ListFilters({
   total?: number;
   // The extra columns showing now; the Columns menu is left out without it.
   columns?: string[];
+  // The server's guess from the user agent (as ResponsiveList), so a phone
+  // gets its own layout in the first paint; the screen width decides after.
+  initialPhone?: boolean;
 }) {
   const router = useRouter();
-  const phone = useIsPhone();
+  const phone = useIsPhone(initialPhone);
   const [panelOpen, setPanelOpen] = useState(false);
   // The bar shows the new choice the instant it is clicked and holds it
   // until the server has answered with the matching rows.
@@ -329,59 +333,103 @@ export function ListFilters({
     </div>
   );
 
-  return (
-    <div className="mb-4 min-w-0 space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex gap-1" role="group" aria-label="Whose records" data-testid="scope">
-          {LIST_SCOPES.map((scope) => (
-            <button
-              key={scope}
-              type="button"
-              aria-pressed={params.scope === scope}
-              onClick={() => pickScope(scope)}
-              data-testid={`scope-${scope}`}
-              className={`btn btn-sm min-h-[44px] md:min-h-0 ${params.scope === scope ? "btn-primary" : "btn-ghost"}`}
-            >
-              {SCOPE_LABELS[scope]}
-            </button>
-          ))}
-        </div>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const input = event.currentTarget.elements.namedItem("q") as HTMLInputElement;
-            go({ q: input.value.trim() });
-          }}
-          className="relative order-first w-full md:order-none md:w-auto"
-          role="search"
-        >
-          <IconSearch
-            size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
-          />
-          <input
-            key={params.q}
-            type="search"
-            name="q"
-            defaultValue={params.q}
-            placeholder={placeholder}
-            aria-label={placeholder}
-            className="input input-sm w-full pl-8 md:w-60"
-          />
-        </form>
-
+  const locked = Boolean(lock.fav || lock.deals || lock.interested);
+  const scopeGroup = (
+    <div className="inline-flex shrink-0 gap-1" role="group" aria-label="Whose records" data-testid="scope">
+      {LIST_SCOPES.map((scope) => (
         <button
+          key={scope}
           type="button"
-          onClick={() => setPanelOpen(!panelOpen)}
-          aria-expanded={panelOpen}
-          data-testid="filters-toggle"
-          className={`btn btn-sm min-h-[44px] md:min-h-0 ${active > 0 ? "btn-primary" : "btn-ghost"}`}
+          aria-pressed={params.scope === scope}
+          onClick={() => pickScope(scope)}
+          data-testid={`scope-${scope}`}
+          className={`btn btn-sm min-h-[44px] shrink-0 md:min-h-0 ${params.scope === scope ? "btn-primary" : "btn-ghost"}`}
         >
-          <IconFilter size={13} />
-          Filters{active > 0 ? ` (${active})` : ""}
-          <IconChevronDown size={12} className={`opacity-70 transition-transform ${panelOpen ? "rotate-180" : ""}`} />
+          {SCOPE_LABELS[scope]}
         </button>
+      ))}
+    </div>
+  );
+  const searchForm = (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const input = event.currentTarget.elements.namedItem("q") as HTMLInputElement;
+        go({ q: input.value.trim() });
+      }}
+      className={phone ? "relative w-full" : "relative order-first w-full md:order-none md:w-auto"}
+      role="search"
+    >
+      <IconSearch
+        size={14}
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
+      />
+      <input
+        key={params.q}
+        type="search"
+        name="q"
+        defaultValue={params.q}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className={phone ? "input w-full min-h-[44px] pl-8" : "input input-sm w-full pl-8 md:w-60"}
+      />
+    </form>
+  );
+  const filtersToggle = (
+    <button
+      type="button"
+      onClick={() => setPanelOpen(!panelOpen)}
+      aria-expanded={panelOpen}
+      data-testid="filters-toggle"
+      className={`btn btn-sm min-h-[44px] shrink-0 whitespace-nowrap md:min-h-0 ${active > 0 ? "btn-primary" : "btn-ghost"}`}
+    >
+      <IconFilter size={13} />
+      Filters{active > 0 ? ` (${active})` : ""}
+      <IconChevronDown size={12} className={`opacity-70 transition-transform ${panelOpen ? "rotate-180" : ""}`} />
+    </button>
+  );
+  const presetButtons = presets.map((preset) => (
+    <button
+      key={preset}
+      type="button"
+      aria-pressed={params.preset === preset}
+      onClick={() => pickPreset(preset)}
+      data-testid={`preset-${preset}`}
+      className={`btn btn-sm min-h-[44px] shrink-0 whitespace-nowrap md:min-h-0 ${params.preset === preset ? "btn-primary" : "btn-ghost"}`}
+    >
+      {PRESET_LABELS[kind][preset]}
+    </button>
+  ));
 
+  // A phone (round 2, Nov 11, 2026): the search on top, with the page's
+  // ⋯ and + beside it (ListHeader places them there), then one row that
+  // scrolls sideways: Mine · Everyone · Unowned, Filters, Select and the
+  // presets. Sort is in the Filters sheet, per page in the footer. The
+  // first card starts about 180px down instead of about 430.
+  const top = phone ? (
+    <>
+      <div className="pr-[6.5rem]" data-testid="list-search-row">
+        {searchForm}
+      </div>
+      <div className="-mx-5 flex gap-1.5 overflow-x-auto px-5 pb-1" data-testid="list-chips">
+        {scopeGroup}
+        {filtersToggle}
+        <span className="shrink-0">
+          <SelectToggle />
+        </span>
+        {!locked && (
+          <div className="flex shrink-0 gap-1.5" role="group" aria-label="Presets" data-testid="presets">
+            {presetButtons}
+          </div>
+        )}
+      </div>
+    </>
+  ) : (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        {scopeGroup}
+        {searchForm}
+        {filtersToggle}
         <div className="hidden md:contents">{sortControl}</div>
         {columns && (
           <div className="hidden md:contents">
@@ -390,25 +438,14 @@ export function ListFilters({
         )}
       </div>
 
-      {(lock.fav || lock.deals || lock.interested) && (
+      {locked && (
         <div className="flex justify-end">
           <SelectToggle />
         </div>
       )}
-      {!lock.fav && !lock.deals && !lock.interested && (
+      {!locked && (
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0" role="group" aria-label="Presets" data-testid="presets">
-          {presets.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              aria-pressed={params.preset === preset}
-              onClick={() => pickPreset(preset)}
-              data-testid={`preset-${preset}`}
-              className={`btn btn-sm min-h-[44px] shrink-0 whitespace-nowrap md:min-h-0 ${params.preset === preset ? "btn-primary" : "btn-ghost"}`}
-            >
-              {PRESET_LABELS[kind][preset]}
-            </button>
-          ))}
+          {presetButtons}
           {/* Select mode: the row boxes stay out until a row is hovered or
               focused, or this is on (round 2: on desktop too). */}
           <span className="order-first shrink-0 md:order-last md:ml-auto">
@@ -416,6 +453,12 @@ export function ListFilters({
           </span>
         </div>
       )}
+    </>
+  );
+
+  return (
+    <div className={`min-w-0 ${phone ? "mb-2 space-y-2" : "mb-4 space-y-3"}`}>
+      {top}
 
       {panelOpen && !phone && <div className="card popover p-3">{groups}</div>}
       {panelOpen && phone && (

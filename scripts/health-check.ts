@@ -981,7 +981,7 @@ async function twinChecks(
   people: Map<string, LeadHealth>,
 ) {
   const { Prisma } = await import("../src/generated/prisma/client");
-  const { pulseRulesSql, contactPulseInputs, loadPulseSets, pulseClause, PULSE_KEYS } = await import("../src/lib/health-sql");
+  const { pulseRulesSql, contactPulseInputs, loadPulseSets, pulseClause, pulseWhere, PULSE_KEYS } = await import("../src/lib/health-sql");
   const { warmth } = await import("../src/lib/health");
   type Out = { key: string; state: string; pulse: string; score: number | null; stalled: boolean; warmth: number };
 
@@ -1073,7 +1073,7 @@ async function twinChecks(
     }
   });
 
-  await checkAsync("Sprint: the Pulse where-clauses put every seeded person under exactly their own pulse", async () => {
+  await checkAsync("Sprint: the Pulse where-clauses put every seeded person under exactly their own pulse, alone and in any combination", async () => {
     const sets = await loadPulseSets(organizationId, clock);
     const seen = new Map<string, string[]>();
     for (const key of PULSE_KEYS) {
@@ -1084,6 +1084,20 @@ async function twinChecks(
       for (const { id } of found) seen.set(id, [...(seen.get(id) ?? []), key]);
     }
     for (const id of ids) assert.deepEqual(seen.get(id), [pulseKeyOf(people.get(id)!)], id);
+    // Any choices together are exactly everyone under any of them.
+    const keyOf = new Map(ids.map((id) => [id, pulseKeyOf(people.get(id)!)]));
+    const combos: (typeof PULSE_KEYS)[number][][] = [];
+    for (let a = 0; a < PULSE_KEYS.length; a += 1)
+      for (let b = a + 1; b < PULSE_KEYS.length; b += 1) combos.push([PULSE_KEYS[a], PULSE_KEYS[b]]);
+    combos.push(["warm", "cooling", "cold"], ["won", "owes"], ["trying", "stalled", "new"], [...PULSE_KEYS]);
+    for (const combo of combos) {
+      const found = await prisma.contact.findMany({
+        where: { AND: [{ organizationId, id: { in: ids } }, pulseWhere(combo, sets) as object] },
+        select: { id: true },
+      });
+      const expected = ids.filter((id) => combo.includes(keyOf.get(id) as (typeof PULSE_KEYS)[number])).sort();
+      assert.deepEqual(found.map((row) => row.id).sort(), expected, combo.join("+"));
+    }
   });
 }
 

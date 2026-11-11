@@ -13,7 +13,7 @@ import { addDays } from "@/lib/payments";
 import { zoneDay, TALK_STATUSES } from "@/lib/health";
 import { effectiveSort, type ListSort } from "@/lib/list-params";
 import { Prisma as P } from "@/generated/prisma/client";
-import { loadPulseSets, pulseClause, type PulseSets } from "@/lib/health-sql";
+import { loadPulseSets, pulseClause, pulseWhere, type PulseSets } from "@/lib/health-sql";
 import { PULSE_KEYS, type PulseKey } from "@/lib/list-params";
 
 // ---- Clean CRM data filters (Nov 10, 2026) ---------------------------
@@ -332,7 +332,7 @@ export async function contactWhere(
   if (p.labels.length) and.push({ opportunities: { some: opportunityLabel(p.labels) } });
   if (p.pulses.length) {
     const sets = await pulseSetsFor(organizationId, p);
-    and.push({ OR: p.pulses.map((key) => pulseClause(key, sets) as Prisma.ContactWhereInput) });
+    and.push(pulseWhere(p.pulses, sets) as Prisma.ContactWhereInput);
   }
   const scope = scopeClause(p);
   if (scope) and.push(scope);

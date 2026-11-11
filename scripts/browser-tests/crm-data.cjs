@@ -991,11 +991,12 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual(await inOrder(page, "q=Spr&scope=all&preset=week"), ["Spr Meet"]);
 
   log("Sprint: Activity gains Not connected in 7 / 30 days and Never connected (from lastConnectAt)");
+  // Round 2 (Nov 11, 2026): a status that already means a talk counts as
+  // one, so Spr Booked (Connected) and Spr Meet (Meeting Set) are off too.
   const nconn = await inOrder(page, "q=Spr&scope=all&act=nconn");
-  assert.equal(nconn.length, 7, `everyone but Talked: ${nconn}`);
-  assert.ok(!nconn.includes("Spr Talked"));
-  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc7")).length, 7);
-  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc30")).length, 7);
+  assert.deepEqual([...nconn].sort(), ["Spr Late", "Spr New", "Spr Nics", "Spr Nobody", "Spr Old"], `everyone but Talked, Booked and Meet: ${nconn}`);
+  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc7")).length, 5);
+  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc30")).length, 5);
   await openFilters(page);
   const actMenu = await openMenu(page, "filter-activity");
   for (const words of ["Not connected in 7 days", "Not connected in 30 days", "Never connected"]) await actMenu.getByText(words, { exact: true }).waitFor();
@@ -1087,6 +1088,183 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
     await shot(ph, "05-sprint-phone-log");
     await ctx.close();
   }
+
+  // ---------------------------------------------------------------------
+  // Round 2 of the lists (Nov 11, 2026).
+  log("Sprint: seed round 2 — warm, cold by status alone, a talk 12 days ago, trying, stalled, new, lost, won");
+  const r2 = {};
+  for (const [key, name, status] of [
+    ["warm", "Rtwo Warm", "CONNECTED"],
+    ["intold", "Rtwo IntOld", "INTERESTED"],
+    ["intnew", "Rtwo IntNew", "INTERESTED"],
+    ["bare", "Rtwo Bare", "MEETING_SET"],
+    ["talkold", "Rtwo TalkOld", "CONTACTED"],
+    ["trying", "Rtwo Trying", "CONTACTED"],
+    ["stalled", "Rtwo Stalled", "CONTACTED"],
+    ["fresh", "Rtwo New", "NOT_ACTIONED"],
+    ["lost", "Rtwo Lost", "LOST"],
+    ["won", "Rtwo Won", "WON"],
+  ]) {
+    r2[key] = await seedContact({ id: `cd_r2_${key}`, name, ownerId: taylor.id, createdById: taylor.id });
+    await sql(`UPDATE "Contact" SET status=$2 WHERE id=$1`, [r2[key], status]);
+  }
+  const r2Act = (id, contactId, outcome, ago) =>
+    sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,outcome,"occurredAt") VALUES ($1,$2,$3,$4,'PHONE_CALL','Seeded',false,$5,now() - $6::interval)`,
+      [id, org, contactId, taylor.id, outcome, ago],
+    );
+  await r2Act("cd_r2_a_warm", r2.warm, "TALKED", "1 hour");
+  await sprEvent("cd_r2_ev_warm", r2.warm, "Call", 2);
+  await r2Act("cd_r2_a_talkold", r2.talkold, "TALKED", "12 days");
+  await r2Act("cd_r2_a_trying", r2.trying, "NO_ANSWER", "1 day");
+  await r2Act("cd_r2_a_stalled", r2.stalled, "NO_ANSWER", "20 days");
+  await sql(
+    `INSERT INTO "StatusChange" (id,"organizationId","contactId","userId","fromStatus","toStatus","on") VALUES
+       ('cd_r2_sc_old',$1,$2,$4,'CONTACTED','INTERESTED',now() - interval '40 days'),
+       ('cd_r2_sc_new',$1,$3,$4,'CONTACTED','INTERESTED',now() - interval '3 days')`,
+    [org, r2.intold, r2.intnew, taylor.id],
+  );
+  assert.equal((await sql(`SELECT "quietDays" AS q FROM "Organization" WHERE id=$1`, [org])).rows[0].q, 8, "the scores below assume 8 quiet days");
+
+  log("Sprint: Not connected and Never connected leave out a status that already means a talk; its date is the latest move into a talk status");
+  const r2Names = (list) => [...list].sort();
+  assert.deepEqual(r2Names(await inOrder(page, "q=Rtwo&scope=all&act=nconn")), ["Rtwo Lost", "Rtwo New", "Rtwo Stalled", "Rtwo Trying"], "Interested / Meeting Set / Won count as talked; Lost says nothing");
+  assert.deepEqual(
+    r2Names(await inOrder(page, "q=Rtwo&scope=all&act=nc30")),
+    ["Rtwo IntOld", "Rtwo Lost", "Rtwo New", "Rtwo Stalled", "Rtwo Trying"],
+    "Interested 40 days ago is past 30; 3 days ago isn't; Meeting Set with no date is left out",
+  );
+  assert.deepEqual(
+    r2Names(await inOrder(page, "q=Rtwo&scope=all&act=nc7")),
+    ["Rtwo IntOld", "Rtwo Lost", "Rtwo New", "Rtwo Stalled", "Rtwo TalkOld", "Rtwo Trying"],
+    "a talk 12 days ago is past 7",
+  );
+
+  log("Sprint: the Pulse filter (the SQL twin of the health rules) — each choice lists exactly the people whose meter reads it, and stacks");
+  const r2Pulse = async (query) => r2Names(await inOrder(page, `q=Rtwo&scope=all&${query}`));
+  assert.deepEqual(await r2Pulse("pulse=warm"), ["Rtwo Warm"]);
+  assert.deepEqual(await r2Pulse("pulse=cold"), ["Rtwo Bare", "Rtwo IntNew", "Rtwo IntOld", "Rtwo TalkOld"]);
+  assert.deepEqual(await r2Pulse("pulse=trying"), ["Rtwo Trying"]);
+  assert.deepEqual(await r2Pulse("pulse=stalled"), ["Rtwo Stalled"]);
+  assert.deepEqual(await r2Pulse("pulse=new"), ["Rtwo New"]);
+  assert.deepEqual(await r2Pulse("pulse=closed"), ["Rtwo Lost"]);
+  assert.deepEqual(await r2Pulse("pulse=won"), ["Rtwo Won"]);
+  assert.deepEqual(await r2Pulse("pulse=cooling"), []);
+  assert.deepEqual(await r2Pulse("pulse=trying&pulse=stalled"), ["Rtwo Stalled", "Rtwo Trying"], "two choices stack as either");
+  // Every row's own meter reads what the filter said.
+  for (const [key, word] of [["warm", "Warm"], ["cold", "Cold"], ["trying", "Trying"], ["stalled", "Trying"], ["new", "New"], ["closed", "Closed"], ["won", "Won"]]) {
+    await inOrder(page, `q=Rtwo&scope=all&pulse=${key}`);
+    const labels = await page.locator("[data-testid=contact-row] [data-testid=pulse] [role=img]").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
+    assert.ok(labels.length > 0 && labels.every((label) => label.includes(`Health: ${word}`)), `${key}: ${labels}`);
+  }
+  await page.goto(`${BASE}/dashboard/contacts?q=Rtwo&scope=all`);
+  await openFilters(page);
+  const pulseMenu = await openMenu(page, "filter-pulse");
+  await pulseMenu.getByText("Trying — stalled", { exact: true }).click();
+  await page.waitForURL(/pulse=stalled/);
+  await page.locator("[data-testid=page-summary]", { hasText: "of 1 contacts" }).waitFor();
+  await page.getByTestId("active-filters").getByText("Pulse: Trying — stalled").waitFor();
+  assert.equal(await page.locator("[data-testid=contact-row]").count(), 1);
+
+  log("Sprint: Warmest first — Won, Warm, Cooling, Cold, Trying, stalled, New, Closed; inside a pulse the most recently touched first");
+  assert.deepEqual(await inOrder(page, "q=Rtwo&scope=all&sort=pulse"), [
+    "Rtwo Won", "Rtwo Warm", "Rtwo TalkOld", "Rtwo Bare", "Rtwo IntNew", "Rtwo IntOld", "Rtwo Trying", "Rtwo Stalled", "Rtwo New", "Rtwo Lost",
+  ]);
+  assert.deepEqual(await inOrder(page, "q=Rtwo&scope=all&sort=pulse&per=10&page=1"), await inOrder(page, "q=Rtwo&scope=all&sort=pulse"), "one page holds them all");
+  // Page boundaries inside a pulse: everyone with an R, 10 a page.
+  const r2All = await inOrder(page, "q=R&scope=all&sort=pulse&per=100");
+  const r2Pages = [...(await inOrder(page, "q=R&scope=all&sort=pulse&per=10&page=1")), ...(await inOrder(page, "q=R&scope=all&sort=pulse&per=10&page=2")), ...(await inOrder(page, "q=R&scope=all&sort=pulse&per=10&page=3"))];
+  assert.ok(r2All.length > 10, `enough to page: ${r2All.length}`);
+  assert.deepEqual(r2Pages, r2All.slice(0, r2Pages.length), "paging never repeats or skips anyone");
+  assert.equal(await page.getByTestId("sort").inputValue(), "pulse");
+  await page.getByTestId("sort").selectOption("pulse");
+  for (let i = 0; i < 20 && (await sql(`SELECT "uiPrefs"->'contacts'->>'sort' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s !== "pulse"; i++) await page.waitForTimeout(100);
+  await page.goto(`${BASE}/dashboard/companies?scope=all`);
+  assert.equal(await page.getByTestId("sort").locator("option[value=pulse]").count(), 0, "Companies don't offer Warmest first");
+  await page.goto(`${BASE}/dashboard/companies?scope=all&sort=pulse&pulse=warm`);
+  await page.locator("[data-testid=company-row]").first().waitFor();
+  assert.equal(await page.getByTestId("sort").inputValue(), "added", "a pasted pulse sort on Companies reads as the default");
+
+  log("Sprint: Columns brings back Activity (four count chips) and Last Contacted By, loaded for the page in one go");
+  await page.goto(`${BASE}/dashboard/contacts?q=Rtwo&scope=all&sort=name`);
+  await page.locator("[data-testid=page-summary]").waitFor();
+  await showColumn(page, "activity");
+  await showColumn(page, "lastContacted");
+  const r2Row = rowOf(page, "Rtwo Stalled");
+  assert.deepEqual(
+    await r2Row.getByTestId("activity-chips").locator("a").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label"))),
+    ["1 Phone calls logged", "0 Texts logged", "0 Emails logged", "0 Meetings logged"],
+  );
+  assert.match(await r2Row.getByTestId("last-contacted").textContent(), /Taylor Test/);
+  assert.match(await rowOf(page, "Rtwo New").locator("td").filter({ hasText: "Not yet" }).first().textContent(), /Not yet/);
+  const r2Prefs = (await sql(`SELECT "uiPrefs"->'contacts'->'columns' AS c FROM "User" WHERE id=$1`, [taylor.id])).rows[0].c;
+  assert.ok(r2Prefs.includes("activity") && r2Prefs.includes("lastContacted"), `remembered: ${r2Prefs}`);
+  await page.getByTestId("columns").click();
+  await page.getByTestId("column-activity").uncheck();
+  await page.getByTestId("column-lastContacted").uncheck();
+  await page.keyboard.press("Escape");
+
+  log("Sprint: Per page sits in the list's footer, not the filter bar, and still pages");
+  await page.goto(`${BASE}/dashboard/contacts?q=R&scope=all&sort=name`);
+  await page.locator("[data-testid=page-summary]").waitFor();
+  assert.equal(await page.getByLabel("Rows per page").count(), 1, "one Per page, in the footer");
+  const perBox = await page.getByLabel("Rows per page").boundingBox();
+  const lastRow = await page.locator("[data-testid=contact-row]").last().boundingBox();
+  assert.ok(perBox.y > lastRow.y, "below the last row");
+  await page.getByLabel("Rows per page").selectOption("10");
+  await page.waitForURL(/per=10/);
+  assert.equal(await page.locator("[data-testid=contact-row]").count(), 10);
+
+  log("Sprint: a row's tick box shows on hover, keyboard focus, after the first tick, or in Select mode — and Tab still reaches it");
+  await page.goto(`${BASE}/dashboard/contacts?q=Rtwo&scope=all&sort=name`);
+  await page.locator("[data-testid=page-summary]").waitFor();
+  await page.mouse.move(5, 5);
+  const opacity = (loc) => loc.evaluate((el) => getComputedStyle(el).opacity);
+  const firstBox = page.locator("[data-testid=contact-row]").first().getByTestId("row-check");
+  const secondBox = page.locator("[data-testid=contact-row]").nth(1).getByTestId("row-check");
+  assert.equal(await opacity(firstBox), "0", "hidden until asked for");
+  await page.locator("[data-testid=contact-row]").first().locator("td").nth(3).hover();
+  assert.equal(await opacity(firstBox), "1", "hovering the row shows it");
+  assert.equal(await opacity(secondBox), "0", "only that row");
+  await page.mouse.move(5, 5);
+  await secondBox.focus();
+  assert.equal(await opacity(secondBox), "1", "keyboard focus shows it");
+  await page.keyboard.press("Space");
+  await page.getByTestId("bulk-bar").waitFor();
+  await page.mouse.move(5, 5);
+  assert.equal(await opacity(firstBox), "1", "after the first tick every box shows");
+  await page.keyboard.press("Space");
+  await page.getByTestId("bulk-bar").waitFor({ state: "detached" });
+  assert.equal(await opacity(firstBox), "0");
+  await page.getByTestId("select-mode").click();
+  assert.equal(await opacity(firstBox), "1", "Select mode shows them all");
+  await page.getByTestId("select-mode").click();
+  assert.equal(await opacity(firstBox), "0");
+  assert.equal(await page.getByTestId("page-check").evaluate((el) => getComputedStyle(el).opacity), "1", "the page box stays in the header");
+
+  log("Sprint: on a phone the first card starts about 180px down");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const ph = await ctx.newPage();
+    await login(ph, EMAIL);
+    for (const url of ["/dashboard/contacts?q=Spr&scope=all", "/dashboard/companies?q=Spr&scope=all", "/dashboard/contacts/favorites"]) {
+      if (url.includes("favorites")) await sql(`UPDATE "Contact" SET favorite=true WHERE id=$1`, [spr.old]);
+      await ph.goto(`${BASE}${url}`);
+      const card = ph.locator(url.includes("companies") ? "[data-testid=company-card]" : "[data-testid=contact-card]").first();
+      await card.waitFor();
+      const top = (await card.boundingBox()).y;
+      assert.ok(top <= 200, `${url}: the first card starts ${Math.round(top)}px down`);
+      const overflow = await ph.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(overflow <= 1, `${url} scrolls sideways by ${overflow}px`);
+    }
+    await sql(`UPDATE "Contact" SET favorite=false WHERE id=$1`, [spr.old]);
+    await ph.goto(`${BASE}/dashboard/contacts?q=Spr&scope=all`);
+    // Everything that was in the header is still one tap away.
+    for (const id of ["cleanup", "filters-toggle", "scope-mine", "preset-call"]) await ph.getByTestId(id).waitFor();
+    await ph.getByRole("link", { name: /Add contact/ }).first().waitFor();
+    await shot(ph, "06-round2-phone-top");
+    await ctx.close();
+  }
   await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id = ANY($1)`, [[taylor.id, nicId]]);
   await sprMemberCtx.close();
 
@@ -1146,7 +1324,7 @@ async function showColumn(page, key) {
     await box.check();
   }
   await page.keyboard.press("Escape");
-  await page.locator("th", { hasText: { marketing: "Marketing", email: "Email", status: "Status", industry: "Industry", location: "Location", notes: "Notes", phone: "Phone", people: "People", added: "Added" }[key] ?? key }).first().waitFor();
+  await page.locator("th", { hasText: { marketing: "Marketing", email: "Email", status: "Status", industry: "Industry", location: "Location", notes: "Notes", phone: "Phone", people: "People", added: "Added", activity: "Activity", lastContacted: "Last Contacted By" }[key] ?? key }).first().waitFor();
 }
 
 // Bulk Assign asks before taking a teammate's records (Nov 11, 2026): the

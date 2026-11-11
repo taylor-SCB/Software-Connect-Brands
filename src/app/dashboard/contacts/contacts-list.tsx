@@ -2,7 +2,8 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { PageHeader, Card, EmptyState, StatusBadge } from "@/components/ui";
+import { Card, EmptyState, StatusBadge } from "@/components/ui";
+import { ListHeader } from "@/components/list-header";
 import { IconPlus, IconUsers, IconNote, IconGlobe, IconMessage, IconMail, IconPhone, IconCalendar } from "@/components/icons";
 import { INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
 import { parseListParams, listHref, pageWindow, PRESET_LABELS, type ListLock } from "@/lib/list-params";
@@ -109,8 +110,8 @@ export async function ContactsList({
   const presetName = params.preset ? PRESET_LABELS.contacts[params.preset] : null;
 
   return (
-    <div className="min-w-0">
-      <PageHeader
+    <div className="relative min-w-0">
+      <ListHeader
         eyebrow="Relationships"
         title={title}
         subtitle={
@@ -130,9 +131,9 @@ export async function ContactsList({
               // lands on their Mine. Everywhere else it starts Unassigned.
               importAssignTo={searchParams.import === "1" && role === "MEMBER" ? userId : ""}
             />
-            <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm min-h-[44px] md:min-h-0">
+            <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm min-h-[44px] max-md:w-11 max-md:justify-center max-md:!px-0 md:min-h-0">
               <IconPlus size={14} />
-              Add contact
+              <span className="max-md:sr-only">Add contact</span>
             </Link>
           </>
         }
@@ -160,6 +161,7 @@ export async function ContactsList({
             leadLabels={leadLabels}
             total={total}
             columns={columns}
+            initialPhone={initialPhone}
           />
           <Card lit>
             {contacts.length === 0 ? (

@@ -825,6 +825,48 @@ async function contrastReport(page, scope) {
   await mobile.locator("[data-testid=phone-bar-more-menu] [data-testid=status-picker]").waitFor();
   await phone.close();
 
+
+  log("Sprint: the Contacts list's Pulse filter and Warmest first (the SQL twin) put every person here exactly where their own meter says, and the twin agrees with leadHealth() on every fixture");
+  {
+    // What each pulse looks like on the row's own mini meter.
+    const LOOK = {
+      won: ["WON", "good"], owes: ["WON", "risk"], warm: ["REACHED", "good"], cooling: ["REACHED", "warn"], cold: ["REACHED", "risk"],
+      trying: ["TRYING", "none"], stalled: ["TRYING", "warn"], new: ["NEW", "none"], closed: ["CLOSED", "none"],
+    };
+    const rowsAt = async (query) => {
+      await page.goto(`${BASE}/dashboard/contacts?scope=all&per=100&${query}`);
+      await page.locator("[data-testid=page-summary]").waitFor();
+      return page.locator("[data-testid=contact-row]").evaluateAll((rows) =>
+        rows.map((row) => {
+          const meter = row.querySelector("[data-testid=pulse] [data-state]");
+          return { id: row.getAttribute("data-contact-id"), state: meter?.getAttribute("data-state"), tone: meter?.getAttribute("data-health") };
+        }),
+      );
+    };
+    const everyone = await rowsAt("sort=name");
+    assert.ok(everyone.length >= 10, `${everyone.length} people`);
+    const seen = new Map();
+    const usedKeys = new Set();
+    for (const [key, [state, tone]] of Object.entries(LOOK)) {
+      for (const row of await rowsAt(`pulse=${key}`)) {
+        assert.deepEqual([row.state, row.tone], [state, tone], `${row.id} under ${key}`);
+        assert.ok(!seen.has(row.id), `${row.id} is under ${seen.get(row.id)} and ${key}`);
+        seen.set(row.id, key);
+        usedKeys.add(key);
+      }
+    }
+    assert.deepEqual([...seen.keys()].sort(), everyone.map((row) => row.id).sort(), "everyone is under exactly one pulse");
+    assert.ok(usedKeys.size >= 5, `the seed reaches ${[...usedKeys]}`);
+    const order = Object.keys(LOOK);
+    const warmest = (await rowsAt("sort=pulse")).map((row) => order.indexOf(seen.get(row.id)));
+    assert.deepEqual(warmest, [...warmest].sort((a, b) => a - b), "Warmest first reads in pulse order");
+    const { execFileSync } = require("node:child_process");
+    const out = execFileSync("npx", ["tsx", "scripts/health-check.ts"], { env: { ...process.env, DATABASE_URL: DB }, encoding: "utf8", timeout: 300000 });
+    assert.match(out, /ok {3}Sprint: the SQL twin agrees with leadHealth\(\) on all \d+ fixtures/);
+    assert.match(out, /ok {3}Sprint: the twin's inputs from the tables agree with the batched loader/);
+    assert.match(out, /PASS — \d+ checks passed/);
+  }
+
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);
   await browser.close();
 })().catch(async (err) => {
