@@ -157,6 +157,7 @@ type BookRow = {
   om_next: Date | null;
   meet_at: Date | null;
   meet_marked: boolean | null;
+  meet_noshow: boolean | null;
   paper: { kind: "quote" | "contract"; at: number }[] | null;
   billed: bigint | number | string | null;
   received: bigint | number | string | null;
@@ -218,15 +219,19 @@ function bookSql(
         JOIN "OpportunityMeeting" om ON om."opportunityId" = o.id
         LEFT JOIN "Activity" act ON act.id = om."activityId"
     ),
+    -- A meeting ahead that is already answered (held early) books nothing.
     om_next AS (
-      SELECT key, MIN("on") AS at FROM om WHERE "on" > now() GROUP BY key
+      SELECT key, MIN("on") AS at FROM om
+       WHERE "on" > now() AND outcome IS NULL AND (act_outcome IS NULL OR act_outcome NOT IN ('HELD', 'NO_SHOW'))
+       GROUP BY key
     ),
     lastmeet AS (
-      SELECT DISTINCT ON (key) key, at, marked FROM (
-        SELECT key, "on" AS at, (outcome IS NOT NULL OR COALESCE(act_outcome IN ('HELD', 'NO_SHOW'), false)) AS marked
+      SELECT DISTINCT ON (key) key, at, marked, noshow FROM (
+        SELECT key, "on" AS at, (outcome IS NOT NULL OR COALESCE(act_outcome IN ('HELD', 'NO_SHOW'), false)) AS marked,
+               COALESCE(outcome::text, act_outcome) IS NOT DISTINCT FROM 'NO_SHOW' AS noshow
           FROM om WHERE "on" <= now()
         UNION ALL
-        SELECT m.key, a."occurredAt", COALESCE(a.outcome IN ('HELD', 'NO_SHOW'), false)
+        SELECT m.key, a."occurredAt", COALESCE(a.outcome IN ('HELD', 'NO_SHOW'), false), a.outcome IS NOT DISTINCT FROM 'NO_SHOW'
           FROM map m
           JOIN "Activity" a ON a."contactId" = m.contact_id
          WHERE a."organizationId" = ${organizationId} AND a.marketing = false AND a.type = 'MEETING' AND a."occurredAt" <= now()
@@ -256,7 +261,7 @@ function bookSql(
            ev_late.n AS late_n, ev_late.oldest AS late_oldest,
            ahead.at AS ahead_at, ahead.type AS ahead_type,
            om_next.at AS om_next,
-           lastmeet.at AS meet_at, lastmeet.marked AS meet_marked,
+           lastmeet.at AS meet_at, lastmeet.marked AS meet_marked, lastmeet.noshow AS meet_noshow,
            paper_agg.items AS paper,
            owed.billed, owed.received, owed.late, owed.oldest_late
       FROM keys k
@@ -314,7 +319,7 @@ function inputFrom(
     triesSinceTalk: touch?.since ?? 0,
     next: candidates[0] ?? null,
     overdue: book?.late_n ? { count: book.late_n, oldestOn: iso(book.late_oldest)! } : null,
-    lastMeeting: book?.meet_at ? { at: book.meet_at, marked: Boolean(book.meet_marked) } : null,
+    lastMeeting: book?.meet_at ? { at: book.meet_at, marked: Boolean(book.meet_marked), noShow: Boolean(book.meet_noshow) } : null,
     paperwork: (book?.paper ?? []).map((paper) => ({ kind: paper.kind, sentAt: new Date(Number(paper.at)) })),
     owed:
       owedBilled > 0 || num(book?.late) > 0

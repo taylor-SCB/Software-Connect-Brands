@@ -10,7 +10,7 @@ import type { ContactMeeting } from "./contact-data";
 import { useContactPage } from "./contact-shell";
 import { EarlyConfirm, MoveButton, useMeetingActions } from "./meeting-actions";
 import { Chip } from "./sheet";
-import { dayChips, shiftDay } from "./day-chips";
+import { dayChips, plusDays } from "@/components/how-did-it-go/dates";
 
 // The first thing booked with them, from Coming up.
 export type NextItem = { eventId: string; title: string; when: string; meeting: boolean };
@@ -44,8 +44,8 @@ export function NextStepStrip({
       ? first.meeting
         ? next && next.eventId === first.eventId
           ? next
-          : { meetingId: null, eventId: first.eventId, on: "", time: null, when: first.when, title: first.title, due: false }
-        : { meetingId: null, eventId: first.eventId, on: "", time: null, when: first.when, title: first.title, due: false }
+          : { meetingId: null, opportunityId: null, eventId: first.eventId, on: "", time: null, when: first.when, title: first.title, due: false }
+        : { meetingId: null, opportunityId: null, eventId: first.eventId, on: "", time: null, when: first.when, title: first.title, due: false }
       : null;
   const actions = useMeetingActions(meeting);
   const isMeeting = Boolean(due) || Boolean(first?.meeting);
@@ -91,6 +91,7 @@ export function NextStepStrip({
               testId="next-move"
               pending={actions.pending}
               withTime={Boolean(meeting?.meetingId)}
+              initialTime={meeting?.time ?? null}
               onMove={(on, time, close) => actions.move(on, time, close)}
             />
           )}
@@ -156,7 +157,7 @@ function FollowUpButton() {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {chips.map((chip) => (
-              <Chip key={chip.on} on={on === chip.on} onClick={() => setOn(chip.on)} testId={`follow-day-${chip.on}`}>
+              <Chip key={chip.on} on={on === chip.on} onClick={() => setOn(chip.on)} testId={`follow-day-${chip.on}`} title={chip.sub}>
                 {chip.label}
               </Chip>
             ))}
@@ -207,7 +208,7 @@ function ParkButton() {
         start(async () => {
           const result = await scheduleFollowUps(
             { contactIds: [page.contactId], companyId: page.companyId, primaryName: page.name, about: "Try again in 30 days" },
-            [{ type: "PHONE_CALL", on: shiftDay(page.today, 30), time: "" }],
+            [{ type: "PHONE_CALL", on: plusDays(page.today, 30), time: "" }],
           );
           page.showToast({ message: result.error ?? result.success ?? "Try again in 30 days" });
           router.refresh();

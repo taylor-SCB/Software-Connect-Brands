@@ -20,7 +20,11 @@
  * More details, Good to know, the Paperwork card appearing only once
  * there is something; both looks' words at 4.5:1; keyboard focus; reduced
  * motion; and the phone at 390 (no sideways scroll, the 56px bar, the
- * full-width main button, folded cards, five history lines).
+ * full-width main button, folded cards, five history lines). And one
+ * rule for the meeting waiting (integration, Nov 11, 2026): a calendar
+ * tick answers nothing, a no-show's next step is Reschedule and Held says
+ * it did happen, Do Not List is not on a tile, and Mark held with no
+ * meeting known opens How did it go? on Meeting — never a second meeting.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -337,7 +341,10 @@ async function contrastReport(page, scope) {
   await page.locator("[data-testid=history-filter-talks]").click();
   assert.equal(await page.locator("[data-testid=activity-line]").count(), 1);
   await page.locator("[data-testid=history-filter-all]").click();
-  assert.equal(await page.locator("[data-testid=history-day]").first().locator("h3").textContent(), "Today");
+  // The talk an hour ago is under Today, or Yesterday in the hour after
+  // midnight on the workspace's clock.
+  const talkDay = dayInZone((await one(`SELECT "occurredAt" FROM "Activity" WHERE id='hla_warm2'`)).occurredAt);
+  assert.equal(await page.locator("[data-testid=history-day]").first().locator("h3").textContent(), talkDay === TODAY ? "Today" : "Yesterday");
 
   log("Sprint: the caption replaces the six tiles; Show counts opens them");
   assert.match(await page.locator("[data-testid=lifecycle-caption]").textContent(), /2 tries · 1 talk/);
@@ -624,6 +631,90 @@ async function contrastReport(page, scope) {
   });
   assert.equal(breathing, "none");
   await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  log("Sprint: one rule for the meeting waiting — a calendar 'Just tick it' still asks and Held answers that meeting; after a no-show the main button is Reschedule and Held in How did it go? says it did happen; Do Not List is not on a tile, so Mark held opens How did it go? on Meeting");
+  for (const [id, name] of [
+    ["hl_tick", "Tia Tick"],
+    ["hl_nos", "Nia Noshow"],
+    ["hl_hide", "Hal Hidden"],
+  ]) {
+    await sql(
+      `INSERT INTO "Contact" (id,"organizationId",name,status,"createdAt","updatedAt") VALUES ($1,$2,$3,'MEETING_SET',now() - interval '20 days',now())`,
+      [id, org, name],
+    );
+    await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","updatedAt") VALUES ($1,$2,$3,'MEETING_SET',$4,now())`, [`${id}_opp`, org, name, me]);
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ($1,$2,$3,$4,true)`, [
+      `${id}_oc`,
+      `${id}_opp`,
+      id,
+      id === "hl_hide" ? "HIDDEN" : "PRIMARY",
+    ]);
+  }
+  // Tia's meeting three days ago was ticked done on the calendar with no
+  // outcome; Nia's was a no-show; Hal's tile has a meeting gone by, but he
+  // is ticked Do Not List on it.
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","contactId","ownerId","doneAt","updatedAt") VALUES
+       ('hl_ev_tick',$1,'Meeting · Tia Tick','Meeting',current_date - 3,'10:00','hl_tick',$2,now(),now()),
+       ('hl_ev_nos',$1,'Meeting · Nia Noshow','Meeting',current_date - 3,'10:00','hl_nos',$2,now(),now())`,
+    [org, me],
+  );
+  await sql(
+    `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById",outcome) VALUES
+       ('hl_m_tick','hl_tick_opp',((current_date - 3) + time '10:00') AT TIME ZONE '${ZONE}','hl_ev_tick',$1,NULL),
+       ('hl_m_nos','hl_nos_opp',((current_date - 3) + time '10:00') AT TIME ZONE '${ZONE}','hl_ev_nos',$1,'NO_SHOW'),
+       ('hl_m_hide','hl_hide_opp',now() - interval '2 days',NULL,$1,NULL)`,
+    [me],
+  );
+  const meetingsOn = async (tile) => (await sql(`SELECT id, outcome FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [tile])).rows.map((row) => `${row.id}:${row.outcome}`);
+  // Tia: the tick answered nothing, so the strip and the header ask, and
+  // Held marks that very meeting (one meeting, never a second beside it).
+  await open(page, "hl_tick");
+  assert.equal(await main(page).getAttribute("data-action"), "mark-held");
+  assert.equal(await page.locator("[data-testid=next-step]").getAttribute("data-kind"), "due", "the strip asks, as the Pipeline does");
+  assert.match(await page.locator("[data-testid=next-step-line]").textContent(), /^Met .* — how did it go\?$/);
+  await main(page).click();
+  await until(async () => (await status("hl_tick")) === "MEETING_COMPLETED", "Tia held");
+  assert.deepEqual(await meetingsOn("hl_tick_opp"), ["hl_m_tick:HELD"], "the ticked meeting itself, held");
+  // Nia: after a no-show with nothing booked the next step is booking
+  // again on that tile; How did it go?'s Held says the no-show did happen.
+  await open(page, "hl_nos");
+  assert.equal(await main(page).getAttribute("data-action"), "book");
+  assert.equal((await main(page).textContent()).trim(), "Reschedule");
+  assert.equal(await page.locator("[data-testid=next-step]").getAttribute("data-kind"), "none");
+  await main(page).click();
+  const nosBook = page.locator("[data-testid=book-meeting]");
+  await nosBook.locator("[data-testid=book-opportunity]").waitFor();
+  assert.equal(await nosBook.locator("[data-testid=book-opportunity]").getAttribute("data-offered"), "hl_nos_opp", "on the no-show's tile");
+  await page.keyboard.press("Escape");
+  await nosBook.waitFor({ state: "detached" });
+  await page.locator("[data-testid=log-bar]").click();
+  const nosLog = page.locator("[data-testid=how-did-it-go]");
+  await nosLog.locator("[data-testid=log-type-MEETING]").click();
+  const nosLine = nosLog.locator("[data-testid=log-meeting-line]");
+  await nosLine.waitFor();
+  assert.equal(await nosLine.getAttribute("data-meeting-id"), "hl_m_nos");
+  assert.match(await nosLine.textContent(), /marked no-show/);
+  await nosLog.locator("[data-testid=outcome-HELD]").click();
+  await page.locator("[data-testid=log-saved]").waitFor();
+  assert.deepEqual(await meetingsOn("hl_nos_opp"), ["hl_m_nos:HELD"], "the no-show turned Held, no second meeting");
+  assert.equal(await status("hl_nos"), "MEETING_COMPLETED");
+  await page.locator("[data-testid=follow-up-skip]").click();
+  await nosLog.waitFor({ state: "detached" });
+  // Hal: Do Not List is not on his tile, so nothing of it waits on him;
+  // Mark held (Meeting Set with no meeting known) opens How did it go? on
+  // Meeting and writes nothing until a chip is tapped.
+  await open(page, "hl_hide");
+  assert.equal(await main(page).getAttribute("data-action"), "mark-held");
+  assert.equal(await page.locator("[data-testid=next-step]").getAttribute("data-kind"), "none");
+  await main(page).click();
+  const hideLog = page.locator("[data-testid=how-did-it-go]");
+  await hideLog.waitFor();
+  assert.equal(await hideLog.locator("[data-testid=log-type-MEETING]").getAttribute("aria-pressed"), "true", "on Meeting");
+  await page.keyboard.press("Escape");
+  await hideLog.waitFor({ state: "detached" });
+  assert.deepEqual(await meetingsOn("hl_hide_opp"), ["hl_m_hide:null"], "his old tile's meeting untouched");
+  assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='hl_hide'`)).n, 0, "nothing logged");
 
   log("Sprint: the phone at 390 — no sideways scroll, the 56px bar (Call · Text · Log · main · ⋯), the main button full width, folded cards, five history lines");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PIPELINE_COLUMNS, PIPELINE_COLUMN_LABELS, STATUS_REASONS, STATUS_REASON_LABELS, type PipelineColumn } from "@/lib/constants";
@@ -16,7 +16,10 @@ import { ConvertDialog } from "./convert-dialog";
 import { isMeetingColumn } from "./move-menu";
 import { OpportunityPanel } from "./opportunity-panel";
 import { FollowUpDialog } from "./ai-assist-ui";
-import { dayChips, timeWords, TIMES, type MeetingFocus, type TileAction, type TileGroup, type TileLine } from "./tile-line";
+import { useHowDidItGo, type SheetToast } from "@/components/how-did-it-go/how-did-it-go";
+import { useBookMeeting } from "@/components/book-meeting/book-meeting";
+import { dayChips, TIME_CHIPS } from "@/components/how-did-it-go/dates";
+import type { MeetingFocus, TileAction, TileGroup, TileLine } from "./tile-line";
 
 export type BoardTile = {
   id: string;
@@ -208,6 +211,22 @@ export function PipelineBoard({
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // The shared sheets ("How did it go?" and Book meeting) live here, not in
+  // the panel, so their "Saved · Undo" outlives a panel closed straight
+  // after. They hand their toast to the board's notice (one toast slot on
+  // the Pipeline, and no "Pipeline →": this is it), and anything they
+  // write reloads the open panel and the board.
+  const [reload, setReload] = useState(0);
+  const changed = useCallback(() => {
+    setReload((n) => n + 1);
+    router.refresh();
+  }, [router]);
+  const sheetToast = useCallback((toast: SheetToast) => {
+    setNotice({ text: toast.words, ...(toast.batchId ? { batchId: toast.batchId } : {}) });
+  }, []);
+  const how = useHowDidItGo({ dial: true, defaults: { onChanged: changed, onToast: sheetToast, opportunityId: panelId ?? undefined } });
+  const book = useBookMeeting({ onChanged: changed, onToast: sheetToast });
+
   const columnOf = (tile: BoardTile) => moved[tile.id] ?? shownIn(tile);
 
   function say(text: string, extra: Omit<Notice, "text"> = {}) {
@@ -309,7 +328,7 @@ export function PipelineBoard({
       const result = await undoLog(batchId);
       if (result.error) return say(result.error, { error: true });
       say("Undone");
-      router.refresh();
+      changed();
     });
   }
 
@@ -497,6 +516,8 @@ export function PipelineBoard({
           quietDays={tiles.find((row) => row.id === panelId)?.quietDays ?? null}
           suggestedLabel={tiles.find((row) => row.id === panelId)?.suggestedLabel ?? null}
           timeZone={timeZone}
+          sheets={{ log: how.open, book: book.open }}
+          reload={reload}
           onClose={closePanel}
           onSaved={(text, batchId) => {
             say(text, batchId ? { batchId } : {});
@@ -509,6 +530,8 @@ export function PipelineBoard({
           }}
         />
       )}
+      {how.element}
+      {book.element}
     </>
   );
 }
@@ -1014,9 +1037,9 @@ function MenuItem({ children, onClick, testId }: { children: React.ReactNode; on
 
 /* ------------------------------- Reschedule ------------------------------- */
 
-// Day chips (Tomorrow · next two weekdays · Next week · Pick) and time
-// chips; a meeting still ahead moves, a missed one is a no-show and a new
-// one is booked (rescheduleMeeting).
+// Day chips (Tomorrow · the working day after · Next week · Pick) and time
+// chips or No time; a meeting still ahead moves, a missed one is a no-show
+// and a new one is booked (rescheduleMeeting).
 function Reschedule({
   tile,
   today,
@@ -1039,6 +1062,8 @@ function Reschedule({
 }) {
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  // The same day and time chips as the sheets (@/components/how-did-it-go/dates),
+  // starting at the meeting's own time.
   const chips = dayChips(today);
   const [on, setOn] = useState(chips[0].on);
   const [time, setTime] = useState<string | null>(tile.focus?.meeting.time ?? "10:00");
@@ -1064,7 +1089,7 @@ function Reschedule({
           <p className="text-sm font-semibold">New day</p>
           <div className="flex flex-wrap gap-1.5">
             {chips.map((row) => (
-              <button key={row.label} type="button" onClick={() => setOn(row.on)} className={chip(on === row.on)} data-testid="reschedule-day">
+              <button key={row.key} type="button" onClick={() => setOn(row.on)} className={chip(on === row.on)} title={row.sub} data-testid="reschedule-day" data-on={row.on}>
                 {row.label}
               </button>
             ))}
@@ -1080,12 +1105,12 @@ function Reschedule({
           </div>
           <p className="text-sm font-semibold">Time</p>
           <div className="flex flex-wrap gap-1.5">
-            {TIMES.map((value) => (
-              <button key={value} type="button" onClick={() => setTime(value)} className={chip(time === value)} data-testid="reschedule-time">
-                {timeWords(value)}
+            {TIME_CHIPS.map((row) => (
+              <button key={row.value} type="button" onClick={() => setTime(row.value)} className={chip(time === row.value)} data-testid="reschedule-time">
+                {row.label}
               </button>
             ))}
-            <button type="button" onClick={() => setTime(null)} className={chip(time === null)}>
+            <button type="button" onClick={() => setTime(null)} className={chip(time === null)} data-testid="reschedule-time-none">
               No time
             </button>
           </div>

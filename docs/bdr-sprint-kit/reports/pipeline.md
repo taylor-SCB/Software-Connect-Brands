@@ -40,6 +40,7 @@ Branch `claude/sprint-pipeline`. The first coder's WIP (81fb5dd) built the loade
   - `convertOpportunity({ id, stage, mode, title, valueCents, on, reason?, early? })`.
 - `tile-line.ts` (pure): `meetingFocus`, `groupOf`, `tileLine`, `tileAction`, `meetingSortKey`, `compactDollars`.
 - `/dashboard/deals?scope=mine|all&decide=1&quiet=1&q=&label=` addresses a filtered board.
+- Integration fixes (Nov 11, 2026): the shared sheets live on the board (`useHowDidItGo` / `useBookMeeting` in `pipeline-board.tsx`), handed to the panel as `sheets`; they are told the panel's tile (`opportunityId`), hand their "Saved · Undo" to the board's one notice, and bump the panel's `reload` on every write. The panel's next-step button is drawn only for an action it can run; Mark held with no meeting waiting opens How did it go? on Meeting. Needs a decision, the tiles' Happened group, the panel's Mark held and a move out of Meeting Set read `waitingMeetings` / `waitingOf` (src/lib/meetings.ts, src/lib/meeting-rule.ts), the rule the contact and company pages and the sheet share. Reschedule pickers use the sheets' `dayChips` / `TIME_CHIPS`.
 - `/dashboard/deals?open=<opportunityId>` (added at integration) opens that tile's panel. An id from another workspace, or none at all, is ignored. The tile shows even when Mine or a filter would hide it, and closing the panel takes `open` off the address. Link to one opportunity this way, never `?q=<name>`.
 
 ## Suite results

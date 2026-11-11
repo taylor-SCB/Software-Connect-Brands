@@ -64,7 +64,8 @@ export function MainAction({ data, phones, variant = "header" }: { data: MainAct
     case "book":
       return (
         <button type="button" className={cls} onClick={page.openBook} data-testid={testId} data-action="book">
-          {bar ? "Book" : "Book meeting"}
+          {/* "Reschedule" after a no-show, else "Book meeting". */}
+          {bar && action.label === "Book meeting" ? "Book" : action.label}
         </button>
       );
     case "meeting":
@@ -79,6 +80,7 @@ export function MainAction({ data, phones, variant = "header" }: { data: MainAct
               testId="contact-reschedule"
               pending={meeting.pending}
               withTime={Boolean(data.meeting.meetingId)}
+              initialTime={data.meeting.time}
               onMove={(on, time, close) => meeting.move(on, time, close)}
             />
           )}

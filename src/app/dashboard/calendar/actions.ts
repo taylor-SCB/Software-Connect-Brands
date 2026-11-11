@@ -294,7 +294,7 @@ export async function completeEventWithLog(
     next?: unknown;
     early?: boolean;
   },
-): Promise<ActionState & { batchId?: string; confirmEarly?: string; notices?: string[] }> {
+): Promise<ActionState & { batchId?: string; confirmEarly?: string; notices?: string[]; opportunityId?: string | null }> {
   const { organizationId, userId } = await requireSession();
   const parsed = z
     .object({
@@ -334,7 +334,7 @@ export async function completeEventWithLog(
   for (const contactId of result.contactIds) revalidatePath(`/dashboard/contacts/${contactId}`);
   if (result.companyId) revalidatePath(`/dashboard/companies/${result.companyId}`);
   if (result.opportunityId) revalidatePath("/dashboard/deals");
-  return { success: ["Done and logged", ...result.notices].join(" · "), batchId: result.batchId, notices: result.notices };
+  return { success: ["Done and logged", ...result.notices].join(" · "), batchId: result.batchId, notices: result.notices, opportunityId: result.opportunityId ?? null };
 }
 
 // Dragging is a mouse gesture a phone cannot do, so moving a day is a

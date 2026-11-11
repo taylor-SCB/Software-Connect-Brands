@@ -27,6 +27,7 @@ import { Chip, ChipGrid, Sheet } from "./sheet";
 import { UndoToast, UNDO_MS } from "./undo-toast";
 import { browserToday, dayChips, longDay, plusDays, whenWords } from "./dates";
 import { useDialReturn } from "./dial-return";
+import { pipelineHref } from "@/lib/pipeline-link";
 import type { AfterLogInput, LogContext, SavedLog } from "./types";
 
 // "How did it go?" (BDR redesign, Nov 11, 2026): one sheet on the contact
@@ -89,8 +90,28 @@ export type HowDidItGoOptions = {
   pickContactIds?: string[];
   // Open straight on the Book meeting step ("Meeting booked").
   start?: "log" | "book";
+  // The tile the sheet was opened from (the Pipeline panel): a Meeting
+  // outcome answers this tile's meeting, a meeting logged or booked lands
+  // on it, and "Add to the open … opportunity?" offers it first.
+  opportunityId?: string;
+  // A step-1 save that opens step 2 (the next step).
   onSaved?: (saved: SavedLog) => void;
+  // Anything written: every save, the next step, a booking, a reschedule,
+  // Not moving forward, and an Undo (the sheet's own or the toast's). A
+  // host showing the same record (the Pipeline panel) reloads on it.
+  onChanged?: () => void;
+  // The host draws "Saved · Undo" itself (one toast slot on its screen):
+  // the sheet hands each toast over instead of drawing its own.
+  onToast?: (toast: SheetToast) => void;
 };
+
+// One "Saved · Undo": the words, the save Undo takes back, and the link
+// to the tile on the Pipeline when the save put someone on it.
+export type SheetToast = { batchId: string; words: string; href: string | null; hrefLabel?: string; opportunityId: string | null };
+
+// "Pipeline →": the tile itself (/dashboard/deals?open=<id>, shown even when
+// Mine or a filter would hide it), or the board when there is no tile.
+export { pipelineHref };
 
 export type HowDidItGoProps = HowDidItGoOptions & {
   open: boolean;
@@ -100,7 +121,7 @@ export type HowDidItGoProps = HowDidItGoOptions & {
   onFinished?: () => void;
 };
 
-type Toast = { batchId: string; words: string; href?: string | null; hrefLabel?: string; at: number };
+type Toast = { batchId: string; words: string; href?: string | null; hrefLabel?: string; at: number; opportunityId?: string | null };
 
 type ChipDef = {
   key: string;
@@ -147,6 +168,10 @@ export const TYPE_ORDER: ActivityTypeValue[] = ["PHONE_CALL", "TEXT", "EMAIL", "
 const TYPE_WORD: Record<ActivityTypeValue, string> = { PHONE_CALL: "Call", TEXT: "Text", EMAIL: "Email", MEETING: "Meeting" };
 const TYPE_ICON = { PHONE_CALL: IconPhone, TEXT: IconMessage, EMAIL: IconMail, MEETING: IconCalendar } as const;
 const TRIES = new Set(["NO_ANSWER", "VOICEMAIL", "BUSY", "GATEKEEPER", "BAD_NUMBER", "SENT"]);
+// The server's "<Name> is on your Pipeline in Meeting Set" (or "the
+// Pipeline", a teammate's tile), found among a save's notices.
+const ON_PIPELINE = /is on (your|the) Pipeline/;
+const YOURS = /is on your Pipeline/;
 
 // The kind of touch a calendar entry reads back as (mirrors activityTypeFor
 // in calendar-auto.ts, so the box needs no round trip).
@@ -169,20 +194,31 @@ type Choice = "none" | "follow" | "park" | "book" | "meeting" | "quote" | "lost"
 export function HowDidItGo(props: HowDidItGoProps) {
   const [toast, setToast] = useState<Toast | null>(null);
   const dismiss = useCallback(() => setToast(null), []);
-  const { open, onFinished } = props;
+  const { open, onFinished, onToast: hostToast, onChanged } = props;
   useEffect(() => {
     if (!open && !toast) onFinished?.();
   }, [open, toast, onFinished]);
+  // A host that draws the toast itself gets it; else it is drawn here.
+  const show = useCallback(
+    (next: Toast) => {
+      if (hostToast)
+        hostToast({ batchId: next.batchId, words: next.words, href: next.href ?? null, hrefLabel: next.hrefLabel, opportunityId: next.opportunityId ?? null });
+      else setToast(next);
+    },
+    [hostToast],
+  );
   return (
     <>
-      {props.open && <HowSheet {...props} onToast={setToast} />}
-      <UndoToast saved={toast} onDone={dismiss} />
+      {props.open && <HowSheet {...props} emit={show} />}
+      <UndoToast saved={toast} onDone={dismiss} onUndone={onChanged} />
     </>
   );
 }
 
-function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) {
-  const { target, event, onClose, onToast } = props;
+function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
+  const { target, event, onClose, emit: onToast } = props;
+  // A booking from a tile's panel starts on that tile.
+  const freshBooking = (): BookingValue => (props.opportunityId ? { ...EMPTY_BOOKING, opportunity: props.opportunityId } : EMPTY_BOOKING);
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const eventMode = Boolean(event);
@@ -204,7 +240,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
   const [seed, setSeed] = useState<FollowUpSeed | null>(null);
   const [undoLeft, setUndoLeft] = useState(false);
   const [people, setPeople] = useState<string[]>(props.pickContactIds ?? []);
-  const [book, setBook] = useState<BookingValue>(EMPTY_BOOKING);
+  const [book, setBook] = useState<BookingValue>(freshBooking);
   const [bookMode, setBookMode] = useState<"log" | "reschedule" | "new" | "entry">("log");
   const [early, setEarly] = useState<{ day: string; retry: () => void } | null>(null);
   // Step 2.
@@ -216,16 +252,21 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
   const [reason, setReason] = useState<StatusReasonValue | null>(null);
   const [checkBack, setCheckBack] = useState(false);
 
+  const opportunityId = props.opportunityId ?? null;
   useEffect(() => {
     let live = true;
-    const ask = event ? { eventId: event.id } : target?.contactId ? { contactId: target.contactId } : { companyId: target?.companyId ?? null };
+    const ask = event
+      ? { eventId: event.id }
+      : target?.contactId
+        ? { contactId: target.contactId, opportunityId }
+        : { companyId: target?.companyId ?? null };
     logContext(ask).then((answer) => {
       if (live && !("error" in answer)) setCtx(answer);
     });
     return () => {
       live = false;
     };
-  }, [event, target?.contactId, target?.companyId]);
+  }, [event, target?.contactId, target?.companyId, opportunityId]);
 
   // "Saved · Undo" shows for ten seconds after the save.
   useEffect(() => {
@@ -243,18 +284,24 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
   // company page, or the entry's person.
   const bookWith = target?.contactId ?? (company ? people[0] : null) ?? ctx?.contactId ?? event?.contactId ?? null;
   const meeting = ctx?.meeting ?? null;
-  // "Booked Tue, Nov 17, 10:00 AM · Kristen is on your Pipeline in Meeting Set"
+  // "Booked Tue, Nov 17, 10:00 AM · Kristen is on your Pipeline in Meeting
+  // Set" — "the Pipeline" when the tile is a teammate's (the server says
+  // which in its own words).
   const bookedName = () => {
     const id = bookWith;
     const person = props.companyPeople?.find((row) => row.id === id);
     const full = person?.name ?? (target?.contactId || eventMode ? (ctx?.name ?? props.name ?? event?.contactName ?? "") : "");
     return full.split(/\s+/)[0] || "They";
   };
-  const bookedWords = (value: BookingValue) => `Booked ${whenWords(value.on, value.time || null)} · ${bookedName()} is on your Pipeline in Meeting Set`;
+  const bookedWords = (value: BookingValue, yours = true) =>
+    `Booked ${whenWords(value.on, value.time || null)} · ${bookedName()} is on ${yours ? "your" : "the"} Pipeline in Meeting Set`;
 
   /* ------------------------------ Saving ------------------------------ */
 
+  // Every save ends here or in enterNext: the host hears that something
+  // changed (the Pipeline panel reloads), and "Saved · Undo" shows.
   function toastAndClose(toast: Omit<Toast, "at"> & { at?: number }) {
+    props.onChanged?.();
     onToast({ ...toast, at: toast.at ?? stamp() });
     onClose();
   }
@@ -265,6 +312,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
     setSeed(followUp);
     setError(undefined);
     props.onSaved?.(next);
+    props.onChanged?.();
     const key = chip?.key ?? null;
     setReason(null);
     setInterested(false);
@@ -287,7 +335,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
     else if (key === "HELD") setChoice("quote");
     else if (key === "NO_SHOW") setChoice("reschedule");
     else setChoice("none");
-    setBook(EMPTY_BOOKING);
+    setBook(freshBooking());
   }
 
   // The touch, from the form (with whatever is on it) plus the chip.
@@ -352,12 +400,13 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
         }
         setEarly(null);
         if (booking) {
-          const ok = (result.notices ?? []).some((line) => /on your Pipeline/.test(line));
+          const line = (result.notices ?? []).find((text) => ON_PIPELINE.test(text));
           toastAndClose({
             batchId: result.batchId,
-            words: ok ? `${chip?.label ?? "Logged"} · ${bookedWords(booking)}` : (result.notices ?? []).join(" · ") || result.success || "Logged",
-            href: ok ? "/dashboard/deals" : null,
+            words: line ? `${chip?.label ?? "Logged"} · ${bookedWords(booking, YOURS.test(line))}` : (result.notices ?? []).join(" · ") || result.success || "Logged",
+            href: line ? pipelineHref(result.opportunityId) : null,
             hrefLabel: "Pipeline →",
+            opportunityId: result.opportunityId ?? null,
           });
           return;
         }
@@ -388,6 +437,8 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
         data.set("nextNote", next.note ?? "");
         data.set("opportunity", next.opportunity ?? "auto");
       }
+      // A meeting logged from a tile's panel lands on that tile.
+      if (type === "MEETING" && opportunityId) data.set("meetingOpportunity", opportunityId);
       const result = await logActivity({}, data);
       if (result.error || !result.batchId) {
         setError(result.error ?? "That couldn't be saved");
@@ -396,12 +447,13 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
       const words = chip?.label ?? (ahead ? "Scheduled" : `${ACTIVITY_LABELS[type]} logged`);
       if (!result.followUp) {
         // Scheduled ahead, or the next step was in the same save.
-        const booked = Boolean(next && booking && (result.notices ?? []).some((line) => /on your Pipeline/.test(line)));
+        const line = next && booking ? (result.notices ?? []).find((text) => ON_PIPELINE.test(text)) : undefined;
         toastAndClose({
           batchId: result.batchId,
-          words: booked && booking ? `${words} · ${bookedWords(booking)}` : next ? (result.notices ?? []).join(" · ") || result.success || words : result.success || words,
-          href: booked ? "/dashboard/deals" : null,
+          words: line && booking ? `${words} · ${bookedWords(booking, YOURS.test(line))}` : next ? (result.notices ?? []).join(" · ") || result.success || words : result.success || words,
+          href: line ? pipelineHref(result.opportunityId) : null,
           hrefLabel: "Pipeline →",
+          opportunityId: result.opportunityId ?? null,
         });
         return;
       }
@@ -418,7 +470,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
     if (chip.book || chip.reschedule) {
       if (chip.reschedule) setBookMode(meeting ? "reschedule" : eventMode ? "entry" : "new");
       else setBookMode("log");
-      setBook(EMPTY_BOOKING);
+      setBook(freshBooking());
       setError(undefined);
       setPhase("book");
       return;
@@ -439,8 +491,10 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
       if (bookMode === "reschedule" && meeting) {
         const result = await rescheduleMeeting(meeting.id, { on: book.on, time: book.time || null });
         if (result.error) return setError(result.error);
-        if (result.batchId) toastAndClose({ batchId: result.batchId, words: result.success ?? "Rescheduled", href: "/dashboard/deals", hrefLabel: "Pipeline →" });
-        else toastAndClose({ batchId: "", words: result.success ?? "Rescheduled" });
+        const tile = result.opportunityId ?? null;
+        if (result.batchId)
+          toastAndClose({ batchId: result.batchId, words: result.success ?? "Rescheduled", href: pipelineHref(tile), hrefLabel: "Pipeline →", opportunityId: tile });
+        else toastAndClose({ batchId: "", words: result.success ?? "Rescheduled", opportunityId: tile });
         return;
       }
       if (bookMode === "entry" && event) {
@@ -460,7 +514,13 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
         opportunity: book.opportunity,
       });
       if (result.error || !result.batchId) return setError(result.error ?? "That couldn't be booked");
-      toastAndClose({ batchId: result.batchId, words: bookedWords(book), href: "/dashboard/deals", hrefLabel: "Pipeline →" });
+      toastAndClose({
+        batchId: result.batchId,
+        words: bookedWords(book, result.yours ?? true),
+        href: pipelineHref(result.opportunityId),
+        hrefLabel: "Pipeline →",
+        opportunityId: result.opportunityId ?? null,
+      });
     });
   }
 
@@ -472,14 +532,15 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
       if (choice === "lost") {
         const result = await notMovingForward({ opportunityId: saved.opportunityId, batchId: saved.batchId, reason });
         if (result.error) return setError(result.error);
-        toastAndClose({ batchId: saved.batchId, words: `${saved.words} · ${result.success}`, at: saved.at });
+        toastAndClose({ batchId: saved.batchId, words: `${saved.words} · ${result.success}`, at: saved.at, opportunityId: saved.opportunityId });
         return;
       }
       if (choice === "reschedule" && book.on) {
         if (meeting) {
           const result = await rescheduleMeeting(meeting.id, { on: book.on, time: book.time || null });
           if (result.error) return setError(result.error);
-          toastAndClose({ batchId: result.batchId ?? saved.batchId, words: result.success ?? "Rescheduled", href: "/dashboard/deals", hrefLabel: "Pipeline →" });
+          const tile = result.opportunityId ?? saved.opportunityId;
+          toastAndClose({ batchId: result.batchId ?? saved.batchId, words: result.success ?? "Rescheduled", href: pipelineHref(tile), hrefLabel: "Pipeline →", opportunityId: tile });
           return;
         }
       }
@@ -507,24 +568,26 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
         }
       }
       if (!input.note && !input.mark && !input.reason && !input.next) {
-        toastAndClose({ batchId: saved.batchId, words: `Saved · ${saved.words}`, at: saved.at });
+        toastAndClose({ batchId: saved.batchId, words: `Saved · ${saved.words}`, at: saved.at, opportunityId: saved.opportunityId });
         return;
       }
       const result = await afterLog(input);
       if (result.error) return setError(result.error);
       const booked = input.next?.kind === "meeting";
-      const lines = (result.words ?? []).map((line) => (booked && /on your Pipeline/.test(line) ? bookedWords(book) : line));
+      const lines = (result.words ?? []).map((line) => (booked && ON_PIPELINE.test(line) ? bookedWords(book, YOURS.test(line)) : line));
+      const tile = result.opportunityId ?? saved.opportunityId;
       toastAndClose({
         batchId: saved.batchId,
         words: [saved.words, ...lines].join(" · "),
-        href: booked ? "/dashboard/deals" : null,
+        href: booked ? pipelineHref(tile) : null,
         hrefLabel: "Pipeline →",
+        opportunityId: tile,
       });
     });
   }
 
   function skip() {
-    if (saved) onToast({ batchId: saved.batchId, words: `Saved · ${saved.words}`, at: saved.at });
+    if (saved) onToast({ batchId: saved.batchId, words: `Saved · ${saved.words}`, at: saved.at, opportunityId: saved.opportunityId });
     onClose();
   }
 
@@ -536,6 +599,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
       setSaved(null);
       setSeed(null);
       setPhase("log");
+      props.onChanged?.();
       router.refresh();
     });
   }
@@ -737,9 +801,9 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
             ) : (
               <div className="space-y-2">
                 {type === "MEETING" && meeting && (
-                  <p className="faint text-xs" data-testid="log-meeting-line">
+                  <p className="faint text-xs" data-testid="log-meeting-line" data-meeting-id={meeting.id}>
                     The meeting booked for {longDay(meeting.on)}
-                    {meeting.ahead ? " (still ahead)" : ""}
+                    {meeting.ahead ? " (still ahead)" : meeting.noShow ? " (marked no-show)" : ""}
                   </p>
                 )}
                 <ChipGrid label={`How did the ${TYPE_WORD[type].toLowerCase()} go?`} testId="outcome-chips">
@@ -785,6 +849,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
             onChange={setBook}
             who={bookMode === "log" || bookMode === "new"}
             opportunity={bookMode === "log" || bookMode === "new"}
+            offer={opportunityId}
           />
         )}
 
@@ -817,7 +882,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
           <button
             type="button"
             onClick={() => {
-              setBook(EMPTY_BOOKING);
+              setBook(freshBooking());
               setChoice("meeting");
               setPhase("next");
             }}
@@ -917,6 +982,7 @@ function HowSheet(props: HowDidItGoProps & { onToast: (toast: Toast) => void }) 
                     onChange={setBook}
                     who={choice === "meeting" || !meeting}
                     opportunity={choice === "meeting" || !meeting}
+                    offer={opportunityId}
                   />
                 )}
 
@@ -1045,9 +1111,16 @@ function ReasonChips({ value, onChange }: { value: StatusReasonValue | null; onC
 // useHowDidItGo({ dial: true }) also opens it on its own, set to Call or
 // Text, when the rep comes back from a tel: or sms: tap on a link inside
 // an element carrying data-contact-id (an Up next row, a Who to call row).
-export function useHowDidItGo(settings: { dial?: boolean } = {}) {
+// `defaults` go into every opening, the dial's included (the Pipeline
+// board passes its one toast slot, its reload and the open panel's tile);
+// what open() is given wins.
+export function useHowDidItGo(settings: { dial?: boolean; defaults?: HowDidItGoOptions } = {}) {
   const [state, setState] = useState<{ open: boolean; options: HowDidItGoOptions | null }>({ open: false, options: null });
-  const open = useCallback((options: HowDidItGoOptions) => setState({ open: true, options }), []);
+  const defaults = useRef(settings.defaults);
+  useEffect(() => {
+    defaults.current = settings.defaults;
+  });
+  const open = useCallback((options: HowDidItGoOptions) => setState({ open: true, options: { ...defaults.current, ...options } }), []);
   const close = useCallback(() => setState((prev) => ({ ...prev, open: false })), []);
   useDialReturn({ contactIds: [], any: true, enabled: Boolean(settings.dial) }, (tap) => {
     if (tap.contactId) open({ target: { contactId: tap.contactId }, type: tap.type });

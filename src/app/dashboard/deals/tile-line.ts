@@ -1,5 +1,6 @@
 import { aheadDay, isoDiff, shortDay, time12 } from "@/lib/health";
 import type { PipelineColumn } from "@/lib/constants";
+import { waitingOf } from "@/lib/meeting-rule";
 
 // What a Pipeline tile says on its third line and which one button it
 // offers (BDR redesign, Release 7, Nov 11, 2026). Pure: the page works it
@@ -42,17 +43,16 @@ export type TileAction =
 export type TileLine = { text: string; tone: "warn" | "plain"; key: string };
 
 // The meeting a Meeting Set tile is about: the soonest one ahead, else the
-// latest one that has passed.
+// latest one that has passed (the shared rule, src/lib/meeting-rule.ts).
 export function meetingFocus(meetings: TileMeeting[], now: Date): MeetingFocus | null {
-  const nowMs = now.getTime();
-  const ahead = meetings
-    .filter((meeting) => meeting.outcome === null && Date.parse(meeting.at) > nowMs)
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  if (ahead[0]) return { meeting: ahead[0], kind: "ahead" };
-  const past = meetings.filter((meeting) => Date.parse(meeting.at) <= nowMs).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  if (!past[0]) return null;
-  const kind = past[0].outcome === "HELD" ? "held" : past[0].outcome === "NO_SHOW" ? "noshow" : "due";
-  return { meeting: past[0], kind };
+  const waiting = waitingOf(
+    meetings.map((meeting) => ({ item: meeting, at: Date.parse(meeting.at), outcome: meeting.outcome, meetingSet: true })),
+    now.getTime(),
+  );
+  if (waiting.ahead) return { meeting: waiting.ahead, kind: "ahead" };
+  if (!waiting.last) return null;
+  const { item, outcome } = waiting.last;
+  return { meeting: item, kind: outcome === "HELD" ? "held" : outcome === "NO_SHOW" ? "noshow" : "due" };
 }
 
 export function groupOf(focus: MeetingFocus | null): TileGroup {
@@ -165,33 +165,4 @@ export function tileAction(column: PipelineColumn | "ARCHIVED", focus: MeetingFo
 export function meetingSortKey(focus: MeetingFocus | null) {
   if (!focus) return "9999";
   return focus.meeting.at;
-}
-
-/* ---------------------- Day and time chips (Reschedule, Book) ---------------------- */
-
-export function addDays(iso: string, days: number) {
-  const date = new Date(`${iso}T12:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" });
-export function dayChips(today: string) {
-  const chips: { on: string; label: string }[] = [{ on: addDays(today, 1), label: "Tomorrow" }];
-  for (let n = 2; chips.length < 3 && n < 7; n += 1) {
-    const on = addDays(today, n);
-    const day = new Date(`${on}T12:00:00Z`).getUTCDay();
-    if (day !== 0 && day !== 6) chips.push({ on, label: weekday.format(new Date(`${on}T12:00:00Z`)) });
-  }
-  // Next Monday, or the one after when Monday is tomorrow.
-  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
-  const toMonday = (8 - dow) % 7 || 7;
-  chips.push({ on: addDays(today, toMonday === 1 ? 8 : toMonday), label: "Next week" });
-  return chips;
-}
-export const TIMES = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00"];
-
-// "9 AM", "1 PM".
-export function timeWords(value: string) {
-  const hour = Number(value.slice(0, 2));
-  return `${hour % 12 || 12} ${hour < 12 ? "AM" : "PM"}`;
 }

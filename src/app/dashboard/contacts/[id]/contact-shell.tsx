@@ -57,6 +57,7 @@ export function ContactShell({
   companyId,
   companyName = null,
   today,
+  bookOpportunityId = null,
   children,
 }: {
   contactId: string;
@@ -65,6 +66,9 @@ export function ContactShell({
   // For the sheet's "+ others" picker.
   companyName?: string | null;
   today: string;
+  // The tile Book meeting offers first: the one whose meeting was a
+  // no-show (Reschedule), else the sheet's own choice.
+  bookOpportunityId?: string | null;
   children: React.ReactNode;
 }) {
   const [log, setLog] = useState<{ open: boolean; type: ActivityTypeValue }>({ open: false, type: "PHONE_CALL" });
@@ -144,7 +148,14 @@ export function ContactShell({
         today={today}
         current={{ id: contactId, name, company: companyName }}
       />
-      <BookMeetingSheet open={bookOpen} onClose={() => setBookOpen(false)} contactId={contactId} name={name} today={today} />
+      <BookMeetingSheet
+        open={bookOpen}
+        onClose={() => setBookOpen(false)}
+        contactId={contactId}
+        name={name}
+        today={today}
+        opportunityId={bookOpportunityId}
+      />
       <UndoToast saved={toast} onDone={dismiss} />
     </Context.Provider>
   );

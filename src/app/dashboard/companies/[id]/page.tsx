@@ -282,12 +282,9 @@ export default async function CompanyDetailPage({
         return { kind: "book", label: step.label, contactId: (warmest ?? about)?.id ?? null };
       case "meeting":
       case "mark-held": {
-        const meeting = about ? await meetingFor(organizationId, about.id, now, today) : null;
+        const meeting = about ? await meetingFor(organizationId, about.id, now, today, timeZone) : null;
         if (step.key === "meeting") {
-          const ahead = meeting?.aheadMeetingId
-            ? await prisma.opportunityMeeting.findFirst({ where: { id: meeting.aheadMeetingId }, select: { on: true } })
-            : null;
-          const day = ahead ? zoneDay(ahead.on, timeZone) : today;
+          const day = meeting?.aheadOn ?? today;
           return { kind: "meeting", label: step.label, href: `/dashboard/calendar?on=${day}`, meetingId: meeting?.aheadMeetingId ?? null, on: day };
         }
         return { kind: "mark-held", label: step.label, meetingId: meeting?.pastMeetingId ?? null, entryId: meeting?.entryId ?? null, contactId: about?.id ?? null };

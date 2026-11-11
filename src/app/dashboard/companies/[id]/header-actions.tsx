@@ -35,7 +35,10 @@ function useRunAction(action: MainAction) {
   const [pending, start] = useTransition();
 
   // Held: the Pipeline meeting row when there is one, else the calendar
-  // entry ticked done as Held. A meeting still ahead asks first.
+  // entry ticked done as Held. A meeting still ahead asks first. With
+  // neither (a status set by hand), How did it go? opens on Meeting for
+  // the person, as on every screen; the sheet finds the meeting to answer
+  // or logs one.
   function held(early = false) {
     if (action.kind !== "mark-held") return;
     setError(undefined);
@@ -56,7 +59,8 @@ function useRunAction(action: MainAction) {
         shell.saved({ message: result.success ?? "Held", batchId: result.batchId });
         return;
       }
-      shell.openLog("MEETING");
+      if (action.contactId) shell.setRowLog(action.contactId, "MEETING");
+      else shell.openLog("MEETING");
     });
   }
 

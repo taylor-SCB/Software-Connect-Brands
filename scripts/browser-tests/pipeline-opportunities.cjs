@@ -38,7 +38,13 @@
  * people rows and meetings; the reworded convert prompt; ?open=<id>
  * opening a tile's panel (from the company page's Opportunity card, past
  * Mine, a search, a label and hidden archived deals, other workspaces'
- * ids ignored); the phone tabs.
+ * ids ignored); the panel's sheets about its own tile (Book meeting and
+ * Log → Meeting → Held on a person who is on two tiles), the panel
+ * reloading after every sheet save, one Saved · Undo that outlives a
+ * closed panel, one set of day and time chips everywhere, Mark held never
+ * a dead button (Reschedule after a no-show; How did it go? on Meeting
+ * with no meeting known), a Member's booking onto a teammate's tile
+ * linking to it; the phone tabs.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -1066,8 +1072,9 @@ async function openAddDeal(p) {
   await panel.getByTestId("panel-title").fill("Happy Builders");
   await panel.getByTestId("panel-save").waitFor({ state: "detached" });
   // Log opens the shared "How did it go?" sheet over the panel, set to
-  // Call; Talked saves in one tap, Skip closes it, and its own toast
-  // carries Undo.
+  // Call; Talked saves in one tap, Skip closes it, and the board's one
+  // "Saved · Undo" carries its Undo (the sheet draws no toast of its own
+  // on the Pipeline).
   await hanaRow.getByTestId("panel-log").click();
   const how = page.getByTestId("how-did-it-go");
   await how.waitFor();
@@ -1078,9 +1085,10 @@ async function openAddDeal(p) {
   await page.getByTestId("follow-up-skip").click();
   await how.waitFor({ state: "detached" });
   assert.equal(await panel.count(), 1, "the panel stays open");
-  const toast = page.getByTestId("log-toast");
-  await toast.waitFor();
-  await toast.getByTestId("log-toast-undo").click();
+  const toast = page.getByTestId("pipeline-notice");
+  await toast.getByText("Saved · Talked").waitFor();
+  assert.equal(await page.getByTestId("log-toast").count(), 0, "one toast slot");
+  await toast.getByTestId("pipeline-undo").click();
   await toast.getByText("Undone").waitFor();
   assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='op_s_hana' AND type='PHONE_CALL'`)).n, 0);
   // Book a meeting: the shared Book meeting sheet, offering this tile,
@@ -1089,10 +1097,12 @@ async function openAddDeal(p) {
   const bookSheet = page.getByTestId("book-meeting");
   await bookSheet.locator("[data-testid=book-opp-yes]").waitFor();
   assert.equal(await bookSheet.locator("[data-testid=book-opp-yes]").getAttribute("aria-checked"), "true", "this tile offered first");
+  assert.equal(await bookSheet.getByTestId("book-opportunity").getAttribute("data-offered"), "op_s_opp_hana", "this tile");
   await bookSheet.locator("[data-testid=book-day-week]").click();
   await bookSheet.locator("[data-testid=book-time-13\\:00]").click();
   await page.getByTestId("book-submit").click();
-  await page.getByTestId("log-toast").getByText(/^Booked .* · Hana is on your Pipeline in Meeting Set/).waitFor();
+  await page.getByTestId("pipeline-notice").getByText(/^Booked .* · Hana is on your Pipeline in Meeting Set/).waitFor();
+  assert.equal(await page.getByTestId("log-toast").count(), 0, "one toast slot");
   const booked = await one(
     `SELECT om."bookedById", e."startTime" FROM "OpportunityMeeting" om JOIN "CalendarEvent" e ON e.id = om."eventId" WHERE om."opportunityId"='op_s_opp_hana' ORDER BY om."createdAt" DESC LIMIT 1`,
   );
@@ -1214,6 +1224,188 @@ async function openAddDeal(p) {
   assert.equal(await phoneOpen.getByRole("tab", { selected: true }).getAttribute("data-testid"), "pipeline-tab-CLOSED", "Walt's Lost tile's tab");
   await phoneOpen.locator("[data-testid=pipeline-column-CLOSED] [data-testid=pipeline-tile][data-id='op_s_opp_walt']").waitFor();
   await phoneOpenContext.close();
+
+  log("Sprint: the panel's sheets are about its own tile — Chase is on two: Book meeting books onto the open one, Log → Meeting → Held answers its meeting, the panel reloads after each sheet save, and the one Saved · Undo outlives a closed panel");
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('op_s_iron',$1,'Ironwood',now())`, [org]);
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,mobile,status,"ownerId","updatedAt") VALUES
+       ('op_s_chase',$1,'op_s_iron','Chase Two','(512) 555-0177','MEETING_SET',$2,now()),
+       ('op_s_nora',$1,NULL,'Nora Noshow',NULL,'MEETING_SET',$2,now()),
+       ('op_s_ned',$1,NULL,'Ned Nomeeting',NULL,'MEETING_SET',$2,now())`,
+    [org, taylorId],
+  );
+  // Lakewood was touched last; Frisco's panel is the one opened.
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES
+       ('op_s_opp_lake',$1,'Ironwood Lakewood','MEETING_SET',$2,now() - interval '6 days',now()),
+       ('op_s_opp_frisco',$1,'Ironwood Frisco','MEETING_SET',$2,now() - interval '9 days',now() - interval '5 days'),
+       ('op_s_opp_nora',$1,'Nora Noshow','MEETING_SET',$2,now() - interval '9 days',now()),
+       ('op_s_opp_ned',$1,'Ned Nomeeting','MEETING_SET',$2,now() - interval '9 days',now())`,
+    [org, taylorId],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES
+       ('op_s_oc_lake','op_s_opp_lake','op_s_chase','PRIMARY',true), ('op_s_oc_frisco','op_s_opp_frisco','op_s_chase','PRIMARY',true),
+       ('op_s_oc_nora','op_s_opp_nora','op_s_nora','PRIMARY',true), ('op_s_oc_ned','op_s_opp_ned','op_s_ned','PRIMARY',true)`,
+  );
+  await sql(
+    `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","bookedById",outcome) VALUES
+       ('op_s_m_lake','op_s_opp_lake',now() - interval '1 day',$1,NULL),
+       ('op_s_m_frisco','op_s_opp_frisco',now() - interval '2 days',$1,NULL),
+       ('op_s_m_nora','op_s_opp_nora',now() - interval '3 days',$1,'NO_SHOW')`,
+    [taylorId],
+  );
+  const chaseTiles = `('op_s_opp_lake','op_s_opp_frisco')`;
+  const stageOf = (scope) => scope.getByTestId("tile-move").innerText();
+  await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_frisco`);
+  const chaseRow = panel.locator("[data-testid=panel-person][data-name='Chase Two']");
+  await chaseRow.waitFor();
+  assert.equal((await panel.getByTestId("panel-next").innerText()).trim(), "Mark held", "its meeting went by unanswered");
+  // Book meeting from Frisco's panel offers and books Frisco, though
+  // Lakewood is the tile touched last.
+  await panel.getByTestId("panel-book").click();
+  const chaseBook = page.getByTestId("book-meeting");
+  await chaseBook.getByTestId("book-opportunity").waitFor();
+  assert.equal(await chaseBook.getByTestId("book-opportunity").getAttribute("data-offered"), "op_s_opp_frisco", "this tile first");
+  assert.equal(await chaseBook.locator("[data-testid=book-opp-yes]").getAttribute("aria-checked"), "true");
+  const sheetDays = (await chaseBook.getByTestId("book-days").getAttribute("data-days")).split(",");
+  await chaseBook.locator("[data-testid=book-day-week]").click();
+  await chaseBook.locator("[data-testid=book-time-13\\:00]").click();
+  await chaseBook.getByTestId("book-submit").click();
+  await notice.getByText(/^Booked .* · Chase is on your Pipeline in Meeting Set$/).waitFor();
+  assert.equal(await page.getByTestId("log-toast").count(), 0, "one toast slot");
+  assert.equal(
+    (await one(`SELECT "opportunityId" FROM "OpportunityMeeting" WHERE "eventId" IS NOT NULL AND "opportunityId" IN ${chaseTiles}`)).opportunityId,
+    "op_s_opp_frisco",
+    "booked onto the open tile",
+  );
+  await until(async () => (await panel.getByTestId("panel-meeting").count()) === 2, "the panel lists it without reopening");
+  // One set of day and time chips everywhere (the sheets' own): the
+  // panel's Reschedule, the tile's and the contact page's offer the same
+  // days and No time, starting at the meeting's own time.
+  await panel.locator("[data-testid=panel-meeting][data-state='Coming up'] [data-testid=panel-meeting-reschedule]").click();
+  const panelPicker = panel.getByTestId("day-time-picker");
+  assert.deepEqual(await panelPicker.getByTestId("picker-day").evaluateAll((els) => els.map((el) => el.dataset.on)), sheetDays, "the panel's days");
+  await panelPicker.getByTestId("picker-time-none").waitFor();
+  assert.equal(new Set(sheetDays).size, 3, "three different days");
+  assert.ok(sheetDays.every((day) => ![0, 6].includes(new Date(`${day}T12:00:00Z`).getUTCDay())), "no weekend day");
+  await panel.getByTestId("panel-close").click();
+  await panel.waitFor({ state: "detached" });
+  await page.waitForURL((url) => !url.searchParams.has("open"));
+  const lake = tileOf("op_s_opp_lake");
+  await lake.getByTestId("tile-reschedule").click();
+  const tileMenu = page.getByTestId("reschedule-menu");
+  await tileMenu.getByTestId("reschedule-time-none").waitFor();
+  assert.deepEqual(await tileMenu.getByTestId("reschedule-day").evaluateAll((els) => els.map((el) => el.dataset.on)), sheetDays, "the tile's days");
+  await page.keyboard.press("Escape");
+  await tileMenu.waitFor({ state: "hidden" });
+  // The contact page: Frisco's meeting is booked ahead, so nothing asks
+  // about Lakewood's (the header and the strip agree: health's rule).
+  await page.goto(`${BASE}/dashboard/contacts/op_s_chase`);
+  await page.getByTestId("contact-header").waitFor();
+  assert.equal(await page.getByTestId("contact-main").getAttribute("data-action"), "meeting");
+  assert.equal(await page.getByTestId("next-step").getAttribute("data-kind"), "meeting", "no 'Met … how did it go?' while one is booked ahead");
+  await page.getByTestId("contact-reschedule").click();
+  const contactMenu = page.getByTestId("contact-reschedule-menu");
+  await contactMenu.getByTestId("contact-reschedule-time-none").waitFor();
+  assert.deepEqual(
+    await contactMenu.locator("[data-testid^=contact-reschedule-day-]").evaluateAll((els) =>
+      els.map((el) => el.dataset.testid.replace("contact-reschedule-day-", "")).filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)),
+    ),
+    sheetDays,
+    "the contact page's days",
+  );
+  assert.equal(await contactMenu.getByTestId("contact-reschedule-time-13:00").getAttribute("aria-pressed"), "true", "starts at the meeting's own time");
+  await page.keyboard.press("Escape");
+  // Log → Meeting → Held from Frisco's panel answers Frisco's meeting (the
+  // person's newest is Lakewood's), with no second meeting written.
+  await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_frisco`);
+  await chaseRow.getByTestId("panel-log").click();
+  const howChase = page.getByTestId("how-did-it-go");
+  await howChase.waitFor();
+  await howChase.getByTestId("log-type-MEETING").click();
+  await howChase.getByTestId("log-meeting-line").waitFor();
+  assert.equal(await howChase.getByTestId("log-meeting-line").getAttribute("data-meeting-id"), "op_s_m_frisco", "this tile's meeting");
+  await howChase.getByTestId("outcome-HELD").click();
+  await page.getByTestId("log-saved").waitFor();
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_frisco'`)).outcome, "HELD");
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_lake'`)).outcome, null, "Lakewood's meeting untouched");
+  assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id='op_s_opp_lake'`)).stage, "MEETING_SET");
+  assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId" IN ${chaseTiles}`)).n, 3, "no meeting written beside it");
+  await until(async () => (await stageOf(panel)).includes("Meeting Completed"), "the panel reloads behind the sheet");
+  // Not moving forward: the tile goes to Lost and the open panel says so.
+  await page.getByTestId("next-lost").click();
+  await page.getByTestId("follow-up-save").click();
+  await howChase.waitFor({ state: "detached" });
+  await until(async () => (await stageOf(panel)).includes("Lost"), "the panel reloads after Not moving forward");
+  assert.equal(await panel.getByTestId("panel-next").count(), 0, "nothing to start on a Lost tile");
+  // Closed straight away, the save's Saved · Undo stays, the only one.
+  await panel.getByTestId("panel-close").click();
+  await panel.waitFor({ state: "detached" });
+  await notice.getByText(/^Held · Meeting Completed · Ironwood Frisco moved to Lost$/).waitFor();
+  assert.equal(await page.getByTestId("log-toast").count(), 0, "one toast slot");
+  await notice.getByTestId("pipeline-undo").click();
+  await notice.getByText("Undone").waitFor();
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_frisco'`)).outcome, null, "Undo took the Held back");
+
+  log("Sprint: Mark held never sits dead — after a no-show the next step is Reschedule, on that tile; a Meeting Set tile with no meeting opens How did it go? on Meeting and Held logs one meeting on it");
+  await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_nora`);
+  await panel.locator("[data-testid=panel-person][data-name='Nora Noshow']").waitFor();
+  assert.equal((await panel.getByTestId("panel-next").innerText()).trim(), "Reschedule", "the latest meeting is answered: book again");
+  assert.equal((await tileOf("op_s_opp_nora").getByTestId("tile-line").innerText()).trim().startsWith("No-show"), true);
+  await panel.getByTestId("panel-next").click();
+  const noraBook = page.getByTestId("book-meeting");
+  await noraBook.getByTestId("book-opportunity").waitFor();
+  assert.equal(await noraBook.getByTestId("book-opportunity").getAttribute("data-offered"), "op_s_opp_nora", "on the no-show's tile");
+  await page.keyboard.press("Escape");
+  await noraBook.waitFor({ state: "detached" });
+  await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_ned`);
+  await panel.locator("[data-testid=panel-person][data-name='Ned Nomeeting']").waitFor();
+  assert.equal((await panel.getByTestId("panel-next").innerText()).trim(), "Mark held", "Meeting Set with no meeting known");
+  await panel.getByTestId("panel-next").click();
+  const howNed = page.getByTestId("how-did-it-go");
+  await howNed.waitFor();
+  assert.equal(await howNed.getByTestId("log-type-MEETING").getAttribute("aria-pressed"), "true", "on Meeting");
+  await howNed.getByTestId("outcome-HELD").click();
+  await page.getByTestId("log-saved").waitFor();
+  const nedMeetings = (
+    await sql(`SELECT om."opportunityId" AS tile, om.outcome FROM "OpportunityMeeting" om JOIN "OpportunityContact" oc ON oc."opportunityId" = om."opportunityId" WHERE oc."contactId"='op_s_ned'`)
+  ).rows.map((row) => `${row.tile}:${row.outcome}`);
+  assert.deepEqual(nedMeetings, ["op_s_opp_ned:HELD"], "one held meeting, on this tile");
+  await until(async () => (await stageOf(panel)).includes("Meeting Completed"), "Ned's tile moves on and the panel says so");
+  await page.getByTestId("follow-up-skip").click();
+  await howNed.waitFor({ state: "detached" });
+  await notice.getByText("Saved · Held").waitFor();
+  await panel.getByTestId("panel-close").click();
+  await panel.waitFor({ state: "detached" });
+
+  log("Sprint: a Member books Chase from the contact page onto Taylor's open tile — the toast says 'the Pipeline' and its link opens that tile past Mine");
+  const nicBookContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const nicBook = await nicBookContext.newPage();
+  nicBook.on("pageerror", (err) => console.error("PAGE ERROR (Nic, book):", err.message));
+  await nicBook.goto(`${BASE}/login`);
+  await nicBook.fill("#email", "test-opps-nic@example.com");
+  await nicBook.fill("#password", PASSWORD);
+  await nicBook.click("button[type=submit]");
+  await nicBook.waitForURL(/\/dashboard/);
+  await nicBook.goto(`${BASE}/dashboard/contacts/op_s_chase`);
+  await nicBook.getByTestId("log-bar").click();
+  const nicHow = nicBook.getByTestId("how-did-it-go");
+  await nicHow.getByTestId("outcome-BOOKED").click();
+  const nicFields = nicBook.getByTestId("book-meeting-fields");
+  await nicFields.getByTestId("book-opportunity").waitFor();
+  assert.equal(await nicFields.getByTestId("book-opportunity").getAttribute("data-offered"), "op_s_opp_lake", "the open tile Chase is on (Frisco is Lost)");
+  await nicFields.locator("[data-testid=book-day-week]").click();
+  await nicBook.getByTestId("book-submit").click();
+  const nicToast = nicBook.getByTestId("log-toast");
+  await nicToast.getByText(/Chase is on the Pipeline in Meeting Set/).waitFor();
+  assert.equal(await nicToast.getByTestId("log-toast-link").getAttribute("href"), "/dashboard/deals?open=op_s_opp_lake");
+  await nicToast.getByTestId("log-toast-link").click();
+  await nicBook.waitForURL(/\/dashboard\/deals\?open=op_s_opp_lake$/);
+  await nicBook.getByTestId("opportunity-panel").locator("[data-testid=panel-person][data-name='Chase Two']").waitFor();
+  assert.equal(await nicBook.getByTestId("pipeline-scope-mine").getAttribute("aria-pressed"), "true", "still on Mine");
+  assert.equal(await tileOf("op_s_opp_lake", nicBook).count(), 1, "Taylor's tile shows with its panel");
+  await nicBookContext.close();
 
   log("Sprint: the phone — sticky stage tabs with counts over one stage's cards, a full-width 44px next-step button on each, nothing sideways, the panel full screen");
   const phoneContext = await browser.newContext({

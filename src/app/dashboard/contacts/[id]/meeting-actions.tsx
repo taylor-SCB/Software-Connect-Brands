@@ -4,19 +4,20 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { markMeetingHeld, markMeetingNoShow, rescheduleMeeting } from "@/app/dashboard/deals/opportunity-actions";
 import { completeEventWithLog, moveEvent } from "@/app/dashboard/calendar/actions";
-import { logActivity } from "../actions";
 import { FloatingMenu } from "@/components/floating-menu";
 import type { ContactMeeting } from "./contact-data";
 import { useContactPage } from "./contact-shell";
 import { Chip } from "./sheet";
-import { dayChips, TIME_CHIPS } from "./day-chips";
+import { clock, dayChips, TIME_CHIPS } from "@/components/how-did-it-go/dates";
 
 // Held · No-show · Move for one meeting (BDR redesign, Nov 11, 2026). A
 // meeting on the Pipeline goes through markMeetingHeld / markMeetingNoShow
 // / rescheduleMeeting; one only on the calendar through the Done box's
-// completeEventWithLog and moveEvent; a status set to Meeting Set by hand
-// with no meeting anywhere is logged as a held meeting. A meeting still
-// ahead asks "Did it happen early?" first. Every save shows "Saved · Undo".
+// completeEventWithLog and moveEvent. With no meeting waiting (a status
+// set to Meeting Set by hand) Held opens How did it go? on Meeting, as
+// every screen does, and the sheet finds the meeting to answer or logs
+// one. A meeting still ahead asks "Did it happen early?" first. Every save
+// shows "Saved · Undo".
 export function useMeetingActions(meeting: ContactMeeting | null) {
   const router = useRouter();
   const page = useContactPage();
@@ -50,12 +51,7 @@ export function useMeetingActions(meeting: ContactMeeting | null) {
         done(result, "Held · Meeting Completed");
         return;
       }
-      const form = new FormData();
-      form.set("contactId", page.contactId);
-      form.set("type", "MEETING");
-      form.set("outcome", "HELD");
-      form.set("body", "");
-      done(await logActivity({}, form), "Held · Meeting Completed");
+      page.openLog("MEETING");
     });
   }
 
@@ -97,7 +93,9 @@ export function EarlyConfirm({ text, onYes, onNo, pending }: { text: string; onY
   );
 }
 
-// "Move" / "Reschedule": a day chip, a time chip, Save.
+// "Move" / "Reschedule": a day chip, a time chip or No time, Save. The
+// same day and time chips as the sheets and the Pipeline
+// (@/components/how-did-it-go/dates); it starts at the meeting's own time.
 export function MoveButton({
   label,
   onMove,
@@ -105,6 +103,7 @@ export function MoveButton({
   testId,
   className = "btn btn-ghost btn-sm pointer-coarse:min-h-11",
   withTime = true,
+  initialTime = null,
 }: {
   label: string;
   onMove: (on: string, time: string | null, close: () => void) => void;
@@ -112,13 +111,15 @@ export function MoveButton({
   testId: string;
   className?: string;
   withTime?: boolean;
+  // The meeting's own "HH:MM"; with none known it starts at 10 AM.
+  initialTime?: string | null;
 }) {
   const page = useContactPage();
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const chips = dayChips(page.today);
   const [on, setOn] = useState(chips[0].on);
-  const [time, setTime] = useState<string | null>("10:00");
+  const [time, setTime] = useState<string | null>(initialTime ?? "10:00");
   return (
     <>
       <button ref={anchor} type="button" className={className} aria-expanded={open} onClick={() => setOpen(!open)} data-testid={testId}>
@@ -128,7 +129,7 @@ export function MoveButton({
         <div className="space-y-3 p-3">
           <div className="flex flex-wrap gap-1.5">
             {chips.map((chip) => (
-              <Chip key={chip.on} on={on === chip.on} onClick={() => setOn(chip.on)} testId={`${testId}-day-${chip.on}`}>
+              <Chip key={chip.on} on={on === chip.on} onClick={() => setOn(chip.on)} testId={`${testId}-day-${chip.on}`} title={chip.sub}>
                 {chip.label}
               </Chip>
             ))}
@@ -145,10 +146,18 @@ export function MoveButton({
           {withTime && (
             <div className="flex flex-wrap gap-1.5">
               {TIME_CHIPS.map((chip) => (
-                <Chip key={chip.value} on={time === chip.value} onClick={() => setTime(chip.value)}>
+                <Chip key={chip.value} on={time === chip.value} onClick={() => setTime(chip.value)} testId={`${testId}-time-${chip.value}`}>
                   {chip.label}
                 </Chip>
               ))}
+              {time && !TIME_CHIPS.some((chip) => chip.value === time) && (
+                <Chip on onClick={() => undefined}>
+                  {clock(time)}
+                </Chip>
+              )}
+              <Chip on={time === null} onClick={() => setTime(null)} testId={`${testId}-time-none`}>
+                No time
+              </Chip>
             </div>
           )}
           <div className="flex justify-end">

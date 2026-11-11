@@ -18,9 +18,10 @@ export type LogContext = {
   park: boolean;
   tries: number;
   parkAfterTries: number;
-  // The meeting a Meeting outcome answers: one booked with them that has
-  // happened (or is today) and nobody marked, else the next one ahead.
-  meeting: { id: string; eventId: string | null; on: string; time: string | null; ahead: boolean } | null;
+  // The meeting a Meeting outcome answers (src/lib/meeting-rule.ts
+  // toAnswer): the latest one that has come and nobody marked, else the
+  // next one ahead, else the latest no-show with nothing booked since.
+  meeting: { id: string; eventId: string | null; on: string; time: string | null; ahead: boolean; noShow?: boolean } | null;
 };
 
 // One save the sheet made, for "Saved · Undo" and the next step.

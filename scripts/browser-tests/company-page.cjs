@@ -411,6 +411,20 @@ async function contrastOf(locator) {
   assert.equal(await status("Contact", "ctc_cp_olivia"), "CONTACTED", "Olivia back too");
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"='opp_cp_iron'`)).n, 1, "the booked meeting is gone");
 
+  log("Sprint: Do Not List is not on a tile — Kristen ticked Do Not List on hers: Mark held has no meeting of hers to mark and opens How did it go? on Meeting, writing nothing");
+  await sql(`UPDATE "OpportunityMeeting" SET "on" = now() - interval '1 day' WHERE id='om_cp_k'`);
+  await sql(`UPDATE "OpportunityContact" SET role='HIDDEN' WHERE id='oc_cp_kristen'`);
+  await page.reload();
+  assert.equal(await main.getAttribute("data-action"), "mark-held", "Meeting Set with no meeting of hers known");
+  await main.click();
+  const hiddenLog = page.locator("[data-testid=how-did-it-go]");
+  await hiddenLog.waitFor();
+  assert.equal(await hiddenLog.locator("[data-testid=log-type-MEETING]").getAttribute("aria-pressed"), "true", "on Meeting");
+  await page.keyboard.press("Escape");
+  await hiddenLog.waitFor({ state: "detached" });
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='om_cp_k'`)).outcome, null, "the tile she is off is untouched");
+  await sql(`UPDATE "OpportunityContact" SET role='PRIMARY' WHERE id='oc_cp_kristen'`);
+
   log("Sprint: a meeting gone by: Mark held asks nothing, moves Kristen to Meeting Completed, and Undo takes it back; No-show sits beside it");
   await sql(`UPDATE "OpportunityMeeting" SET "on" = now() - interval '1 day' WHERE id='om_cp_k'`);
   await page.reload();

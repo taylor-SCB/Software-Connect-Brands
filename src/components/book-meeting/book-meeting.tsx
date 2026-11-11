@@ -8,6 +8,7 @@ import { Chip, ChipGrid, Sheet } from "@/components/how-did-it-go/sheet";
 import { UndoToast } from "@/components/how-did-it-go/undo-toast";
 import { TIME_CHIPS, browserToday, dayChips, longDay, whenWords } from "@/components/how-did-it-go/dates";
 import { FormError } from "@/components/ui";
+import { pipelineHref } from "@/lib/pipeline-link";
 import { IconCalendar } from "@/components/icons";
 
 // The Book meeting sheet (BDR redesign, Nov 11, 2026; the four old ways to
@@ -16,7 +17,8 @@ import { IconCalendar } from "@/components/icons";
 // Chase?" Yes / New one. It writes "Meeting · <name>" on the calendar and
 // runs the same steps as every meeting (Meeting Set, the opportunity, the
 // booker kept on it), then says so: "Booked Tue, Nov 17, 10:00 AM · Kristen
-// is on your Pipeline in Meeting Set →".
+// is on your Pipeline in Meeting Set →" ("the Pipeline" when the tile is a
+// teammate's), the link opening that tile.
 
 export type BookingValue = {
   on: string;
@@ -34,7 +36,8 @@ type Choices = Extract<Awaited<ReturnType<typeof bookingChoices>>, { today: stri
 
 // The fields, shared by this sheet and the "Meeting booked" step of How
 // did it go?. Reads its choices for `contactId` (who else, open
-// opportunities); `who` / `opportunity` off for a reschedule.
+// opportunities); `who` / `opportunity` off for a reschedule. `offer`: the
+// tile the host is on (the Pipeline panel), offered first.
 export function BookMeetingFields({
   contactId,
   today,
@@ -42,6 +45,7 @@ export function BookMeetingFields({
   onChange,
   who = true,
   opportunity = true,
+  offer = null,
   onChoices,
 }: {
   contactId: string | null;
@@ -50,6 +54,7 @@ export function BookMeetingFields({
   onChange: (next: BookingValue) => void;
   who?: boolean;
   opportunity?: boolean;
+  offer?: string | null;
   onChoices?: (choices: Choices) => void;
 }) {
   const [choices, setChoices] = useState<Choices | null>(null);
@@ -61,7 +66,7 @@ export function BookMeetingFields({
   useEffect(() => {
     if (!contactId || (!who && !opportunity)) return;
     let live = true;
-    bookingChoices(contactId).then((answer) => {
+    bookingChoices(contactId, offer).then((answer) => {
       if (!live || "error" in answer) return;
       setChoices(answer);
       onChoices?.(answer);
@@ -70,12 +75,16 @@ export function BookMeetingFields({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per person
-  }, [contactId, who, opportunity]);
+  }, [contactId, who, opportunity, offer]);
 
-  // The open opportunity they're already on (else the newest at their
-  // company) is the one offered first.
+  // The host's tile, else the open opportunity they're already on (else
+  // the newest at their company), is the one offered first.
   const opportunities = choices?.opportunities ?? [];
-  const offered = opportunities.find((row) => row.includesThem) ?? opportunities[0] ?? null;
+  const offered =
+    (offer ? opportunities.find((row) => row.id === offer) : undefined) ??
+    opportunities.find((row) => row.includesThem) ??
+    opportunities[0] ??
+    null;
   useEffect(() => {
     if (offered && value.opportunity === "auto") onChange({ ...value, opportunity: offered.id });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed once the choices land
@@ -87,7 +96,7 @@ export function BookMeetingFields({
 
   return (
     <div className="space-y-4" data-testid="book-meeting-fields">
-      <fieldset className="space-y-2">
+      <fieldset className="space-y-2" data-testid="book-days" data-days={days.map((day) => day.on).join(",")}>
         <legend className="mb-2 text-sm font-medium">Which day?</legend>
         <ChipGrid label="Day">
           {days.map((day) => (
@@ -167,7 +176,7 @@ export function BookMeetingFields({
       )}
 
       {opportunity && offered && (
-        <fieldset className="space-y-2" data-testid="book-opportunity">
+        <fieldset className="space-y-2" data-testid="book-opportunity" data-offered={offered.id}>
           <legend className="mb-2 text-sm font-medium">
             Add to the open {offered.title} opportunity{offered.primaryName ? ` with ${offered.primaryName}` : ""}?
           </legend>
@@ -221,26 +230,50 @@ export type BookMeetingSheetProps = {
   // Shown in the title while the sheet reads the rest.
   name?: string;
   today?: string;
+  // The tile it was opened from (the Pipeline panel), offered and picked
+  // first; else the open one they're on.
+  opportunityId?: string | null;
   onBooked?: (result: { batchId: string; opportunityId: string | null; eventId: string | null; message: string }) => void;
+  // Anything written: the booking, and its Undo from the toast.
+  onChanged?: () => void;
+  // The host draws "Saved · Undo" itself (one toast slot on its screen).
+  onToast?: (toast: { batchId: string; words: string; href: string | null; hrefLabel?: string; opportunityId: string | null }) => void;
 };
 
-type BookToast = { batchId: string; words: string; href: string; hrefLabel: string; at: number };
+type BookToast = { batchId: string; words: string; href: string; hrefLabel: string; at: number; opportunityId: string | null };
 
 export function BookMeetingSheet(props: BookMeetingSheetProps) {
   const [saved, setSaved] = useState<BookToast | null>(null);
   const dismiss = useCallback(() => setSaved(null), []);
+  const { onToast, onChanged } = props;
+  const show = useCallback(
+    (toast: BookToast) => {
+      onChanged?.();
+      if (onToast) onToast(toast);
+      else setSaved(toast);
+    },
+    [onToast, onChanged],
+  );
   return (
     <>
       {/* Drawn only while open, so every opening starts fresh. */}
-      {props.open && <BookSheetBody {...props} onSaved={setSaved} />}
-      <UndoToast saved={saved} onDone={dismiss} />
+      {props.open && <BookSheetBody {...props} onSaved={show} />}
+      <UndoToast saved={saved} onDone={dismiss} onUndone={onChanged} />
     </>
   );
 }
 
-function BookSheetBody({ onClose, contactId, name, today, onBooked, onSaved }: BookMeetingSheetProps & { onSaved: (toast: BookToast) => void }) {
+function BookSheetBody({
+  onClose,
+  contactId,
+  name,
+  today,
+  opportunityId = null,
+  onBooked,
+  onSaved,
+}: BookMeetingSheetProps & { onSaved: (toast: BookToast) => void }) {
   const router = useRouter();
-  const [value, setValue] = useState<BookingValue>(EMPTY_BOOKING);
+  const [value, setValue] = useState<BookingValue>(opportunityId ? { ...EMPTY_BOOKING, opportunity: opportunityId } : EMPTY_BOOKING);
   const [fallbackToday] = useState(browserToday);
   const [day, setDay] = useState(today ?? "");
   const [who, setWho] = useState(name ?? "");
@@ -264,8 +297,10 @@ function BookSheetBody({ onClose, contactId, name, today, onBooked, onSaved }: B
         return;
       }
       const first = (who || name || "They").split(/\s+/)[0];
-      const message = `Booked ${whenWords(value.on, value.time || null)} · ${first} is on your Pipeline in Meeting Set`;
-      onSaved({ batchId: result.batchId, words: message, href: "/dashboard/deals", hrefLabel: "Pipeline →", at: Date.now() });
+      // "the Pipeline" when the tile is a teammate's (Mine won't show it).
+      const message = `Booked ${whenWords(value.on, value.time || null)} · ${first} is on ${result.yours === false ? "the" : "your"} Pipeline in Meeting Set`;
+      const tile = result.opportunityId ?? null;
+      onSaved({ batchId: result.batchId, words: message, href: pipelineHref(tile), hrefLabel: "Pipeline →", at: Date.now(), opportunityId: tile });
       onBooked?.({ batchId: result.batchId, opportunityId: result.opportunityId ?? null, eventId: result.eventId ?? null, message });
       router.refresh();
       onClose();
@@ -299,6 +334,7 @@ function BookSheetBody({ onClose, contactId, name, today, onBooked, onSaved }: B
         today={day || fallbackToday}
         value={value}
         onChange={setValue}
+        offer={opportunityId}
         onChoices={(choices) => {
           setDay(choices.today);
           setWho(choices.name);
@@ -308,18 +344,30 @@ function BookSheetBody({ onClose, contactId, name, today, onBooked, onSaved }: B
   );
 }
 
+export type BookTarget = { contactId: string; name?: string; today?: string; opportunityId?: string | null };
+
 // For other screens: const book = useBookMeeting(); book.open({ contactId,
-// name }); and render {book.element} once.
-export function useBookMeeting(defaults?: { onBooked?: Parameters<typeof BookMeetingSheet>[0]["onBooked"] }) {
-  const [target, setTarget] = useState<{ contactId: string; name?: string; today?: string } | null>(null);
+// name, opportunityId? }); and render {book.element} once.
+export function useBookMeeting(defaults?: Pick<BookMeetingSheetProps, "onBooked" | "onChanged" | "onToast">) {
+  const [target, setTarget] = useState<BookTarget | null>(null);
   const [open, setOpen] = useState(false);
-  const openSheet = useCallback((next: { contactId: string; name?: string; today?: string }) => {
+  const openSheet = useCallback((next: BookTarget) => {
     setTarget(next);
     setOpen(true);
   }, []);
   const close = useCallback(() => setOpen(false), []);
   const element = target ? (
-    <BookMeetingSheet open={open} onClose={close} contactId={target.contactId} name={target.name} today={target.today} onBooked={defaults?.onBooked} />
+    <BookMeetingSheet
+      open={open}
+      onClose={close}
+      contactId={target.contactId}
+      name={target.name}
+      today={target.today}
+      opportunityId={target.opportunityId ?? null}
+      onBooked={defaults?.onBooked}
+      onChanged={defaults?.onChanged}
+      onToast={defaults?.onToast}
+    />
   ) : null;
   return { open: openSheet, close, element, isOpen: open };
 }

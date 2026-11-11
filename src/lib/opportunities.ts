@@ -44,7 +44,8 @@ function titleFor(contact: { name: string; company: { name: string } | null }) {
 }
 
 // A meeting logged, booked or ticked done with these people. If any of
-// them is already on an open opportunity the meeting joins it and anyone
+// them is already on an open opportunity (as Primary or Associated; Do
+// Not List is not on it) the meeting joins it and anyone
 // new from the meeting is added as Associated; otherwise it starts one,
 // with the first person as Primary. Every meeting path calls this through
 // markMeetingSet. `opportunity` lets the Book meeting sheet choose: "new"
@@ -79,7 +80,12 @@ export async function attachMeeting(
     (meeting.opportunity === "new"
       ? null
       : await prisma.opportunity.findFirst({
-          where: { organizationId, ...OPEN_OPPORTUNITY, contacts: { some: { contactId: { in: ordered.map((person) => person.id) } } } },
+          // On it as Primary or Associated: Do Not List is not on it.
+          where: {
+            organizationId,
+            ...OPEN_OPPORTUNITY,
+            contacts: { some: { contactId: { in: ordered.map((person) => person.id) }, role: { not: "HIDDEN" } } },
+          },
           orderBy: { updatedAt: "desc" },
           select: { id: true, contacts: { select: { contactId: true } } },
         }));
