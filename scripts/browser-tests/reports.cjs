@@ -1058,7 +1058,7 @@ async function narrativeText(page) {
     const chart = async (p) => {
       await p.goto(`${BASE}/dashboard?report=activity&period=this-month`);
       await p.locator("[data-testid=report][data-report=activity]").waitFor();
-      const selector = "[data-testid=activity-daily] svg[role=img]";
+      const selector = "[data-testid=activity-tries-talks] svg[role=img]";
       await p.locator(selector).waitFor();
       // Drawn at the box's own width once the browser has measured it.
       await p
@@ -1108,6 +1108,72 @@ async function narrativeText(page) {
       await shot(small, `06-phone-${report}`);
     }
     await phone.close();
+
+    log("Sprint: the Activity report splits tries from talks — a meeting that happened is a talk, calls and messages with no outcome are tries");
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.equal(await tile(page, "touches"), 5);
+    assert.match(await page.locator("[data-testid=report-tile][data-id=touches]").textContent(), /Tries/);
+    assert.equal(await tile(page, "talks"), 1, "Taylor's meeting with Ann");
+    assert.equal(await tile(page, "connect-rate"), 0.2);
+    assert.deepEqual(
+      (await groupRows(page)).filter((row) => row[0] !== "Unassigned").map((row) => [row[0], row[1], row[2]]),
+      [
+        ["Taylor Test", "3", "1"],
+        ["Nic Rivera", "2", "0"],
+      ],
+    );
+
+    log("Sprint: one save logged on three people is one try and one talk; a no-show is no touch at all");
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,marketing,"batchId","occurredAt") VALUES
+         ('a_rpt_s1',$1,'ct_rpt_ann',$3,'PHONE_CALL','Group call','TALKED',false,'b_rpt_sprint',${ago("3 minutes")}),
+         ('a_rpt_s2',$1,'ct_rpt_bob',$3,'PHONE_CALL','Group call','TALKED',false,'b_rpt_sprint',${ago("3 minutes")}),
+         ('a_rpt_s3',$1,'ct_rpt_cal',$3,'PHONE_CALL','Group call','TALKED',false,'b_rpt_sprint',${ago("3 minutes")}),
+         ('a_rpt_s4',$1,'ct_rpt_ann',$2,'MEETING','Did not show','NO_SHOW',false,NULL,${ago("3 minutes")}),
+         ('a_rpt_s5',$1,'ct_rpt_ann',$2,'PHONE_CALL','Voicemail','VOICEMAIL',false,NULL,${ago("3 minutes")})`,
+      [org, T, N],
+    );
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.equal(await tile(page, "touches"), 7, "5 + the group call once + the voicemail; the no-show is not a touch");
+    assert.equal(await tile(page, "talks"), 2, "the meeting and the group call");
+    assert.equal(await tile(page, "calls"), 4, "2 + the group call once + the voicemail");
+    assert.equal(await tile(page, "meetings"), 1, "the no-show isn't a meeting");
+    const sprintRows = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[2]]]));
+    assert.deepEqual(sprintRows["Taylor Test"], ["4", "1"]);
+    assert.deepEqual(sprintRows["Nic Rivera"], ["3", "1"]);
+    words = await narrativeText(page);
+    assert.match(words, /2 of them were talks \(29%\)\./);
+
+    log("Sprint: tries are grey and talks green, by day and by rep; marketing stays its own chart");
+    const fills = await page.locator("[data-testid=activity-tries-talks] svg rect").evaluateAll((rects) => [...new Set(rects.map((r) => r.getAttribute("fill")))]);
+    assert.deepEqual(fills.sort(), ["var(--health-good)", "var(--health-none)"]);
+    assert.match(await page.locator("[data-testid=activity-tries-talks]").textContent(), /Attempts.*Talks/);
+    const repBars = await page.locator("[data-testid=activity-groups-chart] [aria-label]").evaluateAll((bars) => bars.map((bar) => [bar.getAttribute("aria-label"), bar.style.background]));
+    assert.ok(repBars.some(([label, bg]) => /Nic Rivera, Talks: 1/.test(label) && /health-good/.test(bg)), JSON.stringify(repBars));
+    assert.ok(repBars.some(([label, bg]) => /Taylor Test, Attempts: 3/.test(label) && /health-none/.test(bg)), JSON.stringify(repBars));
+    assert.match(await page.locator("[data-testid=activity-marketing]").textContent(), /3 sent/);
+    assert.equal(await page.locator("[data-testid=activity-by-kind]").getAttribute("open"), null, "the kinds of touch are one tap down");
+    await page.locator("[data-testid=activity-by-kind] summary").click();
+    await page.locator("[data-testid=activity-by-kind] svg[aria-label='Touches over time by kind']").waitFor();
+
+    log("Sprint: 'Talks counted from' shows only when the period starts before outcomes were recorded");
+    const since = (await sql(`SELECT "outcomesSince" FROM "Organization" WHERE id=$1`, [org])).rows[0].outcomesSince;
+    await sql(`UPDATE "Organization" SET "outcomesSince" = '2020-01-01' WHERE id=$1`, [org]);
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.equal(await page.locator("[data-testid=activity-talks-since]").count(), 0);
+    await sql(`UPDATE "Organization" SET "outcomesSince" = now() - interval '1 hour' WHERE id=$1`, [org]);
+    await open(page, `${BASE}/dashboard?report=activity`, "activity");
+    assert.match(await page.locator("[data-testid=activity-talks-since]").textContent(), /^Talks counted from [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+    await sql(`UPDATE "Organization" SET "outcomesSince" = $2 WHERE id=$1`, [org, since]);
+
+    log("Sprint: a chart's duplicate table is behind Show numbers");
+    await open(page, `${BASE}/dashboard?report=closing`, "closing");
+    const numbers = page.locator("[data-testid=closing-groups] [data-testid=report-show-numbers]");
+    assert.equal(await numbers.getAttribute("open"), null);
+    assert.equal(await numbers.locator("[data-testid=report-group-table]").isVisible(), false);
+    await numbers.locator("summary").click();
+    await numbers.locator("[data-testid=report-group-table]").waitFor();
+    await sql(`DELETE FROM "Activity" WHERE id LIKE 'a_rpt_s%'`);
 
     console.log(`\nAll ${step} steps passed.`);
   } finally {
