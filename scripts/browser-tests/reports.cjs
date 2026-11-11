@@ -28,7 +28,9 @@
  * rep with nothing in it saying so once; Overview on an isMobile phone
  * staying 390px wide with a long activity line cut with …; and the
  * Activity chart's labels at 11px on a phone and at 1440, bars at most
- * 28px, and the axis on round numbers.
+ * 28px, and the axis on round numbers. The final audit (Nov 11, 2026): the
+ * daily write-up is keyed on what is still open only, so a touch logged from
+ * a contact's page (a done calendar entry) doesn't ask Claude again.
  *
  * The server on BASE needs, in .env: RESEND_API_KEY (any), EMAIL_FROM,
  * RESEND_ENDPOINT=http://localhost:3993/emails, CRON_SECRET=test-cron-secret,
@@ -380,7 +382,8 @@ async function narrativeText(page) {
     log("the Daily Rundown's write-up is the rules version, from the same numbers");
     assert.equal(await page.locator("[data-testid=report-narrative]").getAttribute("data-source"), "RULES");
     let words = await narrativeText(page);
-    assert.match(words, /The team has 2 things on the calendar today, starting with “Site walk at Acme” at 09:00\./);
+    // Final audit (Nov 11, 2026): the write-up counts only what is still open.
+    assert.match(words, /The team has 2 things still open on the calendar today, starting with “Site walk at Acme” at 09:00\./);
     assert.match(words, /1 follow-up is overdue — the oldest, “Follow up · Ann Acme” with Ann Acme, is 3 days late\./);
     assert.match(words, /Yesterday \$500 came in from 1 payment, the largest from Acme Plumbing\./);
     assert.match(words, /1 quote worth \$2,160 and 1 contract went out, and 1 new contact was added\./);
@@ -447,7 +450,9 @@ async function narrativeText(page) {
     // on faint text read 2.57:1 in Light).
     const doneLook = await page.locator("[data-testid=rundown-calendar] li[data-done=true] > span").first().evaluate((el) => ({ opacity: getComputedStyle(el).opacity, line: getComputedStyle(el).textDecorationLine }));
     assert.deepEqual(doneLook, { opacity: "1", line: "line-through" }, "done rows are struck through, not faded");
-    assert.match(await narrativeText(page), /The team has 11 things on the calendar today, 2 still open, starting with “Site walk at Acme” at 09:00\./);
+    // Final audit (Nov 11, 2026): only what is still open is counted, so
+    // nine done calls leave the write-up as it was.
+    assert.match(await narrativeText(page), /The team has 2 things still open on the calendar today, starting with “Site walk at Acme” at 09:00\./);
     await sql(`UPDATE "CalendarEvent" SET "doneAt"=now() WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
     await open(page, `${BASE}/dashboard`, "daily");
     assert.equal((await heading("rundown-calendar")).trim(), "On the calendar today", "nothing open, no count");
@@ -455,7 +460,7 @@ async function narrativeText(page) {
     calRows = await calendarRows();
     assert.ok(calRows.length === 8 && calRows.every((row) => row.done), "the done entries are still listed, under Done today");
     words = await narrativeText(page);
-    assert.match(words, /The team has 11 things on the calendar today, all done\./);
+    assert.match(words, /Nothing is left open on the calendar today\./);
     assert.doesNotMatch(words, /starting with/);
     await sql(`UPDATE "CalendarEvent" SET "doneAt"=NULL WHERE id IN ('ev_rpt_1','ev_rpt_2')`);
     await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_rpt_done_%'`);
@@ -926,12 +931,16 @@ async function narrativeText(page) {
       assert.equal((await sql(`SELECT source FROM "ReportNarrative" WHERE "organizationId"=$1 AND key LIKE 'MONEY|%'`, [org])).rows[0].source, "RULES");
     }
 
-    log("audit fixes (UX review): the AI write-up of the Daily Rundown is told which calendar entries are done, open ones first");
+    // Final audit (Nov 11, 2026): told only what is still open — the done
+    // entries' flags and counts moved the write-up's fingerprint on every
+    // logged touch. A call already made is still never "next up": it isn't
+    // listed at all.
+    log("audit fixes (UX review): the AI write-up of the Daily Rundown is told only the calendar entries still open, never the done ones");
     await sql(
       `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","doneAt","updatedAt") VALUES ('ev_rpt_ai_done',$1,'Early call','Call',$2::date,'07:00',$3,now(),now())`,
       [org, today, T],
     );
-    claudeReply = { paragraphs: ["The team has 3 things on the calendar today."] };
+    claudeReply = { paragraphs: ["The team has 2 things still open on the calendar today."] };
     const asksBefore = claudeRequests.length;
     await page.goto(`${AI_BASE}/dashboard`);
     for (let i = 0; claudeRequests.length === asksBefore; i += 1) {
@@ -942,19 +951,73 @@ async function narrativeText(page) {
     const dailyPrompt = typeof dailyAsk.content === "string" ? dailyAsk.content : dailyAsk.content.map((part) => part.text ?? "").join("");
     const dailyFacts = JSON.parse(dailyPrompt.slice(dailyPrompt.indexOf("{"), dailyPrompt.lastIndexOf("}") + 1));
     assert.equal(dailyFacts.report, "daily");
-    assert.equal(dailyFacts.calendarEntries, 3);
     assert.equal(dailyFacts.calendarStillOpen, 2);
-    assert.equal(dailyFacts.calendarAlreadyDone, 1);
+    assert.equal(dailyFacts.calendarEntries, undefined, "the day's total moves with every logged touch");
+    assert.equal(dailyFacts.calendarAlreadyDone, undefined, "so does the done count");
     assert.deepEqual(
-      dailyFacts.calendarToday.map((item) => [item.title, item.done]),
-      [
-        ["Site walk at Acme", false],
-        ["Call Bob", false],
-        ["Early call", true],
-      ],
+      dailyFacts.calendarToday.map((item) => item.title),
+      ["Site walk at Acme", "Call Bob"],
+      "the open entries only: the call already made isn't offered as next up",
     );
+    assert.ok(dailyFacts.calendarToday.every((item) => !("done" in item)), "no per-entry done flag");
+    assert.doesNotMatch(JSON.stringify(dailyFacts.headlines), /already done/, "nor the tile's done count");
     await page.waitForFunction(() => !document.querySelector("[data-testid=report-narrative]")?.getAttribute("aria-busy")?.includes("true"));
     await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_rpt_ai_done'`);
+
+    log("audit fixes: a touch logged from a contact's page doesn't make the Owner's Rundown ask Claude again; a new open entry does");
+    // Before the fix every logged touch wrote a done calendar entry for
+    // today, which changed the daily facts' fingerprint, so the next open
+    // of the Rundown asked Claude again (one of the workspace's 60 a day).
+    const dailyNarrative = async () =>
+      (await sql(`SELECT key, source, "createdAt" FROM "ReportNarrative" WHERE "organizationId"=$1 AND key LIKE 'DAILY|%' AND key LIKE '%|rep:all|%'`, [org])).rows;
+    for (let i = 0; (await dailyNarrative()).filter((row) => row.source === "CLAUDE").length !== 1; i += 1) {
+      if (i > 100) throw new Error("the Daily Rundown's AI write-up was not stored");
+      await page.waitForTimeout(200);
+    }
+    const [storedDaily] = await dailyNarrative();
+    await page.goto(`${AI_BASE}/dashboard/contacts/ct_rpt_eve`);
+    await page.locator("[data-testid=log-bar]").click();
+    const eveLog = page.locator("[data-testid=log-activity-form]");
+    await eveLog.locator("textarea[name=body]").fill("Left a message about the spring service");
+    await eveLog.getByRole("button", { name: "Log phone call" }).click();
+    await page.locator("#activity").getByText("Left a message about the spring service").waitFor();
+    await page.keyboard.press("Escape");
+    await eveLog.waitFor({ state: "detached" });
+    const eveEntry = (
+      await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve' AND "startOn"=$2::date AND "doneAt" IS NOT NULL`, [org, today])
+    ).rows[0].n;
+    assert.equal(eveEntry, 1, "the logged call is on today's calendar, ticked done (what used to re-key the write-up)");
+    const asksBeforeTouch = claudeRequests.length;
+    await page.goto(`${AI_BASE}/dashboard`);
+    await page.locator("[data-testid=report-narrative][data-source=CLAUDE]").waitFor({ timeout: 20000 });
+    assert.match(await page.locator("[data-testid=rundown-done] summary").textContent(), /Done today \(1\)/, "the Rundown itself shows the call");
+    await page.waitForTimeout(1000);
+    assert.equal(claudeRequests.length, asksBeforeTouch, "Claude wasn't asked again for a logged touch");
+    const afterTouch = await dailyNarrative();
+    assert.deepEqual(
+      afterTouch.map((row) => [row.key, row.source, row.createdAt.getTime()]),
+      [[storedDaily.key, "CLAUDE", storedDaily.createdAt.getTime()]],
+      "the same write-up, under the same fingerprint",
+    );
+    // Something that is still to do today does change it.
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","updatedAt") VALUES ('ev_rpt_ai_open',$1,'Call Cal','Call',$2::date,'15:00',$3,now())`,
+      [org, today, T],
+    );
+    claudeReply = { paragraphs: ["The team has 3 things still open on the calendar today."] };
+    await page.goto(`${AI_BASE}/dashboard`);
+    for (let i = 0; claudeRequests.length === asksBeforeTouch; i += 1) {
+      if (i > 100) throw new Error("a new open entry didn't ask for a new write-up");
+      await page.waitForTimeout(200);
+    }
+    await page.waitForFunction(() => !document.querySelector("[data-testid=report-narrative]")?.getAttribute("aria-busy")?.includes("true"));
+    assert.notEqual((await dailyNarrative())[0]?.key, storedDaily.key, "a new open entry is a new set of numbers");
+    await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_rpt_ai_open'`);
+    await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve'`, [org]);
+    await sql(`DELETE FROM "Activity" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve'`, [org]);
+    // The call moved Eve to Attempted; put her back as seeded for the steps after.
+    await sql(`DELETE FROM "StatusChange" WHERE "organizationId"=$1 AND "contactId"='ct_rpt_eve'`, [org]);
+    await sql(`UPDATE "Contact" SET status='NOT_ACTIONED' WHERE id='ct_rpt_eve'`);
 
     log("each report opens inside its time budget");
     for (const [name, ms] of Object.entries(timings)) {

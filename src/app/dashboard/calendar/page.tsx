@@ -13,7 +13,7 @@ import {
   startOfWeek,
   weekDays,
 } from "@/lib/calendar";
-import { LOG_ROWS, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, type EventFilters } from "@/lib/calendar-data";
+import { LOG_ROWS, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, loadOverdue, type EventFilters } from "@/lib/calendar-data";
 import { readIds, readLayout } from "@/lib/calendar-filters";
 import { PageHeader, Card } from "@/components/ui";
 import { CalendarToolbar } from "./calendar-toolbar";
@@ -115,7 +115,8 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       projectIds: filters.projectIds ?? [],
     }),
     view === "team" && layout !== "log" ? loadCrewRows(organizationId) : [],
-    view === "agenda" && layout === "calendar" ? loadLogs(organizationId, today, filters).then((log) => log.overdue) : Promise.resolve([] as EventView[]),
+    // The overdue read alone (final audit, Nov 11, 2026), not the whole log.
+    view === "agenda" && layout === "calendar" ? loadOverdue(organizationId, today, filters) : Promise.resolve([] as EventView[]),
   ]);
 
   // Real tap-to-call: the person's mobile, else their phone, for every

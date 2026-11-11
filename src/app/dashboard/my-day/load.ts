@@ -226,7 +226,10 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
         company: { select: { name: true } },
       },
     }),
-    goneQuietOpportunities(organizationId, { quietDays: settings.quietDays, limit: 300 }),
+    // The rep's own, in the statement (final audit, Nov 11, 2026): kept from
+    // the workspace's 300 quietest, a rep's own dropped out past 300. Oldest
+    // touch first, so the first row is the loudest.
+    goneQuietOpportunities(organizationId, { quietDays: settings.quietDays, ownerId: rep.id, limit: 1 }),
   ]);
 
   // Health for every candidate, in two statements, and which meeting each
@@ -399,16 +402,8 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
   }
 
   // The loudest account gone quiet among this rep's opportunities.
-  let quietOne: { name: string; days: number } | null = null;
-  if (quiet.opportunities.length) {
-    const owned = await prisma.opportunity.findMany({
-      where: { organizationId, id: { in: quiet.opportunities.map((row) => row.id) }, ownerId: rep.id },
-      select: { id: true },
-    });
-    const mineQuiet = new Set(owned.map((row) => row.id));
-    const top = quiet.opportunities.filter((row) => mineQuiet.has(row.id)).sort((a, b) => b.days - a.days)[0];
-    if (top) quietOne = { name: shortName(top.title), days: top.days };
-  }
+  const top = quiet.opportunities[0];
+  const quietOne: { name: string; days: number } | null = top ? { name: shortName(top.title), days: top.days } : null;
 
   const late = upNext.filter((row) => row.category === "late").length;
   const toCall = upNext.filter((row) => row.category !== "late" && row.category !== "meeting").length;

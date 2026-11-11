@@ -197,14 +197,19 @@ export const LOG_ROWS = 60;
 // ticked it, so it stays in Previous.
 export const OVERDUE_TYPES = ["Call", "Meeting", "Email", "Text", "Quote due", "Quote follow up", "Contract follow up"];
 
+// Gone by, unticked, and a kind somebody was meant to do (OVERDUE_TYPES).
+// An entry still running into today isn't late yet.
+function pastBefore(from: Date) {
+  return { startOn: { lt: from }, OR: [{ endOn: null }, { endOn: { lt: from } }] };
+}
+const OVERDUE_WHERE = { doneAt: null, type: { in: OVERDUE_TYPES } };
+
 export async function loadLogs(organizationId: string, today: string, filters?: EventFilters) {
   const from = new Date(`${today}T00:00:00.000Z`);
   const where = { organizationId, ...filterWhere(filters) };
-  const past = { startOn: { lt: from }, OR: [{ endOn: null }, { endOn: { lt: from } }] };
-  const overdueWhere = { doneAt: null, type: { in: OVERDUE_TYPES } };
   const [previous, upcoming, overdue] = await Promise.all([
     prisma.calendarEvent.findMany({
-      where: { ...where, ...past, NOT: overdueWhere },
+      where: { ...where, ...pastBefore(from), NOT: OVERDUE_WHERE },
       orderBy: [{ startOn: "desc" }, { startTime: "desc" }],
       take: LOG_ROWS,
       select: EVENT_SELECT,
@@ -215,19 +220,29 @@ export async function loadLogs(organizationId: string, today: string, filters?: 
       take: LOG_ROWS,
       select: EVENT_SELECT,
     }),
-    // Oldest first: the one that has waited longest is at the top.
-    prisma.calendarEvent.findMany({
-      where: { ...where, ...past, ...overdueWhere },
-      orderBy: [{ startOn: "asc" }, { startTime: "asc" }],
-      take: LOG_ROWS,
-      select: EVENT_SELECT,
-    }),
+    loadOverdue(organizationId, today, filters),
   ]);
   return {
     previous: previous.map(toEventView),
     upcoming: upcoming.map(toEventView),
-    overdue: overdue.map(toEventView),
+    overdue,
   };
+}
+
+// The Log's Overdue column on its own (final audit, Nov 11, 2026): the
+// Agenda shows only this, and ran the whole loadLogs — three 60-row reads
+// with every relation — for it. Oldest first: the one that has waited
+// longest is at the top. Reads the open entries' index
+// (CalendarEvent_open_startOn_idx), never the done history.
+export async function loadOverdue(organizationId: string, today: string, filters?: EventFilters) {
+  const from = new Date(`${today}T00:00:00.000Z`);
+  const overdue = await prisma.calendarEvent.findMany({
+    where: { organizationId, ...filterWhere(filters), ...pastBefore(from), ...OVERDUE_WHERE },
+    orderBy: [{ startOn: "asc" }, { startTime: "asc" }],
+    take: LOG_ROWS,
+    select: EVENT_SELECT,
+  });
+  return overdue.map(toEventView);
 }
 
 // The team view: one row per teammate and per crew, for one week. The

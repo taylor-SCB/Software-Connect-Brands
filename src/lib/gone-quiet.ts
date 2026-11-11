@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 // "Nobody has touched this in N days" (Nov 10, 2026). An open opportunity
@@ -9,10 +10,15 @@ import { prisma } from "@/lib/prisma";
 // never quiet (audit fix, Nov 10, 2026): a meeting booked for two weeks
 // out was "Quiet 9 days" with a follow-up offered. Shared by the Pipeline tiles, the Daily
 // Rundown report and the drafted follow-ups, so they always agree.
+//
+// `ownerId` keeps one rep's opportunities, in the statement itself (final
+// audit, Nov 11, 2026): My day kept the rep's own out of the workspace's
+// 300 quietest, so past 300 a rep's loudest quiet account dropped out of
+// their greeting. The limit is then the rep's own, oldest first.
 
 export type QuietOpportunity = { id: string; title: string; lastTouchAt: Date; days: number; dealId: string | null };
 
-export async function goneQuietOpportunities(organizationId: string, options: { quietDays?: number; limit?: number } = {}) {
+export async function goneQuietOpportunities(organizationId: string, options: { quietDays?: number; limit?: number; ownerId?: string } = {}) {
   const quietDays =
     options.quietDays ??
     (await prisma.organization.findUnique({ where: { id: organizationId }, select: { quietDays: true } }))?.quietDays ??
@@ -23,6 +29,7 @@ export async function goneQuietOpportunities(organizationId: string, options: { 
         FROM "Opportunity" o
         LEFT JOIN "Deal" d ON d.id = o."dealId"
        WHERE o."organizationId" = ${organizationId}
+         ${options.ownerId ? Prisma.sql`AND o."ownerId" = ${options.ownerId}` : Prisma.empty}
          AND o.stage <> 'LOST'
          AND (d.id IS NULL OR d.stage NOT IN ('WON', 'LOST', 'ARCHIVED'))
     ), touch AS (

@@ -19,7 +19,10 @@
  * phone; the phone: the bottom tab bar, More with every link, the look
  * switch and a confirmed Log out, the sticky "Next:" bar, no sideways
  * scroll; the sidebar's search; a Member's Settings opening My Account;
- * an Owner's bare calendar on a phone swapping to the Agenda.
+ * an Owner's bare calendar on a phone swapping to the Agenda. The final
+ * audit's cross-area steps (Nov 11, 2026): a rep's own quiet account in the
+ * greeting past the workspace's 300 quietest, and the Agenda's Overdue read
+ * on its own answering exactly as the Log's.
  *
  * Runs against a built app and a local Postgres that has had `prisma
  * migrate deploy`. It signs up its own workspace and deletes it again on
@@ -914,6 +917,58 @@ const ago = (days) => `now() - interval '${days} days'`;
   await sql(`DELETE FROM "Contact" WHERE id LIKE 'ctc_md_ms%' OR id='ctc_md_long'`);
   await sql(`DELETE FROM "Company" WHERE id='cmp_md_long'`);
   await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_md_tap'`);
+
+  // Final audit, cross-area fixes (Nov 11, 2026).
+  log("audit fixes: My day's greeting names the rep's own quiet account even with more than 300 quieter ones in the workspace");
+  // goneQuietOpportunities took the workspace's 300 quietest and My day
+  // kept Marcus's afterwards, so 320 of Taylor's, quiet longer, pushed his
+  // own out of his greeting. The rep is now part of the statement.
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt")
+     SELECT 'opp_md_hush' || g, $1, 'Hushed account ' || g, 'MEETING_COMPLETED', $2, now() - interval '60 days', now() FROM generate_series(1, 320) g`,
+    [org, taylor.id],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES ('opp_md_bluebird',$1,'Bluebird Spa','MEETING_COMPLETED',$2,now() - interval '20 days',now())`,
+    [org, M],
+  );
+  await am.goto(`${BASE}/dashboard`);
+  await am.locator("[data-testid=my-day]").waitFor();
+  assert.match((await am.locator("[data-testid=my-day-greeting]").textContent()).trim(), /· Bluebird Spa quiet 20 days$/, "Marcus's own quiet account, past the workspace's 300");
+  await sql(`DELETE FROM "Opportunity" WHERE "organizationId"=$1 AND (id LIKE 'opp_md_hush%' OR id='opp_md_bluebird')`, [org]);
+
+  log("audit fixes: the Agenda's Overdue, now its own read, lists exactly the Log's Overdue: oldest first, never done, ahead, still running or a day of work, and the filter applied");
+  // The Agenda ran the whole Log (three 60-row reads) for its Overdue; it
+  // reads only that now. Its speed is timed by load-test.cjs; this checks it
+  // still answers the same as the Log's own column, for Mine and filtered.
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","endOn","startTime","ownerId","contactId","doneAt","updatedAt") VALUES
+       ('ev_md_ag1',$1,'Call · oldest','Call',$3::date,NULL,NULL,$2,NULL,NULL,now()),
+       ('ev_md_ag2',$1,'Email · Tom at nine','Email',$4::date,NULL,'09:00',$2,'ctc_md_tom',NULL,now()),
+       ('ev_md_ag3',$1,'Text · at eight','Text',$4::date,NULL,'08:00',$2,NULL,NULL,now()),
+       ('ev_md_ag4',$1,'Call · ticked','Call',$5::date,NULL,NULL,$2,'ctc_md_tom',now(),now()),
+       ('ev_md_ag5',$1,'Install · a day of work','Install',$5::date,NULL,NULL,$2,'ctc_md_tom',NULL,now()),
+       ('ev_md_ag6',$1,'Call · still running','Call',$6::date,$7::date,NULL,$2,'ctc_md_tom',NULL,now()),
+       ('ev_md_ag7',$1,'Call · ahead','Call',$7::date,NULL,NULL,$2,'ctc_md_tom',NULL,now())`,
+    [org, M, addDays(TODAY, -6), addDays(TODAY, -2), addDays(TODAY, -3), addDays(TODAY, -1), addDays(TODAY, 1)],
+  );
+  const agendaOverdue = async (query) => {
+    await am.goto(`${BASE}/dashboard/calendar?view=agenda&${query}`);
+    await am.locator("[data-testid=agenda]").waitFor();
+    return am.locator("[data-testid=agenda-overdue] [data-testid=agenda-row]").evaluateAll((rows) => rows.map((row) => row.dataset.eventId));
+  };
+  const logOverdue = async (query) => {
+    await am.goto(`${BASE}/dashboard/calendar?view=agenda&layout=log&${query}`);
+    await am.locator("[data-testid=log-columns]").waitFor();
+    return am.locator("[data-testid=log-overdue] [data-testid=log-row]").evaluateAll((rows) => rows.map((row) => row.dataset.eventId));
+  };
+  const mine = await agendaOverdue(`users=${M}`);
+  assert.deepEqual(mine.filter((id) => id.startsWith("ev_md_ag")), ["ev_md_ag1", "ev_md_ag3", "ev_md_ag2"], "oldest first, then by time; ticked, ahead, still running and Install left out");
+  assert.deepEqual(mine, await logOverdue(`users=${M}`), "the same list as the Log's Overdue");
+  const tom = await agendaOverdue("scope=team&contacts=ctc_md_tom");
+  assert.deepEqual(tom, ["ev_md_ag2"], "a contact filter narrows it");
+  assert.deepEqual(tom, await logOverdue("scope=team&contacts=ctc_md_tom"));
+  await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_md_ag%'`);
   await auditM.close();
 
 
