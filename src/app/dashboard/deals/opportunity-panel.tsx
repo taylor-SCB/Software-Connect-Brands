@@ -132,6 +132,8 @@ export function OpportunityPanel({
 
   // The tile whose name, label, rep, value and people fill the form.
   const seeded = useRef<string | null>(null);
+  // The read the form was last brought in line with.
+  const loadedRef = useRef<OpportunityDetail | null>(null);
   useEffect(() => {
     let live = true;
     loadOpportunity(id).then((result) => {
@@ -140,8 +142,35 @@ export function OpportunityPanel({
         setLoadError(result.error);
         return;
       }
+      const before = loadedRef.current;
+      loadedRef.current = result;
       setDetail(result);
-      // A reload after a log or a meeting answer keeps what is being typed.
+      // A reload after a log or a meeting answer keeps what is being typed,
+      // and takes in what the sheet changed: a field nobody edited here
+      // follows the new read, and someone a sheet added (Book meeting with
+      // a second person) joins People with their role. Without it the new
+      // person was missing, Save was refused as "someone was added
+      // meanwhile" and a phantom Save showed (audit, Nov 11, 2026).
+      if (seeded.current === id && before) {
+        const follow = <T,>(now: T, was: T, next: T) => (now === was ? next : now);
+        setTitle((now) => follow(now, before.title, result.title));
+        setLeadLabel((now) => follow(now, before.leadLabel, result.leadLabel));
+        setOwnerId((now) => follow(now, before.ownerId ?? "", result.ownerId ?? ""));
+        const money = (d: OpportunityDetail) => (d.deal ? (d.deal.valueCents / 100).toFixed(2) : "");
+        setValue((now) => follow(now, money(before), money(result)));
+        setPeople((rows) => {
+          const wasRole = new Map(before.people.map((row) => [row.contactId, row.role]));
+          const fresh = new Map(result.people.map((row) => [row.contactId, row]));
+          const kept = rows.map((row) => {
+            const next = fresh.get(row.contactId);
+            if (!next) return row;
+            return { ...next, role: row.role === wasRole.get(row.contactId) ? next.role : row.role };
+          });
+          const have = new Set(rows.map((row) => row.contactId));
+          return [...kept, ...result.people.filter((row) => !have.has(row.contactId))];
+        });
+        return;
+      }
       if (seeded.current === id) return;
       seeded.current = id;
       setTitle(result.title);
@@ -155,9 +184,55 @@ export function OpportunityPanel({
     };
   }, [id, version, reload]);
 
+  // Escape closes the panel, and Tab stays inside it — unless something
+  // drawn over it is open (a Stage or Lead label menu, How did it go?,
+  // Book meeting, the convert prompt): that one has the keyboard, and its
+  // Escape closes only itself. Before (audit, Nov 11, 2026) Escape in a
+  // menu here closed the panel too and lost what was typed, and focus never
+  // came into the panel at all.
+  const shell = useRef<HTMLElement>(null);
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const frame = requestAnimationFrame(() => shell.current?.querySelector<HTMLElement>("[data-testid=panel-close]")?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [id]);
+  useEffect(() => {
+    function overlaid() {
+      const panel = shell.current;
+      return Array.from(document.querySelectorAll<HTMLElement>("[role=dialog], [role=alertdialog], .modal-backdrop")).some(
+        (el) => panel && el !== panel && !el.contains(panel) && !panel.contains(el),
+      );
+    }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      const panel = shell.current;
+      if (!panel || overlaid()) return;
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), [href], input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        ),
+      ).filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const at = document.activeElement;
+      if (!panel.contains(at)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && at === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && at === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -221,6 +296,7 @@ export function OpportunityPanel({
         title,
         leadLabel,
         ownerId,
+        ownerOriginal: detail.ownerId ?? "",
         valueCents: detail.deal && !detail.deal.hasQuotes ? dollarsToCents(value) : null,
         people: people.map((row) => ({ contactId: row.contactId, role: row.role as Role })),
       });
@@ -367,6 +443,7 @@ export function OpportunityPanel({
           blur is the box a pinned button is placed against, and the
           DealJourney's Next lives in here. */}
       <aside
+        ref={shell}
         role="dialog"
         aria-modal="true"
         aria-label="Opportunity"
@@ -389,7 +466,7 @@ export function OpportunityPanel({
               <p className="faint text-sm">{loadError ?? "Loading…"}</p>
             )}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm min-h-9 min-w-9 justify-center !px-1.5" data-testid="panel-close">
+          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11 min-w-9 [@media(pointer:coarse)]:min-w-11 justify-center !px-1.5" data-testid="panel-close">
             <IconX size={14} />
           </button>
         </div>
@@ -413,10 +490,10 @@ export function OpportunityPanel({
                 {early && (
                   <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] p-2.5 text-sm" role="alert" data-testid="panel-early">
                     <span className="min-w-0 flex-1">{early.text}</span>
-                    <button type="button" onClick={() => setEarly(null)} className="btn btn-ghost btn-sm min-h-9">
+                    <button type="button" onClick={() => setEarly(null)} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11">
                       No
                     </button>
-                    <button type="button" onClick={() => answerHeld(early.meetingId, true)} className="btn btn-primary btn-sm min-h-9" data-testid="panel-early-yes">
+                    <button type="button" onClick={() => answerHeld(early.meetingId, true)} className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-early-yes">
                       Yes, it happened
                     </button>
                   </div>
@@ -525,7 +602,7 @@ export function OpportunityPanel({
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" role="group" aria-label={`${row.name}: role on this opportunity`}>
                       {ROLES.map((item) => (
-                        <label key={item.role} className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 text-xs">
+                        <label key={item.role} className="inline-flex min-h-8 [@media(pointer:coarse)]:min-h-11 cursor-pointer items-center gap-1.5 text-xs">
                           {/* A greyed-out box is the browser's own disabled look,
                               as everywhere else; an extra 30% fade made it all
                               but vanish on white (UX review). */}
@@ -555,7 +632,7 @@ export function OpportunityPanel({
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-sm font-semibold">Meetings</h3>
                 {primary && (
-                  <button type="button" onClick={() => bookWith(primary.contactId, primary.name)} className="link inline-flex min-h-9 items-center gap-1 text-xs" data-testid="panel-book">
+                  <button type="button" onClick={() => bookWith(primary.contactId, primary.name)} className="link inline-flex min-h-9 [@media(pointer:coarse)]:min-h-11 items-center gap-1 text-xs" data-testid="panel-book">
                     <IconPlus size={12} />
                     Book a meeting
                   </button>
@@ -596,7 +673,7 @@ export function OpportunityPanel({
                 {primary && (
                   <Link
                     href={`/dashboard/quotes/new?contactId=${primary.contactId}${detail.deal ? `&dealId=${detail.deal.id}` : ""}`}
-                    className="btn btn-ghost btn-sm"
+                    className="btn btn-ghost btn-sm [@media(pointer:coarse)]:min-h-11"
                     data-testid="panel-new-quote"
                   >
                     <IconPlus size={12} />
@@ -608,7 +685,7 @@ export function OpportunityPanel({
                 <ul className="space-y-1 text-xs">
                   {detail.deal.quotes.map((quote) => (
                     <li key={quote.id}>
-                      <Link href={`/dashboard/quotes/${quote.id}`} className="link flex items-center gap-1.5">
+                      <Link href={`/dashboard/quotes/${quote.id}`} className="link flex items-center gap-1.5 [@media(pointer:coarse)]:min-h-11">
                         <IconFileText size={12} />
                         <span className="docnum">QUO-{quote.number}</span>
                         <span className="truncate">{quote.title}</span>
@@ -640,11 +717,11 @@ export function OpportunityPanel({
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-cancel">
+            <button type="button" onClick={onClose} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-cancel">
               {dirty ? "Cancel" : "Close"}
             </button>
             {dirty && (
-              <button type="button" onClick={() => save()} disabled={!detail || pending} className="btn btn-primary btn-sm min-h-9" data-testid="panel-save">
+              <button type="button" onClick={() => save()} disabled={!detail || pending} className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-save">
                 {pending ? "Saving…" : "Save"}
               </button>
             )}
@@ -674,7 +751,7 @@ function ReachButtons({
   person: { contactId: string; name: string; phone: string | null; email: string | null };
   onLog: () => void;
 }) {
-  const button = "btn btn-ghost btn-sm min-h-9 min-w-9 justify-center !px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+  const button = "btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11 min-w-9 [@media(pointer:coarse)]:min-w-11 justify-center !px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
   const digits = person.phone?.replace(/[^\d+]/g, "") ?? "";
   return (
     <div className="flex shrink-0 items-center gap-1" data-testid="panel-reach" data-contact-id={person.contactId}>
@@ -744,20 +821,20 @@ function MeetingRow({
         <div className="mt-2 flex flex-wrap gap-1.5">
           {!meeting.ahead && !meeting.outcome && (
             <>
-              <button type="button" onClick={onHeld} className="btn btn-primary btn-sm min-h-9" data-testid="panel-meeting-held">
+              <button type="button" onClick={onHeld} className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-meeting-held">
                 Held
               </button>
-              <button type="button" onClick={onNoShow} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-meeting-noshow">
+              <button type="button" onClick={onNoShow} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-meeting-noshow">
                 No-show
               </button>
             </>
           )}
           {meeting.ahead && (
-            <button type="button" onClick={onHeld} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-meeting-held">
+            <button type="button" onClick={onHeld} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-meeting-held">
               It happened early
             </button>
           )}
-          <button type="button" onClick={() => setMoving(!moving)} className="btn btn-ghost btn-sm min-h-9" data-testid="panel-meeting-reschedule">
+          <button type="button" onClick={() => setMoving(!moving)} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="panel-meeting-reschedule">
             Reschedule
           </button>
         </div>
@@ -799,7 +876,7 @@ function DayTimePicker({
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const chip = (active: boolean) =>
-    `min-h-9 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
+    `min-h-9 [@media(pointer:coarse)]:min-h-11 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
       active ? "border-[var(--brand)] bg-[var(--hover)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
     }`;
   return (
@@ -836,7 +913,7 @@ function DayTimePicker({
         </p>
       )}
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm min-h-9">
+        <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11">
           Cancel
         </button>
         <button
@@ -848,7 +925,7 @@ function DayTimePicker({
               if (problem) setError(problem);
             })
           }
-          className="btn btn-primary btn-sm min-h-9"
+          className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11"
           data-testid="picker-save"
         >
           {pending ? "Saving…" : saveLabel(on)}
@@ -892,7 +969,7 @@ function AddPerson({
 
   if (!open) {
     return (
-      <button type="button" onClick={() => setOpen(true)} className="link mt-2 inline-flex min-h-9 items-center gap-1 text-xs" data-testid="panel-add-person">
+      <button type="button" onClick={() => setOpen(true)} className="link mt-2 inline-flex min-h-9 [@media(pointer:coarse)]:min-h-11 items-center gap-1 text-xs" data-testid="panel-add-person">
         <IconPlus size={12} />
         Add contact
       </button>
@@ -930,7 +1007,7 @@ function AddPerson({
           </li>
         ))}
       </ul>
-      <button type="button" onClick={() => setOpen(false)} className="link mt-1 min-h-9 text-xs">
+      <button type="button" onClick={() => setOpen(false)} className="link mt-1 min-h-9 [@media(pointer:coarse)]:min-h-11 text-xs">
         Done adding
       </button>
     </div>

@@ -18,6 +18,7 @@ import { healthSettings, opportunityHealth } from "@/lib/health-load";
 import { zoneDay, type LeadHealth } from "@/lib/health";
 import { loadDealJourney, type JourneyRefs } from "@/lib/deal-journey-load";
 import type { JourneyState } from "@/lib/health-journey";
+import { undoLogCore } from "@/lib/undo-log";
 import { updateDealStage } from "./actions";
 
 // The Pipeline's tiles (Oct 27, 2026): open one, move it, convert it to a
@@ -123,6 +124,7 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
             id: true,
             stage: true,
             valueCents: true,
+            ownerId: true,
             quotes: { select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true, status: true }, orderBy: { createdAt: "desc" } },
           },
         },
@@ -199,7 +201,8 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
     id: opportunity.id,
     title: opportunity.title,
     leadLabel: opportunity.leadLabel,
-    ownerId: opportunity.ownerId,
+    // The rep the tile shows: the deal's once there is one (page.tsx).
+    ownerId: deal ? deal.ownerId : opportunity.ownerId,
     column,
     deal: deal
       ? {
@@ -264,11 +267,11 @@ export async function moveOpportunity(id: string, column: string, options: { ear
     return moved.error ? { error: moved.error } : { success: "Moved" };
   }
   if (!toMeeting) {
-    // A draft quote's deal (not sent yet) just moves; nothing to convert.
-    if (opportunity.deal) {
-      const moved = await updateDealStage(opportunity.deal.id, target);
-      return moved.error ? { error: moved.error } : { success: "Moved" };
-    }
+    // A Build Quote deal (its quote not sent yet, decision 19) is still a
+    // meeting tile: into a deal column it goes through the convert prompt
+    // like one with no deal, which holds the meeting, asks the amount for
+    // Won and leaves Quote Sent to the quote's own send. It used to move
+    // straight there with none of that (audit, Nov 11, 2026).
     return { convert: true };
   }
   if (from === "MEETING_SET" && target === "MEETING_COMPLETED") {
@@ -319,7 +322,7 @@ const convertSchema = z.object({
 // unanswered meeting is marked Held first (one ahead only with `early`).
 export async function convertOpportunity(
   input: z.input<typeof convertSchema>,
-): Promise<Result & { dealId?: string; quoteUrl?: string; confirmEarly?: string; batchId?: string }> {
+): Promise<Result & { dealId?: string; quoteUrl?: string; existingQuote?: boolean; confirmEarly?: string; batchId?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = convertSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That conversion isn't valid" };
@@ -346,12 +349,21 @@ export async function convertOpportunity(
       },
     });
   let opportunity = await load();
+  // A Build Quote deal that already has a quote opens that one, not a second.
+  const existingQuote = opportunity?.deal
+    ? await prisma.quote.findFirst({ where: { organizationId, dealId: opportunity.deal.id }, orderBy: { createdAt: "desc" }, select: { id: true } })
+    : null;
   if (!opportunity) return { error: "That opportunity is no longer on the board" };
   if (opportunity.deal && CONVERTED_STAGES.includes(opportunity.deal.stage)) return { error: "This one is already a deal" };
   const primary = opportunity.contacts.find((row) => row.role === "PRIMARY") ?? opportunity.contacts[0];
   if (!primary) return { error: "Pick a Primary POC on the opportunity first" };
 
   let batchId: string | undefined;
+  // A convert that loses the race to another tab takes back the Held it
+  // wrote on the way, so nothing is left half done.
+  const giveBack = async () => {
+    if (batchId) await undoLogCore(organizationId, batchId, { userId, canManage: true }).catch(() => null);
+  };
   if (opportunity.stage === "MEETING_SET") {
     const meetingId = await meetingToHold(organizationId, opportunity.id, new Date());
     if (meetingId) {
@@ -382,6 +394,7 @@ export async function convertOpportunity(
       });
       if (claimed.count === 0) {
         await prisma.deal.deleteMany({ where: { id: dealId, organizationId } });
+        await giveBack();
         return { error: "Someone else just converted this one. Refresh the board." };
       }
     }
@@ -409,6 +422,7 @@ export async function convertOpportunity(
     });
     if (claimed.count === 0) {
       await prisma.deal.deleteMany({ where: { id: dealId, organizationId } });
+      await giveBack();
       return { error: "Someone else just converted this one. Refresh the board." };
     }
     await prisma.statusChange.create({
@@ -423,7 +437,11 @@ export async function convertOpportunity(
     success: mode === "quote" ? "Deal made · it moves to Quote Sent when the quote goes out" : "Converted to a deal",
     dealId,
     ...(batchId ? { batchId } : {}),
-    ...(mode === "quote" ? { quoteUrl: `/dashboard/quotes/new?contactId=${primary.contactId}&dealId=${dealId}` } : {}),
+    ...(mode === "quote"
+      ? existingQuote
+        ? { quoteUrl: `/dashboard/quotes/${existingQuote.id}`, existingQuote: true }
+        : { quoteUrl: `/dashboard/quotes/new?contactId=${primary.contactId}&dealId=${dealId}` }
+      : {}),
   };
 }
 
@@ -432,6 +450,10 @@ const saveSchema = z.object({
   title: z.string().trim().min(1, "Give it a name").max(160),
   leadLabel: z.string().trim().max(60).nullable(),
   ownerId: z.string().trim().max(64),
+  // The rep the panel opened with: the rep is written only when it was
+  // changed from this, so saving a name or a label never moves a deal
+  // that a teammate's tile or another tab gave a different rep.
+  ownerOriginal: z.string().trim().max(64).optional(),
   // Only taken when the deal has no quotes; null leaves it alone.
   valueCents: z.number().int().min(0).max(100_000_000_000).nullable(),
   people: z
@@ -459,7 +481,7 @@ export async function saveOpportunity(input: z.input<typeof saveSchema>): Promis
     select: {
       id: true,
       ownerId: true,
-      deal: { select: { id: true, _count: { select: { quotes: true } } } },
+      deal: { select: { id: true, ownerId: true, _count: { select: { quotes: true } } } },
       contacts: { select: { contactId: true } },
     },
   });
@@ -470,7 +492,14 @@ export async function saveOpportunity(input: z.input<typeof saveSchema>): Promis
   const onIt = new Set(opportunity.contacts.map((row) => row.contactId));
   if (opportunity.contacts.some((row) => !ids.includes(row.contactId))) return { error: "Refresh the board: someone was added to this one meanwhile" };
 
-  if (data.ownerId && data.ownerId !== opportunity.ownerId) {
+  // What the rep is now, as the tile shows it, and whether this save
+  // changes it (audit, Nov 11, 2026: Save used to write the opportunity's
+  // rep onto the deal on every save, so changing only a label moved a
+  // deal made by another rep, and its money, to whoever booked the meeting).
+  const currentOwner = opportunity.deal ? opportunity.deal.ownerId : opportunity.ownerId;
+  const ownerChanged =
+    (data.ownerOriginal !== undefined ? data.ownerId !== data.ownerOriginal : true) && (data.ownerId || null) !== currentOwner;
+  if (ownerChanged && data.ownerId) {
     const rep = await prisma.user.findFirst({ where: { id: data.ownerId, organizationId, removedAt: null }, select: { id: true } });
     if (!rep) return { error: "That person isn't on this account" };
   }
@@ -483,7 +512,7 @@ export async function saveOpportunity(input: z.input<typeof saveSchema>): Promis
   await prisma.$transaction([
     prisma.opportunity.updateMany({
       where: { id: opportunity.id, organizationId },
-      data: { title: data.title, leadLabel, ownerId: data.ownerId || null },
+      data: { title: data.title, leadLabel, ...(ownerChanged ? { ownerId: data.ownerId || null } : {}) },
     }),
     ...data.people
       .filter((person) => onIt.has(person.contactId))
@@ -504,7 +533,7 @@ export async function saveOpportunity(input: z.input<typeof saveSchema>): Promis
           prisma.deal.updateMany({
             where: { id: opportunity.deal.id, organizationId },
             data: {
-              ownerId: data.ownerId || null,
+              ...(ownerChanged ? { ownerId: data.ownerId || null } : {}),
               ...(data.valueCents !== null && opportunity.deal._count.quotes === 0 ? { valueCents: data.valueCents } : {}),
             },
           }),

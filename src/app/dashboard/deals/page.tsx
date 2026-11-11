@@ -63,6 +63,11 @@ async function decisionOpportunityIds(organizationId: string, mineOf: string | n
     where: {
       organizationId,
       stage: "MEETING_SET",
+      // Only a tile with a meeting can have one that has passed: without
+      // this every Meeting Set tile in the workspace was read and sent
+      // through waitingMeetings on each load (an import of 20,000 people at
+      // Meeting Set makes 20,000 tiles with no meeting; audit, Nov 11, 2026).
+      meetings: { some: {} },
       OR: [{ dealId: null }, { deal: { stage: { notIn: ["QUOTE_SENT", "CONTRACT_SENT", "WON", "LOST", "ARCHIVED"] } } }],
       ...(mineOf ? { AND: [{ OR: [{ dealId: null, ownerId: mineOf }, { deal: { ownerId: mineOf } }] }] } : {}),
     },
@@ -312,7 +317,7 @@ export default async function DealsPage({
       focus,
       sortKey: meetingSortKey(focus),
       line,
-      action: tileAction(column, focus),
+      action: tileAction(column, focus, draft ? draft.id : null),
       meetingCount: meetings.length,
       deal: deal
         ? {

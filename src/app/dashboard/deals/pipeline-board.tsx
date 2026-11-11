@@ -9,7 +9,7 @@ import { formatCents, formatDay } from "@/lib/format";
 import type { LeadHealth } from "@/lib/health";
 import { LifecycleMeter } from "@/components/lifecycle-meter";
 import { FloatingMenu } from "@/components/floating-menu";
-import { LeadLabelChip, LeadLabelMenu } from "@/components/lead-label-chip";
+import { LeadLabelChip, LeadLabelMenu, useMenuFocus } from "@/components/lead-label-chip";
 import { undoLog } from "../contacts/actions";
 import { markMeetingHeld, markMeetingNoShow, moveOpportunity, rescheduleMeeting, saveLostReason, setOpportunityLabel } from "./opportunity-actions";
 import { ConvertDialog } from "./convert-dialog";
@@ -243,7 +243,8 @@ export function PipelineBoard({
     // Out of Meeting Set means the meeting happened. The server decides
     // which meeting (the latest one gone by with no answer, else the next
     // one) and answers { confirmEarly } when that one is still ahead.
-    if (!tile.deal && !isMeetingColumn(column)) {
+    // A Build Quote deal whose quote isn't sent is still a meeting tile.
+    if (!isDeal(tile) && !isMeetingColumn(column)) {
       setConverting({ tile, stage: column, early: Boolean(options.early) });
       return;
     }
@@ -445,7 +446,7 @@ export function PipelineBoard({
           >
             <span className={`min-w-0 flex-1 ${notice.error ? "text-[var(--danger)]" : ""}`}>{notice.text}</span>
             {notice.batchId && (
-              <button type="button" onClick={() => undo(notice.batchId!)} className="btn btn-ghost btn-sm min-h-9" data-testid="pipeline-undo">
+              <button type="button" onClick={() => undo(notice.batchId!)} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="pipeline-undo">
                 Undo
               </button>
             )}
@@ -463,13 +464,13 @@ export function PipelineBoard({
                         router.refresh();
                       });
                     }}
-                    className="btn btn-ghost btn-sm min-h-9"
+                    className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11"
                     data-testid={`lost-reason-${reason}`}
                   >
                     {STATUS_REASON_LABELS[reason]}
                   </button>
                 ))}
-                <button type="button" onClick={() => setNotice(null)} className="link ml-auto text-xs" data-testid="lost-reason-skip">
+                <button type="button" onClick={() => setNotice(null)} className="link ml-auto text-xs [@media(pointer:coarse)]:min-h-11" data-testid="lost-reason-skip">
                   Skip
                 </button>
               </div>
@@ -499,10 +500,15 @@ export function PipelineBoard({
           early={converting.early}
           ai={ai}
           onClose={() => setConverting(null)}
-          onDone={(quoteUrl) => {
+          onDone={(quoteUrl, saved) => {
             setConverting(null);
             if (quoteUrl) router.push(quoteUrl);
-            else router.refresh();
+            else {
+              // Converting from Meeting Set held the meeting: say so, with Undo.
+              // Undo takes back the Held; the deal stays (it can be moved on).
+              if (saved?.batchId) say(`${saved.text ?? "Converted to a deal"} · the meeting is marked Held`, { batchId: saved.batchId });
+              router.refresh();
+            }
           }}
         />
       )}
@@ -644,11 +650,25 @@ function PhoneBoard({
 }) {
   const current = PHONE_TABS.find((row) => row.key === tab) ?? PHONE_TABS[0];
   const counts = new Map(PHONE_TABS.map((row) => [row.key, tiles.filter((tile) => row.columns.includes(columnOf(tile))).length]));
+  // The tabs stick under the phone's own sticky top bar (layout.tsx), not
+  // at the top of the screen where that bar covered them (audit, Nov 11,
+  // 2026). Its height is read, so a bar that wraps or grows still fits.
+  const [barHeight, setBarHeight] = useState(0);
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>("[data-testid=phone-top-bar]");
+    if (!bar) return;
+    const read = () => setBarHeight(getComputedStyle(bar).position === "sticky" ? bar.getBoundingClientRect().height : 0);
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(bar);
+    return () => watch.disconnect();
+  }, []);
   return (
     <div data-testid="pipeline-phone">
       <div
         role="tablist"
         aria-label="Stages"
+        style={{ top: barHeight }}
         className="sticky top-0 z-20 -mx-5 mb-3 grid grid-cols-5 gap-1 border-b border-[var(--hairline-3)] bg-[var(--bg)] px-5 py-2"
         data-testid="pipeline-tabs"
       >
@@ -724,6 +744,7 @@ function Tile({
   const more = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState(false);
   const [labelMenu, setLabelMenu] = useState(false);
+  useMenuFocus(menu, `tile-menu-${tile.id}`, more);
   const labelButton = useRef<HTMLButtonElement>(null);
   const person = tile.people[0] ?? null;
   const others = tile.people.slice(1);
@@ -920,6 +941,10 @@ function Tile({
             >
               {tile.action.label}
             </button>
+          ) : tile.action.kind === "link" ? (
+            <Link href={tile.action.href} className="btn btn-primary min-h-11 w-full justify-center" data-testid="tile-action-button">
+              {tile.action.label}
+            </Link>
           ) : tile.action.kind === "open" ? (
             <button
               type="button"
@@ -934,6 +959,7 @@ function Tile({
       )}
 
       <FloatingMenu anchor={more} open={menu} onClose={() => setMenu(false)} width={230} testId="tile-menu" label={`More for ${name}`}>
+        <div data-testid={`tile-menu-${tile.id}`}>
         <div className="py-1" role="menu">
           <p className="px-3 pb-1 pt-1.5 text-xs font-semibold text-[var(--text-dim)]">Move to…</p>
           <ul aria-label="Move to" className="pb-1" data-testid="tile-move-menu">
@@ -951,7 +977,7 @@ function Tile({
                       setMenu(false);
                       handlers.move(tile, target);
                     }}
-                    className={`flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:text-[var(--text-dim)] [@media(pointer:coarse)]:min-h-11 ${
+                    className={`flex min-h-9 [@media(pointer:coarse)]:min-h-11 w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:text-[var(--text-dim)] [@media(pointer:coarse)]:min-h-11 ${
                       target === column ? "font-semibold" : ""
                     }`}
                     data-testid={`tile-move-${target}`}
@@ -988,7 +1014,7 @@ function Tile({
               <Link
                 href={`/dashboard/deals/tracker?dealId=${tile.deal.id}`}
                 role="menuitem"
-                className="flex min-h-9 w-full items-center px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] [@media(pointer:coarse)]:min-h-11"
+                className="flex min-h-9 [@media(pointer:coarse)]:min-h-11 w-full items-center px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] [@media(pointer:coarse)]:min-h-11"
                 data-testid="tile-menu-coordinator"
               >
                 Contract Coordinator
@@ -1004,6 +1030,7 @@ function Tile({
               Open
             </MenuItem>
           </div>
+        </div>
         </div>
       </FloatingMenu>
       <LeadLabelMenu
@@ -1027,7 +1054,7 @@ function MenuItem({ children, onClick, testId }: { children: React.ReactNode; on
       type="button"
       role="menuitem"
       onClick={onClick}
-      className="flex min-h-9 w-full items-center px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] [@media(pointer:coarse)]:min-h-11"
+      className="flex min-h-9 [@media(pointer:coarse)]:min-h-11 w-full items-center px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] [@media(pointer:coarse)]:min-h-11"
       data-testid={testId}
     >
       {children}
@@ -1070,7 +1097,7 @@ function Reschedule({
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const chip = (active: boolean) =>
-    `min-h-9 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
+    `min-h-9 [@media(pointer:coarse)]:min-h-11 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
       active ? "border-[var(--brand)] bg-[var(--hover)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
     }`;
   return (
@@ -1129,7 +1156,7 @@ function Reschedule({
                 else setOpen(false);
               })
             }
-            className="btn btn-primary btn-sm min-h-9 w-full justify-center"
+            className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11 w-full justify-center"
             data-testid="reschedule-save"
           >
             {pending ? "Saving…" : `Move to ${formatDay(`${on}T12:00:00Z`)}`}
@@ -1185,10 +1212,10 @@ function EarlyDialog({ day, onYes, onNo }: { day: string; onYes: () => void; onN
         </h2>
         <p className="mt-1 text-sm text-[var(--text-dim)]">Yes marks it held today and moves it to Meeting Completed.</p>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onNo} className="btn btn-ghost btn-sm min-h-9" data-testid="early-no">
+          <button type="button" onClick={onNo} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="early-no">
             No, it&apos;s still ahead
           </button>
-          <button ref={yes} type="button" onClick={onYes} className="btn btn-primary btn-sm min-h-9" data-testid="early-yes">
+          <button ref={yes} type="button" onClick={onYes} className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="early-yes">
             Yes, it happened
           </button>
         </div>

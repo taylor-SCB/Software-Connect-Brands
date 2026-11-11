@@ -43,7 +43,7 @@ export function ConvertDialog({
   // AI on: Build Quote can draft the new quote's lines from the meeting.
   ai?: boolean;
   onClose: () => void;
-  onDone: (quoteUrl?: string) => void;
+  onDone: (quoteUrl?: string, saved?: { batchId?: string; text?: string }) => void;
 }) {
   const startOn = (BOARD_DEAL_STAGES as readonly string[]).includes(stage) ? (stage as Stage) : null;
   const [picked, setPicked] = useState<Stage | null>(startOn);
@@ -96,7 +96,11 @@ export function ConvertDialog({
         setError(result.error);
         return;
       }
-      onDone(result.quoteUrl && ai && draftLines ? `${result.quoteUrl}&draft=meeting` : result.quoteUrl);
+      // The meeting this marked Held comes back with its batch, for Undo.
+      onDone(result.quoteUrl && ai && draftLines && !result.existingQuote ? `${result.quoteUrl}&draft=meeting` : result.quoteUrl, {
+        batchId: result.batchId,
+        text: result.success,
+      });
     });
   }
 
@@ -117,7 +121,7 @@ export function ConvertDialog({
               What happened after the meeting with {who}?
             </h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm min-h-9 min-w-9 justify-center !px-1.5">
+          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11 min-w-9 [@media(pointer:coarse)]:min-w-11 justify-center !px-1.5">
             <IconX size={14} />
           </button>
         </div>
@@ -127,7 +131,7 @@ export function ConvertDialog({
             const chosen = picked === card.stage;
             return (
               <div key={card.stage} className={`rounded-lg border p-3 ${chosen ? "border-[var(--brand)]" : "border-[var(--border)]"}`} data-testid={`convert-card-${card.stage}`}>
-                <label className="flex min-h-9 cursor-pointer items-center gap-2.5">
+                <label className="flex min-h-9 [@media(pointer:coarse)]:min-h-11 cursor-pointer items-center gap-2.5">
                   <input
                     type="radio"
                     name="convert-stage"
@@ -150,7 +154,7 @@ export function ConvertDialog({
                   <div className="mt-3 space-y-2 border-t border-[var(--hairline-3)] pl-6 pt-3" data-testid="convert-mode">
                     {card.stage !== "LOST" && (
                       <>
-                        <label className="flex min-h-8 cursor-pointer items-start gap-2.5 text-sm">
+                        <label className="flex min-h-8 [@media(pointer:coarse)]:min-h-11 cursor-pointer items-start gap-2.5 text-sm">
                           <input
                             type="radio"
                             name="convert-mode"
@@ -164,7 +168,7 @@ export function ConvertDialog({
                             <span className="block text-xs text-[var(--text-dim)]">It stays at Meeting Completed until the quote is sent.</span>
                           </span>
                         </label>
-                        <label className="flex min-h-8 cursor-pointer items-start gap-2.5 text-sm">
+                        <label className="flex min-h-8 [@media(pointer:coarse)]:min-h-11 cursor-pointer items-start gap-2.5 text-sm">
                           <input
                             type="radio"
                             name="convert-mode"
@@ -192,7 +196,7 @@ export function ConvertDialog({
                               role="radio"
                               aria-checked={reason === value}
                               onClick={() => setReason(reason === value ? null : value)}
-                              className={`min-h-9 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
+                              className={`min-h-9 [@media(pointer:coarse)]:min-h-11 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
                                 reason === value ? "border-[var(--brand)] bg-[var(--hover)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-dim)]"
                               }`}
                               data-testid={`convert-reason-${value}`}
@@ -274,19 +278,19 @@ export function ConvertDialog({
           </p>
         )}
         {askEarly && (
-          <button type="button" onClick={() => save(true)} className="btn btn-ghost btn-sm mt-2 min-h-9" data-testid="convert-early-yes">
+          <button type="button" onClick={() => save(true)} className="btn btn-ghost btn-sm mt-2 min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="convert-early-yes">
             Yes, it happened early
           </button>
         )}
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn btn-ghost btn-sm min-h-9" data-testid="convert-cancel">
+          <button type="button" onClick={onClose} className="btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11" data-testid="convert-cancel">
             Cancel
           </button>
           <button
             type="button"
             onClick={() => save()}
             disabled={pending || !picked || !mode || !title.trim() || !on || amountMissing}
-            className="btn btn-primary btn-sm min-h-9"
+            className="btn btn-primary btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11"
             data-testid="convert-save"
           >
             {pending ? "Saving…" : "Save and Accept"}

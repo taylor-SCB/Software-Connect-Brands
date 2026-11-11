@@ -38,7 +38,8 @@ export type TileAction =
   | { kind: "decide" }
   | { kind: "reschedule"; label: string }
   | { kind: "move"; column: PipelineColumn; label: string }
-  | { kind: "open"; label: string };
+  | { kind: "open"; label: string }
+  | { kind: "link"; href: string; label: string };
 
 export type TileLine = { text: string; tone: "warn" | "plain"; key: string };
 
@@ -148,13 +149,16 @@ const NEXT_MOVE: Partial<Record<PipelineColumn, { column: PipelineColumn; label:
 
 // The one button at the foot of a phone card (and the Happened tiles'
 // three on every size).
-export function tileAction(column: PipelineColumn | "ARCHIVED", focus: MeetingFocus | null): TileAction {
+// A Meeting Completed tile whose deal already has a draft quote (Build
+// Quote, decision 19) offers that quote to send, not "Start a quote".
+export function tileAction(column: PipelineColumn | "ARCHIVED", focus: MeetingFocus | null, draftQuoteId: string | null = null): TileAction {
   if (column === "MEETING_SET") {
     if (!focus) return { kind: "move", column: "MEETING_COMPLETED", label: "Move to Meeting Completed →" };
     if (focus.kind === "ahead") return { kind: "reschedule", label: "Reschedule" };
     if (focus.kind === "held") return { kind: "move", column: "MEETING_COMPLETED", label: "Move to Meeting Completed →" };
     return { kind: "decide" };
   }
+  if (column === "MEETING_COMPLETED" && draftQuoteId) return { kind: "link", href: `/dashboard/quotes/${draftQuoteId}`, label: "Send the quote →" };
   const next = column === "ARCHIVED" ? null : NEXT_MOVE[column];
   if (next) return { kind: "move", ...next };
   return { kind: "open", label: "Open" };

@@ -84,7 +84,7 @@ export function PipelineFilters({
 
   const filtered = Boolean(q) || labels.length > 0 || quiet || decide;
   const segment = (on: boolean) =>
-    `min-h-9 px-3 text-xs font-medium transition-colors focus-visible:relative focus-visible:z-10 ${
+    `min-h-9 [@media(pointer:coarse)]:min-h-11 px-3 text-xs font-medium transition-colors focus-visible:relative focus-visible:z-10 ${
       on ? "bg-[var(--brand)] text-white" : "text-[var(--text-dim)] hover:bg-[var(--hover)] hover:text-[var(--text)]"
     }`;
   return (
@@ -120,7 +120,7 @@ export function PipelineFilters({
         onClick={() => go({ quiet: !quiet })}
         aria-pressed={quiet}
         title={`Open opportunities with no call, text, email or meeting in ${quietDays} days`}
-        className={`btn btn-sm ${quiet ? "btn-primary" : "btn-ghost"}`}
+        className={`btn btn-sm [@media(pointer:coarse)]:min-h-11 ${quiet ? "btn-primary" : "btn-ghost"}`}
         data-testid="pipeline-quiet-toggle"
       >
         Gone quiet{quietCount ? ` (${quietCount})` : ""}
@@ -130,7 +130,7 @@ export function PipelineFilters({
         onClick={() => go({ decide: !decide })}
         aria-pressed={decide}
         title="Meetings that have passed with nobody saying how they went"
-        className={`btn btn-sm ${decide ? "btn-primary" : "btn-ghost"}`}
+        className={`btn btn-sm [@media(pointer:coarse)]:min-h-11 ${decide ? "btn-primary" : "btn-ghost"}`}
         data-testid="pipeline-decide-toggle"
       >
         Needs a decision{decideCount ? ` (${decideCount})` : ""}
@@ -162,7 +162,7 @@ export function PipelineFilters({
               setPicked([]);
               go({ q: "", labels: [], quiet: false, decide: false });
             }}
-            className="link text-xs"
+            className="link text-xs [@media(pointer:coarse)]:min-h-11"
           >
             Clear
           </button>

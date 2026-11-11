@@ -1628,6 +1628,266 @@ async function openAddDeal(p) {
   assert.ok(panelBox.width >= 389 && panelBox.x <= 1, `the panel is ${panelBox.width}px wide at x=${panelBox.x}`);
   await phoneContext.close();
 
+  /* ---------------- audit fixes (final BDR audit, Nov 11, 2026) ----------------
+   * Each step stands on its own data (op_a_…) and opens a fresh page, and a
+   * failure is collected rather than thrown at once, so a run on the code
+   * before the fixes shows every one of them failing in one go. */
+  const auditFailures = [];
+  async function audit(name, fn) {
+    log(`audit fixes: ${name}`);
+    try {
+      await fn();
+    } catch (err) {
+      auditFailures.push(`[${step}] ${name}: ${err.message.split("\n")[0]}`);
+      console.log(`   FAILED: ${err.message.split("\n")[0]}`);
+    }
+  }
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","updatedAt") VALUES
+       ('op_a_rex',$1,'Rex Repkept','QUOTE_SENT',$2,now()),
+       ('op_a_bea',$1,'Bea Booked','MEETING_SET',$2,now()),
+       ('op_a_ben',$1,'Ben Bookedtoo','MEETING_SET',$2,now()),
+       ('op_a_quinn',$1,'Quinn Quotedraft','MEETING_COMPLETED',$2,now()),
+       ('op_a_lia',$1,'Lia Lostreason','MEETING_SET',$2,now()),
+       ('op_a_kai',$1,'Kai Keyboard','MEETING_SET',$2,now())`,
+    [org, taylorId],
+  );
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"stageChangedAt","valueCents","ownerId","updatedAt") VALUES
+       ('op_a_deal_rex',$1,'op_a_rex','Rex deal','QUOTE_SENT',now(),120000,$2,now()),
+       ('op_a_deal_quinn',$1,'op_a_quinn','Quinn deal','LEAD',now(),0,$3,now())`,
+    [org, nicId, taylorId],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","dealId","createdAt","updatedAt") VALUES
+       ('op_a_opp_rex',$1,'Rex Repkept','MEETING_COMPLETED',$2,'op_a_deal_rex',now() - interval '3 days',now()),
+       ('op_a_opp_bea',$1,'Bea Booked','MEETING_SET',$2,NULL,now() - interval '3 days',now()),
+       ('op_a_opp_quinn',$1,'Quinn Quotedraft','MEETING_COMPLETED',$2,'op_a_deal_quinn',now() - interval '3 days',now()),
+       ('op_a_opp_lia',$1,'Lia Lostreason','MEETING_SET',$2,NULL,now() - interval '3 days',now()),
+       ('op_a_opp_kai',$1,'Kai Keyboard','MEETING_SET',$2,NULL,now() - interval '3 days',now())`,
+    [org, taylorId],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES
+       ('op_a_oc_rex','op_a_opp_rex','op_a_rex','PRIMARY',true), ('op_a_oc_bea','op_a_opp_bea','op_a_bea','PRIMARY',true),
+       ('op_a_oc_quinn','op_a_opp_quinn','op_a_quinn','PRIMARY',true), ('op_a_oc_lia','op_a_opp_lia','op_a_lia','PRIMARY',true),
+       ('op_a_oc_kai','op_a_opp_kai','op_a_kai','PRIMARY',true)`,
+  );
+  await sql(
+    `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","bookedById") VALUES
+       ('op_a_m_bea','op_a_opp_bea',now() - interval '1 day',$1), ('op_a_m_lia','op_a_opp_lia',now() - interval '2 days',$1)`,
+    [taylorId],
+  );
+  const quinnQuote = (
+    await one(
+      `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
+       VALUES ('op_a_q_quinn',$1,'op_a_quinn','op_a_deal_quinn',99001,'Quinn draft','DRAFT','op-a-quinn-token',now()) RETURNING id`,
+      [org],
+    )
+  ).id;
+  const fresh = async (url = `${BASE}/dashboard/deals`) => {
+    await page.goto(url);
+    await page.locator("[data-testid=pipeline-tile]").first().waitFor();
+  };
+
+  await audit("saving only a label in the panel keeps the deal's own rep (it was overwritten with whoever booked the meeting)", async () => {
+    await fresh(`${BASE}/dashboard/deals?open=op_a_opp_rex`);
+    await panel.locator("[data-testid=panel-person][data-name='Rex Repkept']").waitFor();
+    assert.equal(await panel.getByTestId("panel-rep").inputValue(), nicId, "the panel shows the rep the tile shows: the deal's");
+    await panel.getByTestId("lead-label-picker").click();
+    await page.getByTestId("lead-label-menu").getByTestId("lead-label-option-Vendor").click();
+    await panel.getByTestId("panel-save").click();
+    await panel.waitFor({ state: "detached" });
+    await until(async () => (await one(`SELECT "leadLabel" FROM "Opportunity" WHERE id='op_a_opp_rex'`)).leadLabel === "Vendor", "label saved");
+    assert.equal((await one(`SELECT "ownerId" FROM "Deal" WHERE id='op_a_deal_rex'`)).ownerId, nicId, "the deal is still Nic's");
+  });
+
+  await audit("a person a sheet adds while the panel is open joins People, with no phantom Save, and Save still works", async () => {
+    await fresh(`${BASE}/dashboard/deals?open=op_a_opp_bea`);
+    await panel.locator("[data-testid=panel-person][data-name='Bea Booked']").waitFor();
+    // Someone joins the tile (as Book meeting with a second person does)
+    // and the sheet's save makes the panel read again.
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_a_oc_ben','op_a_opp_bea','op_a_ben','ASSOCIATED',true)`);
+    await panel.getByTestId("panel-book").click();
+    const sheet = page.getByTestId("book-meeting");
+    await sheet.locator("[data-testid=book-day-week]").click();
+    await sheet.locator("[data-testid=book-time-13\\:00]").click();
+    await sheet.getByTestId("book-submit").click();
+    await sheet.waitFor({ state: "detached" });
+    await until(async () => (await panel.getByTestId("panel-meeting").count()) === 2, "the panel read again");
+    await panel.locator("[data-testid=panel-person][data-name='Ben Bookedtoo']").waitFor({ timeout: 5000 });
+    assert.equal(await panel.getByTestId("panel-save").count(), 0, "nothing was changed here, so no Save");
+    await panel.getByTestId("panel-title").fill("Bea Booked — renamed");
+    await panel.getByTestId("panel-save").click();
+    await panel.waitFor({ state: "detached" });
+    assert.equal((await one(`SELECT title FROM "Opportunity" WHERE id='op_a_opp_bea'`)).title, "Bea Booked — renamed");
+  });
+
+  await audit("a Build Quote deal whose quote is a draft goes through the convert prompt, never straight to Quote Sent; on a phone its button sends the draft", async () => {
+    await fresh();
+    const quinn = tileOf("op_a_opp_quinn");
+    await quinn.getByTestId("tile-more").click();
+    await page.getByTestId("tile-menu").getByTestId("tile-move-QUOTE_SENT").click();
+    await page.getByTestId("convert-dialog").waitFor({ timeout: 5000 });
+    await page.getByTestId("convert-cancel").click();
+    await page.waitForTimeout(500);
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE id='op_a_deal_quinn'`)).stage, "LEAD", "the deal didn't move");
+    assert.equal((await one(`SELECT status FROM "Contact" WHERE id='op_a_quinn'`)).status, "MEETING_COMPLETED", "nor did Quinn");
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    try {
+      await phone.goto(`${BASE}/dashboard/deals`);
+      await phone.getByTestId("pipeline-tab-MEETING_COMPLETED").click();
+      const button = tileOf("op_a_opp_quinn", phone).getByTestId("tile-action-button");
+      assert.equal((await button.innerText()).trim(), "Send the quote →");
+      assert.equal(await button.getAttribute("href"), `/dashboard/quotes/${quinnQuote}`);
+    } finally {
+      await phoneCtx.close();
+    }
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE id='op_a_deal_quinn'`)).stage, "LEAD");
+  });
+
+  await audit("converting from Meeting Set holds the meeting and says so with Undo, which takes the Held back", async () => {
+    await fresh();
+    await tileOf("op_a_opp_lia").getByTestId("tile-more").click();
+    await page.getByTestId("tile-menu").getByTestId("tile-move-LOST").click();
+    const dialog = page.getByTestId("convert-dialog");
+    await dialog.waitFor();
+    await dialog.getByTestId("convert-save").click();
+    await dialog.waitFor({ state: "detached" });
+    await until(async () => (await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_a_m_lia'`)).outcome === "HELD", "held");
+    await notice.getByText("Converted to a deal · the meeting is marked Held").waitFor({ timeout: 5000 });
+    const undo = notice.getByTestId("pipeline-undo");
+    await undo.waitFor({ timeout: 5000 });
+    await undo.click();
+    await notice.getByText("Undone").waitFor();
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_a_m_lia'`)).outcome, null, "the meeting is unanswered again");
+  });
+
+  await audit("Escape in the panel's Stage menu closes the menu only; the panel and the name typed stay", async () => {
+    await fresh(`${BASE}/dashboard/deals?open=op_a_opp_kai`);
+    await panel.locator("[data-testid=panel-person][data-name='Kai Keyboard']").waitFor();
+    await panel.getByTestId("panel-title").fill("Kai typed");
+    await panel.getByTestId("tile-move").click();
+    const menu = page.locator("[role=dialog][data-testid=tile-move-menu]");
+    await menu.waitFor();
+    await page.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
+    await page.waitForTimeout(200);
+    assert.equal(await panel.count(), 1, "the panel is still open");
+    assert.equal(await panel.getByTestId("panel-title").inputValue(), "Kai typed");
+    await page.keyboard.press("Escape");
+    await panel.waitFor({ state: "detached" });
+  });
+
+  await audit("opening a tile from the keyboard puts focus in the panel and Tab stays inside it", async () => {
+    await fresh();
+    const open = tileOf("op_a_opp_kai").getByTestId("tile-open");
+    await open.focus();
+    await page.keyboard.press("Enter");
+    await panel.locator("[data-testid=panel-person][data-name='Kai Keyboard']").waitFor();
+    await until(async () => panel.evaluate((el) => el.contains(document.activeElement)), "focus inside the panel", 3000);
+    for (let i = 0; i < 60; i += 1) await page.keyboard.press("Tab");
+    assert.ok(await panel.evaluate((el) => el.contains(document.activeElement)), "Tab never leaves the panel");
+    await page.keyboard.press("Escape");
+    await panel.waitFor({ state: "detached" });
+  });
+
+  await audit("the tile's ⋯ menu is reached by the keyboard: Enter focuses its first choice and the arrows walk it", async () => {
+    await fresh();
+    const more = tileOf("op_a_opp_kai").getByTestId("tile-more");
+    await more.focus();
+    await page.keyboard.press("Enter");
+    const menu = page.locator("[role=dialog][data-testid=tile-menu]");
+    await menu.waitFor();
+    await until(async () => menu.evaluate((el) => el.contains(document.activeElement)), "focus in the menu", 3000);
+    const first = await page.evaluate(() => document.activeElement?.dataset.testid);
+    await page.keyboard.press("ArrowDown");
+    const second = await page.evaluate(() => document.activeElement?.dataset.testid);
+    assert.notEqual(first, second, "ArrowDown moves");
+    assert.ok(await menu.evaluate((el) => el.contains(document.activeElement)), "and stays in the menu");
+    await page.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
+    await until(async () => (await more.evaluate((el) => el === document.activeElement)), "focus back on ⋯", 3000);
+  });
+
+  await audit("on a phone the stage tabs stick below the top bar, and the panel's and the convert prompt's buttons are 44px", async () => {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    try {
+      await phone.goto(`${BASE}/dashboard/deals`);
+      const tabs = phone.getByTestId("pipeline-tabs");
+      await tabs.waitFor();
+      await phone.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      await phone.waitForTimeout(300);
+      const bar = await phone.getByTestId("phone-top-bar").boundingBox();
+      const box = await tabs.boundingBox();
+      assert.ok(box.y >= bar.y + bar.height - 1, `the tabs (y=${box.y}) sit under the top bar (bottom ${bar.y + bar.height})`);
+      await phone.evaluate(() => window.scrollTo(0, 0));
+      await tileOf("op_a_opp_bea", phone).getByTestId("tile-open").click();
+      const phonePanel = phone.getByTestId("opportunity-panel");
+      await phonePanel.getByTestId("panel-person").first().waitFor();
+      await phonePanel.getByTestId("panel-title").fill("Bea renamed again");
+      for (const id of ["panel-save", "panel-cancel", "tile-move", "lead-label-picker"]) {
+        const h = (await phonePanel.getByTestId(id).first().boundingBox()).height;
+        assert.ok(h >= 44, `${id} is ${h}px tall`);
+      }
+      const role = (await phonePanel.getByTestId("role-PRIMARY").first().locator("xpath=..").boundingBox()).height;
+      assert.ok(role >= 44, `a role tick's row is ${role}px tall`);
+      await phonePanel.getByTestId("panel-cancel").click();
+      await phone.getByTestId("pipeline-tab-MEETING_SET").click();
+      await tileOf("op_a_opp_kai", phone).getByTestId("tile-more").click();
+      await phone.getByTestId("tile-menu").getByTestId("tile-move-WON").click();
+      const dialog = phone.getByTestId("convert-dialog");
+      await dialog.waitFor();
+      for (const id of ["convert-save", "convert-cancel"]) {
+        const h = (await dialog.getByTestId(id).boundingBox()).height;
+        assert.ok(h >= 44, `${id} is ${h}px tall`);
+      }
+      await dialog.getByTestId("convert-cancel").click();
+    } finally {
+      await phoneCtx.close();
+    }
+  });
+
+  await audit("Needs a decision skips tiles with no meeting: 40,000 imported Meeting Set tiles add next to nothing to the board", async () => {
+    // The board searched for nothing, so only the counts' own reads move:
+    // timed alone, then with 40,000 meetingless Meeting Set tiles (an
+    // import's worth). Before the fix every one of them was read and sent
+    // through waitingMeetings on each load (+170 ms here at 40,000, and
+    // growing); now only tiles with a meeting are (the +60–80 ms left is the board's other counts).
+    const timed = async () => {
+      const t0 = Date.now();
+      const res = await page.request.get(`${BASE}/dashboard/deals?q=zzznomatch`);
+      assert.equal(res.status(), 200);
+      await res.text();
+      return Date.now() - t0;
+    };
+    const median = async () => {
+      await timed();
+      const times = [];
+      for (let i = 0; i < 5; i += 1) times.push(await timed());
+      return times.sort((a, b) => a - b)[2];
+    };
+    const alone = await median();
+    await sql(
+      `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt")
+       SELECT 'op_a_bulk_' || g, $1, 'Bulk ' || g, 'MEETING_SET', $2, now() - interval '30 days', now() - interval '30 days'
+       FROM generate_series(1, 40000) g`,
+      [org, taylorId],
+    );
+    try {
+      const loaded = await median();
+      console.log(`   the board alone ${alone} ms, with 40,000 meetingless Meeting Set tiles ${loaded} ms`);
+      const budget = Number(process.env.DECIDE_BUDGET_MS || 140);
+      assert.ok(loaded - alone < budget, `40,000 meetingless tiles added ${loaded - alone} ms (budget ${budget})`);
+    } finally {
+      await sql(`DELETE FROM "Opportunity" WHERE "organizationId"=$1 AND id LIKE 'op_a_bulk_%'`, [org]);
+    }
+  });
+
+  if (auditFailures.length) throw new Error(`${auditFailures.length} audit step(s) failed:\n  ${auditFailures.join("\n  ")}`);
+
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED. Screenshots in ${OUT}`);
 })().catch((err) => {
