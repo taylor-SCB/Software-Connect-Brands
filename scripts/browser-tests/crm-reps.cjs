@@ -168,6 +168,8 @@ async function login(page, email) {
 
   log("Nic logs a call on Alex");
   await nic.goto(alexUrl);
+  // The log is the How did it go? sheet behind the "What happened?" bar (Nov 11, 2026).
+  await nic.locator("[data-testid=log-bar]").click();
   const activityForm = nic.locator("[data-testid=log-activity-form]");
   await activityForm.locator("textarea[name=body]").fill("Intro call, wants a walkthrough");
   await activityForm.locator("[data-testid=activity-submit]").click();

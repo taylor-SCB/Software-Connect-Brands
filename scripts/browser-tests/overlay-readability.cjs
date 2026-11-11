@@ -565,8 +565,16 @@ async function withOldGlass(page, selector, body) {
     ["Email (a contact)", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /^Email$/ }).first()],
     ["Additional Account", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByTestId("additional-account")],
     // Drawn inside the Log activity card: in Dark that card's glass blur
-    // pinned the window to the card.
-    ["+ Include multiple contacts", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /Include multiple contacts/ }).first()],
+    // pinned the window to the card. The log is the How did it go? sheet
+    // since Nov 11, 2026, and the picker is its "+ others".
+    [
+      "+ others (How did it go?)",
+      `/dashboard/contacts/${contactIds[0]}`,
+      async (p) => {
+        await p.getByTestId("log-bar").click();
+        return p.getByRole("button", { name: "+ others" });
+      },
+    ],
     ["Import CSV (Companies)", "/dashboard/companies", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
   ];
   const openFromTop = async (p, url, button) => {
@@ -576,7 +584,7 @@ async function withOldGlass(page, selector, body) {
       document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getTiming().iterations === Infinity),
     );
     await p.evaluate(() => window.scrollTo(0, 0));
-    await button(p).click();
+    await (await button(p)).click();
     await p.locator(".modal-backdrop").last().waitFor();
     await p.waitForTimeout(150);
   };
@@ -620,7 +628,7 @@ async function withOldGlass(page, selector, body) {
     await page.locator(".modal-backdrop").waitFor();
     const trapped = await dialogPlacement(page);
     assert.throws(() => assertOnScreen(trapped, "old card blur"), /not the screen/, `the check does not catch a card's blur (${JSON.stringify(trapped)})`);
-    console.log(`     old card blur: dim ${trapped.scrim.join(",")} (the Log activity card)`);
+    console.log(`     old card blur: dim ${trapped.scrim.join(",")} (the Notes card)`);
   }
   await sql(`UPDATE "User" SET theme = NULL WHERE email = $1 AND "organizationId" = $2`, [EMAIL, org]);
 

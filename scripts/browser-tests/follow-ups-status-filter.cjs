@@ -230,9 +230,18 @@ async function followUps(org) {
 
   const form = page.locator("[data-testid=log-activity-form]");
   const box = page.locator("[data-testid=follow-up-prompt]");
+  // The log is the How did it go? sheet behind the "What happened?" bar
+  // (Nov 11, 2026). A log with no outcome chip moves on to this box; what
+  // it adds is said in the "Saved · Undo" line once the sheet closes.
+  const openLog = async () => {
+    if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
+    await form.waitFor();
+  };
+  const notice = page.locator("[data-testid=log-toast-words]");
 
   log("logging a call opens 'Want to set a follow-up?' with nothing ticked and nothing to add yet");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog();
   await form.locator("textarea[name=body]").fill("Left a voicemail about the kitchen quote");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -253,8 +262,8 @@ async function followUps(org) {
   await shot(page, "05-two-follow-ups-picked");
   await box.locator("[data-testid=follow-up-save]").click();
   await box.waitFor({ state: "detached" });
-  await page.locator("[data-testid=follow-up-notice]").waitFor();
-  assert.match(await page.locator("[data-testid=follow-up-notice]").textContent(), /2 follow-ups on the calendar/);
+  await notice.waitFor();
+  assert.match(await notice.textContent(), /2 follow-ups on the calendar/);
 
   log("two open entries: Call and Email, on their days, with Dana and her company, under Taylor, not auto");
   const two = await followUps(org);
@@ -290,6 +299,7 @@ async function followUps(org) {
 
   log("the box opens again for the next touch; No thanks writes nothing");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog();
   await form.getByRole("button", { name: "Text", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Texted the revised numbers");
   await form.locator("[data-testid=activity-submit]").click();
@@ -297,12 +307,14 @@ async function followUps(org) {
   await box.locator("[data-testid=follow-up-type-MEETING]").click();
   await box.locator("[data-testid=follow-up-skip]").click();
   await box.waitFor({ state: "detached" });
-  assert.equal(await page.locator("[data-testid=follow-up-notice]").count(), 0, "nothing to say when nothing was added");
+  await notice.waitFor();
+  assert.doesNotMatch(await notice.textContent(), /follow-up|on the calendar/, "nothing to say when nothing was added");
   assert.equal((await followUps(org)).length, 2, "still the two from before");
   assert.equal(await status("Contact", "ctc_fu_dana"), "CONTACTED", "a Meeting ticked then skipped sets nothing");
 
   log("Sprint: a Meeting follow-up is “Try to book a meeting” — a reminder call that moves no status (decision 5)");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_eli`);
+  await openLog();
   await form.getByRole("button", { name: "Email", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Sent the brochure");
   await form.locator("[data-testid=activity-submit]").click();
@@ -311,7 +323,7 @@ async function followUps(org) {
   await box.locator("[data-testid=follow-up-on-MEETING]").fill(daysOn(5));
   await box.locator("[data-testid=follow-up-save]").click();
   await box.waitFor({ state: "detached" });
-  assert.match(await page.locator("[data-testid=follow-up-notice]").textContent(), /“Try to book a meeting” on the calendar for/);
+  assert.match(await notice.textContent(), /“Try to book a meeting” on the calendar for/);
   const eli = (await followUps(org)).filter((row) => row.contactId === "ctc_fu_eli");
   assert.deepEqual(eli.map((row) => [row.type, isoOf(row.startOn), row.title]), [["Call", daysOn(5), "Try to book a meeting · Eli Park"]]);
   assert.equal(await status("Contact", "ctc_fu_eli"), "INTERESTED", "the reminder books nothing, so Eli stays where he was");
@@ -323,6 +335,7 @@ async function followUps(org) {
 
   log("a day before today is refused, and the box stays open to fix it");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog();
   await form.locator("textarea[name=body]").fill("Quick check-in");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -339,14 +352,17 @@ async function followUps(org) {
   assert.equal((await followUps(org)).length, 4, "today itself is fine");
 
   log("scheduling a call ahead opens no box — it is already the thing to do");
+  await openLog();
   await form.locator("textarea[name=body]").fill("Call back next week");
+  await form.locator("[data-testid=activity-when-toggle]").click();
   await form.locator("[data-testid=activity-when]").fill(daysOn(6));
   await form.locator("[data-testid=activity-submit]").click();
-  await form.getByText(/Scheduled for/).waitFor();
+  await page.locator("[data-testid=log-toast]").getByText(/Scheduled for/).waitFor();
   assert.equal(await box.count(), 0, "no follow-up box after scheduling");
 
   log("a company-page log (bypassed, nobody linked) gets the same box, with the company as who it is with");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_oak`);
+  await openLog();
   await form.locator("textarea[name=body]").fill("Spoke to reception");
   await form.locator("[data-testid=company-bypass-tick]").check();
   await form.locator("[data-testid=activity-submit]").click();
@@ -361,6 +377,7 @@ async function followUps(org) {
 
   log("with people ticked on the company page, the follow-up is with the first and the rest are expected");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_harbor`);
+  await openLog();
   const picker = form.locator("[data-testid=company-people-picker]");
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Eli Park" }).click();

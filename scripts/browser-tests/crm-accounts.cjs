@@ -317,6 +317,9 @@ async function until(fn, what) {
 
   log("an activity on a company page can be put on its people, including one added on the spot");
   await page.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
+  // The log is the How did it go? sheet behind the "What happened?" bar
+  // (Nov 11, 2026); after a save it moves on to the next step.
+  await page.locator("[data-testid=log-bar]").click();
   const form = page.locator("[data-testid=log-activity-form]");
   const picker = form.locator("[data-testid=company-people-picker]");
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Jordan Blake" }).click();
@@ -336,7 +339,10 @@ async function until(fn, what) {
   assert.equal(logged.rows.length, 2);
   assert.deepEqual(logged.rows.map((r) => r.contactId).sort(), ["ctc_acc_jordan", pat.id].sort());
   assert.ok(logged.rows.every((r) => r.companyId === null && r.batchId && r.batchId === logged.rows[0].batchId), "one batch, on the people");
-  log("nobody ticked: refused until the bypass box is ticked, then it lands on the company");
+  log("nobody ticked: refused until Front desk / main line (the old bypass box) is on, then it lands on the company");
+  await page.locator("[data-testid=follow-up-skip]").click();
+  await form.waitFor({ state: "detached" });
+  await page.locator("[data-testid=log-bar]").click();
   await form.locator("textarea[name=body]").fill("Left a message at the front desk");
   await form.locator("[data-testid=activity-submit]").click();
   await form.getByRole("alert").waitFor();

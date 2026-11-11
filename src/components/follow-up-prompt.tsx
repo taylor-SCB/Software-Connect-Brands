@@ -8,6 +8,12 @@ import { FormError } from "@/components/ui";
 import { IconCalendar, IconCheck } from "@/components/icons";
 import { scheduleFollowUps } from "@/app/dashboard/contacts/actions";
 
+// A Meeting ticked is a reminder to try for one (decision 5, Nov 11, 2026);
+// booking it is the sheet's "Book it now".
+function pickLabel(type: ActivityTypeValue) {
+  return type === "MEETING" ? "Try to book a meeting" : ACTIVITY_LABELS[type];
+}
+
 // "Want to set a follow-up?" — the box that opens under the Log activity
 // form the moment a call, text, email or meeting is logged (Oct 4, 2026).
 // Tick what comes next (one or several), give each its day, and each one
@@ -19,8 +25,13 @@ export function FollowUpPrompt({
   seed,
   today,
   onClose,
+  batchId,
+  testId = "follow-up-prompt",
 }: {
   seed: FollowUpSeed;
+  // The save these follow-ups belong to, so its Undo takes them too.
+  batchId?: string;
+  testId?: string;
   // Today in the workspace's zone, from the server, like the form above.
   today: string;
   // Called with the success line to show, or nothing when skipped.
@@ -50,7 +61,7 @@ export function FollowUpPrompt({
   const save = () =>
     start(async () => {
       setError(undefined);
-      const result = await scheduleFollowUps(seed, items);
+      const result = await scheduleFollowUps(seed, items, batchId);
       if (result?.error) setError(result.error);
       else onClose(result?.success);
     });
@@ -60,7 +71,7 @@ export function FollowUpPrompt({
       className="space-y-2.5 rounded-lg border border-[var(--border-strong)] bg-[var(--tint-2)] p-3"
       role="group"
       aria-label="Set a follow-up"
-      data-testid="follow-up-prompt"
+      data-testid={testId}
     >
       <div>
         <p className="text-sm font-medium">Want to set a follow-up{seed.primaryName ? ` with ${seed.primaryName}` : ""}?</p>
@@ -80,7 +91,7 @@ export function FollowUpPrompt({
               data-testid={`follow-up-type-${type}`}
             >
               {on && <IconCheck size={12} />}
-              {ACTIVITY_LABELS[type]}
+              {pickLabel(type)}
             </button>
           );
         })}
@@ -90,7 +101,7 @@ export function FollowUpPrompt({
         <div className="space-y-1.5" data-testid="follow-up-rows">
           {items.map((item) => (
             <div key={item.type} className="flex flex-wrap items-end gap-2" data-testid={`follow-up-row-${item.type}`}>
-              <span className="w-24 pb-1.5 text-xs">{ACTIVITY_LABELS[item.type]}</span>
+              <span className="w-24 pb-1.5 text-xs">{pickLabel(item.type)}</span>
               <label className="block text-xs">
                 <span className="faint block">When</span>
                 <input

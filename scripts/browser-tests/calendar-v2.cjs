@@ -181,9 +181,23 @@ const readableDay = (iso) =>
   log("a call logged five days ago, with a time, lands on the calendar that day, done");
   await page.goto(`${BASE}/dashboard/contacts/ctc_calv2`);
   const logForm = page.locator("[data-testid=log-activity-form]");
-  await logForm.waitFor();
+  // The log is the How did it go? sheet behind the "What happened?" bar,
+  // with When and Time behind "Just now ▾" (Nov 11, 2026). After a save
+  // it moves on to the next step; Skip closes it.
+  const openLog = async () => {
+    if (await page.locator("[data-testid=follow-up-skip]").isVisible().catch(() => false)) {
+      await page.locator("[data-testid=follow-up-skip]").click();
+      await logForm.waitFor({ state: "detached" });
+    }
+    if (!(await logForm.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
+    await logForm.waitFor();
+    if (await logForm.locator("[data-testid=activity-when-toggle]").isVisible().catch(() => false)) {
+      await logForm.locator("[data-testid=activity-when-toggle]").click();
+    }
+  };
+  await openLog();
   assert.equal(await logForm.locator("[data-testid=activity-when]").inputValue(), TODAY, "When defaults to today");
-  await logForm.getByRole("button", { name: "Phone Call", exact: true }).click();
+  await logForm.getByRole("button", { name: "Call", exact: true }).click();
   await logForm.locator("textarea[name=body]").fill("Walked through the roof scope on the phone");
   await logForm.locator("[data-testid=activity-when]").fill(daysAgo(5));
   await logForm.locator("[data-testid=activity-time]").fill("10:30");
@@ -210,10 +224,11 @@ const readableDay = (iso) =>
   assert.equal(dayInZone(call.occurredAt), daysAgo(5), "the Activity itself is dated that day too");
 
   log("logged on two contacts at once it is one entry, with the other expected");
+  await openLog();
   await logForm.getByRole("button", { name: "Meeting", exact: true }).click();
   await logForm.locator("textarea[name=body]").fill("Site meeting with both of them");
   await logForm.locator("[data-testid=activity-when]").fill(daysAgo(2));
-  await logForm.getByRole("button", { name: "+ Include multiple contacts" }).click();
+  await logForm.getByRole("button", { name: "+ others" }).click();
   await page.getByRole("dialog").getByLabel("Search contacts").fill("Priya");
   await page.getByRole("dialog").getByText("Priya Menon").click();
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
@@ -237,7 +252,8 @@ const readableDay = (iso) =>
 
   log("a call dated ahead is scheduled, not logged: on the calendar, open, nothing in the history");
   const activitiesBefore = (await sql(`SELECT count(*)::int AS n FROM "Activity" WHERE "organizationId"=$1`, [org])).rows[0].n;
-  await logForm.getByRole("button", { name: "Phone Call", exact: true }).click();
+  await openLog();
+  await logForm.getByRole("button", { name: "Call", exact: true }).click();
   await logForm.locator("textarea[name=body]").fill("Call back about the deposit");
   await logForm.locator("[data-testid=activity-when]").fill(daysOn(4));
   await logForm.locator("[data-testid=activity-time]").fill("14:00");
@@ -259,6 +275,9 @@ const readableDay = (iso) =>
     activitiesBefore,
     "nothing was written to the history for a call that has not happened",
   );
+  // The sheet says so as soon as the save lands; the page behind it
+  // refreshes a moment later.
+  await page.locator("[data-testid=upcoming-card]").getByText(/Call · Dana Ruiz/).first().waitFor();
   const comingUp = await page.locator("[data-testid=upcoming-card]").textContent();
   assert.match(comingUp, /Call · Dana Ruiz/, "and Coming up on her page shows it");
   assert.doesNotMatch(comingUp, /Meeting · Dana Ruiz/, "the meeting that already happened is not coming up");
