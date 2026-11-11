@@ -825,7 +825,7 @@ async function closeFilters(page) {
     assert.match(await more.textContent(), /Showing 60 of \d+ · Show all/);
     assert.ok(Number(await more.getAttribute("data-total")) >= 70);
     const fold = todaySection.locator("[data-testid=agenda-done-fold]");
-    assert.match(await fold.textContent(), /\b5 done\b/);
+    assert.match(await fold.textContent(), /^5 done(Show)?$/);
     assert.equal(await fold.getAttribute("aria-expanded"), "false");
     await fold.click();
     assert.equal(await fold.getAttribute("aria-expanded"), "true");
