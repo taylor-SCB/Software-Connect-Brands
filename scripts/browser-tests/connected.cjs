@@ -167,10 +167,19 @@ async function meetingAction(page, actor, name, ...args) {
   return core("meetings", MEETING_CORE[name], [actor, ...args]);
 }
 
-// The contact or company log form, with the new "How did it go?" fields
-// added as hidden inputs: today's form posts them to logActivity as is.
-async function logWith(page, fields, { body = "", type } = {}) {
+// The log form lives in the How did it go? sheet, opened from the "What
+// happened with …?" bar (Nov 11, 2026).
+async function openLog(page) {
   const form = page.locator("[data-testid=log-activity-form]");
+  if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
+  await form.waitFor();
+  return form;
+}
+
+// The contact or company log form, with the new "How did it go?" fields
+// added as hidden inputs: the form posts them to logActivity as is.
+async function logWith(page, fields, { body = "", type } = {}) {
+  const form = await openLog(page);
   if (type) await form.getByRole("button", { name: type, exact: true }).click();
   await form.locator("textarea[name=body]").fill(body);
   await form.evaluate((el, extra) => {
@@ -481,8 +490,9 @@ async function logWith(page, fields, { body = "", type } = {}) {
 
   log("Sprint: the Done box takes an outcome and the next follow-up, in one save");
   await page.goto(`${BASE}/dashboard/contacts/ctc_cn_moe`);
-  const moeForm = page.locator("[data-testid=log-activity-form]");
+  const moeForm = await openLog(page);
   await moeForm.locator("textarea[name=body]").fill("Call Moe about the bid");
+  await moeForm.locator("[data-testid=activity-when-toggle]").click();
   await moeForm.locator("[data-testid=activity-when]").fill(shift(TODAY, 1));
   await moeForm.locator("[data-testid=activity-submit]").click();
   await until(async () => (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "contactId"='ctc_cn_moe' AND "doneAt" IS NULL`)).n === 1, "Moe call scheduled");

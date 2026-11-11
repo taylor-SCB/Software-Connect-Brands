@@ -145,6 +145,16 @@ function isoDaysAgo(n) {
   log("the first logged touch makes Ava — and Aster Homes — Contacted");
   await page.goto(`${BASE}/dashboard/contacts/${ava}`);
   const form = page.locator("[data-testid=log-activity-form]");
+  // The log is the How did it go? sheet behind the "What happened?" bar,
+  // with When behind "Just now ▾" (Nov 11, 2026).
+  const openLog = async (on, sheet) => {
+    if (!(await sheet.isVisible().catch(() => false))) await on.locator("[data-testid=log-bar]").click();
+    await sheet.waitFor();
+    if (await sheet.locator("[data-testid=activity-when-toggle]").isVisible().catch(() => false)) {
+      await sheet.locator("[data-testid=activity-when-toggle]").click();
+    }
+  };
+  await openLog(page, form);
   await form.locator("textarea[name=body]").fill("Intro call");
   await form.locator("[data-testid=activity-submit]").click();
   await until(async () => (await status("Contact", ava)) === "CONTACTED", "Ava contacted");
@@ -182,6 +192,7 @@ function isoDaysAgo(n) {
   log("Nic books a meeting with Ava for next week: Meeting Set, credited to Nic, and no deal made");
   await nic.goto(`${BASE}/dashboard/contacts/${ava}`);
   const nicForm = nic.locator("[data-testid=log-activity-form]");
+  await openLog(nic, nicForm);
   await nicForm.getByRole("button", { name: "Meeting", exact: true }).click();
   await nicForm.locator("textarea[name=body]").fill("Walkthrough at their office");
   const nextWeek = isoDaysAgo(-7);
@@ -195,6 +206,8 @@ function isoDaysAgo(n) {
   assert.equal((await sql(`SELECT count(*)::int n FROM "Deal" WHERE "organizationId"=$1`, [org])).rows[0].n, 0, "a meeting is not a deal");
 
   log("a second meeting changes nothing");
+  await nicForm.waitFor({ state: "detached" });
+  await openLog(nic, nicForm);
   await nicForm.getByRole("button", { name: "Meeting", exact: true }).click();
   await nicForm.locator("textarea[name=body]").fill("Follow-up walkthrough");
   await nicForm.locator("[data-testid=activity-when]").fill(nextWeek);
@@ -205,6 +218,7 @@ function isoDaysAgo(n) {
   log("a meeting logged as held also sets it (Ben)");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('ctc_ps_ben',$1,'Ben Ortiz',now())`, [org]);
   await page.goto(`${BASE}/dashboard/contacts/ctc_ps_ben`);
+  await openLog(page, form);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Coffee meeting");
   await form.locator("[data-testid=activity-submit]").click();

@@ -211,9 +211,20 @@ async function pixelContrast(page, png) {
   log("a meeting logged with Pat and Nic is one opportunity: Pat Primary, Nic Associated, one meeting");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
   const form = page.locator("[data-testid=log-activity-form]");
+  // The log is the How did it go? sheet behind the "What happened?" bar
+  // (Nov 11, 2026); after a save it moves on to the next step.
+  const openLog = async () => {
+    if (await page.locator("[data-testid=follow-up-skip]").isVisible().catch(() => false)) {
+      await page.locator("[data-testid=follow-up-skip]").click();
+      await form.waitFor({ state: "detached" });
+    }
+    if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
+    await form.waitFor();
+  };
+  await openLog();
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Kickoff at Murphy");
-  await form.getByRole("button", { name: "+ Include multiple contacts" }).click();
+  await form.getByRole("button", { name: "+ others" }).click();
   await page.getByRole("dialog").getByPlaceholder("Search contacts…").fill("Nic Partner");
   await page.getByRole("dialog").locator("input[type=checkbox]").first().check();
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
@@ -229,6 +240,7 @@ async function pixelContrast(page, png) {
   assert.deepEqual(await logs(patOpp), [], "Meeting Set writes no special lines yet");
 
   log("a second meeting with Pat joins it: still one tile, two meeting dates");
+  await openLog();
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Second sit-down");
   await form.locator("[data-testid=activity-submit]").click();
@@ -238,6 +250,7 @@ async function pixelContrast(page, png) {
 
   log("Abby's meeting is her own tile; the board shows both names on Pat's tile and the meeting count");
   await page.goto(`${BASE}/dashboard/contacts/op_abby`);
+  await openLog();
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Kitchen walk");
   await form.locator("[data-testid=activity-submit]").click();
@@ -438,6 +451,7 @@ async function pixelContrast(page, png) {
   await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
   await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "WON", "deal saved as Won");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
+  await openLog();
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Phase two chat");
   await form.locator("[data-testid=activity-submit]").click();
