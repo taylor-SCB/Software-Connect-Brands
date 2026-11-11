@@ -95,7 +95,7 @@ export function NextStepStrip({
             />
           )}
           {first && !isMeeting && !due && (
-            <button type="button" className={BTN} onClick={page.openLog} data-testid="next-log">
+            <button type="button" className={BTN} onClick={() => page.openLog()} data-testid="next-log">
               Log it
             </button>
           )}

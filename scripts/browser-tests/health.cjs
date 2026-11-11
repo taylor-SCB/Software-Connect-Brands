@@ -91,6 +91,18 @@ async function settle(page) {
     document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity),
   );
 }
+// The Book meeting sheet is the shared one (src/components/book-meeting,
+// merged Nov 11, 2026): its day chips start at the next working day, so
+// tomorrow is the "Tomorrow" chip on a weekday and is picked by date on a
+// Friday or Saturday.
+async function bookTomorrow(sheet) {
+  const chip = sheet.locator("[data-testid=book-day-first]", { hasText: "Tomorrow" });
+  if (await chip.count()) await chip.click();
+  else {
+    await sheet.locator("[data-testid=book-day-pick]").click();
+    await sheet.locator("[data-testid=book-day-input]").fill(shift(TODAY, 1));
+  }
+}
 async function open(page, id) {
   await page.goto(`${BASE}/dashboard/contacts/${id}`);
   await page.locator("[data-testid=contact-header]").waitFor();
@@ -342,19 +354,19 @@ async function contrastReport(page, scope) {
   assert.equal(await main(page).getAttribute("data-action"), "book");
   // Tapping the meter's next step (Meeting Set) runs the same action.
   await page.locator("[data-testid=contact-header] [data-testid=lifecycle-meter] button.lm-name[data-state=next]").click();
-  await page.locator("[data-testid=book-sheet]").waitFor();
+  await page.locator("[data-testid=book-meeting]").waitFor();
   await page.keyboard.press("Escape");
-  assert.equal(await page.locator("[data-testid=book-sheet]").count(), 0);
+  assert.equal(await page.locator("[data-testid=book-meeting]").count(), 0);
 
   log("Sprint: Book meeting sheet — Tomorrow at 10 books Kristen: Meeting Set, the Pipeline, the booker kept; Undo takes it back");
   await open(page, "hl_warm");
   await main(page).click();
-  const sheet = page.locator("[data-testid=book-sheet]");
+  const sheet = page.locator("[data-testid=book-meeting]");
   await sheet.waitFor();
-  await sheet.locator(`[data-testid=book-day-${shift(TODAY, 1)}]`).click();
+  await bookTomorrow(sheet);
   await sheet.locator("[data-testid='book-time-10:00']").click();
-  await sheet.locator("[data-testid=book-save]").click();
-  const toast = page.locator("[data-testid=undo-toast]");
+  await sheet.locator("[data-testid=book-submit]").click();
+  const toast = page.locator("[data-testid=log-toast]");
   await toast.getByText(/Booked/).waitFor();
   await until(async () => (await status("hl_warm")) === "MEETING_SET", "Kristen Meeting Set");
   const booked = await one(
@@ -363,7 +375,7 @@ async function contrastReport(page, scope) {
   );
   assert.equal(booked.bookedById, me);
   assert.equal(booked.at, `${shift(TODAY, 1)} 10:00`);
-  await toast.locator("[data-testid=undo-toast-undo]").click();
+  await toast.locator("[data-testid=log-toast-undo]").click();
   await toast.getByText("Undone").waitFor();
   await until(async () => (await status("hl_warm")) === "CONNECTED", "Kristen back to Connected");
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" om JOIN "OpportunityContact" oc ON oc."opportunityId" = om."opportunityId" WHERE oc."contactId"='hl_warm'`)).n, 0);
@@ -372,9 +384,9 @@ async function contrastReport(page, scope) {
   await open(page, "hl_warm");
   await main(page).click();
   await sheet.waitFor();
-  await sheet.locator(`[data-testid=book-day-${shift(TODAY, 1)}]`).click();
+  await bookTomorrow(sheet);
   await sheet.locator("[data-testid='book-time-10:00']").click();
-  await sheet.locator("[data-testid=book-save]").click();
+  await sheet.locator("[data-testid=book-submit]").click();
   await until(async () => (await status("hl_warm")) === "MEETING_SET", "Kristen Meeting Set again");
   await open(page, "hl_warm");
   assert.equal(await main(page).getAttribute("data-action"), "meeting");
@@ -551,6 +563,9 @@ async function contrastReport(page, scope) {
   await form.locator("[data-testid=activity-submit]").click();
   const newLine = page.locator("[data-testid=activity-line]", { hasText: "Asked about the spring schedule" });
   await newLine.waitFor();
+  // The sheet moves on to the next step; closing it skips that.
+  await page.keyboard.press("Escape");
+  await form.waitFor({ state: "detached" });
   assert.equal(await page.locator("[data-testid=history-day]").first().locator("h3").textContent(), "Today");
   await newLine.locator("[data-testid=activity-delete]").click();
   await newLine.locator("[data-testid=activity-delete-yes]").click();
@@ -654,6 +669,9 @@ async function contrastReport(page, scope) {
   await mobile.locator("[data-testid=phone-bar-log]").click();
   await mobile.locator("[data-testid=log-activity-form]").waitFor();
   await shot(mobile, "06-phone");
+  // The log is a sheet over the page: close it to reach the bar again.
+  await mobile.keyboard.press("Escape");
+  await mobile.locator("[data-testid=log-activity-form]").waitFor({ state: "detached" });
   await mobile.locator("[data-testid=phone-bar-more]").click();
   await mobile.locator("[data-testid=phone-bar-more-menu] [data-testid=status-picker]").waitFor();
   await phone.close();

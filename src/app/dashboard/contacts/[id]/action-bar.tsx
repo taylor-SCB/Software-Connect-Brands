@@ -49,13 +49,13 @@ export function MainAction({ data, phones, variant = "header" }: { data: MainAct
       const first = phones[0];
       if (!first)
         return (
-          <button type="button" className={cls} onClick={page.openLog} data-testid={testId} data-action="call">
+          <button type="button" className={cls} onClick={() => page.openLog("PHONE_CALL")} data-testid={testId} data-action="call">
             <IconPhone size={14} />
             Call
           </button>
         );
       return (
-        <a href={`tel:${first.number}`} className={cls} onClick={page.armReturn} data-testid={testId} data-action="call">
+        <a href={`tel:${first.number}`} className={cls} onClick={() => page.armReturn("PHONE_CALL")} data-testid={testId} data-action="call">
           <IconPhone size={14} />
           Call
         </a>
@@ -191,7 +191,7 @@ export function CallButton({ phones, variant = "header" }: { phones: PhoneRow[];
   }
   if (bar) {
     return (
-      <a href={`tel:${phones[0].number}`} onClick={page.armReturn} className="btn btn-ghost btn-sm min-h-11 w-full flex-col gap-0.5 px-1 text-[0.7rem]" data-testid={testId}>
+      <a href={`tel:${phones[0].number}`} onClick={() => page.armReturn("PHONE_CALL")} className="btn btn-ghost btn-sm min-h-11 w-full flex-col gap-0.5 px-1 text-[0.7rem]" data-testid={testId}>
         <IconPhone size={14} />
         Call
       </a>
@@ -201,7 +201,7 @@ export function CallButton({ phones, variant = "header" }: { phones: PhoneRow[];
     <span className="inline-flex">
       <a
         href={`tel:${phones[0].number}`}
-        onClick={page.armReturn}
+        onClick={() => page.armReturn("PHONE_CALL")}
         className={`${GHOST} ${phones.length > 1 ? "rounded-r-none" : ""}`}
         title={`Call ${phones[0].label.toLowerCase()} ${phones[0].number}`}
         data-testid={testId}
@@ -231,7 +231,7 @@ export function CallButton({ phones, variant = "header" }: { phones: PhoneRow[];
 
                   onClick={() => {
                     setOpen(false);
-                    page.armReturn();
+                    page.armReturn("PHONE_CALL");
                   }}
                   className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-[var(--hover)] pointer-coarse:min-h-11"
                   data-testid={`contact-call-${row.key}`}
@@ -266,7 +266,7 @@ export function TextButton({ phones, variant = "header" }: { phones: PhoneRow[];
     return null;
   }
   return (
-    <a href={`sms:${target.number}`} onClick={page.armReturn} className={cls} title={`Text ${target.number}`} data-testid={bar ? "phone-bar-text" : "contact-text"}>
+    <a href={`sms:${target.number}`} onClick={() => page.armReturn("TEXT")} className={cls} title={`Text ${target.number}`} data-testid={bar ? "phone-bar-text" : "contact-text"}>
       <IconMessage size={bar ? 14 : 13} />
       Text
     </a>

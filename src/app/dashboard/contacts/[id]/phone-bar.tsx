@@ -30,7 +30,7 @@ export function PhoneBar({ data, phones, more }: { data: MainActionData; phones:
     >
       <CallButton phones={phones} variant="bar" />
       <TextButton phones={phones} variant="bar" />
-      <button type="button" onClick={page.openLog} className="btn btn-ghost btn-sm min-h-11 w-full flex-col gap-0.5 px-1 text-[0.7rem]" data-testid="phone-bar-log">
+      <button type="button" onClick={() => page.openLog("PHONE_CALL")} className="btn btn-ghost btn-sm min-h-11 w-full flex-col gap-0.5 px-1 text-[0.7rem]" data-testid="phone-bar-log">
         <IconNote size={14} />
         Log
       </button>

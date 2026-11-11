@@ -1,17 +1,20 @@
 "use client";
 
-import Link from "next/link";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
-import { undoLog } from "../actions";
-import { BookMeetingSheet } from "./book-meeting-sheet";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { ActivityTypeValue } from "@/lib/constants";
+import { HowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
+import { useDialReturn } from "@/components/how-did-it-go/dial-return";
+import { UndoToast } from "@/components/how-did-it-go/undo-toast";
+import { BookMeetingSheet } from "@/components/book-meeting/book-meeting";
 
 // The contact page's shared state (BDR redesign, Nov 11, 2026): the
 // "What happened with <name>?" bar, the Book meeting sheet and the "Saved
 // · Undo" line are opened from the header's main button, the Next step
-// strip and the phone's bottom bar alike, so they live here. A call or
-// text tapped from the page opens the log when the rep comes back to it.
+// strip and the phone's bottom bar alike, so they live here. The log is
+// the shared How did it go? sheet and booking the shared Book meeting
+// sheet (src/components/how-did-it-go, src/components/book-meeting): one
+// form for the whole app, not one per page. A call or text tapped from
+// the page opens the log, set to Call or Text, when the rep comes back.
 
 type Toast = { message: string; batchId?: string | null; href?: string; hrefLabel?: string };
 
@@ -22,14 +25,16 @@ type ContactPage = {
   companyId: string | null;
   today: string;
   logOpen: boolean;
-  // Opens the log and brings it into view (from the header, the phone's
-  // bar, the Next step strip, the way back from a call).
-  openLog: () => void;
-  // Opens it where it is: the bar itself was tapped.
+  // Opens How did it go?, set to Call unless told otherwise (from the
+  // bar, the header, the phone's bar, the Next step strip, the way back
+  // from a call).
+  openLog: (type?: ActivityTypeValue) => void;
+  // The bar itself was tapped; the same sheet.
   openLogHere: () => void;
   closeLog: () => void;
-  // A tel: or sms: was tapped: open the log once the page is looked at again.
-  armReturn: () => void;
+  // A tel: or sms: was tapped: open the log, set to Call or Text, once
+  // the page is looked at again.
+  armReturn: (type?: ActivityTypeValue) => void;
   openBook: () => void;
   showToast: (toast: Toast) => void;
 };
@@ -42,39 +47,47 @@ export function useContactPage() {
   return value;
 }
 
+const KINDS = new Set<string>(["PHONE_CALL", "TEXT", "EMAIL", "MEETING"]);
+// openLog is often an onClick, which hands it the click event.
+const kindOf = (value: unknown): ActivityTypeValue => (typeof value === "string" && KINDS.has(value) ? (value as ActivityTypeValue) : "PHONE_CALL");
+
 export function ContactShell({
   contactId,
   name,
   companyId,
+  companyName = null,
   today,
   children,
 }: {
   contactId: string;
   name: string;
   companyId: string | null;
+  // For the sheet's "+ others" picker.
+  companyName?: string | null;
   today: string;
   children: React.ReactNode;
 }) {
-  const [logOpen, setLogOpen] = useState(false);
+  const [log, setLog] = useState<{ open: boolean; type: ActivityTypeValue }>({ open: false, type: "PHONE_CALL" });
   const [bookOpen, setBookOpen] = useState(false);
-  const [toast, setToast] = useState<(Toast & { id: number }) | null>(null);
-  const armed = useRef(false);
+  const [toast, setToast] = useState<{ batchId: string; words: string; href?: string | null; hrefLabel?: string; at: number } | null>(null);
+  const armed = useRef<ActivityTypeValue | null>(null);
 
-  const openLog = useCallback(() => {
-    setLogOpen(true);
-    // After the bar has drawn the form, bring it into view.
-    requestAnimationFrame(() => {
-      const bar = document.getElementById("log");
-      bar?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-      bar?.querySelector<HTMLElement>("button[aria-pressed], textarea")?.focus({ preventScroll: true });
-    });
-  }, []);
+  const openLog = useCallback((type?: ActivityTypeValue) => setLog({ open: true, type: kindOf(type) }), []);
+  const closeLog = useCallback(() => setLog((prev) => ({ ...prev, open: false })), []);
+  const dismiss = useCallback(() => setToast(null), []);
 
+  // Back from the phone app: the shared dial watcher (a tel: or sms: link
+  // anywhere on this page, the page hidden and shown again).
+  useDialReturn({ contactIds: [contactId], page: true }, (tap) => openLog(tap.type));
+
+  // Back from a desktop dialler, which takes the focus but never hides the
+  // page: the header's Call and Text arm this.
   useEffect(() => {
     function back() {
       if (document.visibilityState !== "visible" || !armed.current) return;
-      armed.current = false;
-      openLog();
+      const type = armed.current;
+      armed.current = null;
+      openLog(type);
     }
     document.addEventListener("visibilitychange", back);
     window.addEventListener("focus", back);
@@ -91,87 +104,48 @@ export function ContactShell({
       firstName: name.trim().split(/\s+/)[0] || name,
       companyId,
       today,
-      logOpen,
-      openLog,
-      openLogHere: () => {
-        setLogOpen(true);
-        requestAnimationFrame(() => document.getElementById("log")?.querySelector<HTMLElement>("button[aria-pressed], textarea")?.focus({ preventScroll: true }));
-      },
-      closeLog: () => setLogOpen(false),
-      armReturn: () => {
-        armed.current = true;
+      logOpen: log.open,
+      openLog: (type) => openLog(kindOf(type)),
+      openLogHere: () => openLog("PHONE_CALL"),
+      closeLog,
+      armReturn: (type) => {
+        armed.current = kindOf(type);
         // A desktop with no phone app never leaves the page; open it now.
         setTimeout(() => {
           if (armed.current && document.visibilityState === "visible" && document.hasFocus()) {
-            armed.current = false;
-            openLog();
+            const kind = armed.current;
+            armed.current = null;
+            openLog(kind);
           }
         }, 1500);
       },
       openBook: () => setBookOpen(true),
-      showToast: (next) => setToast({ ...next, id: Date.now() }),
+      showToast: (next) =>
+        setToast({
+          batchId: next.batchId ?? "",
+          words: next.message,
+          href: next.href ?? null,
+          hrefLabel: next.href ? `${next.hrefLabel ?? "Open"} →` : undefined,
+          at: Date.now(),
+        }),
     }),
-    [contactId, name, companyId, today, logOpen, openLog],
+    [contactId, name, companyId, today, log.open, openLog, closeLog],
   );
 
   return (
     <Context.Provider value={value}>
       {children}
-      {bookOpen && <BookMeetingSheet onClose={() => setBookOpen(false)} />}
-      {toast && <UndoToast key={toast.id} toast={toast} onDone={() => setToast(null)} />}
+      <HowDidItGo
+        open={log.open}
+        onClose={closeLog}
+        target={{ contactId }}
+        type={log.type}
+        name={name}
+        today={today}
+        current={{ id: contactId, name, company: companyName }}
+      />
+      <BookMeetingSheet open={bookOpen} onClose={() => setBookOpen(false)} contactId={contactId} name={name} today={today} />
+      <UndoToast saved={toast} onDone={dismiss} />
     </Context.Provider>
-  );
-}
-
-// "Saved · Undo" for ten seconds, above the phone's bottom bar. Undo takes
-// the whole save back (undoLog).
-function UndoToast({ toast, onDone }: { toast: Toast; onDone: () => void }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [message, setMessage] = useState(toast.message);
-  const [undone, setUndone] = useState(false);
-  useEffect(() => {
-    const timer = setTimeout(onDone, undone ? 4000 : 10000);
-    return () => clearTimeout(timer);
-  }, [onDone, undone]);
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      role="status"
-      aria-live="polite"
-      className="card popover fixed left-1/2 z-[90] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 px-4 py-2.5 text-sm max-sm:bottom-[calc(var(--phone-tabbar-h,0px)+4.5rem)] sm:bottom-6"
-      data-testid="undo-toast"
-    >
-      <span className="min-w-0" data-testid="undo-toast-message">
-        {message}
-      </span>
-      {toast.href && !undone && (
-        <Link href={toast.href} className="link shrink-0 text-xs">
-          {toast.hrefLabel ?? "Open"} →
-        </Link>
-      )}
-      {toast.batchId && !undone && (
-        <button
-          type="button"
-          disabled={pending}
-          className="btn btn-ghost btn-sm shrink-0 pointer-coarse:min-h-11"
-          data-testid="undo-toast-undo"
-          onClick={() =>
-            start(async () => {
-              const result = await undoLog(toast.batchId!);
-              setUndone(true);
-              setMessage(result.error ?? "Undone");
-              router.refresh();
-            })
-          }
-        >
-          {pending ? "Undoing…" : "Undo"}
-        </button>
-      )}
-      <button type="button" onClick={onDone} aria-label="Dismiss" className="faint shrink-0 px-1 text-base leading-none pointer-coarse:min-h-11 pointer-coarse:min-w-11">
-        ×
-      </button>
-    </div>,
-    document.body,
   );
 }

@@ -31,7 +31,7 @@ import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
 import { Avatar } from "@/components/avatar";
 import { NotesList } from "@/components/notes-list";
-import { AddNoteForm, LogActivityForm } from "./forms";
+import { AddNoteForm } from "./forms";
 import { AddedBy } from "@/components/crm-cells";
 import { RepPicker } from "@/components/rep-select";
 import { loadRepChoices } from "@/lib/reps";
@@ -294,7 +294,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const moreProps = { contactId: contact.id, contactName: contact.name, linkedIds, status: contact.status, meetingSetOn, today, addDeal: !canAddDeal };
 
   return (
-    <ContactShell contactId={contact.id} name={contact.name} companyId={contact.companyId} today={today}>
+    <ContactShell contactId={contact.id} name={contact.name} companyId={contact.companyId} companyName={contact.company?.name ?? null} today={today}>
       <div className="pb-20 sm:pb-0">
         <BackLink href="/dashboard/contacts" label="Contacts" current={contact.name} />
 
@@ -380,9 +380,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
               <NextStepStrip due={meetings.due} next={meetings.next} first={first} park={health.park} />
             </div>
             <div className="order-2 min-w-0 lg:order-none">
-              <LogBar>
-                <LogActivityForm target={{ contactId: contact.id }} current={pickable} today={today} />
-              </LogBar>
+              <LogBar />
             </div>
             <section id="activity" className="card card-lit order-3 min-w-0 scroll-mt-20 lg:order-none">
               <div className="border-b border-[var(--hairline-3)] px-5 py-3.5">
