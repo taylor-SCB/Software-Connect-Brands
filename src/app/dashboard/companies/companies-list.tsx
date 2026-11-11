@@ -107,13 +107,16 @@ export async function CompaniesList({
   // Health, what's owed, marketing (when shown) and each company's top
   // three people, for just this page, in a handful of grouped statements.
   const pageIds = companies.map((company) => company.id);
-  const [health, owed, marketing, top] = await Promise.all([
+  // The top people's own health loads beside the companies', not after
+  // it (audit fix, Nov 11, 2026: it waited on the whole roll-up).
+  const [health, owed, marketing, [top, peopleHealth]] = await Promise.all([
     loadCompanyHealth(organizationId, pageIds, { settings }),
     owedBy(organizationId, "company", pageIds, todayIso(timeZone)),
     show.has("marketing") ? marketingCompanies(organizationId, pageIds) : Promise.resolve(new Map()),
-    topPeople(organizationId, pageIds),
+    topPeople(organizationId, pageIds).then(
+      async (found) => [found, await loadContactHealth(organizationId, found.people.map((person) => person.id), { settings })] as const,
+    ),
   ]);
-  const peopleHealth = await loadContactHealth(organizationId, top.people.map((person) => person.id), { settings });
   const filtered = Boolean(params.q) || total !== unfiltered;
   const showRep = params.scope !== "mine";
   const repName = (owner: { name: string; removedAt: Date | null } | null) =>
@@ -223,7 +226,7 @@ export async function CompaniesList({
                       const touch = lastTouchText(h);
                       const line = [company.city, `${company._count.contacts} ${company._count.contacts === 1 ? "person" : "people"}`].filter(Boolean).join(" · ");
                       return (
-                        <li key={company.id} className="flex gap-3 py-3" data-testid="company-card">
+                        <li key={company.id} className="flex gap-3 px-5 py-3" data-testid="company-card">
                           <CardCheck id={company.id} label={company.name} />
                           <div className="min-w-0 flex-1">
                             <CardTitle href={`/dashboard/companies/${company.id}`} name={company.name} health={h} />

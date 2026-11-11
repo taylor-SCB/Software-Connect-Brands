@@ -36,7 +36,7 @@ export function Pagination({
       <div className="flex flex-wrap items-center gap-3">
       {perPage && total > 0 && <PerPageSelect value={perPage.value} options={perPage.options} />}
       {pages > 1 && (
-        <nav className="flex items-center gap-1" aria-label="Pages">
+        <nav className="flex flex-wrap items-center gap-1" aria-label="Pages">
           <PageLink href={hrefFor(page - 1)} disabled={page <= 1} label="Previous page">
             <IconChevronLeft size={13} />
           </PageLink>
@@ -74,7 +74,8 @@ function PageLink({
   label: string;
   children: React.ReactNode;
 }) {
-  const className = `btn btn-sm min-w-[2rem] justify-center ${current ? "btn-primary" : "btn-ghost"} ${
+  // 44px on a phone, like the Per page box beside it (audit fix, Nov 11, 2026).
+  const className = `btn btn-sm min-h-[44px] min-w-[44px] justify-center md:min-h-0 md:min-w-[2rem] ${current ? "btn-primary" : "btn-ghost"} ${
     disabled ? "pointer-events-none opacity-40" : ""
   }`;
   if (disabled) {

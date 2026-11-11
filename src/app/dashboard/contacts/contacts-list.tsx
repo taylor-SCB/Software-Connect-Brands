@@ -217,7 +217,7 @@ export async function ContactsList({
                       const best = bestPhone(contact);
                       const line = [contact.title, contact.company?.name].filter(Boolean).join(" · ");
                       return (
-                        <li key={contact.id} className="flex gap-3 py-3" data-testid="contact-card" data-contact-id={contact.id}>
+                        <li key={contact.id} className="flex gap-3 px-5 py-3" data-testid="contact-card" data-contact-id={contact.id}>
                           <CardCheck id={contact.id} label={contact.name} />
                           <div className="min-w-0 flex-1">
                             <CardTitle href={`/dashboard/contacts/${contact.id}`} name={contact.name} health={h} />

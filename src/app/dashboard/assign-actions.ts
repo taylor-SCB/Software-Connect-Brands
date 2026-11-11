@@ -4,8 +4,8 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { parseListParams, effectiveSort } from "@/lib/list-params";
-import { companyIdsMatching, companyWhere, contactWhere, orderFor } from "@/lib/list-query";
+import { parseListParams } from "@/lib/list-params";
+import { companyIdsMatching, companyWhere, contactWhere, pageIds } from "@/lib/list-query";
 import { MAX_ASSIGN, checkedRep } from "@/lib/reps";
 
 // Bulk Assign on the Contacts and Companies lists (Nov 10, 2026, Taylor):
@@ -58,33 +58,29 @@ export async function assignRecords(input: z.input<typeof schema>): Promise<Assi
   } else if (query !== undefined) {
     const raw: Record<string, string[]> = {};
     for (const [key, value] of new URLSearchParams(query)) (raw[key] ??= []).push(value);
-    const params = { ...parseListParams(raw, { interested: Boolean(interested) }), page: 1, me: userId };
-    // The list's own order (late follow-ups aside), so "the first 1,000"
-    // is the first 1,000 the person sees.
-    const sort = effectiveSort(params);
-    const order = orderFor(sort === "meeting" ? "added" : sort) as never;
+    // per: one "page" of MAX_ASSIGN, so the list's own pager (pageIds)
+    // picks the first 1,000 in the order the person sees: Warmest first
+    // tier by tier, late follow-ups at the top of Oldest touch first,
+    // Meetings this week soonest first (audit fix, Nov 11, 2026: every
+    // non-column order fell back to Recently added). The same object goes
+    // to the where-builder and the pager, which share per-view caches.
+    const params = { ...parseListParams(raw, { interested: Boolean(interested) }), page: 1, me: userId, per: MAX_ASSIGN };
     // Only records that don't have this rep yet (audit fix, Nov 10, 2026):
     // the write leaves updatedAt alone and a filter with no Rep in it
     // still matches an assigned record, so "run it again for the next
     // 1,000" kept picking the same 1,000.
     const notYet = ownerId === null ? { ownerId: { not: null } } : { OR: [{ ownerId: null }, { ownerId: { not: ownerId } }] };
-    if (kind === "contacts") {
-      const where = await contactWhere(organizationId, { ...params, auto: false }, await companyIdsMatching(organizationId, params.q));
-      const todo = { AND: [where, notYet] };
-      [matching, pending, targets] = await Promise.all([
-        prisma.contact.count({ where }),
-        prisma.contact.count({ where: todo }),
-        prisma.contact.findMany({ where: todo, orderBy: order, take: MAX_ASSIGN, select: { id: true } }).then((rows) => rows.map((row) => row.id)),
-      ]);
-    } else {
-      const where = await companyWhere(organizationId, params);
-      const todo = { AND: [where, notYet] };
-      [matching, pending, targets] = await Promise.all([
-        prisma.company.count({ where }),
-        prisma.company.count({ where: todo }),
-        prisma.company.findMany({ where: todo, orderBy: order, take: MAX_ASSIGN, select: { id: true } }).then((rows) => rows.map((row) => row.id)),
-      ]);
-    }
+    const where =
+      kind === "contacts"
+        ? await contactWhere(organizationId, params, await companyIdsMatching(organizationId, params.q))
+        : await companyWhere(organizationId, params);
+    const todo = { AND: [where, notYet] };
+    const model = (kind === "contacts" ? prisma.contact : prisma.company) as unknown as { count(args: { where: object }): Promise<number> };
+    [matching, pending, targets] = await Promise.all([
+      model.count({ where }),
+      model.count({ where: todo }),
+      pageIds(kind, organizationId, todo, params, { skip: 0 }),
+    ]);
   } else {
     return { error: "Tick some rows first." };
   }

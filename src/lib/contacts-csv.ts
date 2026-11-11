@@ -255,7 +255,10 @@ export function parseStatus(raw: string): { status: ContactStatusValue | null; n
   // Connected (Nov 11, 2026): a talk, not a try. "Not connected",
   // "disconnected", "not reached" and "reached out" are tries, so they are
   // checked before the words they contain.
-  if (/not.?(connected|reached)|dis.?connected|un.?reached|reached.?out|no.?answer|voice.?mail/.test(value)) return { status: "CONTACTED" };
+  // A front desk, a wrong number, a busy line or a message left is an
+  // attempt too (decision 1), even worded "spoke to the gatekeeper"
+  // (audit fix, Nov 11, 2026).
+  if (/not.?(connected|reached)|dis.?connected|un.?reached|reached.?out|no.?answer|voice.?mail|gate.?keeper|front.?desk|reception|wrong.?(number|#)|busy|left.?(a.?)?(message|msg)|no.?show/.test(value)) return { status: "CONTACTED" };
   if (/connected|talked|spoke|spoken|reached/.test(value)) return { status: "CONNECTED" };
   if (/contacted|attempt|touched/.test(value)) return { status: "CONTACTED" };
   if (/customer|client|won|signed|active|current/.test(value)) return { status: "WON" };
@@ -495,7 +498,9 @@ export function planContactImport(
         ? {
             keptNote:
               noteColumns
-                .map((index) => ({ header: headers[index], value: (cells[index] ?? "").trim() }))
+                // Postgres text can't hold a NUL; one cut the kept note short
+                // and made every re-import add it again (audit fix, Nov 11, 2026).
+                .map((index) => ({ header: headers[index], value: (cells[index] ?? "").replace(/\u0000/g, "").trim() }))
                 .filter((part) => part.value)
                 .map((part) => `${part.header}: ${part.value}`)
                 .join("\n")
