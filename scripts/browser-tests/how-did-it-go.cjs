@@ -15,6 +15,8 @@
  * an outcome and the next follow-up; Held on a meeting still ahead asking
  * first; No-show on a passed meeting and Reschedule on the same tile;
  * Escape and focus; the phone's bottom sheet with 56px chips two to a row.
+ * Fix phase of the final audit (Nov 11, 2026): Not moving forward offers
+ * Undo again, and it takes the Lost move back with the Held.
  *
  *   DATABASE_URL=postgresql://postgres:postgres@localhost:5433/scb_test \
  *   NODE_PATH=$(npm root -g):$(pwd)/node_modules \
@@ -529,7 +531,7 @@ const ladder = async (contactId) =>
   await form.waitFor({ state: "detached" });
   assert.equal(await count(`SELECT count(*)::int n FROM "Activity" WHERE "companyId"='cmp_hd_red' AND outcome IN ('TALKED','REPLIED','HELD')`), 0);
 
-  log("audit fixes (pages): Rescheduled keeps the meeting's time; Not moving forward moves the tile to Lost with no half-true Undo");
+  log("audit fixes (pages): Rescheduled keeps the meeting's time; Not moving forward moves the tile to Lost (and, since the fix phase, offers an Undo that takes it all back)");
   await sql(`INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('cmp_hd_oak',$1,'Oakline Roofing',now())`, [org]);
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",phone,"updatedAt") VALUES ('ctc_hd_lee',$1,'Lee Lane','cmp_hd_oak','5125550108',now())`, [org]);
   await page.goto(`${BASE}/dashboard/contacts/ctc_hd_lee`);
@@ -564,10 +566,24 @@ const ladder = async (contactId) =>
   await next.locator("[data-testid=reason-PRICE]").click();
   await page.locator("[data-testid=follow-up-save]").click();
   await toast.getByText(/moved to Lost/).waitFor();
-  assert.equal(await toast.locator("[data-testid=log-toast-undo]").count(), 0, "no Undo that would leave the tile Lost and say Undone");
-  assert.equal(await toast.locator("[data-testid=log-toast-link]").getAttribute("href"), `/dashboard/deals?open=${leeOm.opportunityId}`, "the tile, to move it back");
-  const leeDeal = await one(`SELECT d.stage FROM "Opportunity" o JOIN "Deal" d ON d.id=o."dealId" WHERE o.id=$1`, [leeOm.opportunityId]);
+  assert.equal(await toast.locator("[data-testid=log-toast-link]").getAttribute("href"), `/dashboard/deals?open=${leeOm.opportunityId}`, "the tile, a tap away");
+  const leeDeal = await one(`SELECT d.id, d.stage FROM "Opportunity" o JOIN "Deal" d ON d.id=o."dealId" WHERE o.id=$1`, [leeOm.opportunityId]);
   assert.equal(leeDeal.stage, "LOST");
+  assert.equal(await status("Contact", "ctc_hd_lee"), "LOST");
+
+  log("audit fixes: Undo after Not moving forward takes the Lost move back with the Held — the deal it made goes, the tile and Lee are at Meeting Set again");
+  await toast.locator("[data-testid=log-toast-undo]").click();
+  await toast.getByText("Undone").waitFor();
+  assert.equal(await count(`SELECT count(*)::int n FROM "Deal" WHERE id=$1`, [leeDeal.id]), 0, "the deal the Lost move made is gone");
+  const leeTile = await one(`SELECT stage, "dealId", "completedAt", "convertedAt" FROM "Opportunity" WHERE id=$1`, [leeOm.opportunityId]);
+  assert.deepEqual({ ...leeTile }, { stage: "MEETING_SET", dealId: null, completedAt: null, convertedAt: null }, "the tile is back where the Held found it");
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [leeOm.id])).outcome, null, "the meeting asks again");
+  assert.equal(await status("Contact", "ctc_hd_lee"), "MEETING_SET");
+  assert.equal(
+    await count(`SELECT count(*)::int n FROM "OpportunityLog" WHERE "opportunityId"=$1 AND kind IN ('OPPORTUNITY_CREATED','DEAL_CREATED')`, [leeOm.opportunityId]),
+    0,
+    "no Opportunity Created or Deal Created left on Lee's history",
+  );
 
   log("audit fixes (pages): from 640px to 1023px 'Saved · Undo' sits above the tab bar, not on it");
   const tablet = await browser.newContext({ viewport: { width: 768, height: 1000 } });

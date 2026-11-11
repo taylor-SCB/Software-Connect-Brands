@@ -736,6 +736,7 @@ export async function logEventDone(input: {
       contactId: true,
       companyId: true,
       activityId: true,
+      doneAt: true,
       projectId: true,
       attendees: { select: { id: true } },
     },
@@ -784,34 +785,62 @@ export async function logEventDone(input: {
   const rows = contactIds.length
     ? contactIds.map((contactId) => ({ contactId, companyId: null as string | null }))
     : [{ contactId: null as string | null, companyId: event.companyId }];
+
+  // Claim the entry before anything is written (final audit, Nov 11, 2026):
+  // the same Done tapped in two tabs, or twice before the first answered,
+  // wrote two lines, held the meeting twice and booked the next step twice.
+  // Only the save that still finds it unlogged, with the tick it read,
+  // goes on; the other stops here. (An entry ticked with "Just tick it",
+  // or by a no-show, can still be logged: the tick it had is what it
+  // must still have.)
+  const doneAt = occurredAt > now ? now : occurredAt;
+  const claimAt = event.doneAt && event.doneAt.getTime() === doneAt.getTime() ? new Date(doneAt.getTime() + 1) : doneAt;
+  const claimed = await prisma.calendarEvent.updateMany({
+    where: { id: event.id, organizationId: input.organizationId, activityId: null, doneAt: event.doneAt },
+    data: { doneAt: claimAt },
+  });
+  if (claimed.count === 0) return { error: "That was just logged, in another tab or by someone else. Refresh to see it." };
+
   const batchId = newBatchId();
   // The meeting this entry was booked as, with what it was before this
   // save, for Undo (read before anything below changes it).
   const { stashMeetingForEvent } = await import("@/lib/undo-log");
-  const booked = meeting ? await stashMeetingForEvent(input.organizationId, event.id, { batchId, userId: input.userId }) : null;
+  const booked = meeting
+    ? await stashMeetingForEvent(input.organizationId, event.id, { batchId, userId: input.userId }, { doneAt: event.doneAt })
+    : null;
 
-  const written = await prisma.$transaction(
-    rows.map((row) =>
-      prisma.activity.create({
-        data: {
-          organizationId: input.organizationId,
-          contactId: row.contactId,
-          companyId: row.companyId,
-          projectId: event.projectId,
-          userId: input.userId,
-          type: input.activityType,
-          outcome,
-          body,
-          batchId,
-          occurredAt,
-        },
-        select: { id: true },
-      }),
-    ),
-  );
+  let written: { id: string }[];
+  try {
+    written = await prisma.$transaction(
+      rows.map((row) =>
+        prisma.activity.create({
+          data: {
+            organizationId: input.organizationId,
+            contactId: row.contactId,
+            companyId: row.companyId,
+            projectId: event.projectId,
+            userId: input.userId,
+            type: input.activityType,
+            outcome,
+            body,
+            batchId,
+            occurredAt,
+          },
+          select: { id: true },
+        }),
+      ),
+    );
+  } catch (err) {
+    // Nothing was logged: the entry goes back to how it was.
+    await prisma.calendarEvent.updateMany({
+      where: { id: event.id, organizationId: input.organizationId, activityId: null, doneAt: claimAt },
+      data: { doneAt: event.doneAt },
+    });
+    throw err;
+  }
   await prisma.calendarEvent.update({
     where: { id: event.id },
-    data: { doneAt: occurredAt > now ? now : occurredAt, activityId: written[0].id },
+    data: { doneAt, activityId: written[0].id },
   });
   const who = { organizationId: input.organizationId, userId: input.userId, batchId };
   const companyOnly = contactIds.length ? null : event.companyId;

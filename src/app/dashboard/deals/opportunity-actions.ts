@@ -18,7 +18,7 @@ import { healthSettings, opportunityHealth } from "@/lib/health-load";
 import { zoneDay, type LeadHealth } from "@/lib/health";
 import { loadDealJourney, type JourneyRefs } from "@/lib/deal-journey-load";
 import type { JourneyState } from "@/lib/health-journey";
-import { undoLogCore } from "@/lib/undo-log";
+import { mayJoinSave, undoLogCore } from "@/lib/undo-log";
 import { updateDealStage } from "./actions";
 
 // The Pipeline's tiles (Oct 27, 2026): open one, move it, convert it to a
@@ -235,6 +235,17 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
 
 type MoveResult = Result & { convert?: boolean; confirmEarly?: string; batchId?: string };
 
+const joinSchema = z.string().trim().min(1).max(200).optional();
+
+// A save a move may write into (`batchId`, so that save's one Undo takes
+// the move back too: "Not moving forward" after a Held, final audit Nov 11,
+// 2026). Only one that exists, by whoever may undo it; a made-up or
+// someone else's batchId is refused rather than quietly joined.
+async function joinable(session: { organizationId: string; userId: string; role: string }, batchId: string | undefined) {
+  if (!batchId) return true;
+  return mayJoinSave(session.organizationId, batchId, { userId: session.userId, canManage: session.role === "OWNER" || session.role === "ADMIN" });
+}
+
 // A tile dropped on a column, or moved from its menu. Meeting Set ↔
 // Meeting Completed moves with no prompt, except that a move forward means
 // the meeting happened (decision 4): the latest meeting that has passed
@@ -245,12 +256,17 @@ type MoveResult = Result & { convert?: boolean; confirmEarly?: string; batchId?:
 // browser asks "What happened after the meeting?" instead
 // (convertOpportunity); a deal moves between deal columns dated today, and
 // never back into a meeting column.
-export async function moveOpportunity(id: string, column: string, options: { early?: boolean } = {}): Promise<MoveResult> {
-  const { organizationId, userId } = await requireSession();
+// `batchId`: a save this move belongs to (see joinable), so its Undo takes
+// the move back with it.
+export async function moveOpportunity(id: string, column: string, options: { early?: boolean; batchId?: string } = {}): Promise<MoveResult> {
+  const session = await requireSession();
+  const { organizationId, userId } = session;
   const parsed = z
-    .object({ id: idSchema, column: z.enum(PIPELINE_COLUMNS), early: z.boolean().optional() })
-    .safeParse({ id, column, early: options.early });
+    .object({ id: idSchema, column: z.enum(PIPELINE_COLUMNS), early: z.boolean().optional(), batchId: joinSchema })
+    .safeParse({ id, column, early: options.early, batchId: options.batchId });
   if (!parsed.success) return { error: "That move isn't valid" };
+  const joined = parsed.data.batchId;
+  if (!(await joinable(session, joined))) return { error: "That save can't be added to. Move the tile on the Pipeline instead." };
   const opportunity = await prisma.opportunity.findFirst({
     where: { id: parsed.data.id, organizationId },
     select: { id: true, stage: true, deal: { select: { id: true, stage: true } } },
@@ -263,8 +279,22 @@ export async function moveOpportunity(id: string, column: string, options: { ear
 
   if (opportunity.deal && CONVERTED_STAGES.includes(opportunity.deal.stage)) {
     if (toMeeting) return { error: "A deal can't go back to a meeting column. Move it to Lost, or start a new opportunity." };
-    const moved = await updateDealStage(opportunity.deal.id, target);
-    return moved.error ? { error: moved.error } : { success: "Moved" };
+    const dealId = opportunity.deal.id;
+    // The deal's ladder rows from before, so the ones this move writes (the
+    // deal's and its people's, all carrying the deal) can go into the save
+    // it belongs to, and nothing older does.
+    const earlier = joined
+      ? (await prisma.statusChange.findMany({ where: { organizationId, dealId, batchId: null }, select: { id: true } })).map((row) => row.id)
+      : [];
+    const moved = await updateDealStage(dealId, target);
+    if (moved.error) return { error: moved.error };
+    if (joined && moved.success !== "No change") {
+      await prisma.statusChange.updateMany({
+        where: { organizationId, dealId, batchId: null, userId, id: { notIn: earlier } },
+        data: { batchId: joined },
+      });
+    }
+    return { success: "Moved" };
   }
   if (!toMeeting) {
     // A Build Quote deal (its quote not sent yet, decision 19) is still a
@@ -306,6 +336,9 @@ const convertSchema = z.object({
   reason: z.enum(STATUS_REASONS).nullish(),
   // The tile's meeting is still ahead and the person said it happened early.
   early: z.boolean().optional(),
+  // A save this conversion belongs to (see joinable): its ladder rows carry
+  // it, so that save's Undo takes the deal back too.
+  batchId: joinSchema,
 });
 
 // "What happened after the meeting with <person>?" (reworded Nov 11, 2026;
@@ -323,10 +356,13 @@ const convertSchema = z.object({
 export async function convertOpportunity(
   input: z.input<typeof convertSchema>,
 ): Promise<Result & { dealId?: string; quoteUrl?: string; existingQuote?: boolean; confirmEarly?: string; batchId?: string }> {
-  const { organizationId, userId } = await requireSession();
+  const session = await requireSession();
+  const { organizationId, userId } = session;
   const parsed = convertSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That conversion isn't valid" };
   const { id, stage, mode, title, valueCents } = parsed.data;
+  const joined = parsed.data.batchId;
+  if (!(await joinable(session, joined))) return { error: "That save can't be added to. Move the tile on the Pipeline instead." };
   if (mode === "manual" && stage === "WON" && valueCents <= 0) return { error: "Enter the amount they signed for" };
 
   const settings = await healthSettings(organizationId);
@@ -406,7 +442,7 @@ export async function convertOpportunity(
         data: { stage, stageChangedAt: at, title, valueCents },
       }),
       prisma.statusChange.create({
-        data: { organizationId, dealId, userId, fromStatus: opportunity.deal.stage, toStatus: stage, on: at, auto: false },
+        data: { organizationId, dealId, userId, fromStatus: opportunity.deal.stage, toStatus: stage, on: at, auto: false, batchId: joined ?? null },
       }),
     ]);
   } else {
@@ -426,11 +462,11 @@ export async function convertOpportunity(
       return { error: "Someone else just converted this one. Refresh the board." };
     }
     await prisma.statusChange.create({
-      data: { organizationId, dealId, userId, fromStatus: "LEAD", toStatus: stage, on: at, auto: false },
+      data: { organizationId, dealId, userId, fromStatus: "LEAD", toStatus: stage, on: at, auto: false, batchId: joined ?? null },
     });
   }
   await prisma.opportunity.updateMany({ where: { id: opportunity.id, organizationId }, data: { stage: "MEETING_COMPLETED" } });
-  await syncOpportunity({ organizationId, userId }, opportunity.id);
+  await syncOpportunity({ organizationId, userId, batchId: joined ?? null }, opportunity.id);
   if (mode === "manual" && stage === "LOST" && parsed.data.reason) await stampLostReason(organizationId, opportunity.id, parsed.data.reason);
   revalidateBoard();
   return {

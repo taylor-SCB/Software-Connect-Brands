@@ -326,27 +326,49 @@ export async function rescheduleMeetingCore(
   const event = await loadEvent(organizationId, meeting.eventId);
   const { day } = whenOf(meeting, event, timeZone);
   const when = `${formatDay(`${input.on}T12:00:00Z`)}${input.time ? `, ${formatTime(input.time)}` : ""}`;
+  const ahead = day >= today && meeting.outcome !== "NO_SHOW";
+  // A meeting still to come that already carries a history line nobody
+  // answered (logged for later today, or put back to "not recorded"):
+  // the line was a plan, not what happened (final audit M16, Nov 11, 2026).
+  // It used to stay behind beside the new booking, so once its time passed
+  // Stats counted it held, as a try and a talk, and credited two bookings.
+  // Moving the meeting takes it with it: a line dated ahead goes (nothing
+  // is history until it has happened), one already past reads No-show (it
+  // was put off, so it didn't happen then), and the meeting row moves.
+  const lines = await linkedLines(organizationId, meeting, event);
+  const now = new Date();
+  const loose = ahead && !meeting.outcome && lines.length > 0 && lines.every((row) => answerOf(null, row.outcome) === null) ? lines : [];
+  const settleLoose = loose.length
+    ? [
+        prisma.activity.deleteMany({ where: { organizationId, id: { in: loose.filter((row) => row.occurredAt > now).map((row) => row.id) } } }),
+        prisma.activity.updateMany({
+          where: { organizationId, id: { in: loose.filter((row) => row.occurredAt <= now).map((row) => row.id) } },
+          data: { outcome: "NO_SHOW" as const },
+        }),
+      ]
+    : [];
 
-  if (day >= today && meeting.outcome !== "NO_SHOW" && event && !event.activityId) {
+  if (ahead && event && (!event.activityId || loose.length)) {
     const at = input.time ? zonedMoment(input.on, input.time, timeZone) : zonedNoon(input.on, timeZone);
     await prisma.$transaction([
+      // Unlinked before its line can go: deleting a line deletes the entry
+      // linked to it.
       prisma.calendarEvent.updateMany({
         where: { id: event.id, organizationId },
-        data: { startOn: isoToDate(input.on)!, endOn: null, startTime: input.time, doneAt: null },
+        data: { startOn: isoToDate(input.on)!, endOn: null, startTime: input.time, doneAt: null, ...(loose.length ? { activityId: null } : {}) },
       }),
-      prisma.opportunityMeeting.update({ where: { id: meeting.id }, data: { on: at, outcome: null } }),
+      prisma.opportunityMeeting.update({ where: { id: meeting.id }, data: { on: at, outcome: null, ...(loose.length ? { activityId: null } : {}) } }),
+      ...settleLoose,
     ]);
     return { ok: true, opportunityId: meeting.opportunityId, meetingId: meeting.id, message: `Moved to ${when}` };
   }
 
   // Still to come with nothing to move (no calendar entry of its own): the
   // new booking replaces it. Gone by: it didn't happen, so it is a no-show.
-  const ahead = day >= today && meeting.outcome !== "NO_SHOW";
   if (!ahead && !meeting.outcome) {
     const missed = await recordMeetingNoShow(who, meeting.id);
     if ("error" in missed) return missed;
   }
-  const lines = await linkedLines(organizationId, meeting, event);
   const people = lines.length
     ? [...new Set(lines.map((row) => row.contactId).filter((id): id is string => Boolean(id)))]
     : peopleOf(meeting, event);
@@ -360,7 +382,9 @@ export async function rescheduleMeetingCore(
     opportunity: meeting.opportunityId,
   });
   if ("error" in booked) return { error: booked.error ?? "That couldn't be booked" };
-  if (ahead && !meeting.activityId) await prisma.opportunityMeeting.deleteMany({ where: { id: meeting.id } });
+  if (ahead && (!meeting.activityId || loose.length)) {
+    await prisma.$transaction([...settleLoose, prisma.opportunityMeeting.deleteMany({ where: { id: meeting.id } })]);
+  }
   const fresh = await prisma.opportunityMeeting.findFirst({
     where: { opportunityId: meeting.opportunityId, eventId: booked.eventId },
     select: { id: true },
@@ -457,20 +481,26 @@ export async function waitingMeetings(
   for (const row of rows) {
     const event = row.eventId ? eventById.get(row.eventId) : undefined;
     const outcome = answerOf(row.outcome, row.activityId ? loggedAs.get(row.activityId) : null);
+    // The moment is the calendar entry's, in the workspace's clock, when it
+    // has one (as whenOf reads it): rows the calendar form wrote before the
+    // Nov 11 audit hold midnight UTC, the evening before in the US, so a
+    // 4pm meeting read as already happened from 7pm the night before.
+    const eventDay = event ? event.startOn.toISOString().slice(0, 10) : null;
+    const at = event && eventDay ? zonedMoment(eventDay, event.startTime ?? "12:00", timeZone) : row.on;
     const meeting: WaitingMeeting = {
       id: row.id,
       opportunityId: row.opportunityId,
       title: row.opportunity.title,
       eventId: row.eventId,
-      at: row.on,
-      day: event ? event.startOn.toISOString().slice(0, 10) : dayInZone(row.on, timeZone),
+      at,
+      day: eventDay ?? dayInZone(row.on, timeZone),
       time: event?.startTime ?? null,
       outcome,
     };
     const column = opportunityColumn(row.opportunity);
     const fact = {
       item: meeting,
-      at: row.on.getTime(),
+      at: at.getTime(),
       outcome,
       meetingSet: column === "MEETING_SET",
       // Asking about one tile, it is the one; a person's Won or Lost tiles

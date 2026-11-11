@@ -430,6 +430,17 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   // on the calendar is): it completes like one, and nothing later asks
   // "Did the meeting happen?" about it.
   if (type === "MEETING" && on <= today && !outcome) outcome = "HELD";
+  // Front desk / main line (on the company, nobody linked) is always a try
+  // (final audit, Nov 11, 2026): the sheet turns the talk chips off, and a
+  // forged form can't save it as a talk, a reply, a held meeting (a meeting
+  // logged with nobody ticked is held, so it is refused too) or an
+  // Interested / Not interested — those are with a person.
+  if (onCompanyOnly && ((outcome && CONNECT_OUTCOMES.includes(outcome)) || mark)) {
+    return {
+      error: "Front desk / main line is a try, not a talk. Tick who you spoke or met with to log a talk, a reply, a held meeting or Interested / Not interested.",
+      kept: keepFields(formData, ["body", "occurredOn", "atTime"]),
+    };
+  }
 
   // Who it was with, for the calendar's title: the first contact, or
   // the company.

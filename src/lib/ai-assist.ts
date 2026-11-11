@@ -76,10 +76,13 @@ export async function opportunityMeetingNotes(organizationId: string, opportunit
 }
 
 // Notes as the prompt carries them: fenced, so words in a note read as the
-// customer's, never as instructions.
+// customer's, never as instructions. A "<" inside is written &lt; (final
+// audit, Nov 11, 2026), so a note can't close its own fence with
+// "</meeting>" and carry on as if it were the prompt.
+const fenced = (text: string) => text.replace(/</g, "&lt;");
 export function notesForPrompt(notes: MeetingNote[]) {
   return notes
-    .map((note) => `<meeting date="${note.on.toISOString().slice(0, 10)}" with="${note.with.replace(/"/g, "'")}">\n${note.body}\n</meeting>`)
+    .map((note) => `<meeting date="${note.on.toISOString().slice(0, 10)}" with="${fenced(note.with.replace(/"/g, "'"))}">\n${fenced(note.body)}\n</meeting>`)
     .join("\n");
 }
 

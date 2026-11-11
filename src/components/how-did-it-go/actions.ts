@@ -14,6 +14,7 @@ import { dayInZone, planNextStep, writeNextStep } from "@/lib/calendar-auto";
 import { bookMeetingCore, waitingMeetings } from "@/lib/meetings";
 import { markByHand } from "@/lib/status";
 import { stampLostReason } from "@/lib/opportunities";
+import { mayJoinSave } from "@/lib/undo-log";
 import { convertOpportunity, moveOpportunity } from "@/app/dashboard/deals/opportunity-actions";
 import { bookingOptions } from "@/app/dashboard/contacts/actions";
 import type { AfterLogInput, AfterLogResult, LogContext } from "./types";
@@ -217,6 +218,11 @@ export async function afterLog(input: AfterLogInput): Promise<AfterLogResult> {
   const plan = next ? planNextStep(next, today) : null;
   if (plan && "error" in plan) return { error: plan.error };
 
+  // Front desk / main line (nobody linked) is a try, never a talk: no
+  // Interested or Not interested on it, whatever a forged call sends
+  // (final audit, Nov 11, 2026; logActivity refuses the same).
+  if (mark && save.companyOnly) return { error: "A front-desk log is a try. Mark Interested or Not interested on the person you spoke with." };
+
   const words: string[] = [];
   const who = { organizationId, userId, batchId };
 
@@ -285,17 +291,28 @@ export async function afterLog(input: AfterLogInput): Promise<AfterLogResult> {
 
 // "Not moving forward" after a held meeting: the opportunity goes to Lost
 // (converted with no paperwork when it is not a deal yet, as the
-// Pipeline's "Yes – Move to Lost" does) with the optional reason.
+// Pipeline's "Yes – Move to Lost" does) with the optional reason. The move
+// is written into the Held's save (final audit, Nov 11, 2026), so the one
+// Undo takes both back: the deal it made goes (or the deal it moved goes
+// back to its stage), the tile and its people return to where the Held
+// found them. `batchId` comes back when that is so; without it (a save
+// that isn't this person's, or is gone) the move stands on its own and the
+// sheet offers no Undo.
 export async function notMovingForward(input: {
   opportunityId?: string | null;
   batchId?: string | null;
   reason?: string | null;
-}): Promise<{ success?: string; error?: string; opportunityId?: string }> {
-  const { organizationId } = await requireSession();
+}): Promise<{ success?: string; error?: string; opportunityId?: string; batchId?: string }> {
+  const session = await requireAdminSession();
+  const { organizationId } = session;
   const parsed = z
     .object({ opportunityId: idSchema.nullish(), batchId: batchSchema.nullish(), reason: z.enum(STATUS_REASONS).nullish() })
     .safeParse(input);
   if (!parsed.success) return { error: "Pick one of the reasons" };
+  const joined =
+    parsed.data.batchId && (await mayJoinSave(organizationId, parsed.data.batchId, { userId: session.userId, canManage: session.allowed }))
+      ? parsed.data.batchId
+      : undefined;
   let opportunityId = parsed.data.opportunityId ?? null;
   if (!opportunityId && parsed.data.batchId) {
     const batchId = parsed.data.batchId;
@@ -314,16 +331,26 @@ export async function notMovingForward(input: {
   if (!opportunityId) return { error: "There's no opportunity on the Pipeline for this meeting" };
   const opportunity = await prisma.opportunity.findFirst({
     where: { id: opportunityId, organizationId },
-    select: { id: true, title: true, stage: true, deal: { select: { stage: true } } },
+    select: { id: true, title: true, stage: true, deal: { select: { stage: true, title: true, valueCents: true } } },
   });
   if (!opportunity) return { error: "That opportunity is no longer on the board" };
+  let moved = false;
   if (opportunity.deal?.stage !== "LOST") {
-    const moved = await moveOpportunity(opportunity.id, "LOST");
-    if (moved.error) return { error: moved.error };
-    if (moved.convert) {
-      const converted = await convertOpportunity({ id: opportunity.id, stage: "LOST", mode: "manual", title: opportunity.title, valueCents: 0 });
+    const move = await moveOpportunity(opportunity.id, "LOST", { batchId: joined });
+    if (move.error) return { error: move.error };
+    if (move.convert) {
+      // A Build Quote deal keeps its own name and amount: only its stage moves.
+      const converted = await convertOpportunity({
+        id: opportunity.id,
+        stage: "LOST",
+        mode: "manual",
+        title: opportunity.deal?.title || opportunity.title,
+        valueCents: opportunity.deal?.valueCents ?? 0,
+        batchId: joined,
+      });
       if (converted.error) return { error: converted.error };
     }
+    moved = true;
   }
   if (parsed.data.reason) {
     const stamped = await stampLostReason(organizationId, opportunity.id, parsed.data.reason);
@@ -332,7 +359,7 @@ export async function notMovingForward(input: {
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard");
-  return { success: `${opportunity.title} moved to Lost`, opportunityId: opportunity.id };
+  return { success: `${opportunity.title} moved to Lost`, opportunityId: opportunity.id, ...(joined && moved ? { batchId: joined } : {}) };
 }
 
 // Rescheduled, for a calendar meeting with no Pipeline meeting behind it:

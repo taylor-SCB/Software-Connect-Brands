@@ -51,9 +51,9 @@ import type { AfterLogInput, LogContext, SavedLog } from "./types";
 // talk, a reason and "Check back in 90 days?" after Not interested, Start
 // a quote / Book next meeting / Not moving forward after Held, Reschedule
 // after a no-show. Dates are chips. Skip writes nothing. It goes into the
-// same save, so the one Undo takes both — except Not moving forward, whose
-// Lost move makes a deal Undo can't take back: its toast has no Undo and
-// links to the tile instead.
+// same save, so the one Undo takes both — Not moving forward included: its
+// Lost move, and the deal it makes, go into the Held's save (final audit,
+// Nov 11, 2026), and its toast also links to the tile.
 
 export type LogTargetProps =
   | { contactId: string; companyId?: undefined }
@@ -579,12 +579,21 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
       if (choice === "lost") {
         const result = await notMovingForward({ opportunityId: saved.opportunityId, batchId: saved.batchId, reason });
         if (result.error) return setError(result.error);
-        // No Undo here: Undo takes back the save (the Held line), not the
-        // Lost move, which makes a deal. An Undo that left the tile Lost
-        // would say "Undone" and be half true (audit, Nov 11, 2026). The
-        // tile is one tap away to move back.
+        // The Lost move is written into the Held's save, so its one Undo
+        // takes both back, the deal it made included (final audit, Nov 11,
+        // 2026). Only when the server says so: a move it couldn't add to
+        // the save gets no Undo, never a half-true one. The tile is a tap
+        // away either way.
         const tile = result.opportunityId ?? saved.opportunityId;
-        toastAndClose({ batchId: "", words: `${saved.words} · ${result.success}`, at: saved.at, href: pipelineHref(tile), hrefLabel: "Pipeline →", opportunityId: tile });
+        toastAndClose({
+          batchId: result.batchId ?? "",
+          words: `${saved.words} · ${result.success}`,
+          // Its Undo gets its full ten seconds from now.
+          at: result.batchId ? undefined : saved.at,
+          href: pipelineHref(tile),
+          hrefLabel: "Pipeline →",
+          opportunityId: tile,
+        });
         return;
       }
       if (choice === "reschedule" && book.on) {
@@ -697,7 +706,14 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
       )}
       {phase === "log" && !eventMode && (
         <div className="flex flex-wrap items-center gap-2">
-          <button type="submit" disabled={pending} className={`btn ${ahead ? "btn-primary" : "btn-ghost"} min-h-11 flex-1 sm:flex-none`} data-testid="activity-submit">
+          {/* A meeting that happened is held, a talk: not at the front desk
+              (the server refuses it too; final audit, Nov 11, 2026). */}
+          <button
+            type="submit"
+            disabled={pending || (frontDesk && type === "MEETING" && !ahead)}
+            className={`btn ${ahead ? "btn-primary" : "btn-ghost"} min-h-11 flex-1 sm:flex-none`}
+            data-testid="activity-submit"
+          >
             {pending ? (ahead ? "Scheduling…" : "Saving…") : `${ahead ? "Schedule" : "Log"} ${ACTIVITY_LABELS[type].toLowerCase()}`}
           </button>
           {!ahead && <span className="faint text-xs">or tap how it went</span>}
@@ -1051,7 +1067,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                   <>
                     <ReasonChips value={reason} onChange={setReason} />
                     <p className="faint text-xs" data-testid="next-lost-note">
-                      Moves it to Lost on the Pipeline. Undo won&apos;t take that back; move the tile there instead.
+                      Moves it to Lost on the Pipeline. Undo takes the meeting and the move back together.
                     </p>
                   </>
                 )}

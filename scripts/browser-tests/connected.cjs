@@ -22,6 +22,15 @@
  * Lost by hand keeping the reason; Log as sent writing SENT; Connected and
  * Attempted in the Status filter and the Stats funnel.
  *
+ * "audit fixes:" steps for the final audit's fix phase (Nov 11, 2026), at
+ * the end: Not moving forward written into the Held's save so one Undo
+ * takes the Lost deal, the tile it made and the ladder back (and a Quote
+ * Sent deal back to its own day; a teammate can't add a move to someone
+ * else's save); a forged front-desk log refused as a talk, a held meeting
+ * or Not interested; Held in two tabs at once logging one meeting and one
+ * next step; a calendar meeting waited for at its entry's own time; a
+ * meeting with a line logged for later today moving on reschedule (M16).
+ *
  * Calls the server actions the new screens will use straight over HTTP
  * (the action ids come from .next/server/server-reference-manifest.json),
  * so it needs a production build in the working directory.
@@ -183,6 +192,25 @@ function coreAsync(module, fn, args) {
     );
   });
 }
+// core(), with the arguments' ISO date-times (at any depth) handed over as
+// Dates and a Map answered as an object: for waitingMeetings' `now`.
+function coreDated(module, fn, args) {
+  const code = `import * as lib from "./src/lib/${module}";
+    const args = JSON.parse(process.env.CORE_ARGS, (key, value) =>
+      typeof value === "string" && /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$/.test(value) ? new Date(value) : value);
+    Promise.resolve(lib.${fn}(...args)).then(
+      (answer) => { console.log("@@" + JSON.stringify(answer instanceof Map ? Object.fromEntries(answer) : (answer ?? null))); process.exit(0); },
+      (err) => { console.error(err); process.exit(1); });`;
+  const out = execFileSync(path.join(process.cwd(), "node_modules/.bin/tsx"), ["-e", code], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, CORE_ARGS: JSON.stringify(args) },
+  });
+  const line = out.split("\n").find((row) => row.startsWith("@@"));
+  if (!line) throw new Error(`${fn}: no answer: ${out.slice(0, 300)}`);
+  return JSON.parse(line.slice(2));
+}
+const SHEET_ACTIONS = "src/components/how-did-it-go/actions.ts";
 async function meetingAction(page, actor, name, ...args) {
   if (hasAction(OPP_ACTIONS, name)) return action(page, OPP_ACTIONS, name, ...args);
   return core("meetings", MEETING_CORE[name], [actor, ...args]);
@@ -1025,6 +1053,198 @@ async function logWith(page, fields, { body = "", type } = {}) {
     if (!AUDIT_SOFT) throw err;
     auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
   }
+  /* ------------------------------------------------------------------ */
+  /* Final audit, fix phase (Nov 11, 2026): what the six audits sent to  */
+  /* the data and pipeline core. Each step fails on the code before its  */
+  /* fix.                                                                */
+  /* ------------------------------------------------------------------ */
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"companyId","updatedAt") VALUES
+       ('ctc_fx_nmf',$1,'Fix Notmoving','CONNECTED',NULL,now()),
+       ('ctc_fx_qs',$1,'Fix Quoted','QUOTE_SENT',NULL,now()),
+       ('ctc_fx_twin',$1,'Fix Twotabs','CONNECTED',NULL,now()),
+       ('ctc_fx_wait',$1,'Fix Waiting','MEETING_SET',NULL,now()),
+       ('ctc_fx_m16',$1,'Fix Later','CONNECTED',NULL,now())`,
+    [org],
+  );
+  try {
+    log("audit fixes: Not moving forward after a meeting logged Held goes into that save — one Undo takes back the Lost deal, the tile it made and the ladder");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_fx_nmf`);
+    await logWith(page, { outcome: "HELD" }, { type: "Meeting", body: "Walked the site, not a fit" });
+    await until(async () => (await status("Contact", "ctc_fx_nmf")) === "MEETING_COMPLETED", "the meeting held");
+    var nmfBatch = (await one(`SELECT "batchId" FROM "Activity" WHERE "contactId"='ctc_fx_nmf' AND type='MEETING'`)).batchId;
+    var nmf = await action(page, SHEET_ACTIONS, "notMovingForward", { batchId: nmfBatch, reason: "PRICE" });
+    assert.match(nmf.success ?? "", /moved to Lost/, JSON.stringify(nmf));
+    assert.equal(nmf.batchId, nmfBatch, "the Lost move is in the Held's save, so the sheet offers its Undo");
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE "contactId"='ctc_fx_nmf'`)).stage, "LOST");
+    assert.equal(await status("Contact", "ctc_fx_nmf"), "LOST");
+    var nmfUndo = await action(page, CONTACT_ACTIONS, "undoLog", nmfBatch);
+    assert.equal(nmfUndo.success, "Undone", JSON.stringify(nmfUndo));
+    assert.equal((await one(`SELECT count(*)::int n FROM "Deal" WHERE "contactId"='ctc_fx_nmf'`)).n, 0, "the deal it made is gone");
+    assert.equal(
+      (await one(`SELECT count(*)::int n FROM "OpportunityContact" WHERE "contactId"='ctc_fx_nmf'`)).n,
+      0,
+      "so is the tile the save made — no meeting left on it asking how a meeting nobody logged went",
+    );
+    assert.equal(await status("Contact", "ctc_fx_nmf"), "CONNECTED");
+    assert.equal((await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "contactId"='ctc_fx_nmf'`)).n, 0, "no ladder lines left");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: Not moving forward on a Quote Sent tile — a teammate can't add a move to Taylor's save; Taylor's Undo puts the deal back at Quote Sent on its own day");
+    var quotedOn = new Date(Date.now() - 5 * 86_400_000).toISOString();
+    await sql(
+      `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"stageChangedAt","valueCents","ownerId","updatedAt")
+       VALUES ('dl_fx_qs',$1,'ctc_fx_qs','Fix bid','QUOTE_SENT',($3::timestamptz AT TIME ZONE 'UTC'),50000,$2,now())`,
+      [org, taylor.id, quotedOn],
+    );
+    await sql(
+      `INSERT INTO "StatusChange" (id,"organizationId","dealId","userId","fromStatus","toStatus","on") VALUES ('sc_fx_qs',$1,'dl_fx_qs',$2,'LEAD','QUOTE_SENT',($3::timestamptz AT TIME ZONE 'UTC'))`,
+      [org, taylor.id, quotedOn],
+    );
+    await sql(
+      `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","dealId","completedAt","convertedAt","updatedAt")
+       VALUES ('opp_fx_qs',$1,'Fix bid','MEETING_COMPLETED',$2,'dl_fx_qs',now() - interval '6 days',now() - interval '5 days',now())`,
+      [org, taylor.id],
+    );
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('oc_fx_qs','opp_fx_qs','ctc_fx_qs','PRIMARY',true)`);
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","bookedById") VALUES ('om_fx_qs','opp_fx_qs',now() - interval '1 day',$1)`, [taylor.id]);
+    var qsBefore = await one(`SELECT "stageChangedAt" FROM "Deal" WHERE id='dl_fx_qs'`);
+    var qsHeld = await meetingAction(page, me, "markMeetingHeld", "om_fx_qs", {});
+    assert.match(qsHeld.success ?? "", /Held/, JSON.stringify(qsHeld));
+    var forgedMove = await action(nic, OPP_ACTIONS, "moveOpportunity", "opp_fx_qs", "LOST", { batchId: qsHeld.batchId });
+    assert.ok(forgedMove.error, `Nic's move can't join Taylor's save: ${JSON.stringify(forgedMove)}`);
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE id='dl_fx_qs'`)).stage, "QUOTE_SENT", "and nothing moved");
+    var qsLost = await action(page, SHEET_ACTIONS, "notMovingForward", { opportunityId: "opp_fx_qs", batchId: qsHeld.batchId });
+    assert.equal(qsLost.batchId, qsHeld.batchId, JSON.stringify(qsLost));
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE id='dl_fx_qs'`)).stage, "LOST");
+    assert.equal(await status("Contact", "ctc_fx_qs"), "LOST");
+    var qsUndo = await action(page, CONTACT_ACTIONS, "undoLog", qsHeld.batchId);
+    assert.equal(qsUndo.success, "Undone", JSON.stringify(qsUndo));
+    var qsAfter = await one(`SELECT stage, "stageChangedAt" FROM "Deal" WHERE id='dl_fx_qs'`);
+    assert.equal(qsAfter.stage, "QUOTE_SENT");
+    assert.equal(+qsAfter.stageChangedAt, +qsBefore.stageChangedAt, "on the day it got there, so no clock restarts");
+    assert.equal(await status("Contact", "ctc_fx_qs"), "QUOTE_SENT");
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='om_fx_qs'`)).outcome, null, "the meeting is unanswered again");
+    assert.equal((await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "dealId"='dl_fx_qs'`)).n, 1, "only the deal's own Quote Sent line is left");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a forged front-desk log (nobody linked) can't be saved as a talk, a held meeting or Not interested");
+    var deskStatus = await status("Company", "cmp_cn_red");
+    var deskDates = await dates("Company", "cmp_cn_red");
+    await page.goto(`${BASE}/dashboard/companies/cmp_cn_red`);
+    await page.locator("[data-testid=company-log-toggle]").click();
+    var deskForm = page.locator("[data-testid=log-activity-form]");
+    for (const [fields, opts] of [
+      [{ outcome: "TALKED", bypass: "1" }, { body: "Forged desk talk" }],
+      [{ outcome: "GATEKEEPER", mark: "NOT_INTERESTED", reason: "PRICE" }, { body: "Forged desk no" }],
+      [{ bypass: "1" }, { type: "Meeting", body: "Forged desk meeting" }],
+    ]) {
+      await logWith(page, fields, opts);
+      await until(
+        async () =>
+          (await one(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1 AND body=$2`, [org, opts.body])).n > 0 ||
+          /Front desk \/ main line is a try/.test((await deskForm.getByRole("alert").textContent().catch(() => "")) ?? ""),
+        `an answer for "${opts.body}"`,
+      );
+      await page.waitForTimeout(600);
+      assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1 AND body=$2`, [org, opts.body])).n, 0, `"${opts.body}" refused`);
+    }
+    assert.equal(await status("Company", "cmp_cn_red"), deskStatus);
+    assert.equal(+(await dates("Company", "cmp_cn_red")).lastConnectAt, +deskDates.lastConnectAt, "no connect on the company");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: Held tapped in two tabs at once logs one meeting and books one next step");
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_fx_twin", on: TODAY, time: "06:00" });
+    var twinEvent = await one(`SELECT id FROM "CalendarEvent" WHERE "contactId"='ctc_fx_twin' AND type='Meeting'`);
+    var twinInput = { activityType: "MEETING", note: "Met at the site", outcome: "HELD", next: { kind: "follow", on: shift(TODAY, 2), type: "PHONE_CALL", withContactIds: [] } };
+    // Both taps read the entry before either writes: the row is held while
+    // they start, as two tabs a moment apart would find it.
+    var twinLock = new Client({ connectionString: DB });
+    await twinLock.connect();
+    await twinLock.query("BEGIN");
+    await twinLock.query(`SELECT 1 FROM "CalendarEvent" WHERE id=$1 FOR UPDATE`, [twinEvent.id]);
+    var twinRace = Promise.all([
+      action(page, CAL_ACTIONS, "completeEventWithLog", twinEvent.id, twinInput),
+      action(page, CAL_ACTIONS, "completeEventWithLog", twinEvent.id, twinInput),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await twinLock.query("COMMIT");
+    await twinLock.end();
+    var twinAnswers = await twinRace;
+    assert.equal(twinAnswers.filter((answer) => answer.success).length, 1, JSON.stringify(twinAnswers));
+    assert.match(twinAnswers.find((answer) => answer.error)?.error ?? "", /just logged/);
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_fx_twin' AND type='MEETING'`)).n, 1, "one meeting line");
+    assert.equal(
+      (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "contactId"='ctc_fx_twin' AND "doneAt" IS NULL AND title LIKE 'Follow up%'`)).n,
+      1,
+      "one follow-up booked",
+    );
+    assert.equal(
+      (await one(`SELECT count(*)::int n FROM "OpportunityMeeting" m JOIN "OpportunityContact" oc ON oc."opportunityId"=m."opportunityId" WHERE oc."contactId"='ctc_fx_twin'`)).n,
+      1,
+      "one meeting on the Pipeline",
+    );
+    assert.equal(await status("Contact", "ctc_fx_twin"), "MEETING_COMPLETED");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a meeting on the calendar is waited for at its entry's own time, not the midnight-UTC an older calendar save left on it");
+    var waitDay = shift(TODAY, 1);
+    await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","updatedAt") VALUES ('opp_fx_wait',$1,'Fix Waiting','MEETING_SET',$2,now())`, [org, taylor.id]);
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('oc_fx_wait','opp_fx_wait','ctc_fx_wait','PRIMARY',true)`);
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","contactId","ownerId","updatedAt")
+       VALUES ('ev_fx_wait',$1,'Meeting · Fix Waiting','Meeting',$2::date,'15:00','ctc_fx_wait',$3,now())`,
+      [org, waitDay, taylor.id],
+    );
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById") VALUES ('om_fx_wait','opp_fx_wait',$1::date,'ev_fx_wait',$2)`, [waitDay, taylor.id]);
+    // 1am UTC on the meeting's day is the evening before in Chicago, hours
+    // before its 3pm.
+    var waited = coreDated("meetings", "waitingMeetings", [org, { contactIds: ["ctc_fx_wait"] }, { now: `${waitDay}T01:00:00.000Z`, timeZone: ZONE }]);
+    assert.equal(waited.ctc_fx_wait?.ahead?.id, "om_fx_wait", JSON.stringify(waited));
+    assert.equal(waited.ctc_fx_wait.due, null, "nothing to answer the night before");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a meeting with a line logged for later today, then rescheduled, moves — no second booking, no line left to count as held (M16)");
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_fx_m16", on: TODAY, time: "23:59" });
+    var m16 = await one(
+      `SELECT m.id, m."eventId", m."opportunityId" FROM "OpportunityMeeting" m JOIN "CalendarEvent" e ON e.id=m."eventId" WHERE e."contactId"='ctc_fx_m16'`,
+    );
+    // The line a meeting logged for later today left on it (before the D5
+    // fix, or a line edited back to not recorded), ticking its entry.
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,"occurredAt") VALUES ('act_fx_m16',$1,'ctc_fx_m16',$2,'MEETING','Site walk later today',now() + interval '20 minutes')`,
+      [org, taylor.id],
+    );
+    await sql(`UPDATE "CalendarEvent" SET "activityId"='act_fx_m16', "doneAt"=now() WHERE id=$1`, [m16.eventId]);
+    await sql(`UPDATE "OpportunityMeeting" SET "activityId"='act_fx_m16' WHERE id=$1`, [m16.id]);
+    var m16Moved = await meetingAction(page, me, "rescheduleMeeting", m16.id, { on: shift(TODAY, 1), time: "10:00" });
+    assert.match(m16Moved.success ?? "", /Moved/, JSON.stringify(m16Moved));
+    assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [m16.opportunityId])).n, 1, "one meeting, one booking");
+    var m16Row = await one(`SELECT "eventId", "activityId", outcome FROM "OpportunityMeeting" WHERE id=$1`, [m16.id]);
+    assert.deepEqual({ ...m16Row }, { eventId: m16.eventId, activityId: null, outcome: null });
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE id='act_fx_m16'`)).n, 0, "the line dated ahead is gone, so it never counts as held");
+    var m16Event = await one(`SELECT to_char("startOn",'YYYY-MM-DD') AS day, "startTime", "activityId", "doneAt" FROM "CalendarEvent" WHERE id=$1`, [m16.eventId]);
+    assert.deepEqual({ ...m16Event }, { day: shift(TODAY, 1), startTime: "10:00", activityId: null, doneAt: null }, "its entry moved, open again");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+
   if (AUDIT_SOFT) {
     console.log(`\nAUDIT_SOFT: ${auditFailed.length} audit step(s) failed`);
     for (const line of auditFailed) console.log(`  FAILED ${line}`);

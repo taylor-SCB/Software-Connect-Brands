@@ -13,7 +13,10 @@
  * rest, a new contact can be added and claimed in one go, and a person
  * from another company is refused; an activity logged on the company
  * before today (seeded with SQL) is claimable too; and Notes on the
- * company page split into All / Company / People / Personal.
+ * company page split into All / Company / People / Personal. Fix phase of
+ * the final audit (Nov 11, 2026): a claim that moved nobody can't be
+ * undone by a Member who didn't make it (its token, its batchId, a forged
+ * token), and its maker still can.
  *
  * Runs against a built app (`bash scripts/dev-serve.sh`) and a local
  * Postgres that has had `prisma migrate deploy` run against it. It signs
@@ -77,6 +80,41 @@ async function until(fn, what) {
 const status = async (table, id) => (await sql(`SELECT status FROM "${table}" WHERE id=$1`, [id])).rows[0].status;
 const activity = async (body, org) =>
   (await sql(`SELECT id, "contactId", "companyId", type FROM "Activity" WHERE "organizationId"=$1 AND body=$2`, [org, body])).rows[0];
+
+// A server action called the way the browser calls it (as connected.cjs
+// does): POST with its id in the Next-Action header and the arguments as
+// JSON. The id is looked up by file and export in the build's manifest.
+let MANIFEST = null;
+async function action(p, file, name, ...args) {
+  MANIFEST ??= JSON.parse(fs.readFileSync(path.join(process.cwd(), ".next/server/server-reference-manifest.json"), "utf8"));
+  const found = Object.entries(MANIFEST.node).find(([, entry]) => entry.filename === file && entry.exportedName === name);
+  if (!found) throw new Error(`no server action ${name} in ${file} (rebuild?)`);
+  const [id, entry] = found;
+  const workers = Object.keys(entry.workers);
+  const pick = workers.find((w) => !w.includes("[")) ?? workers[0];
+  const url = pick.replace(/^app/, "").replace(/\/page$/, "").replace(/\[[^\]]+\]/g, "x") || "/";
+  const response = await p.request.post(`${BASE}${url}`, {
+    headers: { "Next-Action": id, "Content-Type": "text/plain;charset=UTF-8", Accept: "text/x-component", Origin: BASE },
+    data: JSON.stringify(args),
+  });
+  const text = await response.text();
+  const rows = new Map();
+  for (const line of text.split("\n")) {
+    const match = /^([0-9a-f]+):(.*)$/.exec(line);
+    if (match) {
+      try {
+        rows.set(match[1], JSON.parse(match[2]));
+      } catch {
+        rows.set(match[1], match[2]);
+      }
+    }
+  }
+  const head = rows.get("0");
+  const pointer = head && typeof head.a === "string" ? head.a.replace(/^\$@/, "") : null;
+  const result = pointer !== null ? rows.get(pointer) : head;
+  if (result === undefined) throw new Error(`${name}: unreadable answer (${response.status()}): ${text.slice(0, 300)}`);
+  return result;
+}
 
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
@@ -297,6 +335,41 @@ const activity = async (body, org) =>
   await page.goto(`${BASE}/dashboard/contacts/ctc_by_dana`);
   await page.locator("[data-testid=notes-tabs]").waitFor();
   assert.deepEqual((await page.locator("[data-testid=notes-tabs] button").allTextContents()).map((t) => t.replace(/\s+/g, "").trim()), ["All1", "Personal1"]);
+
+  log("audit fixes: a claim that moved nobody (nothing of it on record) can't be undone by a Member who didn't make it — not with its token, its batchId or a forged token");
+  const COMPANY_ACTIONS = "src/app/dashboard/companies/actions.ts";
+  const CLAIM_ACTIONS = "src/app/dashboard/companies/[id]/claim-actions.ts";
+  const CONTACT_ACTIONS = "src/app/dashboard/contacts/actions.ts";
+  // Fay is already at Meeting Set, so a front-desk try claimed onto her
+  // moves no status: the claim's save writes no ladder row naming anyone.
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",status,"updatedAt") VALUES ('ctc_by_fay',$1,'Fay Further','cmp_by_harbor','MEETING_SET',now())`, [org]);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","companyId","userId",type,outcome,body,"occurredAt")
+     VALUES ('act_by_fx',$1,'cmp_by_harbor',$2,'PHONE_CALL','GATEKEEPER','Front desk took a message for Fay',now() - interval '1 day')`,
+    [org, taylor.id],
+  );
+  const claim = await action(page, COMPANY_ACTIONS, "claimActivities", { activityIds: ["act_by_fx"], contactId: "ctc_by_fay" });
+  assert.ok(claim.batchId && claim.claimToken, JSON.stringify(claim));
+  assert.equal((await sql(`SELECT count(*)::int n FROM "StatusChange" WHERE "batchId"=$1`, [claim.batchId])).rows[0].n, 0, "nobody on record for this save");
+  assert.equal(await status("Contact", "ctc_by_fay"), "MEETING_SET");
+  const nicContext = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+  const nic = await nicContext.newPage();
+  await login(nic, NIC_EMAIL);
+  const replayed = await action(nic, CLAIM_ACTIONS, "undoClaim", { token: claim.claimToken });
+  assert.match(replayed.error ?? "", /Only whoever claimed it, or an Owner or Admin/, JSON.stringify(replayed));
+  const byBatch = await action(nic, CONTACT_ACTIONS, "undoLog", claim.batchId);
+  assert.ok(byBatch.error, `undoLog on the claim's batchId does nothing for Nic: ${JSON.stringify(byBatch)}`);
+  const tampered = claim.claimToken.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+  const forged = await action(nic, CLAIM_ACTIONS, "undoClaim", { token: tampered });
+  assert.match(forged.error ?? "", /can no longer be undone/, JSON.stringify(forged));
+  const made = await action(nic, CLAIM_ACTIONS, "undoClaim", { token: "e30.bad" });
+  assert.ok(made.error, JSON.stringify(made));
+  assert.equal((await activity("Front desk took a message for Fay", org)).contactId, "ctc_by_fay", "the claim stands");
+  await nicContext.close();
+  const own = await action(page, CLAIM_ACTIONS, "undoClaim", { token: claim.claimToken });
+  assert.ok(own.success, `Taylor can undo his own: ${JSON.stringify(own)}`);
+  const back = await activity("Front desk took a message for Fay", org);
+  assert.deepEqual({ contactId: back.contactId, companyId: back.companyId }, { contactId: null, companyId: "cmp_by_harbor" });
 
   await browser.close();
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);

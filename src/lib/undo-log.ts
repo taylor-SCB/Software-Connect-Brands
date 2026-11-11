@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type DealStage } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { CONVERTED_STAGES } from "@/lib/opportunities";
 
 // "Saved · Undo" (BDR redesign, Nov 11, 2026): one save taken back, in one
 // transaction. A save is everything that carries its batchId — the
@@ -24,6 +25,11 @@ import { prisma } from "@/lib/prisma";
 // - A meeting action (Held / No-show from the Pipeline) is a save whose
 //   batchId is "m:<meetingId>:<uuid>": its meeting's outcome, and the
 //   outcome it set on a history line written before, are cleared too.
+// - A deal the save made (Not moving forward after a Held converts the
+//   tile to Lost inside the Held's save) is deleted, while nothing has been
+//   added to it, and comes off its tile; a deal it moved goes back to its
+//   stage and the day it got there, while still where the save left it.
+//   The tile's "Deal Created" goes with it.
 //
 // Not "use server": takes an organizationId. Marketing sends can't be
 // undone here (they went out).
@@ -70,7 +76,15 @@ function readStash(value: unknown): MeetingStash | null {
   return typeof row.batchId === "string" && typeof row.on === "string" ? (row as MeetingStash) : null;
 }
 
-export async function stashMeeting(organizationId: string, meetingId: string, who: { batchId?: string | null; userId?: string | null }) {
+// `seen.doneAt`: the calendar tick as the save found it, when the save has
+// already claimed the entry (logEventDone changes the tick first, so two
+// tabs can't both log it) and the row no longer shows it.
+export async function stashMeeting(
+  organizationId: string,
+  meetingId: string,
+  who: { batchId?: string | null; userId?: string | null },
+  seen: { doneAt?: Date | null } = {},
+) {
   if (!who.batchId) return;
   const meeting = await prisma.opportunityMeeting.findFirst({
     where: { id: meetingId, opportunity: { organizationId } },
@@ -99,7 +113,7 @@ export async function stashMeeting(organizationId: string, meetingId: string, wh
     outcome: meeting.outcome,
     on: meeting.on.toISOString(),
     activityId: meeting.activityId,
-    event: event ? { id: event.id, doneAt: event.doneAt?.toISOString() ?? null } : null,
+    event: event ? { id: event.id, doneAt: ("doneAt" in seen ? seen.doneAt : event.doneAt)?.toISOString() ?? null } : null,
     lines: lines.map((line) => ({ id: line.id, outcome: line.outcome, occurredAt: line.occurredAt.toISOString() })),
   };
   await prisma.opportunityMeeting.update({ where: { id: meeting.id }, data: { outcomeUndo: stash } });
@@ -107,13 +121,18 @@ export async function stashMeeting(organizationId: string, meetingId: string, wh
 
 // The meeting a calendar entry was booked as, for stashing before a log
 // on that entry's day takes it over.
-export async function stashMeetingForEvent(organizationId: string, eventId: string, who: { batchId?: string | null; userId?: string | null }) {
+export async function stashMeetingForEvent(
+  organizationId: string,
+  eventId: string,
+  who: { batchId?: string | null; userId?: string | null },
+  seen: { doneAt?: Date | null } = {},
+) {
   const row = await prisma.opportunityMeeting.findFirst({
     where: { eventId, opportunity: { organizationId } },
     orderBy: { createdAt: "asc" },
     select: { id: true, opportunityId: true },
   });
-  if (row) await stashMeeting(organizationId, row.id, who);
+  if (row) await stashMeeting(organizationId, row.id, who, seen);
   return row;
 }
 
@@ -121,6 +140,35 @@ export async function stashMeetingForEvent(organizationId: string, eventId: stri
 // one request). Anything later on a tile is somebody's later work, which
 // Undo never takes back.
 const SAVE_WINDOW_MS = 120_000;
+
+// Whose save this is, as Undo reads it: whoever its rows name, else whoever
+// made the meeting answer it holds. `found` is false when nothing carries
+// it (made up, or already undone).
+async function saveOwner(organizationId: string, batchId: string) {
+  const meetingId = batchId.startsWith("m:") ? batchId.split(":")[1] || null : null;
+  const [activity, event, change, meeting] = await Promise.all([
+    prisma.activity.findFirst({ where: { organizationId, batchId }, select: { userId: true } }),
+    prisma.calendarEvent.findFirst({ where: { organizationId, batchId }, select: { ownerId: true } }),
+    prisma.statusChange.findFirst({ where: { organizationId, batchId }, select: { userId: true } }),
+    meetingId
+      ? prisma.opportunityMeeting.findFirst({ where: { id: meetingId, opportunity: { organizationId } }, select: { outcomeUndo: true } })
+      : Promise.resolve(null),
+  ]);
+  const stash = meeting ? readStash(meeting.outcomeUndo) : null;
+  const meetingSet = stash?.batchId === batchId;
+  return {
+    found: Boolean(activity || event || change || meetingSet),
+    owner: activity?.userId ?? event?.ownerId ?? change?.userId ?? (meetingSet ? stash?.by : null) ?? null,
+  };
+}
+
+// Whether a later step may write into this save, so its Undo takes that
+// step back too ("Not moving forward" after a Held, final audit Nov 11,
+// 2026): only a save that exists, by whoever may undo it.
+export async function mayJoinSave(organizationId: string, batchId: string, actor: { userId: string; canManage: boolean }) {
+  const save = await saveOwner(organizationId, batchId);
+  return save.found && (actor.canManage || save.owner === actor.userId);
+}
 
 export type UndoResult =
   | { ok: true; contactIds: string[]; companyIds: string[]; opportunityIds: string[]; removed: number }
@@ -140,7 +188,7 @@ export async function undoLogCore(
     prisma.calendarEvent.findMany({ where: { organizationId, batchId }, select: { id: true, ownerId: true, createdAt: true } }),
     prisma.statusChange.findMany({
       where: { organizationId, batchId },
-      select: { id: true, contactId: true, companyId: true, fromStatus: true, toStatus: true, userId: true, createdAt: true },
+      select: { id: true, contactId: true, companyId: true, dealId: true, fromStatus: true, toStatus: true, userId: true, createdAt: true },
     }),
     meetingId
       ? prisma.opportunityMeeting.findFirst({
@@ -192,14 +240,85 @@ export async function undoLogCore(
   });
   // Made by this save: booked with an entry it wrote, or written during it
   // for a line it wrote.
-  // A meeting this save stashed was there before it.
-  const madeHere = (row: (typeof meetings)[number]) =>
-    readStash(row.outcomeUndo)?.batchId !== batchId &&
-    ((row.eventId !== null && eventIds.includes(row.eventId)) ||
-      (row.activityId !== null && activityIds.includes(row.activityId) && inSave(row.createdAt)));
+  // A meeting this save stashed was there before it — unless the save made
+  // it a moment before stashing it (a meeting logged Held with no booking:
+  // the row is written for this save's line, then held). That one goes,
+  // or Undo left a meeting with no line and no entry on the tile, asking
+  // "how did it go?" about nothing (final audit, Nov 11, 2026).
+  const madeHere = (row: (typeof meetings)[number]) => {
+    const stash = readStash(row.outcomeUndo);
+    if (stash?.batchId === batchId) {
+      return (
+        inSave(row.createdAt) &&
+        stash.outcome === null &&
+        stash.activityId !== null &&
+        activityIds.includes(stash.activityId) &&
+        (!stash.event || eventIds.includes(stash.event.id))
+      );
+    }
+    return (
+      (row.eventId !== null && eventIds.includes(row.eventId)) ||
+      (row.activityId !== null && activityIds.includes(row.activityId) && inSave(row.createdAt))
+    );
+  };
   const dropMeetings = meetings.filter(madeHere).map((row) => row.id);
   const resetMeetings = meetings.filter((row) => !madeHere(row));
-  const opportunityIds = [...new Set(meetings.map((row) => row.opportunityId))];
+
+  // Deals the save made or moved (Not moving forward after a Held writes
+  // its Lost move into the Held's save, final audit Nov 11, 2026). A deal's
+  // own ladder rows name no person. One made during the save goes, while
+  // nothing has been added to it since (no quote, contract or job); one it
+  // moved goes back to the stage it was at, with the day it got there,
+  // while it is still where the save left it.
+  const dealRows = changes.filter((row) => row.dealId && !row.contactId && !row.companyId);
+  const dealIds = [...new Set(dealRows.map((row) => row.dealId!))];
+  const deals = dealIds.length
+    ? await prisma.deal.findMany({
+        where: { organizationId, id: { in: dealIds } },
+        select: {
+          id: true,
+          stage: true,
+          createdAt: true,
+          project: { select: { id: true } },
+          opportunity: { select: { id: true } },
+          _count: { select: { quotes: true, contracts: true } },
+        },
+      })
+    : [];
+  const dropDeals: string[] = [];
+  const restoreDeals: { id: string; start: string; end: string; stageChangedAt: Date }[] = [];
+  for (const deal of deals) {
+    const rows = dealRows.filter((row) => row.dealId === deal.id).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const tos = new Set(rows.map((row) => row.toStatus));
+    const start = rows.find((row) => !tos.has(row.fromStatus ?? ""))?.fromStatus ?? rows[0].fromStatus;
+    const end = rows[rows.length - 1].toStatus;
+    if (inSave(deal.createdAt)) {
+      if (!deal.project && deal._count.quotes === 0 && deal._count.contracts === 0) dropDeals.push(deal.id);
+      continue;
+    }
+    if (!start || deal.stage !== end) continue;
+    // The day it reached `start`: that move's own row (an Archived deal
+    // keeps the day its contract went out, as the sweep does).
+    const before = await prisma.statusChange.findFirst({
+      where: {
+        organizationId,
+        dealId: deal.id,
+        contactId: null,
+        companyId: null,
+        toStatus: start === "ARCHIVED" ? "CONTRACT_SENT" : start,
+        OR: [{ batchId: null }, { batchId: { not: batchId } }],
+      },
+      orderBy: { on: "desc" },
+      select: { on: true },
+    });
+    restoreDeals.push({ id: deal.id, start, end, stageChangedAt: before?.on ?? deal.createdAt });
+  }
+  const opportunityIds = [
+    ...new Set([
+      ...meetings.map((row) => row.opportunityId),
+      ...deals.map((deal) => deal.opportunity?.id).filter((id): id is string => Boolean(id)),
+    ]),
+  ];
 
   // The history lines a meeting answer changed that this save did not
   // write: put back as the save found them (or, for a save from before the
@@ -289,10 +408,32 @@ export async function undoLogCore(
         });
       }
 
+      // A deal the save made comes off its tile and goes (its own ladder
+      // rows with it); one it moved goes back where it was.
+      if (dropDeals.length) {
+        await tx.opportunity.updateMany({ where: { organizationId, dealId: { in: dropDeals } }, data: { dealId: null } });
+        await tx.deal.deleteMany({ where: { organizationId, id: { in: dropDeals } } });
+      }
+      for (const deal of restoreDeals) {
+        await tx.deal.updateMany({
+          where: { id: deal.id, organizationId, stage: deal.end as DealStage },
+          data: { stage: deal.start as DealStage, stageChangedAt: deal.stageChangedAt },
+        });
+      }
+
       for (const opportunityId of opportunityIds) {
         const opportunity = await tx.opportunity.findFirst({
           where: { id: opportunityId, organizationId },
-          select: { id: true, stage: true, dealId: true, completedAt: true, createdAt: true, _count: { select: { meetings: true } } },
+          select: {
+            id: true,
+            stage: true,
+            dealId: true,
+            deal: { select: { stage: true } },
+            completedAt: true,
+            convertedAt: true,
+            createdAt: true,
+            _count: { select: { meetings: true } },
+          },
         });
         if (!opportunity || !from) continue;
         if (!opportunity.dealId && opportunity._count.meetings === 0 && inSave(opportunity.createdAt)) {
@@ -302,6 +443,15 @@ export async function undoLogCore(
         await tx.opportunityContact.deleteMany({
           where: { opportunityId: opportunity.id, fromMeeting: true, createdAt: { gte: from, lte: until! }, role: { not: "PRIMARY" } },
         });
+        // Not a deal (any more): no deal, or one back before Quote Sent. Its
+        // "Deal Created" goes when the save is what converted it.
+        const converted = Boolean(opportunity.deal && CONVERTED_STAGES.includes(opportunity.deal.stage));
+        if (!converted && opportunity.convertedAt && inSave(opportunity.convertedAt)) {
+          await tx.opportunity.updateMany({ where: { id: opportunity.id, organizationId }, data: { convertedAt: null } });
+          await tx.opportunityLog.deleteMany({
+            where: { opportunityId: opportunity.id, kind: "DEAL_CREATED", occurredAt: opportunity.convertedAt },
+          });
+        }
         if (!opportunity.dealId && opportunity.stage === "MEETING_COMPLETED" && inSave(opportunity.completedAt)) {
           await tx.opportunity.updateMany({
             where: { id: opportunity.id, organizationId },
