@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { getTimeZone } from "@/lib/organization";
-import { prisma } from "@/lib/prisma";
+import { prefWords, readUiPrefsWithLegacy } from "@/lib/user-prefs";
 import { formatCents, formatDate, pct } from "@/lib/format";
 import { CONTACT_STATUS_LABELS, type ContactStatusValue } from "@/lib/constants";
 import { loadStats, PERIODS, type PeriodKey, type RepRow } from "@/lib/stats";
@@ -71,13 +71,14 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
   const [stats, users, me] = await Promise.all([
     loadStats(organizationId, { period, userIds: repIds, timeZone }),
     loadWorkspaceUsers(organizationId),
-    prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } }),
+    readUiPrefsWithLegacy(userId),
   ]);
   const t = stats.totals;
   const p = stats.previous;
   const rate = (a: number, b: number) => (b ? a / b : null);
-  const prefs = me?.uiPrefs && typeof me.uiPrefs === "object" && !Array.isArray(me.uiPrefs) ? (me.uiPrefs as Record<string, unknown>) : {};
-  const columns = readLeaderboardColumns(prefs.statsColumns);
+  // uiPrefs stats.columns; the top-level statsColumns an earlier build
+  // saved is read when that isn't set.
+  const columns = readLeaderboardColumns(prefWords(me.prefs, "stats", "columns") ?? me.legacy.statsColumns);
 
   const href = (changes: { period?: string; reps?: string[] }) => {
     const search = new URLSearchParams();

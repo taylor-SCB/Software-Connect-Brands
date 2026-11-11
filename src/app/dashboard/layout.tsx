@@ -32,6 +32,8 @@ export default async function DashboardLayout({
     .map((word) => word.charAt(0).toUpperCase())
     .join("");
 
+  const brandOnBody = /^#[0-9a-fA-F]{3,8}$/.test(organization.primaryColor ?? "") ? organization.primaryColor : null;
+
   return (
     // The tenant's brand color is injected here, so every descendant —
     // buttons, glows, focus rings, badges — reskins from one variable.
@@ -40,6 +42,12 @@ export default async function DashboardLayout({
       style={{ ["--brand" as string]: organization.primaryColor }}
       data-theme={theme}
     >
+      {/* The brand colour on <body> too (Nov 11, 2026), once for every
+          panel drawn there through a portal — sheets, Saved · Undo toasts,
+          floating menus, dialogs — which sit outside this shell and lost the
+          tenant's colour. Server-rendered, so there is no flash, and gone
+          when the dashboard is left. Only a plain hex colour is written. */}
+      {brandOnBody && <style data-brand-on-body>{`body{--brand:${brandOnBody}}`}</style>}
       {/* The nav scrolls inside the sidebar and the account and Log out
           stay pinned at its foot (audit fix, Nov 10, 2026): on a short
           laptop screen the look switch had pushed Log out below the

@@ -538,7 +538,8 @@ function isoDaysAgo(n) {
   await until(
     async () => {
       const prefs = (await sql(`SELECT "uiPrefs" FROM "User" WHERE email=$1`, [EMAIL])).rows[0].uiPrefs;
-      return prefs && Array.isArray(prefs.statsColumns) && prefs.statsColumns.includes("showRate") && prefs.statsColumns.includes("calls");
+      const cols = prefs && prefs.stats && prefs.stats.columns;
+      return Array.isArray(cols) && cols.includes("showRate") && cols.includes("calls");
     },
     "the columns to be saved",
   );
@@ -552,11 +553,51 @@ function isoDaysAgo(n) {
   await page.getByTestId("stats-columns").click();
   await page.getByTestId("stats-columns-reset").click();
   await until(
-    async () => ((await sql(`SELECT "uiPrefs" FROM "User" WHERE email=$1`, [EMAIL])).rows[0].uiPrefs.statsColumns || []).length === 6,
+    async () => (((await sql(`SELECT "uiPrefs" FROM "User" WHERE email=$1`, [EMAIL])).rows[0].uiPrefs.stats || {}).columns || []).length === 6,
     "the usual columns to be saved",
   );
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("[data-testid=stats-leaderboard] th").count(), 7);
+
+  log("Sprint (integration): the columns live in uiPrefs stats.columns beside other screens' choices, and a choice saved at the top level by the earlier build still opens");
+  const savedPrefs = (await sql(`SELECT "uiPrefs" FROM "User" WHERE email=$1`, [EMAIL])).rows[0].uiPrefs;
+  assert.equal(savedPrefs.statsColumns, undefined, "nothing written at the top level");
+  await sql(`UPDATE "User" SET "uiPrefs" = jsonb_build_object('statsColumns', jsonb_build_array('tries', 'calls'), 'calendar', jsonb_build_object('scope', 'team')) WHERE email=$1`, [EMAIL]);
+  await page.reload();
+  await page.locator("[data-testid=stats-page]").waitFor();
+  assert.deepEqual(await page.locator("[data-testid=stats-leaderboard] th").allTextContents(), ["Rep", "Tries", "Calls"], "the old top-level choice is read");
+  await page.getByTestId("stats-columns").click();
+  await page.getByTestId("stats-column-talks").check();
+  await until(
+    async () => {
+      const prefs = (await sql(`SELECT "uiPrefs" FROM "User" WHERE email=$1`, [EMAIL])).rows[0].uiPrefs;
+      return JSON.stringify(prefs.stats && prefs.stats.columns) === JSON.stringify(["tries", "talks", "calls"]) && prefs.calendar && prefs.calendar.scope === "team";
+    },
+    "the namespaced save, with the calendar's choice kept",
+  );
+  await page.keyboard.press("Escape");
+  await sql(`UPDATE "User" SET "uiPrefs" = jsonb_build_object('statsColumns', jsonb_build_array('won')) || "uiPrefs" WHERE email=$1`, [EMAIL]);
+  await page.reload();
+  await page.locator("[data-testid=stats-page]").waitFor();
+  assert.deepEqual(await page.locator("[data-testid=stats-leaderboard] th").allTextContents(), ["Rep", "Tries", "Talks", "Calls"], "once saved, stats.columns wins over the old value");
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE email=$1`, [EMAIL]);
+  await page.reload();
+  await page.locator("[data-testid=stats-page]").waitFor();
+
+  log("Sprint (integration): anything drawn on <body> — here the Columns menu — carries the tenant's brand colour");
+  const brandBefore = (await sql(`SELECT "primaryColor" FROM "Organization" WHERE id=$1`, [org])).rows[0].primaryColor;
+  await sql(`UPDATE "Organization" SET "primaryColor" = '#e11d48' WHERE id=$1`, [org]);
+  await page.reload();
+  await page.locator("[data-testid=stats-page]").waitFor();
+  await page.getByTestId("stats-columns").click();
+  const menuBrand = await page.getByTestId("stats-columns-menu").evaluate((el) => ({
+    onBody: el.closest("[data-theme]") === null,
+    brand: getComputedStyle(el).getPropertyValue("--brand").trim(),
+  }));
+  assert.ok(menuBrand.onBody, "the menu is drawn outside the shell");
+  assert.equal(menuBrand.brand.toLowerCase(), "#e11d48");
+  await page.keyboard.press("Escape");
+  await sql(`UPDATE "Organization" SET "primaryColor" = $2 WHERE id=$1`, [org, brandBefore]);
 
   log("Sprint: 'Talks counted from' shows only when the period starts before outcomes were recorded");
   const since = (await sql(`SELECT "outcomesSince" FROM "Organization" WHERE id=$1`, [org])).rows[0].outcomesSince;

@@ -10,7 +10,7 @@ import {
   type LeaderboardFormat,
   type LeaderboardRow,
 } from "@/lib/stats-columns";
-import { saveLeaderboardColumns } from "./actions";
+import { saveUiPref } from "@/app/dashboard/prefs-actions";
 
 function show(value: number | null, format: LeaderboardFormat) {
   if (value === null) return "—";
@@ -43,8 +43,9 @@ export function Leaderboard({
     setColumns(ordered);
     setError(null);
     startSaving(async () => {
-      const result = await saveLeaderboardColumns(ordered);
-      if ("error" in result) setError(result.error);
+      // Remembered per person as uiPrefs stats.columns.
+      const result = await saveUiPref("stats", "columns", ordered);
+      if (result.error) setError(result.error);
     });
   }
 

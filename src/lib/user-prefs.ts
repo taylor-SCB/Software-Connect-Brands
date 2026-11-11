@@ -35,6 +35,19 @@ export async function readUiPrefs(userId: string): Promise<UiPrefs> {
   return cleanUiPrefs(user?.uiPrefs);
 }
 
+// The same, plus whatever was stored at the top level before the
+// namespaced shape (the Stats sprint saved `statsColumns` there, Nov 11,
+// 2026). Read only as a fallback when the namespaced key isn't set, so
+// nobody loses a saved choice; the next save writes the namespaced one,
+// which wins from then on.
+export async function readUiPrefsWithLegacy(userId: string): Promise<{ prefs: UiPrefs; legacy: Record<string, unknown> }> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } });
+  const raw = user?.uiPrefs;
+  const legacy: Record<string, unknown> = {};
+  if (isObject(raw)) for (const [key, value] of Object.entries(raw)) if (!isObject(value)) legacy[key] = value;
+  return { prefs: cleanUiPrefs(raw), legacy };
+}
+
 // One remembered choice as one of the allowed values, or null.
 export function prefChoice<T extends string>(prefs: UiPrefs, namespace: string, key: string, allowed: readonly T[]): T | null {
   const value = prefs[namespace]?.[key];

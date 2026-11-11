@@ -261,13 +261,10 @@ function TakeToast({ toast, onDone }: { toast: { ids: string[]; at: number } | n
 
 // Drawn on document.body: the list sits in a .card, whose backdrop blur
 // would make the card, not the screen, what position:fixed is placed in.
-// It carries the tenant's brand colour along, which is set on the
-// dashboard's shell rather than on the page.
 function OnBody({ children }: { children: React.ReactNode }) {
-  const [brand, setBrand] = useState<string | null>(null);
-  useEffect(() => {
-    const shell = document.querySelector<HTMLElement>("[data-theme]");
-    setBrand((shell ? getComputedStyle(shell).getPropertyValue("--brand").trim() : "") || "var(--brand)");
-  }, []);
-  return brand ? createPortal(<div style={{ ["--brand" as string]: brand }}>{children}</div>, document.body) : null;
+  // The tenant's brand colour reaches it from <body> (the dashboard layout
+  // puts it there once for every portal).
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
+  return ready ? createPortal(children, document.body) : null;
 }

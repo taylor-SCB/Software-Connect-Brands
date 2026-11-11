@@ -1,8 +1,9 @@
 // The Stats leaderboard's columns (Nov 11, 2026). Rep, Tries, Talks,
 // Connect rate, Meetings booked, Held and Won $ show by default; the rest
 // are one tap away under Columns, and each person's pick is remembered on
-// User.uiPrefs.statsColumns. Browser-safe: the page, the menu and the save
-// action all read this one list.
+// User.uiPrefs stats.columns (saveUiPref; an earlier top-level
+// statsColumns is read as a fallback). Browser-safe: the page and the
+// menu both read this one list.
 
 export const LEADERBOARD_COLUMNS = [
   { key: "tries", label: "Tries", format: "count", hint: "Calls, texts, emails and meetings logged, each save once" },
