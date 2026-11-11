@@ -90,6 +90,7 @@ async function rowCount(page, testId) {
 // A filter menu, opened and placed (FloatingMenu draws it hidden until it
 // has measured where it fits).
 async function openMenu(page, id) {
+  if (id.startsWith("filter-")) await openFilters(page);
   await page.getByTestId(id).click();
   const menu = page.getByTestId(`${id}-menu`);
   await menu.waitFor();
@@ -178,6 +179,7 @@ async function assertMenuInside(page, menu, what) {
   await page.locator("aside").getByRole("link", { name: "Favorite Companies" }).click();
   await page.waitForURL(/\/dashboard\/companies\/favorites$/);
   await page.locator("tr", { hasText: "Acme Towers" }).waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-fav").count(), 0, "Favorites toggle hidden on the sub-pane");
   await shot(page, "02-favorite-companies");
 
@@ -235,7 +237,7 @@ async function assertMenuInside(page, menu, what) {
   const csvPath = path.join(OUT, "import.csv");
   fs.writeFileSync(csvPath, rows.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   const summary = await page.getByTestId("import-summary").textContent();
   assert.match(summary, /65 contacts and 5 companies found/, summary); // Dana, Sam, Pat, Lee, Ivy + 60
@@ -268,7 +270,7 @@ async function assertMenuInside(page, menu, what) {
   assert.equal(seededGeneral, 1, "Construction has General");
 
   log("re-importing the same file updates instead of doubling");
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-start").click();
   await page.getByText("Imported 66 rows").waitFor({ timeout: 60000 });
@@ -305,15 +307,15 @@ async function assertMenuInside(page, menu, what) {
 
   log("State, Industry, Company Type and Company filters stack; Individual / Personal is a company type; chips remove; Clear all");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-state").click();
+  await openFilters(page); await page.getByTestId("filter-state").click();
   await page.getByRole("checkbox", { name: "TX" }).check();
   await page.waitForURL(/state=TX/);
   assert.equal(await pageSummary(page), "Showing 1–50 of 62 contacts", "TX: Dana + Sam + 60 at Big Co");
-  await page.getByTestId("filter-industry").click();
+  await openFilters(page); await page.getByTestId("filter-industry").click();
   await page.getByRole("checkbox", { name: "Construction" }).check();
   await page.waitForURL(/industry=Construction/);
   assert.equal(await pageSummary(page), "Showing 1–50 of 60 contacts", "TX + Construction = Big Co");
-  await page.getByTestId("filter-company-type").click();
+  await openFilters(page); await page.getByTestId("filter-company-type").click();
   const typeChoices = await page.getByRole("listbox", { name: "Company type" }).getByRole("checkbox").allTextContents();
   void typeChoices;
   await page.getByRole("checkbox", { name: "Individual / Personal" }).check();
@@ -326,9 +328,9 @@ async function assertMenuInside(page, menu, what) {
   await page.waitForURL(/^(?!.*state=)/);
   assert.equal(await pageSummary(page), "Showing 1–3 of 3 contacts", "Individual / Personal = Taylor Homeowner + Pat Solo + Ivy Blank");
   await page.getByRole("button", { name: "Clear all" }).click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
   assert.equal(await pageSummary(page), "Showing 1–50 of 66 contacts");
-  await page.getByTestId("filter-company").click();
+  await openFilters(page); await page.getByTestId("filter-company").click();
   await page.getByLabel("Search companies").fill("blue");
   await page.getByRole("checkbox", { name: /Bluebird ISP/ }).check();
   await page.waitForURL(/company=/);
@@ -340,7 +342,7 @@ async function assertMenuInside(page, menu, what) {
   await page.locator("tr", { hasText: "Sam Rivera" }).getByTestId("star").click();
   await page.waitForTimeout(400);
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-fav").click();
+  await openFilters(page); await page.getByTestId("filter-fav").click();
   await page.waitForURL(/fav=1/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 contacts");
   await page.locator("aside").getByRole("link", { name: "Favorite Contacts" }).click();
@@ -359,6 +361,7 @@ async function assertMenuInside(page, menu, what) {
   await page.locator("aside").getByRole("link", { name: "Contacts with Deals" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/with-deals$/);
   await page.locator("tr", { hasText: "Dana Owner" }).waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-deals").count(), 0, "With deals toggle hidden on the sub-pane");
   await page.goto(`${BASE}/dashboard/companies/with-deals`);
   await page.locator("tr", { hasText: "Acme Towers" }).waitFor();
@@ -368,11 +371,11 @@ async function assertMenuInside(page, menu, what) {
   log("companies list: filters and the Industry · Type column; a company page pages its people");
   await page.goto(`${BASE}/dashboard/companies`);
   assert.equal(await pageSummary(page), "Showing 1–5 of 5 companies");
-  await page.getByTestId("filter-industry").click();
+  await openFilters(page); await page.getByTestId("filter-industry").click();
   await page.getByRole("checkbox", { name: "Service Provider" }).check();
   await page.waitForURL(/industry=Service/);
   assert.equal(await pageSummary(page), "Showing 1–2 of 2 companies", "Bluebird + Gates");
-  await page.getByTestId("filter-company-type").click();
+  await openFilters(page); await page.getByTestId("filter-company-type").click();
   await page.getByRole("checkbox", { name: "Gates" }).check();
   await page.waitForURL(/type=Gates/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies");
@@ -420,7 +423,7 @@ async function assertMenuInside(page, menu, what) {
   const messyPath = path.join(OUT, "messy.csv");
   fs.writeFileSync(messyPath, messy.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(messyPath);
   const messySummary = await page.getByTestId("import-summary").textContent();
   assert.match(messySummary, /4 contacts and 4 companies found/, messySummary);
@@ -475,8 +478,8 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/contacts?q=r%25a`);
   assert.equal(await pageSummary(page), "No contacts", "% is not a wildcard");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-fav").click();
-  await page.getByTestId("filter-attn").click();
+  await openFilters(page); await page.getByTestId("filter-fav").click();
+  await openFilters(page); await page.getByTestId("filter-attn").click();
   await page.waitForURL(/fav=1.*attn=1|attn=1.*fav=1/);
 
   log("import v2 (Sept 27, 2026): Mailing City / Mailing State and a Location column land in City and State, Job Title beats Outlook's Mr./Ms. Title, the preview shows Title and City, State and names the columns it leaves out");
@@ -487,7 +490,7 @@ async function assertMenuInside(page, menu, what) {
   const v2Path = path.join(OUT, "mailing.csv");
   fs.writeFileSync(v2Path, v2.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(v2Path);
   await page.getByTestId("import-summary").waitFor();
   const previewRow = page.locator("tr", { hasText: "Mia Mailing" });
@@ -505,7 +508,7 @@ async function assertMenuInside(page, menu, what) {
     'Mr.,Lou,Location,Site Lead,lou@location.test,"Dallas, Texas, United States"',
   ];
   fs.writeFileSync(v2Path, v2b.join("\r\n") + "\r\n");
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(v2Path);
   await page.getByTestId("import-start").click();
   await page.getByText("Imported 1 row").waitFor({ timeout: 60000 });
@@ -516,7 +519,7 @@ async function assertMenuInside(page, menu, what) {
   log("mobile width: filter bar wraps, table scrolls, nothing overflows the page");
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("filter-state").waitFor();
+  await openFilters(page); await page.getByTestId("filter-state").waitFor();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);
   await shot(page, "09-mobile");
@@ -540,7 +543,7 @@ async function assertMenuInside(page, menu, what) {
   const found = async (list, q) => {
     await page.goto(`${BASE}/dashboard/${list}?q=${encodeURIComponent(q)}`);
     await page.getByTestId("page-summary").waitFor();
-    const cell = list === "contacts" ? "[data-testid=contact-row] td:nth-child(4) a.link" : "[data-testid=company-row] td:nth-child(3) a.link";
+    const cell = list === "contacts" ? "[data-testid=contact-row] td:nth-child(2) a.link" : "[data-testid=company-row] td:nth-child(2) a.link";
     return (await page.locator(cell).allTextContents()).map((t) => t.trim()).sort();
   };
   for (const typed of ["(870) 555-0123", "870-555-0123", "8705550123", "870.555.0123", "+1 870 555 0123", "555-0123"]) {
@@ -650,6 +653,7 @@ async function assertMenuInside(page, menu, what) {
       return { id: el?.getAttribute("data-testid") ?? "", label: (el?.closest("label")?.textContent ?? "").trim(), menu: el?.closest("[data-testid$='-menu']")?.getAttribute("data-testid") ?? "" };
     });
   const keyOpen = async (id) => {
+    await openFilters(page);
     await page.getByTestId(id).focus();
     await page.keyboard.press("Enter");
     const menu = page.getByTestId(`${id}-menu`);
@@ -699,7 +703,8 @@ async function assertMenuInside(page, menu, what) {
   assert.equal((await cursor()).label, "Touched in the last 7 days");
   await page.keyboard.press("Tab");
   await page.getByTestId("filter-activity-menu").waitFor({ state: "detached" });
-  assert.equal((await cursor()).id, "filter-job-title", "Tab past the last choice moves on to the next filter");
+  // Activity sits in the Filters panel's Stage group, before Lead Label (Nov 11, 2026).
+  assert.equal((await cursor()).id, "filter-lead-label", "Tab past the last choice moves on to the next filter");
   // A date box's month / day / year are walked by the browser, inside the menu.
   await keyOpen("filter-added");
   assert.equal((await cursor()).id, "added-from");
@@ -710,25 +715,37 @@ async function assertMenuInside(page, menu, what) {
   await page.getByTestId("filter-added-menu").waitFor({ state: "detached" });
   assert.equal((await cursor()).id, "filter-added");
   // Opened with a click the cursor stays on the button, as before; Tab goes in.
-  await page.getByTestId("filter-rep").click();
+  await openFilters(page); await page.getByTestId("filter-rep").click();
   await page.getByTestId("filter-rep-menu").waitFor();
   await page.waitForTimeout(100);
   assert.equal((await cursor()).id, "filter-rep", "a click leaves the cursor on the button");
   await page.keyboard.press("Tab");
-  assert.deepEqual(await cursor(), { id: "", label: "Unassigned", menu: "filter-rep-menu" }, "Tab from the clicked-open button goes into its menu");
+  // "Me" is the Rep filter's first choice since Nov 11, 2026.
+  const firstRep = await cursor();
+  assert.equal(firstRep.menu, "filter-rep-menu", "Tab from the clicked-open button goes into its menu");
+  assert.match(firstRep.label, /^Me \(/, "Me comes first");
   await page.keyboard.press("Space");
-  await page.waitForURL(/rep=none/);
+  await page.waitForURL(/rep=/);
   await page.keyboard.press("Escape");
   await page.getByTestId("filter-rep-menu").waitFor({ state: "detached" });
   assert.equal((await cursor()).id, "filter-rep");
 
   log("audit fixes (UX review): Companies list phone numbers stay on one line; its last columns are reached by scrolling the table, as on Contacts");
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto(`${BASE}/dashboard/companies`);
+  // Phone and Status are Columns-menu columns since the BDR redesign (Nov
+  // 11, 2026), and below 768px the list is cards with a Call button.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${BASE}/dashboard/companies`);
+  for (const key of ["phone", "status"]) {
+    await page.getByTestId("columns").click();
+    const box = page.getByTestId(`column-${key}`);
+    if (!(await box.isChecked())) await box.check();
+    await page.keyboard.press("Escape");
+  }
+  await page.locator("thead th", { hasText: "Status" }).waitFor();
+  {
     const phones = await page.locator("[data-testid=company-row-phone] a").evaluateAll((links) => links.map((a) => [a.textContent.trim(), a.getClientRects().length]));
     assert.ok(phones.length >= 4, `phones listed: ${JSON.stringify(phones)}`);
-    for (const [number, lines] of phones) assert.equal(lines, 1, `${number} breaks onto ${lines} lines at ${width}px`);
+    for (const [number, lines] of phones) assert.equal(lines, 1, `${number} breaks onto ${lines} lines at 1440px`);
     const reach = await page.evaluate(() => {
       const box = document.querySelector("table").parentElement;
       box.scrollLeft = box.scrollWidth;
@@ -740,9 +757,20 @@ async function assertMenuInside(page, menu, what) {
     });
     assert.equal(reach.name, "Status");
     assert.equal(reach.overflow, "auto", "the table scrolls inside its card, like the Contacts list");
-    assert.ok(reach.inside, `at ${width}px the Status column can be scrolled into view`);
-    assert.ok(reach.page <= reach.window + 1, `at ${width}px the page itself scrolls sideways (${reach.page}px)`);
+    assert.ok(reach.inside, "at 1440px the Status column can be scrolled into view");
+    assert.ok(reach.page <= reach.window + 1, `at 1440px the page itself scrolls sideways (${reach.page}px)`);
   }
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto(`${BASE}/dashboard/companies`);
+  const calls = await page.locator("[data-testid=company-card] [data-testid=card-call]").evaluateAll((links) =>
+    links.map((a) => ({ height: a.getBoundingClientRect().height, right: a.getBoundingClientRect().right })),
+  );
+  assert.ok(calls.length >= 4, `Call buttons on the cards: ${calls.length}`);
+  for (const call of calls) {
+    assert.ok(call.height >= 44, `a Call button is ${call.height}px tall`);
+    assert.ok(call.right <= 390, "and on the screen");
+  }
+  assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 391, "the page doesn't scroll sideways at 390px");
   await shot(page, "11-ux-companies-phone");
 
   void acmeUrl;
@@ -752,3 +780,20 @@ async function assertMenuInside(page, menu, what) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

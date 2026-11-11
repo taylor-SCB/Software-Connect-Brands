@@ -62,7 +62,7 @@ async function importFile(page, name, lines) {
   const file = path.join(OUT, name);
   fs.writeFileSync(file, lines.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(file);
   await page.getByTestId("import-summary").waitFor();
 }
@@ -216,7 +216,7 @@ async function runImport(page, rows) {
   log("merging keeps a mobile the kept contact lacked");
   const bob = (await contact(org, "bob@mobile.test"))[0];
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.locator("[data-testid=merge-open]").click();
+  await cleanUp(page, "merge");
   const merge = page.locator("[data-testid=merge-dialog]");
   const results = merge.locator("[data-testid=merge-results] label");
   // The first ticked is kept: Bob, who has no mobile.
@@ -247,3 +247,20 @@ async function runImport(page, rows) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

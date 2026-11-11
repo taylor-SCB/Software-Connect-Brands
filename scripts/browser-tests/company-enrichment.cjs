@@ -96,7 +96,7 @@ async function pageSummary(page) {
 }
 async function importCsv(page, csvPath, expectedRows) {
   await page.goto(`${BASE}/dashboard/companies`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-summary").waitFor();
   await page.getByTestId("import-start").click();
@@ -233,32 +233,33 @@ async function company(org, name) {
   const title = await acmeRow.locator("[data-testid=auto-pill][data-field=phone]").getAttribute("title");
   assert.match(title, /^Filled in by the app on [A-Z][a-z]{2} \d{1,2}, \d{4}$/, title);
   await shot(page, "02-companies-list-marks");
-  await page.getByTestId("filter-auto").click();
+  await openFilters(page); await page.getByTestId("filter-auto").click();
   await page.waitForURL(/auto=1/);
   assert.equal(await pageSummary(page), "Showing 1–6 of 6 companies", "Auto-filled: everyone but Bluebird");
   assert.ok(await page.getByTestId("active-filters").getByText("Auto-filled").isVisible(), "toggle shows as a chip");
   await page.getByTestId("active-filters").locator("span.badge", { hasText: "Auto-filled" }).getByRole("button", { name: "Remove filter" }).click();
   await page.waitForURL(/^(?!.*auto=)/);
   assert.equal(await pageSummary(page), "Showing 1–7 of 7 companies");
-  await page.getByTestId("filter-industry").click();
+  await openFilters(page); await page.getByTestId("filter-industry").click();
   await page.getByRole("checkbox", { name: "Service Provider" }).check();
   await page.waitForURL(/industry=Service/);
   assert.equal(await pageSummary(page), "Showing 1–2 of 2 companies", "the Industry filter finds the auto-tagged electrician and supplier");
-  await page.getByTestId("filter-company-type").click();
+  await openFilters(page); await page.getByTestId("filter-company-type").click();
   await page.getByRole("checkbox", { name: "Distributor" }).check();
   await page.waitForURL(/type=Distributor/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies", "the new Distributor type is in the pick list and finds the supplier");
-  await page.getByTestId("filter-auto").click();
+  await openFilters(page); await page.getByTestId("filter-auto").click();
   await page.waitForURL(/auto=1/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies", "filters stack");
   await page.getByRole("button", { name: "Clear all" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   assert.equal(await pageSummary(page), "Showing 1–7 of 7 companies");
   await page.goto(`${BASE}/dashboard/contacts?q=dana`);
   assert.deepEqual(await pills(page.locator("tr", { hasText: "Dana Ruiz" })), ["industries"], "the contact row marks the company's tags");
   // The toggle is companies-only: a pasted ?auto=1 on contacts filters nothing and claims nothing.
   await page.goto(`${BASE}/dashboard/contacts?auto=1`);
   assert.equal(await page.getByTestId("active-filters").count(), 0, "no Auto-filled chip on the contacts list");
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-auto").count(), 0, "no Auto-filled toggle on the contacts list");
 
   log(`seed ${SEEDED.toLocaleString()} bare companies + 30 contacts in SQL; Fill in missing counts; stop after the first batch of 500; reopen and finish; totals match SQL; order unchanged`);
@@ -286,7 +287,7 @@ async function company(org, name) {
   assert.equal(await pageSummary(page), `Showing 1–50 of ${(SEEDED + 7).toLocaleString()} companies`);
   const orderBefore = await page.locator("[data-testid=company-row] td:nth-child(3)").allTextContents();
   assert.equal(orderBefore.length, 50);
-  await page.getByTestId("fill-missing-button").click();
+  await cleanUp(page, "fill");
   const plan = await page.getByTestId("fill-missing-plan").textContent();
   // Untagged: the 1,200 seeded. No phone: those + Lakeside + Zqx. No website: those + Zqx + Typed Co.
   assert.match(plan, /tag 1,200 companies and try to fill in 1,202 phones and 1,202 websites/, plan);
@@ -324,7 +325,7 @@ async function company(org, name) {
   assert.deepEqual(afterStop, { tagged: 500, oldest_tagged: true, next_untouched: true }, JSON.stringify(afterStop));
   // Reopened, the plan is what is left (every seeded company still lacks
   // a phone and a website, so it is 1,203 again) and the run finishes.
-  await page.getByTestId("fill-missing-button").click();
+  await cleanUp(page, "fill");
   const rest = await page.getByTestId("fill-missing-plan").textContent();
   assert.match(rest, /tag 700 companies and try to fill in 1,202 phones and 1,202 websites/, rest);
   await page.getByTestId("fill-missing-start").click();
@@ -443,7 +444,7 @@ async function company(org, name) {
             ('ctc_real','${org}','cmp_real','Ana Ruiz','ana@gulflockworks.com','512-555-0102',now())`,
   );
   await page.goto(`${BASE}/dashboard/companies`);
-  await page.getByTestId("fill-missing-button").click();
+  await cleanUp(page, "fill");
   await page.getByTestId("fill-missing-plan").waitFor();
   await page.getByTestId("fill-missing-start").click();
   await page.getByTestId("fill-missing-summary").waitFor({ timeout: 120000 });
@@ -479,3 +480,20 @@ async function company(org, name) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

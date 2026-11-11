@@ -559,9 +559,18 @@ async function withOldGlass(page, selector, body) {
   // "+ Include multiple contacts" scrolled the page to find itself. Each
   // window is opened from the top of its page, as a person would.
   const DIALOGS = [
-    ["Import CSV", "/dashboard/contacts", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
-    ["Merge Contacts", "/dashboard/contacts", (p) => p.getByTestId("merge-open").first()],
-    ["Email (Contacts list)", "/dashboard/contacts", (p) => p.getByRole("button", { name: /^Email$/ }).first()],
+    // Import CSV and Merge sit under "Clean up" since Nov 11, 2026; on a
+    // phone the list's Email does too.
+    ["Import CSV", "/dashboard/contacts", (p) => fromCleanUp(p, "import")],
+    ["Merge Contacts", "/dashboard/contacts", (p) => fromCleanUp(p, "merge")],
+    [
+      "Email (Contacts list)",
+      "/dashboard/contacts",
+      async (p) => {
+        const email = p.getByRole("button", { name: /^Email$/ }).first();
+        return (await email.isVisible()) ? email : fromCleanUp(p, "email");
+      },
+    ],
     ["Email (a contact)", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /^Email$/ }).first()],
     ["Additional Account", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByTestId("additional-account")],
     // Drawn inside the Log activity card: in Dark that card's glass blur
@@ -575,7 +584,7 @@ async function withOldGlass(page, selector, body) {
         return p.getByRole("button", { name: "+ others" });
       },
     ],
-    ["Import CSV (Companies)", "/dashboard/companies", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
+    ["Import CSV (Companies)", "/dashboard/companies", (p) => fromCleanUp(p, "import")],
   ];
   const openFromTop = async (p, url, button) => {
     await p.goto(`${BASE}${url}`);
@@ -638,3 +647,11 @@ async function withOldGlass(page, selector, body) {
   console.error("\nFAILED:", err.message);
   process.exit(1);
 });
+
+// Opens "Clean up" and hands back one of its items (Nov 11, 2026).
+async function fromCleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  const entry = p.getByTestId(`cleanup-${item}`);
+  await entry.waitFor();
+  return entry;
+}
