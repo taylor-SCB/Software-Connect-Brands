@@ -5,7 +5,10 @@
  * the 20,000-row import step below, which is enough to time a batch),
  * then times the pages a user would actually open and fails if any of
  * them is slower than the budget. Run it before anything touching these
- * lists goes live.
+ * lists goes live. Since the final audit (Nov 11, 2026) My day, the Daily
+ * Rundown and the Agenda are timed again after the calendar seed, beside a
+ * done calendar entry for every seeded touch, and the plans are checked for
+ * the open-entries and Activity-by-rep indexes.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it.
@@ -315,7 +318,72 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     console.log(`     every pulse adds up to ${sum} of ${all}`);
     assert.equal(sum, all, "every person is under exactly one pulse");
   }
-  await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND id LIKE 'lev%'`, [org]);
+
+  log("audit fixes: My day, the Daily Rundown and the Agenda timed after the calendar seed, beside 100,000 done entries, through the open-entries index");
+  // Final audit (Nov 11, 2026). My day was timed above, before any calendar
+  // entry existed, so its due lookup was never measured. Every logged touch
+  // writes a calendar entry ticked done, so a real workspace's past is
+  // almost all done entries: one here per seeded touch. The overdue reads
+  // (My day's due_ev, the Rundown's Overdue, the Agenda's) walked all of
+  // them through ("organizationId","startOn") and threw them away; the
+  // partial index CalendarEvent_open_startOn_idx holds only the open ones.
+  // And a teammate who logged nothing makes Team today's sellingReps probe
+  // Activity for them (Activity_organizationId_userId_createdAt_idx).
+  {
+    await sql(
+      `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "contactId", "ownerId", "activityId", auto, "doneAt", "updatedAt")
+       SELECT 'lvd' || substr(a.id, 3), a."organizationId",
+         CASE a.type WHEN 'PHONE_CALL' THEN 'Call' WHEN 'EMAIL' THEN 'Email' WHEN 'TEXT' THEN 'Text' ELSE 'Meeting' END || ' · seeded',
+         CASE a.type WHEN 'PHONE_CALL' THEN 'Call' WHEN 'EMAIL' THEN 'Email' WHEN 'TEXT' THEN 'Text' ELSE 'Meeting' END,
+         a."occurredAt"::date, a."contactId", a."userId", a.id, true, a."occurredAt", now()
+       FROM "Activity" a WHERE a."organizationId" = $1 AND a.id LIKE 'la%' AND a.marketing = false
+       ON CONFLICT DO NOTHING`,
+      [org],
+    );
+    const quietMate = "usr_load_quiet_mate";
+    await sql(`DELETE FROM "User" WHERE id = $1`, [quietMate]);
+    await sql(
+      `INSERT INTO "User" (id, name, email, "passwordHash", role, "organizationId") SELECT $1, 'Quinn Quiet', 'test-load-quiet@example.com', "passwordHash", 'MEMBER', $2 FROM "User" WHERE id = $3`,
+      [quietMate, org, ownerId],
+    );
+    await sql(`ANALYZE "CalendarEvent"; ANALYZE "Activity";`);
+    const done = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId" = $1 AND "doneAt" IS NOT NULL`, [org])).rows[0].n;
+    console.log(`     ${done.toLocaleString("en-US")} done calendar entries behind the 3,000 open ones`);
+    assert.ok(done >= CONTACTS / 2 - 1, "a done entry for every seeded touch");
+
+    // The plans name the new indexes (EXPLAIN, the statements as the app sends them).
+    const overdueTypes = ["Call", "Meeting", "Email", "Text", "Quote due", "Quote follow up", "Contract follow up"];
+    const planOf = async (text, params) => JSON.stringify((await sql(`EXPLAIN (FORMAT JSON) ${text}`, params)).rows[0]["QUERY PLAN"]);
+    const overduePlan = await planOf(
+      `SELECT id FROM "CalendarEvent" WHERE "organizationId" = '${org}' AND "doneAt" IS NULL AND type IN (${overdueTypes.map((type) => `'${type}'`).join(",")})
+         AND "startOn" < current_date AND ("endOn" IS NULL OR "endOn" < current_date) ORDER BY "startOn" ASC, "startTime" ASC LIMIT 60`,
+    );
+    assert.match(overduePlan, /CalendarEvent_open_startOn_idx/, `the Rundown's and the Agenda's Overdue read the open entries only: ${overduePlan.slice(0, 300)}`);
+    const sellingPlan = await planOf(
+      `SELECT 1 FROM "Activity" a WHERE a."organizationId" = '${org}' AND a."userId" = '${quietMate}' AND a.marketing = false AND a."createdAt" >= now() - interval '30 days' LIMIT 1`,
+    );
+    assert.match(sellingPlan, /Activity_organizationId_userId_createdAt_idx/, `sellingReps' probe for a teammate with nothing logged: ${sellingPlan.slice(0, 300)}`);
+
+    await timed(page, "audit fixes: My day after the calendar seed (due follow-ups from 3,000 open entries among 100,000 done)", `${BASE}/dashboard?view=myday`, "[data-testid=up-next-row]");
+    assert.ok((await page.locator("[data-testid=up-next-row][data-category=late]").count()) > 0, "Up next has the seed's late follow-ups: the due lookup ran on real entries");
+    await timed(page, "audit fixes: Daily Rundown with Team today after the calendar seed (a teammate with nothing logged)", `${BASE}/dashboard?report=daily`, "[data-testid=team-row]");
+    const overdueSql = (
+      await sql(
+        `SELECT count(*)::int AS n FROM "CalendarEvent" e JOIN "Organization" o ON o.id = e."organizationId"
+          WHERE e."organizationId" = $1 AND e."doneAt" IS NULL AND e.type = ANY($2)
+            AND e."startOn" < (now() AT TIME ZONE o."timeZone")::date AND (e."endOn" IS NULL OR e."endOn" < (now() AT TIME ZONE o."timeZone")::date)`,
+        [org, overdueTypes],
+      )
+    ).rows[0].n;
+    assert.ok(overdueSql > 60, `the seed has more overdue than one screen (${overdueSql})`);
+    assert.match((await page.locator("[data-testid=rundown-overdue] h3").textContent()).replace(/,/g, ""), new RegExp(`Overdue follow-ups · ${overdueSql}\\b`));
+    assert.equal(await page.locator("[data-testid=team-row]").count(), 1, "Quinn, who owns nothing and logged nothing, isn't a selling rep");
+    await timed(page, "audit fixes: Calendar Agenda after the calendar seed (its Overdue alone, not the whole log)", `${BASE}/dashboard/calendar?view=agenda&scope=team`, "[data-testid=agenda-overdue]");
+    assert.equal(await page.locator("[data-testid=agenda-overdue] [data-testid=agenda-row]").count(), 60, "the Overdue column's 60, oldest first");
+    await page.locator("[data-testid=agenda-overdue-more]").waitFor();
+    await sql(`DELETE FROM "User" WHERE id = $1`, [quietMate]);
+  }
+  await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND (id LIKE 'lev%' OR id LIKE 'lvd%')`, [org]);
 
   log("bulk assign the first 1,000 of every Unassigned contact in one go");
   await page.goto(`${BASE}/dashboard/contacts?rep=none`);

@@ -741,6 +741,9 @@ model Activity {
   @@index([projectId])
   @@index([batchId])
   @@index([contactId, outcome, occurredAt])
+  // Team today's "last logged" and who counts as selling (audit, Nov 11,
+  // 2026, migration 20261111190000_audit_cross).
+  @@index([organizationId, userId, createdAt])
 }
 
 // Every quote line must carry one of these so the tag totals grid at the
@@ -2401,6 +2404,11 @@ model CalendarEvent {
   @@index([ownerId, startOn])
   @@index([quoteId])
   @@index([contractId])
+  // Also "CalendarEvent_open_startOn_idx" on (organizationId, startOn) WHERE
+  // "doneAt" IS NULL, the open entries only (audit, Nov 11, 2026, migration
+  // 20261111190000_audit_cross): My day's due follow-ups, the Rundown's and
+  // the calendar's Overdue. Hand-written in SQL, because a partial index
+  // needs Prisma's partialIndexes preview; Prisma's diff leaves it alone.
 }
 
 // A thing to do on a job, with an optional day it is wanted by. Kept
