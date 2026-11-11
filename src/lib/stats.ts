@@ -10,15 +10,14 @@ import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 //
 // Counting rules, written once so every tile agrees:
 // - A funnel step counts PEOPLE: distinct contacts who reached that status
-//   inside the period (the contact rows of StatusChange; a deal's move
-//   writes one for its contact too).
+//   or a later one inside the period (the contact rows of StatusChange; a
+//   deal's move writes one for its contact too). See rollUpReached.
 // - A step that came with a deal (quote out, contract out, won, lost) is
 //   credited to the deal's rep; any other step to whoever made the move.
 // - Money is DEALS: the value of deals that reached Won in the period,
 //   credited to the deal's rep.
-// - Conversion rates compare two counts over the same period, so a quick
-//   month can read above 100% when last month's meetings complete in this
-//   one. Close rate is Won / (Won + Lost).
+// - Funnel and conversion rates compare two of those counts, so they
+//   never read above 100%. Close rate is Won / (Won + Lost).
 
 // Connected (Nov 11, 2026) sits between Attempted (CONTACTED) and
 // Interested; Interested is a side step a person may skip.
@@ -221,7 +220,28 @@ async function production(organizationId: string, from: Date, to: Date) {
       }
     }
   }
+  for (const steps of people.values()) rollUpReached(steps);
   return { people, won };
+}
+
+// "Reached a step" means got to it or past it (audit, Nov 11, 2026): a
+// person booked straight from a first call reached Attempted and Connected
+// on the way to Meeting Set even though no move into those two was ever
+// written in the period. So each ladder step counts the people moved into
+// it or any later step, which keeps every funnel step at or under the one
+// before and every step rate at or under 100% (it read "120% from
+// Attempted" when it counted only moves into each step). Interested is a
+// side step: it implies Attempted and Connected, but nothing later implies
+// it. Lost is a side exit and implies nothing.
+const LADDER = FUNNEL.filter((step) => step !== "INTERESTED");
+function rollUpReached(steps: Map<string, Set<string>>) {
+  const later = new Set<string>();
+  for (let index = LADDER.length - 1; index >= 0; index -= 1) {
+    const step = LADDER[index];
+    for (const id of steps.get(step) ?? []) later.add(id);
+    if (step === "CONNECTED") for (const id of steps.get("INTERESTED") ?? []) later.add(id);
+    if (later.size) steps.set(step, new Set(later));
+  }
 }
 
 export async function loadStats(

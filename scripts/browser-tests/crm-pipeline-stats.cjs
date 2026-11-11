@@ -364,8 +364,11 @@ async function openMore(p) {
   const funnelSteps = await page.locator("[data-testid=funnel-step]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-step")));
   assert.deepEqual(funnelSteps, ["CONTACTED", "CONNECTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"], "Attempted → Connected → … → Won");
   const funnelCounts = await page.locator("[data-testid=funnel-count]").allTextContents();
-  assert.equal(funnelCounts[2], "2", "Ava and Ben reached Meeting Set");
-  assert.equal(funnelCounts[3], "2", "Ben by hand, Ava by the skipped step");
+  // A step counts everyone who reached it or a later one (audit, Nov 11,
+  // 2026): Cara, won in the period, reached Meeting Set on her way to Won.
+  assert.equal(funnelCounts[2], "3", "Ava and Ben reached Meeting Set, and Cara on her way to Won");
+  assert.equal(funnelCounts[3], "3", "Ben by hand, Ava by the skipped step, Cara on her way to Won");
+  assert.equal(funnelCounts[6], "1", "Cara is the one Won");
   await shot(page, "04-stats");
 
   log("the leaderboard credits Nic with the meeting he booked and Cara's win");
@@ -677,6 +680,44 @@ async function openMore(p) {
   await pocket.close();
   await sql(`DELETE FROM "Activity" WHERE id LIKE 'a_ps_sprint_%'`);
   await sql(`DELETE FROM "OpportunityMeeting" WHERE id='om_ps_sprint'`);
+
+  log("audit fixes: the funnel counts everyone who reached a step or a later one, so no step reads more people than the one before and no rate passes 100%");
+  // Three people booked straight from a first call: the only moves written
+  // in the period go into Meeting Set (two of them) and Quote Sent (one).
+  // Counting moves into each step alone gave Meeting Set more people than
+  // Attempted and Connected ("120% from Attempted").
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES
+       ('ctc_ps_jump1',$1,'Jump One','MEETING_SET',now()),
+       ('ctc_ps_jump2',$1,'Jump Two','MEETING_SET',now()),
+       ('ctc_ps_jump3',$1,'Jump Three','QUOTE_SENT',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "StatusChange" (id,"organizationId","contactId","userId","fromStatus","toStatus","on") VALUES
+       ('sc_ps_jump1',$1,'ctc_ps_jump1',$2,'NOT_ACTIONED','MEETING_SET',now() - interval '2 days'),
+       ('sc_ps_jump2',$1,'ctc_ps_jump2',$2,'NOT_ACTIONED','MEETING_SET',now() - interval '2 days'),
+       ('sc_ps_jump3',$1,'ctc_ps_jump3',$2,'NOT_ACTIONED','QUOTE_SENT',now() - interval '2 days')`,
+    [org, taylor.id],
+  );
+  await page.goto(`${BASE}/dashboard/stats?reps=all`);
+  await page.locator("[data-testid=stats-page]").waitFor();
+  const reached = (await page.locator("[data-testid=funnel-count]").allTextContents()).map((t) => Number(t.replace(/,/g, "")));
+  for (let i = 1; i < reached.length; i += 1) assert.ok(reached[i] <= reached[i - 1], `step ${i} has ${reached[i]} people, the step before ${reached[i - 1]}: ${reached.join(" / ")}`);
+  const viaSql = (await sql(
+    `SELECT COUNT(DISTINCT "contactId")::int AS n FROM "StatusChange" WHERE "organizationId"=$1 AND "contactId" IS NOT NULL AND "on" >= now() - interval '30 days'
+       AND "toStatus" IN ('CONTACTED','CONNECTED','INTERESTED','MEETING_SET','MEETING_COMPLETED','QUOTE_SENT','CONTRACT_SENT','WON')`,
+    [org],
+  )).rows[0].n;
+  assert.equal(reached[0], viaSql, "Attempted is everyone who moved anywhere up the ladder in the period");
+  for (const text of await page.locator("[data-testid=funnel-rate]").allTextContents()) {
+    const pctValue = Number((text.match(/(\d+)%/) || [])[1]);
+    assert.ok(!(pctValue > 100), `a step rate reads ${text}`);
+  }
+  for (const text of await page.locator("[data-testid=stats-rates]").allTextContents()) {
+    for (const m of text.matchAll(/(\d+)%/g)) assert.ok(Number(m[1]) <= 100, `a conversion reads ${m[0]}`);
+  }
+  await sql(`DELETE FROM "Contact" WHERE id LIKE 'ctc_ps_jump%'`);
 
   log("Sprint: label-old-attempts.cjs — a dry run by default, refuses --apply without --org, labels only plain old voicemail / no-answer calls in the named workspace");
   const { spawnSync } = require("node:child_process");
