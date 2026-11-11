@@ -29,6 +29,7 @@ import {
 import { NO_LEAD_LABEL } from "@/lib/lead-labels";
 import { COLUMN_LABELS, columnsFor } from "@/lib/list-columns";
 import { saveListPrefs } from "@/app/dashboard/user-prefs-actions";
+import { SelectToggle } from "@/components/bulk-assign";
 import { useSearch } from "@/lib/use-search";
 import { FloatingMenu } from "@/components/floating-menu";
 
@@ -155,6 +156,48 @@ export function ListFilters({
     go({ preset: next, sort: "", scope });
     remember({ preset: next || "none", sort: null, ...(scope && scope !== params.scope ? { scope } : {}) });
   }
+
+  const sortControl = (
+<label className="flex items-center gap-1.5 text-xs">
+          <span className="faint">Sort</span>
+          <select
+            value={sort}
+            onChange={(event) => {
+              const value = event.target.value as ListSort | "meeting";
+              const next = value === "meeting" ? "" : value;
+              go({ sort: next });
+              remember({ sort: next || null });
+            }}
+            aria-label="Sort"
+            data-testid="sort"
+            className="select input-sm min-h-[44px] w-[11.5rem] py-1 pr-7 md:min-h-0"
+          >
+            {sort === "meeting" && <option value="meeting">Meeting time</option>}
+            {LIST_SORTS.map((key) => (
+              <option key={key} value={key}>
+                {SORT_LABELS[key]}
+              </option>
+            ))}
+          </select>
+        </label>
+  );
+  const perPageControl = (
+<label className="flex items-center gap-1.5 text-xs">
+          <span className="faint">Per page</span>
+          <select
+            value={params.per}
+            onChange={(event) => go({ per: Number(event.target.value) })}
+            aria-label="Rows per page"
+            className="select input-sm min-h-[44px] w-[4.75rem] py-1 pr-7 md:min-h-0"
+          >
+            {PAGE_SIZES.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+  );
 
   const groups = (
     <div className="space-y-3" data-testid="filters-panel">
@@ -339,48 +382,21 @@ export function ListFilters({
           <IconChevronDown size={12} className={`opacity-70 transition-transform ${panelOpen ? "rotate-180" : ""}`} />
         </button>
 
-        <label className="flex items-center gap-1.5 text-xs">
-          <span className="faint">Sort</span>
-          <select
-            value={sort}
-            onChange={(event) => {
-              const value = event.target.value as ListSort | "meeting";
-              const next = value === "meeting" ? "" : value;
-              go({ sort: next });
-              remember({ sort: next || null });
-            }}
-            aria-label="Sort"
-            data-testid="sort"
-            className="select input-sm min-h-[44px] w-[11.5rem] py-1 pr-7 md:min-h-0"
-          >
-            {sort === "meeting" && <option value="meeting">Meeting time</option>}
-            {LIST_SORTS.map((key) => (
-              <option key={key} value={key}>
-                {SORT_LABELS[key]}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="hidden md:contents">{sortControl}</div>
+        {columns && (
+          <div className="hidden md:contents">
+            <ColumnsMenu kind={kind} columns={columns} onSave={(next) => remember({ columns: next })} />
+          </div>
+        )}
 
-        {columns && <ColumnsMenu kind={kind} columns={columns} onSave={(next) => remember({ columns: next })} />}
-
-        <label className="flex items-center gap-1.5 text-xs md:ml-auto">
-          <span className="faint">Per page</span>
-          <select
-            value={params.per}
-            onChange={(event) => go({ per: Number(event.target.value) })}
-            aria-label="Rows per page"
-            className="select input-sm min-h-[44px] w-[4.75rem] py-1 pr-7 md:min-h-0"
-          >
-            {PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="hidden md:ml-auto md:flex">{perPageControl}</div>
       </div>
 
+      {(lock.fav || lock.deals || lock.interested) && (
+        <div className="flex justify-end md:hidden">
+          <SelectToggle />
+        </div>
+      )}
       {!lock.fav && !lock.deals && !lock.interested && (
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0" role="group" aria-label="Presets" data-testid="presets">
           {presets.map((preset) => (
@@ -395,12 +411,21 @@ export function ListFilters({
               {PRESET_LABELS[kind][preset]}
             </button>
           ))}
+          <span className="order-first shrink-0 md:hidden">
+            <SelectToggle />
+          </span>
         </div>
       )}
 
       {panelOpen && !phone && <div className="card popover p-3">{groups}</div>}
       {panelOpen && phone && (
         <PhoneSheet title="Filters" onClose={() => setPanelOpen(false)} showLabel={`Show ${total.toLocaleString()} ${noun}`}>
+          <div className="mb-3">
+            <FilterGroup title="Order">
+              {sortControl}
+              {perPageControl}
+            </FilterGroup>
+          </div>
           {groups}
         </PhoneSheet>
       )}

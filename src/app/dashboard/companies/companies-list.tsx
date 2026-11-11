@@ -21,7 +21,7 @@ import { OwesLine } from "@/components/owes-line";
 import { TagCell } from "../contacts/contacts-list";
 import { marketingCompanies } from "@/lib/last-contacted";
 import { MarketingCell, RepCell } from "@/components/crm-cells";
-import { BulkAssign, CardCheck, PageCheck, RowCheck, SelectToggle } from "@/components/bulk-assign";
+import { BulkAssign, CardCheck, PageCheck, RowCheck } from "@/components/bulk-assign";
 import { loadRepChoices } from "@/lib/reps";
 import { loadLeadLabelChoices } from "@/lib/crm-labels";
 import { healthSettings, loadCompanyHealth, loadContactHealth } from "@/lib/health-load";
@@ -141,18 +141,6 @@ export async function CompaniesList({
         }
       />
 
-      <ListFilters
-        basePath={basePath}
-        params={params}
-        lock={lock}
-        options={options}
-        kind="companies"
-        placeholder="Search companies…"
-        reps={reps}
-        leadLabels={leadLabels}
-        total={total}
-        columns={columns}
-      />
 
       <ListLogProvider>
         <BulkAssign
@@ -163,6 +151,18 @@ export async function CompaniesList({
           interested={Boolean(lock.interested)}
           reps={reps}
         >
+          <ListFilters
+            basePath={basePath}
+            params={params}
+            lock={lock}
+            options={options}
+            kind="companies"
+            placeholder="Search companies…"
+            reps={reps}
+            leadLabels={leadLabels}
+            total={total}
+            columns={columns}
+          />
           <Card lit>
             {companies.length === 0 ? (
               <EmptyState
@@ -209,9 +209,6 @@ export async function CompaniesList({
               <>
                 {/* Phone: a card list. */}
                 <div className="md:hidden">
-                  <div className="mb-2 flex justify-end">
-                    <SelectToggle />
-                  </div>
                   <ul className="divide-y divide-[var(--hairline-3)]">
                     {companies.map((company) => {
                       const h = health.get(company.id);

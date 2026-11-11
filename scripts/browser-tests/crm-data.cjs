@@ -907,6 +907,180 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.deepEqual(await contactsAt(page, "q=living%20fay"), ["Fay Fresh"], "either order");
 
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // BDR redesign, the lists (Nov 11, 2026).
+  log("Sprint: seed a call list — late, new, old, booked ahead, talked, a teammate's, nobody's, a meeting this week");
+  const sprToday = (await sql(`SELECT (now() AT TIME ZONE "timeZone")::date::text AS d FROM "Organization" WHERE id=$1`, [org])).rows[0].d;
+  const spr = {};
+  for (const [key, name, owner, status] of [
+    ["late", "Spr Late", taylor.id, "CONTACTED"],
+    ["fresh", "Spr New", taylor.id, "NOT_ACTIONED"],
+    ["old", "Spr Old", taylor.id, "CONTACTED"],
+    ["booked", "Spr Booked", taylor.id, "CONNECTED"],
+    ["talked", "Spr Talked", taylor.id, "CONNECTED"],
+    ["nics", "Spr Nics", nicId, "NOT_ACTIONED"],
+    ["nobody", "Spr Nobody", null, "NOT_ACTIONED"],
+    ["meet", "Spr Meet", taylor.id, "MEETING_SET"],
+  ]) {
+    spr[key] = await seedContact({ id: `cd_spr_${key}`, name, ownerId: owner, createdById: taylor.id });
+    await sql(`UPDATE "Contact" SET status=$2 WHERE id=$1`, [spr[key], status]);
+  }
+  const sprEvent = (id, contactId, type, offset) =>
+    sql(`INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","contactId","updatedAt") VALUES ($1,$2,$3,$4,$5::date + $6::int,$7,now())`, [id, org, `${type} · seeded`, type, sprToday, offset, contactId]);
+  await sprEvent("cd_spr_ev_late", spr.late, "Call", -3);
+  await sprEvent("cd_spr_ev_booked", spr.booked, "Call", 3);
+  await sprEvent("cd_spr_ev_meet", spr.meet, "Meeting", 0);
+  await seedActivity(spr.old, 10);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,outcome,"occurredAt") VALUES ('cd_spr_talk',$1,$2,$3,'PHONE_CALL','Talked',false,'TALKED',now() - interval '2 days')`,
+    [org, spr.talked, taylor.id],
+  );
+  const inOrder = async (p, query) => {
+    await p.goto(`${BASE}/dashboard/contacts?${query}`);
+    await p.locator("[data-testid=page-summary]").waitFor();
+    return (await p.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents()).map((t) => t.trim());
+  };
+
+  log("Sprint: Mine / Everyone / Unowned; Rep is hidden on Mine; the choice is remembered for a bare address");
+  await page.setViewportSize({ width: 1500, height: 950 });
+  assert.equal((await inOrder(page, "q=Spr")).length, 8, "an old-style link with a search opens on Everyone");
+  await page.getByTestId("scope-mine").click();
+  await page.waitForURL(/scope=mine/);
+  await page.locator("[data-testid=page-summary]", { hasText: "of 6 contacts" }).waitFor();
+  assert.equal(await page.locator("thead th", { hasText: /^Rep$/ }).count(), 0, "no Rep column on Mine");
+  for (let i = 0; i < 20 && !(await sql(`SELECT "uiPrefs"->>'contacts.scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s; i++) await page.waitForTimeout(100);
+  assert.equal((await sql(`SELECT "uiPrefs"->>'contacts.scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s, "mine");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  assert.equal(await page.getByTestId("scope-mine").getAttribute("aria-pressed"), "true", "a bare address opens on the saved scope");
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=unowned"), ["Spr Nobody"]);
+  await page.getByTestId("scope-all").click();
+  await page.waitForURL(/scope=all/);
+  await page.locator("thead th", { hasText: /^Rep$/ }).waitFor();
+
+  log("Sprint: a Member opens on Mine and My call list until they pick something else");
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id=$1`, [nicId]);
+  const sprMemberCtx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  const nicPage = await sprMemberCtx.newPage();
+  await login(nicPage, NIC_EMAIL);
+  await nicPage.goto(`${BASE}/dashboard/contacts`);
+  assert.equal(await nicPage.getByTestId("scope-mine").getAttribute("aria-pressed"), "true");
+  assert.equal(await nicPage.getByTestId("preset-call").getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await inOrder(nicPage, "q=Spr&scope=mine&preset=call"), ["Spr Nics"], "Nic's call list is Nic's");
+  await nicPage.goto(`${BASE}/dashboard/companies`);
+  assert.equal(await nicPage.getByTestId("scope-mine").getAttribute("aria-pressed"), "true", "companies open on Mine too");
+
+  log("Sprint: My call list — the follow-up gone late first, then never touched, then the oldest touch; nothing booked ahead, nobody past Interested");
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=mine&preset=call"), ["Spr Late", "Spr New", "Spr Old", "Spr Talked"]);
+  const lateCell = page.locator("[data-testid=contact-row]", { hasText: "Spr Late" }).getByTestId("next-step");
+  assert.match(await lateCell.textContent(), /Follow-up 3 days late/);
+  assert.match(await page.locator("[data-testid=contact-row]", { hasText: "Spr Old" }).getByTestId("pulse-caption").textContent(), /1 try · (9|10)d/, "counted on the workspace calendar");
+  assert.equal(await page.getByTestId("sort").inputValue(), "touch", "the call list reads Oldest touch first");
+
+  log("Sprint: Never touched, Talked — no meeting, Meetings this week");
+  const sprNever = await inOrder(page, "q=Spr&scope=all&preset=never");
+  assert.ok(sprNever.includes("Spr New") && sprNever.includes("Spr Nobody") && !sprNever.includes("Spr Old") && !sprNever.includes("Spr Talked"), `never touched: ${sprNever}`);
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=all&preset=talked"), ["Spr Talked"], "Booked has a call booked ahead");
+  assert.deepEqual(await inOrder(page, "q=Spr&scope=all&preset=week"), ["Spr Meet"]);
+
+  log("Sprint: Activity gains Not connected in 7 / 30 days and Never connected (from lastConnectAt)");
+  const nconn = await inOrder(page, "q=Spr&scope=all&act=nconn");
+  assert.equal(nconn.length, 7, `everyone but Talked: ${nconn}`);
+  assert.ok(!nconn.includes("Spr Talked"));
+  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc7")).length, 7);
+  assert.equal((await inOrder(page, "q=Spr&scope=all&act=nc30")).length, 7);
+  await openFilters(page);
+  const actMenu = await openMenu(page, "filter-activity");
+  for (const words of ["Not connected in 7 days", "Not connected in 30 days", "Never connected"]) await actMenu.getByText(words, { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal((await page.getByTestId("filter-attn").textContent()).trim(), "Missing info", "Needs attention reads Missing info");
+  const labelMenu = await openMenu(page, "filter-lead-label");
+  await labelMenu.getByText("On a deal, no label yet", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+
+  log("Sprint: Sort by Name is remembered; Columns brings back Email and is remembered");
+  await inOrder(page, "q=Spr&scope=all");
+  await page.getByTestId("sort").selectOption("name");
+  await page.waitForURL(/sort=name/);
+  const byName = await inOrder(page, "q=Spr&scope=all&sort=name");
+  assert.deepEqual(byName, [...byName].sort());
+  await showColumn(page, "email");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  assert.equal(await page.getByTestId("sort").inputValue(), "name", "the sort is remembered");
+  await page.locator("thead th", { hasText: /^Email$/ }).waitFor();
+  const sprPrefs = (await sql(`SELECT "uiPrefs" AS p FROM "User" WHERE id=$1`, [taylor.id])).rows[0].p;
+  assert.deepEqual([sprPrefs["contacts.sort"], sprPrefs["contacts.columns"]], ["name", ["email", "marketing"]]);
+  await page.getByTestId("columns").click();
+  await page.getByTestId("column-email").uncheck();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("sort").selectOption("added");
+  await page.waitForURL(/sort=added/);
+
+  log("Sprint: taking a teammate's records asks first, Cancel writes nothing, and Undo puts them back");
+  await inOrder(page, "q=Spr%20Nics&scope=all");
+  await rowOf(page, "Spr Nics").locator("[data-testid=row-check]").check();
+  await page.getByTestId("bulk-me").click();
+  await page.getByTestId("bulk-confirm").waitFor();
+  assert.match(await page.getByTestId("bulk-confirm").textContent(), /1 of these belongs to Nic Rivera\. Take them\?/);
+  await page.getByTestId("bulk-confirm-no").click();
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [spr.nics])).rows[0].ownerId, nicId, "Cancel writes nothing");
+  await page.getByTestId("bulk-me").click();
+  await page.getByTestId("bulk-confirm-yes").click();
+  await page.getByTestId("bulk-message").filter({ hasText: "1 record → Taylor Test." }).waitFor();
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [spr.nics])).rows[0].ownerId, taylor.id);
+  const barBox = await page.getByTestId("bulk-bar").boundingBox();
+  assert.ok(barBox.y + barBox.height <= 950, "the bar is on the screen");
+  await page.getByTestId("bulk-undo").click();
+  await page.getByTestId("bulk-message").filter({ hasText: "Undone · 1 record back" }).waitFor();
+  assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [spr.nics])).rows[0].ownerId, nicId, "Undo gives Nic his lead back");
+
+  log("Sprint: Clean up holds Import CSV, Merge, Find duplicates and Fill in missing");
+  await page.goto(`${BASE}/dashboard/companies?scope=all`);
+  await page.getByTestId("cleanup").click();
+  for (const id of ["cleanup-import", "cleanup-merge", "find-duplicates", "cleanup-fill"]) await page.getByTestId(id).waitFor();
+  await page.keyboard.press("Escape");
+
+  log("Sprint: Companies — Reached, Last touch, a row opening to its top three people with Call, Going quiet");
+  const sprCo = await seedCompany({ name: "Spr Co", ownerId: taylor.id });
+  await sql(`UPDATE "Contact" SET "companyId"=$1 WHERE id = ANY($2)`, [sprCo, [spr.talked, spr.old, spr.fresh, spr.late]]);
+  const sprQuietCo = await seedCompany({ name: "Spr Quiet Co", ownerId: taylor.id });
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","companyId","userId",type,body,marketing,"occurredAt") VALUES ('cd_spr_quiet',$1,$2,$3,'PHONE_CALL','Old call',false,now() - interval '40 days')`,
+    [org, sprQuietCo, taylor.id],
+  );
+  await page.goto(`${BASE}/dashboard/companies?q=Spr&scope=all`);
+  const coRow = page.locator("[data-testid=company-row]", { hasText: "Spr Co" }).filter({ hasNotText: "Quiet" });
+  assert.equal((await coRow.getByTestId("reached").textContent()).trim(), "1 of 4 talked to");
+  assert.match(await coRow.getByTestId("last-touch").textContent(), /^[12]d · Taylor$/);
+  await coRow.getByTestId("row-expand").click();
+  const sprPeople = page.locator("[data-testid=company-people]:visible [data-testid=company-person]");
+  assert.equal(await sprPeople.count(), 3, "the top three");
+  assert.match(await sprPeople.first().textContent(), /Spr Talked/, "the one reached comes first");
+  await page.goto(`${BASE}/dashboard/companies?q=Spr&scope=all&preset=quiet`);
+  assert.deepEqual((await page.locator("[data-testid=company-row] td:nth-child(2) a.link").allTextContents()).map((t) => t.trim()), ["Spr Quiet Co"]);
+
+  log("Sprint: on a phone the list is cards with 44px Call · Text · Log, and Filters is a sheet that says how many it will show");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const ph = await ctx.newPage();
+    await login(ph, EMAIL);
+    await sql(`UPDATE "Contact" SET mobile='(512) 555-0142' WHERE id=$1`, [spr.old]);
+    await ph.goto(`${BASE}/dashboard/contacts?q=Spr&scope=all`);
+    const sprCard = ph.locator("[data-testid=contact-card]", { hasText: "Spr Old" });
+    for (const id of ["card-call", "row-log"]) assert.ok((await sprCard.getByTestId(id).boundingBox()).height >= 44, `${id} is 44px tall`);
+    const sprFirst = await ph.locator("[data-testid=contact-card]").first().boundingBox();
+    assert.ok(sprFirst.y < 480, `the first card starts ${Math.round(sprFirst.y)}px down`);
+    await ph.getByTestId("filters-toggle").tap();
+    assert.match(await ph.getByTestId("filters-show").textContent(), /^Show 8 people$/);
+    await ph.getByTestId("filters-show").tap();
+    await ph.getByTestId("filters-sheet").waitFor({ state: "detached" });
+    await sprCard.getByTestId("row-log").tap();
+    await ph.getByTestId("how-did-it-go").waitFor();
+    await shot(ph, "05-sprint-phone-log");
+    await ctx.close();
+  }
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id = ANY($1)`, [[taylor.id, nicId]]);
+  await sprMemberCtx.close();
+
   log("the phone width: lists, Labels and duplicates stay inside the screen");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const p = await phone.newPage();
