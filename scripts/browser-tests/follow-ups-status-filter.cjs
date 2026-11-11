@@ -347,6 +347,8 @@ async function followUps(org) {
 
   log("a company-page log (bypassed, nobody linked) gets the same box, with the company as who it is with");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_oak`);
+  // Log a touch is folded on the company page (Nov 11, 2026).
+  await page.locator("[data-testid=company-log-toggle]").click();
   await form.locator("textarea[name=body]").fill("Spoke to reception");
   await form.locator("[data-testid=company-bypass-tick]").check();
   await form.locator("[data-testid=activity-submit]").click();
@@ -361,6 +363,7 @@ async function followUps(org) {
 
   log("with people ticked on the company page, the follow-up is with the first and the rest are expected");
   await page.goto(`${BASE}/dashboard/companies/cmp_fu_harbor`);
+  await page.locator("[data-testid=company-log-toggle]").click();
   const picker = form.locator("[data-testid=company-people-picker]");
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Eli Park" }).click();

@@ -71,7 +71,7 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
         ref={button}
         type="button"
         onClick={() => setOpen(!open)}
-        className="btn btn-ghost btn-sm"
+        className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
         aria-expanded={open}
         data-testid={compact ? "add-person-compact" : "add-person"}
       >

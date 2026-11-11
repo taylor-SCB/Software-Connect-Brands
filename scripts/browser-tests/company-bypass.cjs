@@ -139,9 +139,21 @@ const activity = async (body, org) =>
   const form = page.locator("[data-testid=log-activity-form]");
   const picker = form.locator("[data-testid=company-people-picker]");
   const other = page.locator("[data-testid=other-contacts]");
+  // Log a touch is folded on the company page (BDR redesign, Nov 11,
+  // 2026), and the not-linked list sits behind its one amber line.
+  const openLog = async () => {
+    const toggle = page.locator("[data-testid=company-log-toggle]");
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await form.waitFor();
+  };
+  const openNotLinked = async () => {
+    const toggle = other.locator("[data-testid=not-linked-toggle]");
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  };
 
   log("nobody ticked: refused, and what was typed is still there");
   await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+  await openLog();
   await form.locator("textarea[name=body]").fill("Spoke to reception about parking");
   await form.locator("[data-testid=activity-time]").fill("10:15");
   await form.locator("[data-testid=activity-submit]").click();
@@ -168,19 +180,21 @@ const activity = async (body, org) =>
   assert.match(await feedRow.locator("[data-testid=activity-bypassed]").textContent(), /^Taylor Test Bypassed$/);
   await shot(page, "02-bypassed-feed");
 
-  log("Other Contacts lists it under Taylor Test Bypassed, and Nic's old email under Nic Steffl Bypassed");
+  log("Other Contacts (now the not-linked line) lists it under Taylor Test, and Nic's old email under Nic Steffl");
   await other.waitFor();
-  assert.match(await other.textContent(), /2 activities logged here with nobody linked/);
+  assert.match(await other.textContent(), /2 touches not linked to a person yet/);
+  await openNotLinked();
   const taylorGroup = other.locator(`[data-testid=bypass-group][data-user-id="${taylor.id}"]`);
   const nicGroup = other.locator(`[data-testid=bypass-group][data-user-id="${nicId}"]`);
-  assert.match(await taylorGroup.textContent(), /Taylor Test Bypassed/);
+  assert.match(await taylorGroup.textContent(), /Logged by Taylor Test/);
   assert.match(await taylorGroup.textContent(), /Spoke to reception about parking/);
-  assert.match(await nicGroup.textContent(), /Nic Steffl Bypassed/);
+  assert.match(await nicGroup.textContent(), /Logged by Nic Steffl/);
   assert.match(await nicGroup.textContent(), /Old email to the office/);
   assert.equal(await taylorGroup.locator("[data-testid=claim-all]").count(), 0, "one activity: no Claim all");
   await shot(page, "03-other-contacts");
 
   log("ticking a person clears the bypass, and the log lands on them as before");
+  await openLog();
   await form.locator("[data-testid=company-bypass-tick]").check();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   assert.equal(await form.locator("[data-testid=company-bypass-tick]").isChecked(), false, "bypass unticked by the tick");
@@ -195,6 +209,7 @@ const activity = async (body, org) =>
   log("bypass two more as Taylor, so the group has three and a Claim all");
   for (const body of ["Front desk said call back Monday", "Left a brochure"]) {
     await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+    await openLog();
     await form.locator("textarea[name=body]").fill(body);
     await form.locator("[data-testid=company-bypass-tick]").check();
     await form.locator("[data-testid=activity-submit]").click();
@@ -202,6 +217,7 @@ const activity = async (body, org) =>
     await page.locator("[data-testid=follow-up-skip]").click();
   }
   await page.reload();
+  await openNotLinked();
   await until(async () => (await taylorGroup.locator("[data-testid=unclaimed-row]").count()) === 3, "three unclaimed");
   assert.equal(await taylorGroup.locator("[data-testid=claim-all]").count(), 1);
 
@@ -226,6 +242,7 @@ const activity = async (body, org) =>
 
   log("a person from another company is refused");
   await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+  await openNotLinked();
   await taylorGroup.locator("[data-testid=claim-one]").first().click();
   const box2 = taylorGroup.locator("[data-testid=claim-box]");
   await box2.locator("input[type=search]").fill("Zed");
@@ -255,7 +272,10 @@ const activity = async (body, org) =>
   await nicGroup.locator("[data-testid=claim-one]").click();
   await nicGroup.locator("[data-testid=claim-person]", { hasText: "Dana Ruiz" }).click();
   await until(async () => (await activity("Old email to the office", org)).contactId === "ctc_by_dana", "old one claimed");
-  await until(async () => (await other.count()) === 0, "Other Contacts gone when empty");
+  // The line goes when nothing is left; "Moved onto … · Undo" stays its
+  // ten seconds.
+  await until(async () => (await other.locator("[data-testid=not-linked-toggle]").count()) === 0, "the not-linked line gone when empty");
+  await other.locator("[data-testid=claim-undo]").waitFor();
 
   log("Notes on the company page split: All 2 · Company 1 · People 1 · Personal 1");
   const tabs = page.locator("[data-testid=notes-tabs]");

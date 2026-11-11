@@ -14,6 +14,7 @@ import { sameTags, withoutAuto, type AutoField } from "@/lib/enrich";
 import { moneyHold, moneyHoldMessage } from "@/lib/money";
 import { markConnected, markContacted, markMeetingSet } from "@/lib/status";
 import { readRepField } from "@/lib/reps";
+import { newBatchId } from "@/lib/undo-log";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -212,7 +213,7 @@ export async function setCompanyFavorite(
 // activities made follow, as if they had been logged on them to begin
 // with — which is why the company link is cleared, the same shape as a
 // touch logged on a person.
-export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState> {
+export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState & { batchId?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = z
     .object({ activityIds: z.array(idSchema).min(1, "Nothing to claim").max(500), contactId: idSchema })
@@ -242,8 +243,11 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
   // The ladder, as if logged on them: the earliest touch makes them
   // Contacted (a no-show is not a touch), the earliest talk, reply or held
   // meeting Connected (Nov 11, 2026; the outcome lives on the row, so it
-  // comes along), the earliest meeting sets Meeting Set.
-  const who = { organizationId, userId };
+  // comes along), the earliest meeting sets Meeting Set. The status rows
+  // carry the claim's batchId, so "Claimed · Undo" can put them back
+  // (undoClaim in companies/[id]/claim-actions.ts).
+  const batchId = newBatchId();
+  const who = { organizationId, userId, batchId };
   const earliest = (rows: typeof activities) => rows.map((row) => row.occurredAt).sort((a, b) => a.getTime() - b.getTime())[0];
   const now = new Date();
   const touches = activities.filter((row) => row.outcome !== "NO_SHOW");
@@ -258,7 +262,7 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/calendar");
-  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}` };
+  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}`, batchId };
 }
 
 // The people stay; they just lose their company link (the database sets

@@ -167,6 +167,8 @@ function isoDaysAgo(n) {
   await page.goto(`${BASE}/dashboard/contacts/interested`);
   await page.locator("[data-testid=contact-row]", { hasText: "Ava Stone" }).waitFor();
   await page.goto(`${BASE}/dashboard/companies/${aster}`);
+  // Set status by hand sits under the header's ⋯ More (Nov 11, 2026).
+  await page.locator("[data-testid=company-more]").click();
   await page.locator("[data-testid=status-picker]").click();
   await page.locator("[data-testid=status-option-INTERESTED]").click();
   await until(async () => (await status("Company", aster)) === "INTERESTED", "Aster interested");

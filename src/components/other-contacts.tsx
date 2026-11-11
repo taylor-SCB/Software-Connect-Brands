@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { IconCheck, IconPlus, IconSearch, IconX, IconMessage, IconMail, IconPhone, IconCalendar } from "@/components/icons";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { IconCheck, IconPlus, IconSearch, IconX, IconMessage, IconMail, IconPhone, IconCalendar, IconChevronDown } from "@/components/icons";
 import { ACTIVITY_LABELS, type ActivityTypeValue } from "@/lib/constants";
 import { useSearch } from "@/lib/use-search";
 import { quickAddContactToCompany } from "@/app/dashboard/contacts/account-actions";
 import { claimActivities } from "@/app/dashboard/companies/actions";
+import { undoClaim } from "@/app/dashboard/companies/[id]/claim-actions";
 import type { CompanyPerson } from "@/components/company-people-picker";
 import { FormError } from "@/components/ui";
 
@@ -16,93 +18,165 @@ const ACTIVITY_ICONS = {
   MEETING: IconCalendar,
 } as const;
 
+const NOUNS: Record<string, [string, string]> = {
+  PHONE_CALL: ["call", "calls"],
+  TEXT: ["text", "texts"],
+  EMAIL: ["email", "emails"],
+  MEETING: ["meeting", "meetings"],
+};
+
 export type UnclaimedActivity = { id: string; type: string; body: string; when: string };
 export type BypassGroup = { userId: string; userName: string; activities: UnclaimedActivity[] };
 
-// "Other Contacts" on a company's People card (Oct 4, 2026): the
-// activities logged on the company with nobody linked, grouped under
-// whoever bypassed ("Nic Steffl Bypassed · 3"). Claim moves one, or all
-// of a teammate's, onto a real person at the company: their history,
-// their Contacted status and the calendar entry follow it.
+// A claim just made, for "Moved onto Eli Park · Undo".
+type Claimed = { batchId: string; ids: string[]; contactId: string; message: string };
+
+// "1 call not linked to a person yet": the words for what is waiting.
+function waitingWords(groups: BypassGroup[]) {
+  const rows = groups.flatMap((group) => group.activities);
+  const types = new Set(rows.map((row) => row.type));
+  const [one, many] = types.size === 1 ? (NOUNS[rows[0].type] ?? ["touch", "touches"]) : ["touch", "touches"];
+  return `${rows.length} ${rows.length === 1 ? one : many} not linked to a person yet`;
+}
+
+// "Not linked to a person yet" at the top of a company's Who to call (BDR
+// redesign, Nov 11, 2026; it was "Other Contacts" under the People card,
+// Oct 4, 2026): what was logged on the company with nobody linked — a
+// call to the front desk, a bypassed log — as one amber line, "1 call not
+// linked to a person yet · Who was it with?". It opens the list, grouped
+// under whoever logged it ("Nic Steffl · 3"). Claim moves one, or all of
+// a teammate's, onto a real person at the company: their history, their
+// Attempted / Connected status and the calendar entry follow it. Every
+// claim can be taken back for ten seconds ("Moved onto Eli Park · Undo",
+// undoClaim).
 export function OtherContacts({ companyId, people, groups }: { companyId: string; people: CompanyPerson[]; groups: BypassGroup[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
   // Which claim box is open: one activity, or a whole group.
   const [claiming, setClaiming] = useState<{ key: string; ids: string[]; label: string } | null>(null);
+  const [claimed, setClaimed] = useState<Claimed | null>(null);
+  const [undoError, setUndoError] = useState<string | undefined>();
+  const [undoing, startUndo] = useTransition();
 
-  if (groups.length === 0) return null;
+  // The Undo stays ten seconds.
+  useEffect(() => {
+    if (!claimed) return;
+    const timer = setTimeout(() => setClaimed(null), 10_000);
+    return () => clearTimeout(timer);
+  }, [claimed]);
+
+  if (groups.length === 0 && !claimed && !undoError) return null;
   const total = groups.reduce((sum, group) => sum + group.activities.length, 0);
 
+  const undo = (row: Claimed) =>
+    startUndo(async () => {
+      setUndoError(undefined);
+      const result = await undoClaim({ batchId: row.batchId, activityIds: row.ids, contactId: row.contactId, companyId });
+      if (result.error) setUndoError(result.error);
+      setClaimed(null);
+      router.refresh();
+    });
+
   return (
-    <div className="border-t border-[var(--hairline-3)]" data-testid="other-contacts">
-      <div className="px-5 pb-2 pt-4">
-        <p className="text-sm font-medium">Other Contacts</p>
-        <p className="faint text-xs">
-          {total} {total === 1 ? "activity" : "activities"} logged here with nobody linked. Claim one to move it onto a person.
-        </p>
-      </div>
-      {groups.map((group) => {
-        const groupKey = `group-${group.userId}`;
-        return (
-          <div key={group.userId} className="border-t border-[var(--hairline)]" data-testid="bypass-group" data-user-id={group.userId}>
-            <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5">
-              <p className="text-sm">
-                <span className="font-medium">{group.userName} Bypassed</span>
-                <span className="faint num ml-1.5 text-xs">{group.activities.length}</span>
-              </p>
-              {group.activities.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setClaiming(
-                      claiming?.key === groupKey
-                        ? null
-                        : { key: groupKey, ids: group.activities.map((row) => row.id), label: `all ${group.activities.length} of ${group.userName}'s` },
-                    )
-                  }
-                  className="btn btn-ghost btn-sm"
-                  data-testid="claim-all"
-                >
-                  Claim all
-                </button>
+    <div className="border-b border-[var(--hairline-3)]" data-testid="other-contacts">
+      {total > 0 && (
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          className="flex w-full items-center gap-2.5 border-l-4 border-[var(--health-warn)] bg-[var(--health-warn-soft)] px-4 py-2.5 text-left text-sm pointer-coarse:min-h-11"
+          data-testid="not-linked-toggle"
+        >
+          <span className="health-dot shrink-0" data-health="warn" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="font-medium" data-testid="not-linked-count">
+              {waitingWords(groups)}
+            </span>
+            <span className="text-[var(--text-dim)]"> · Who was it with?</span>
+          </span>
+          <IconChevronDown size={14} className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
+        </button>
+      )}
+      {claimed && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-sm" role="status" data-testid="claim-done">
+          <span>{claimed.message}</span>
+          <button type="button" onClick={() => undo(claimed)} disabled={undoing} className="btn btn-ghost btn-sm pointer-coarse:min-h-11" data-testid="claim-undo">
+            {undoing ? "Undoing…" : "Undo"}
+          </button>
+        </div>
+      )}
+      {undoError && (
+        <div className="px-5 pb-2.5">
+          <FormError message={undoError} />
+        </div>
+      )}
+      {open &&
+        groups.map((group) => {
+          const groupKey = `group-${group.userId}`;
+          return (
+            <div key={group.userId} className="border-t border-[var(--hairline-3)]" data-testid="bypass-group" data-user-id={group.userId}>
+              <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5">
+                <p className="text-sm">
+                  <span className="font-medium">Logged by {group.userName}</span>
+                  <span className="faint num ml-1.5 text-xs">{group.activities.length}</span>
+                </p>
+                {group.activities.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setClaiming(
+                        claiming?.key === groupKey
+                          ? null
+                          : { key: groupKey, ids: group.activities.map((row) => row.id), label: `all ${group.activities.length} of ${group.userName}'s` },
+                      )
+                    }
+                    className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
+                    data-testid="claim-all"
+                  >
+                    Claim all
+                  </button>
+                )}
+              </div>
+              {claiming?.key === groupKey && (
+                <div className="px-5 pb-2.5">
+                  <ClaimBox companyId={companyId} people={people} ids={claiming.ids} label={claiming.label} onClose={() => setClaiming(null)} onClaimed={setClaimed} />
+                </div>
               )}
-            </div>
-            {claiming?.key === groupKey && (
-              <ClaimBox companyId={companyId} people={people} ids={claiming.ids} label={claiming.label} onClose={() => setClaiming(null)} />
-            )}
-            <ul className="divide-y divide-[var(--hairline)]">
-              {group.activities.map((activity) => {
-                const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue] ?? IconPhone;
-                const key = `one-${activity.id}`;
-                return (
-                  <li key={activity.id} className="px-5 py-2.5" data-testid="unclaimed-row" data-activity-id={activity.id}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 gap-2">
-                        <Icon size={13} className="mt-1 shrink-0 text-[var(--text-faint)]" />
-                        <div className="min-w-0">
-                          <p className="truncate text-sm">{activity.body}</p>
-                          <p className="faint text-[0.7rem]">
-                            {ACTIVITY_LABELS[activity.type as ActivityTypeValue] ?? activity.type} · {activity.when}
-                          </p>
+              <ul className="divide-y divide-[var(--hairline-3)]">
+                {group.activities.map((activity) => {
+                  const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue] ?? IconPhone;
+                  const key = `one-${activity.id}`;
+                  return (
+                    <li key={activity.id} className="px-5 py-2.5" data-testid="unclaimed-row" data-activity-id={activity.id}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 gap-2">
+                          <Icon size={13} className="mt-1 shrink-0 text-[var(--text-faint)]" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm">{activity.body}</p>
+                            <p className="faint text-xs">
+                              {ACTIVITY_LABELS[activity.type as ActivityTypeValue] ?? activity.type} · {activity.when}
+                            </p>
+                          </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setClaiming(claiming?.key === key ? null : { key, ids: [activity.id], label: "this activity" })}
+                          className="btn btn-ghost btn-sm shrink-0 pointer-coarse:min-h-11"
+                          data-testid="claim-one"
+                        >
+                          Claim
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setClaiming(claiming?.key === key ? null : { key, ids: [activity.id], label: "this activity" })}
-                        className="btn btn-ghost btn-sm shrink-0"
-                        data-testid="claim-one"
-                      >
-                        Claim
-                      </button>
-                    </div>
-                    {claiming?.key === key && (
-                      <ClaimBox companyId={companyId} people={people} ids={claiming.ids} label={claiming.label} onClose={() => setClaiming(null)} />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        );
-      })}
+                      {claiming?.key === key && (
+                        <ClaimBox companyId={companyId} people={people} ids={claiming.ids} label={claiming.label} onClose={() => setClaiming(null)} onClaimed={setClaimed} />
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
     </div>
   );
 }
@@ -116,12 +190,14 @@ function ClaimBox({
   ids,
   label,
   onClose,
+  onClaimed,
 }: {
   companyId: string;
   people: CompanyPerson[];
   ids: string[];
   label: string;
   onClose: () => void;
+  onClaimed: (claimed: Claimed) => void;
 }) {
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
@@ -138,7 +214,10 @@ function ClaimBox({
       setError(undefined);
       const result = await claimActivities({ activityIds: ids, contactId });
       if (result?.error) setError(result.error);
-      else onClose();
+      else {
+        if (result.batchId) onClaimed({ batchId: result.batchId, ids, contactId, message: result.success ?? "Claimed" });
+        onClose();
+      }
     });
 
   const addNew = () =>
@@ -151,7 +230,10 @@ function ClaimBox({
       }
       const made = await claimActivities({ activityIds: ids, contactId: result.contact.id });
       if (made?.error) setError(made.error);
-      else onClose();
+      else {
+        if (made.batchId) onClaimed({ batchId: made.batchId, ids, contactId: result.contact.id, message: made.success ?? "Claimed" });
+        onClose();
+      }
     });
 
   return (
@@ -180,7 +262,7 @@ function ClaimBox({
             disabled={pending}
             onClick={() => claim(person.id)}
             title={[person.email, person.phone].filter(Boolean).join(" · ") || undefined}
-            className="badge cursor-pointer gap-1 border border-[var(--border)] text-[var(--text)] transition-colors hover:border-[var(--brand)]"
+            className="badge cursor-pointer gap-1 border border-[var(--border)] text-[var(--text)] transition-colors hover:border-[var(--brand)] pointer-coarse:min-h-11"
             data-testid="claim-person"
           >
             <IconCheck size={10} />
