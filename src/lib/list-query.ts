@@ -10,14 +10,21 @@ import { NO_LEAD_LABEL } from "@/lib/lead-labels";
 import { OVERDUE_TYPES } from "@/lib/calendar-data";
 import { startOfWeek } from "@/lib/calendar";
 import { addDays } from "@/lib/payments";
-import { zoneDay } from "@/lib/health";
+import { zoneDay, TALK_STATUSES } from "@/lib/health";
 import { effectiveSort, type ListSort } from "@/lib/list-params";
 import { Prisma as P } from "@/generated/prisma/client";
+import { loadPulseSets, pulseClause, pulseWhere, type PulseSets } from "@/lib/health-sql";
+import { PULSE_KEYS, type PulseKey } from "@/lib/list-params";
 
 // ---- Clean CRM data filters (Nov 10, 2026) ---------------------------
 // Shared by both lists. Each returns the clauses to AND in.
 
 const WINDOW_DAYS: Record<string, number> = { t7: 7, t30: 30, t90: 90, n7: 7, n30: 30, n90: 90 };
+
+// A status that takes a conversation to reach (round 2): Connected and
+// every step from Interested on, Not interested included. Lost and
+// Archived can come from anywhere, so they say nothing either way.
+const TALK_IMPLIED = ["CONNECTED", "INTERESTED", "NOT_INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"] as const;
 
 // A touch: a call, text, email or meeting somebody logged. Marketing
 // sends are never a touch (Taylor, Nov 10, 2026). The latest one is kept
@@ -28,10 +35,39 @@ function touchClause(act: ListParams["act"]): object | null {
   if (act === "never") return { lastTouchAt: null };
   // Connected (BDR redesign, Nov 11, 2026): lastConnectAt, kept by the
   // same triggers. Not connected in N days includes never connected.
-  if (act === "nconn") return { lastConnectAt: null };
+  // Round 2 (ux-gaps): a status that already means somebody talked —
+  // Connected, Interested, Not interested, Meeting Set or later — counts
+  // as a connect even with no talk logged (old records, a CSV import, a
+  // status set by hand). Its date is the latest move into a talk status
+  // (the health rules' stand-in for a talk); with no such move, and no
+  // talk logged, nobody knows when it was, so it is left out of the
+  // Not-connected windows rather than guessed. Read from StatusChange
+  // when the list is asked; nothing is stored or back-filled.
+  if (act === "nconn") {
+    return {
+      AND: [
+        { lastConnectAt: null },
+        { status: { notIn: [...TALK_IMPLIED] } },
+        { statusChanges: { none: { toStatus: { in: [...TALK_STATUSES] }, on: { lte: new Date() } } } },
+      ],
+    };
+  }
   if (act === "nc7" || act === "nc30") {
-    const since = new Date(Date.now() - (act === "nc7" ? 7 : 30) * 86_400_000);
-    return { OR: [{ lastConnectAt: null }, { lastConnectAt: { lt: since } }] };
+    const now = new Date();
+    const since = new Date(now.getTime() - (act === "nc7" ? 7 : 30) * 86_400_000);
+    return {
+      AND: [
+        { OR: [{ lastConnectAt: null }, { lastConnectAt: { lt: since } }] },
+        { statusChanges: { none: { toStatus: { in: [...TALK_STATUSES] }, on: { gte: since, lte: now } } } },
+        {
+          OR: [
+            { status: { notIn: [...TALK_IMPLIED] } },
+            { lastConnectAt: { not: null } },
+            { statusChanges: { some: { toStatus: { in: [...TALK_STATUSES] }, on: { lte: now } } } },
+          ],
+        },
+      ],
+    };
   }
   const since = new Date(Date.now() - WINDOW_DAYS[act] * 86_400_000);
   if (act.startsWith("t")) return { lastTouchAt: { gte: since } };
@@ -294,6 +330,10 @@ export async function contactWhere(
   if (p.mobile) and.push(present("mobile", p.mobile));
   if (p.email) and.push(present("email", p.email));
   if (p.labels.length) and.push({ opportunities: { some: opportunityLabel(p.labels) } });
+  if (p.pulses.length) {
+    const sets = await pulseSetsFor(organizationId, p);
+    and.push(pulseWhere(p.pulses, sets) as Prisma.ContactWhereInput);
+  }
   const scope = scopeClause(p);
   if (scope) and.push(scope);
   and.push(...((await contactPresetClauses(organizationId, p)) as Prisma.ContactWhereInput[]));
@@ -467,6 +507,55 @@ async function meetingWeekContactIds(organizationId: string, today: string, time
   return rows.map((row) => row.id);
 }
 
+// ---- Pulse (round 2, Nov 11, 2026) -------------------------------------
+// The Contacts list's Pulse filter and Warmest first, from the SQL twin of
+// the health rules (src/lib/health-sql.ts), worked out once per view and
+// shared by the filter, the count and the page. Mine and Unowned only
+// work it out for their own people.
+const pulseCache = new WeakMap<ListParams, Promise<PulseSets>>();
+function pulseSetsFor(organizationId: string, p: ListParams): Promise<PulseSets> {
+  let sets = pulseCache.get(p);
+  if (!sets) {
+    sets = (async () => {
+      await touchesDue(organizationId);
+      const clock = await workspaceClock(organizationId);
+      const owner = p.scope === "mine" ? p.me || "__nobody__" : p.scope === "unowned" ? null : undefined;
+      return loadPulseSets(organizationId, { now: new Date(), timeZone: clock.timeZone, quietDays: clock.quietDays }, owner);
+    })();
+    pulseCache.set(p, sets);
+  }
+  return sets;
+}
+
+// Warmest first: Won, then Warm, Cooling and Cold, Trying, stalled, New,
+// Closed (warmth() in health.ts); inside each, the most recently touched
+// first. Each pulse is a where-clause, so a page is a count per pulse and
+// one or two plain reads.
+async function pulsePageIds(model: IdModel & { count(args: { where: object }): Promise<number> }, organizationId: string, where: object, p: ListParams, window: { skip: number }) {
+  const sets = await pulseSetsFor(organizationId, p);
+  const keys: readonly PulseKey[] = p.pulses.length ? PULSE_KEYS.filter((key) => p.pulses.includes(key)) : PULSE_KEYS;
+  const tiers = keys.map((key) => ({ AND: [where, pulseClause(key, sets)] }));
+  const counts = await Promise.all(tiers.map((tier) => model.count({ where: tier })));
+  const out: string[] = [];
+  let skip = window.skip;
+  for (let index = 0; index < tiers.length && out.length < p.per; index += 1) {
+    if (skip >= counts[index]) {
+      skip -= counts[index];
+      continue;
+    }
+    const rows = await model.findMany({
+      where: tiers[index],
+      orderBy: [{ lastTouchAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
+      skip,
+      take: p.per - out.length,
+      select: { id: true },
+    });
+    out.push(...rows.map((row) => row.id));
+    skip = 0;
+  }
+  return out;
+}
+
 // The ordered ids a preset reads in, when its order isn't a column
 // (Meetings this week). Cached per request by the caller.
 const presetOrder = new WeakMap<ListParams, string[]>();
@@ -517,6 +606,7 @@ async function companyPresetClauses(organizationId: string, p: ListParams): Prom
 // never repeats or skips a row.
 export function orderFor(sort: ListSort | "meeting"): object[] {
   switch (sort) {
+    // Contacts only, through pulsePageIds; anywhere else it reads as added.
     case "touch":
       return [{ lastTouchAt: { sort: "asc", nulls: "first" } }, { id: "asc" }];
     case "recent":
@@ -551,6 +641,9 @@ export async function pageIds(
   const model = (kind === "contacts" ? prisma.contact : prisma.company) as unknown as IdModel;
   const sort = effectiveSort(p);
   const take = p.per;
+  if (sort === "pulse" && kind === "contacts") {
+    return pulsePageIds(model as IdModel & { count(args: { where: object }): Promise<number> }, organizationId, where, p, window);
+  }
   if (sort === "meeting") {
     const order = presetOrder.get(p) ?? [];
     const matching = new Set((await model.findMany({ where: { AND: [where, { id: { in: order } }] }, select: { id: true } })).map((row) => row.id));

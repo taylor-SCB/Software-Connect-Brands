@@ -384,6 +384,9 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/contacts?attn=1`);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 contacts", "needs attention: Ivy has no email and no phone");
   // Give Dana a deal, then the deal views light up.
+  // Add deal sits under ⋯ More on a new lead's page since the contact
+  // page's redesign (Nov 11, 2026): one tap deeper.
+  // (From Meeting Completed on it is in the Paperwork card's ⋯ instead.)
   await page.goto(danaUrl);
   await openAddDeal(page);
   await page.fill("#deal-title", "Lobby access control");
@@ -812,6 +815,99 @@ async function assertMenuInside(page, menu, what) {
   }
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 391, "the page doesn't scroll sideways at 390px");
   await shot(page, "11-ux-companies-phone");
+
+
+  // ---------------------------------------------------------------------
+  // Round 2 of the lists (Nov 11, 2026).
+  log("Sprint: the import preview reads Person · Reach · Company, names who a row updates, sits the duplicate summary above the table, and offers to keep Notes and Lead Source");
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const r2File = [
+    "Name,Email,Phone,Mobile,Company Name,Company Phone,Notes,Lead Source",
+    "Mia Mailing,mia@mailing.test,512-555-0111,,,,Met at the expo,Trade show",
+    "Nora Notes,nora@notes.test,,512-555-0122,Notes Co,512-555-0199,Wants a quote in spring,Website",
+    "Ned Nothing,ned@notes.test,,,Notes Co,,,",
+  ];
+  const r2Path = path.join(OUT, "round2.csv");
+  fs.writeFileSync(r2Path, r2File.join("\r\n") + "\r\n");
+  await page.goto(`${BASE}/dashboard/contacts`);
+  await cleanUp(page, "import");
+  await page.getByTestId("import-file").setInputFiles(r2Path);
+  await page.getByTestId("import-summary").waitFor();
+  const preview = page.getByTestId("import-preview");
+  assert.deepEqual((await preview.locator("thead th").allTextContents()).map((t) => t.trim()), ["Person", "Reach", "Company"]);
+  const r2Row = (name) => preview.locator("[data-testid=import-preview-row]", { hasText: name });
+  await r2Row("Mia Mailing").getByTestId("import-updates-badge").waitFor();
+  assert.equal((await r2Row("Mia Mailing").getByTestId("import-updates-badge").textContent()).trim(), "Updates Mia Mailing");
+  assert.equal(await r2Row("Nora Notes").getByTestId("import-updates-badge").count(), 0, "a new person has no badge");
+  assert.match(await r2Row("Nora Notes").textContent(), /Mobile 512-555-0122/);
+  assert.match(await r2Row("Nora Notes").textContent(), /Main 512-555-0199/, "the business line sits under the company, not as the person's phone");
+  const dupBox = await page.getByTestId("import-cleanup").boundingBox();
+  const tableBox = await preview.boundingBox();
+  assert.ok(dupBox.y + dupBox.height <= tableBox.y, "the duplicate summary is above the table");
+  const dialogBox = await page.getByRole("dialog", { name: "Import CSV" }).boundingBox();
+  assert.ok(tableBox.x >= dialogBox.x && tableBox.x + tableBox.width <= dialogBox.x + dialogBox.width + 1, "the preview fits the dialog");
+  assert.equal(await preview.evaluate((el) => el.parentElement.scrollWidth - el.parentElement.clientWidth), 0, "and doesn't scroll sideways");
+  const offer = page.getByTestId("import-keep-notes-offer");
+  assert.match(await offer.textContent(), /Keep “Notes” and “Lead Source” as a note on each contact/);
+  assert.equal(await page.getByTestId("import-keep-notes").isChecked(), false, "an offer, not a default");
+  await shot(page, "12-round2-import-preview");
+  await page.getByTestId("import-keep-notes").check();
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 3 rows").waitFor({ timeout: 60000 });
+  assert.match(await page.getByTestId("import-notes-kept").textContent(), /2 notes kept/);
+  await page.getByTestId("import-done").click();
+  const keptNotes = async () =>
+    (
+      await sql(
+        `SELECT c.name, n.body, n.label FROM "Note" n JOIN "Contact" c ON c.id = n."contactId" WHERE n."organizationId"=$1 AND c.email IN ('mia@mailing.test','nora@notes.test','ned@notes.test') ORDER BY c.name`,
+        [org],
+      )
+    ).rows.map((row) => ({ ...row }));
+  assert.deepEqual(await keptNotes(), [
+    { name: "Mia Mailing", body: "Notes: Met at the expo\nLead Source: Trade show", label: "GENERAL" },
+    { name: "Nora Notes", body: "Notes: Wants a quote in spring\nLead Source: Website", label: "GENERAL" },
+  ]);
+  // The same file again, ticked: nobody gets the note twice.
+  await cleanUp(page, "import");
+  await page.getByTestId("import-file").setInputFiles(r2Path);
+  await page.getByTestId("import-keep-notes").check();
+  await page.getByTestId("import-start").click();
+  await page.getByText("Imported 3 rows").waitFor({ timeout: 60000 });
+  assert.equal(await page.getByTestId("import-notes-kept").count(), 0, "nothing new kept");
+  await page.getByTestId("import-done").click();
+  assert.equal((await keptNotes()).length, 2);
+
+  log("Sprint: a Member's Import my list (?import=1) starts Assign everyone in this file on them; everywhere else it starts Unassigned");
+  const ownerRow = (await sql(`SELECT id, "passwordHash" FROM "User" WHERE email=$1`, [EMAIL])).rows[0];
+  const memberId = "cif_member";
+  await sql(`INSERT INTO "User" (id, name, email, "passwordHash", role, "organizationId") VALUES ($1,'Mo Member','test-cif-member@example.com',$2,'MEMBER',$3)`, [
+    memberId,
+    ownerRow.passwordHash,
+    org,
+  ]);
+  const memberCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const mp = await memberCtx.newPage();
+  await mp.goto(`${BASE}/login`);
+  await mp.fill("#email", "test-cif-member@example.com");
+  await mp.fill("#password", PASSWORD);
+  await mp.click("button[type=submit]");
+  await mp.waitForURL(/\/dashboard$/);
+  await mp.goto(`${BASE}/dashboard/contacts?import=1`);
+  await mp.getByTestId("import-file").setInputFiles(r2Path);
+  await mp.getByTestId("import-summary").waitFor();
+  assert.equal(await mp.getByTestId("import-assign").inputValue(), memberId, "Import my list: the Member's own");
+  await mp.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
+  await mp.goto(`${BASE}/dashboard/contacts?scope=all`);
+  await cleanUp(mp, "import");
+  await mp.getByTestId("import-file").setInputFiles(r2Path);
+  await mp.getByTestId("import-summary").waitFor();
+  assert.equal(await mp.getByTestId("import-assign").inputValue(), "", "Clean up → Import CSV starts Unassigned");
+  await memberCtx.close();
+  await page.goto(`${BASE}/dashboard/contacts?import=1`);
+  await page.getByTestId("import-file").setInputFiles(r2Path);
+  await page.getByTestId("import-summary").waitFor();
+  assert.equal(await page.getByTestId("import-assign").inputValue(), "", "an Owner's ?import=1 starts Unassigned");
+  await page.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
 
   void acmeUrl;
   await browser.close();

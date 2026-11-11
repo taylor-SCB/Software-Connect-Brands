@@ -18,23 +18,13 @@ const CHECK_BATCH = 1000;
 // duplicates inside the file and against contacts already on file (no AI),
 // and, with AI on, where the columns the planner left out probably go.
 // Accepting a column re-plans the preview; nothing is saved until Import.
-export function ImportCleanup({
-  plan,
-  onMap,
-}: {
-  plan: ContactImportPlan;
-  // Re-plan with these headers placed by hand, column → header index.
-  onMap: (mapped: Partial<Record<ContactCsvColumn, number>>) => void;
-}) {
-  const inFile = useMemo(
-    () =>
-      findFileDuplicates(
-        plan.rows.map((row) => ({ line: row.line, name: row.name, email: row.email, phone: row.phone, mobile: row.mobile, company: row.company?.name ?? null })),
-      ),
-    [plan],
-  );
+export type ExistingCheck = { plan: ContactImportPlan; matches: ExistingMatch[]; done: boolean; error?: string };
 
-  const [existing, setExisting] = useState<{ plan: ContactImportPlan; matches: ExistingMatch[]; done: boolean; error?: string } | null>(null);
+// Checks the file's people against the contacts already on file, a
+// thousand rows a call, as soon as a plan is shown. Shared by the
+// duplicate summary and the preview's "Updates <name>" badges (round 2).
+export function useExistingMatches(plan: ContactImportPlan): ExistingCheck | null {
+  const [existing, setExisting] = useState<ExistingCheck | null>(null);
   useEffect(() => {
     let live = true;
     (async () => {
@@ -68,7 +58,33 @@ export function ImportCleanup({
       live = false;
     };
   }, [plan]);
-  const current = existing?.plan === plan ? existing : null;
+  return existing?.plan === plan ? existing : null;
+}
+
+// The contacts import's clean-up, in the preview (Nov 10, 2026): likely
+// duplicates inside the file and against contacts already on file (no AI).
+// With AI on, where the columns the planner left out probably go;
+// accepting a column re-plans the preview. Since round 2 (Nov 11, 2026) it
+// sits above the preview's table, and shares the existing-contact check
+// with the table's "Updates <name>" badges.
+export function ImportCleanup({
+  plan,
+  existing,
+  onMap,
+}: {
+  plan: ContactImportPlan;
+  existing: ExistingCheck | null;
+  // Re-plan with these headers placed by hand, column → header index.
+  onMap: (mapped: Partial<Record<ContactCsvColumn, number>>) => void;
+}) {
+  const inFile = useMemo(
+    () =>
+      findFileDuplicates(
+        plan.rows.map((row) => ({ line: row.line, name: row.name, email: row.email, phone: row.phone, mobile: row.mobile, company: row.company?.name ?? null })),
+      ),
+    [plan],
+  );
+  const current = existing;
   const realDuplicates = current?.matches.filter((match) => !match.updates) ?? [];
   const updates = current?.matches.filter((match) => match.updates) ?? [];
 

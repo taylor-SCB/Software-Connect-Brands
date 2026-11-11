@@ -288,6 +288,33 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     await timed(page, label, `${BASE}${url}`, ready);
   }
   await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id = $1`, [ownerId]);
+  log("Sprint: Warmest first and the Pulse filter (the SQL twin of the health rules) at 200,000 contacts, inside the 2-second budget");
+  for (const [label, url] of [
+    ["Contacts sorted Warmest first (Everyone)", "/dashboard/contacts?scope=all&sort=pulse"],
+    ["Contacts Warmest first, page 2,000", "/dashboard/contacts?scope=all&sort=pulse&page=2000"],
+    ["Contacts Warmest first, 100 per page, page 600", "/dashboard/contacts?scope=all&sort=pulse&per=100&page=600"],
+    ["Contacts Warmest first (Mine)", "/dashboard/contacts?scope=mine&sort=pulse"],
+    ["Contacts Pulse = Cold", "/dashboard/contacts?scope=all&pulse=cold"],
+    ["Contacts Pulse = Warm + Cooling", "/dashboard/contacts?scope=all&pulse=warm&pulse=cooling"],
+    ["Contacts Pulse = Trying + stalled, Warmest first", "/dashboard/contacts?scope=all&pulse=trying&pulse=stalled&sort=pulse"],
+    ["Contacts Pulse = New + State TX", "/dashboard/contacts?scope=all&pulse=new&state=TX"],
+  ]) {
+    await timed(page, label, `${BASE}${url}`, "h1");
+  }
+  {
+    // Every pulse, counted through the list, adds up to the whole workspace:
+    // nobody is lost or doubled by the id lists at this size.
+    let sum = 0;
+    for (const key of ["won", "owes", "warm", "cooling", "cold", "trying", "stalled", "new", "closed"]) {
+      await page.goto(`${BASE}/dashboard/contacts?scope=all&pulse=${key}`);
+      const text = (await page.getByTestId("page-summary").textContent()).replace(/,/g, "");
+      const match = text.match(/of (\d+) contacts/);
+      sum += match ? Number(match[1]) : 0;
+    }
+    const all = (await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId" = $1`, [org])).rows[0].n;
+    console.log(`     every pulse adds up to ${sum} of ${all}`);
+    assert.equal(sum, all, "every person is under exactly one pulse");
+  }
   await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND id LIKE 'lev%'`, [org]);
 
   log("bulk assign the first 1,000 of every Unassigned contact in one go");

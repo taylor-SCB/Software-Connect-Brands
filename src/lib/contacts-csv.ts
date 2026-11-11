@@ -210,6 +210,10 @@ export type ImportContactRow = {
   status: ContactStatusValue | null;
   company: ImportCompany | null;
   notes: string[];
+  // The file's Notes / Lead Source columns, kept as one note on the
+  // contact when the person ticks the preview's offer (round 2, Nov 11,
+  // 2026): "Notes: …" and "Lead Source: …" lines. Absent otherwise.
+  keptNote?: string | null;
 };
 
 export type ContactImportPlan = {
@@ -222,7 +226,16 @@ export type ContactImportPlan = {
   skippedEmpty: number;
   skippedDuplicates: number;
   samples?: string[][];
+  // Headers nothing else claimed that read as notes or where the lead came
+  // from (Notes, Comments, Lead Source, Source …): the preview offers to
+  // keep them as a note on each contact. Header indices.
+  noteColumns?: number[];
 };
+
+// A column the planner leaves out that is worth keeping as a note: what
+// people write about a lead, and where it came from.
+const NOTE_HEADER = /^(notes?|comments?|remarks?|description|background|about|lead ?source|source|referral( source)?|how (did you|they) hear.*|origin)$/i;
+const MAX_KEPT_NOTE = 4000;
 
 export function parseStatus(raw: string): { status: ContactStatusValue | null; note?: string } {
   const value = raw.trim().toLowerCase();
@@ -351,6 +364,7 @@ function cleanWebsite(raw: string) {
 export function planContactImport(
   text: string,
   mapped: Partial<Record<ContactCsvColumn, number>> = {},
+  options: { keepNotes?: boolean } = {},
 ): { ok: true; plan: ContactImportPlan } | { ok: false; error: string } {
   const table = parseCsvLines(text);
   if (table.length === 0) return { ok: false, error: "The file is empty." };
@@ -370,6 +384,12 @@ export function planContactImport(
         "Couldn't find a Name or Company Name column. Make the first row headers such as Name, Email, Phone, Company Name — or download the template.",
     };
   }
+
+  const claimed = new Set(Object.values(columns));
+  const noteColumns = headers
+    .map((header, index) => ({ header: header.replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim(), index }))
+    .filter((column) => column.header && !claimed.has(column.index) && NOTE_HEADER.test(column.header))
+    .map((column) => column.index);
 
   const rows: ImportContactRow[] = [];
   const seen = new Set<string>();
@@ -471,6 +491,17 @@ export function planContactImport(
       status: status.status,
       company,
       notes,
+      ...(options.keepNotes && name
+        ? {
+            keptNote:
+              noteColumns
+                .map((index) => ({ header: headers[index], value: (cells[index] ?? "").trim() }))
+                .filter((part) => part.value)
+                .map((part) => `${part.header}: ${part.value}`)
+                .join("\n")
+                .slice(0, MAX_KEPT_NOTE) || null,
+          }
+        : {}),
     });
   });
 
@@ -487,6 +518,7 @@ export function planContactImport(
       skippedDuplicates,
       // The first rows' cells as written, for the preview's column hints.
       samples: table.slice(1, 4).map(({ cells }) => cells.map((cell) => cell.trim().slice(0, 120))),
+      noteColumns,
     },
   };
 }
@@ -502,6 +534,9 @@ export type ImportBatchResult = {
   tagged: number;
   phonesFilled: number;
   websitesFilled: number;
+  // Notes kept from the file's Notes / Lead Source columns (one a person;
+  // the same note already on them isn't written twice).
+  notesKept: number;
   skipped: { line: number; reason: string }[];
 };
 
@@ -514,6 +549,7 @@ export function emptyBatchResult(): ImportBatchResult {
     tagged: 0,
     phonesFilled: 0,
     websitesFilled: 0,
+    notesKept: 0,
     skipped: [],
   };
 }
@@ -526,6 +562,7 @@ export function addBatchResult(into: ImportBatchResult, result: ImportBatchResul
   into.tagged += result.tagged;
   into.phonesFilled += result.phonesFilled;
   into.websitesFilled += result.websitesFilled;
+  into.notesKept += result.notesKept ?? 0;
   into.skipped.push(...result.skipped);
 }
 

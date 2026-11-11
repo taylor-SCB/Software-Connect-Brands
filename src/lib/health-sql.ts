@@ -1,0 +1,425 @@
+import { Prisma } from "@/generated/prisma/client";
+import { prisma } from "@/lib/prisma";
+import { owedRowsSql } from "@/lib/money";
+import { OVERDUE_TYPES } from "@/lib/calendar-data";
+import { TALK_STATUSES, zoneDay } from "@/lib/health";
+import { PULSE_KEYS, type PulseKey } from "@/lib/list-params";
+
+// The SQL twin of leadHealth() (src/lib/health.ts), for the Contacts
+// list's Pulse filter and sort (BDR redesign, round 2, Nov 11, 2026; the
+// plan's healthScore: "The Pulse filter / sort uses a SQL twin of the same
+// rules, with a test that the two agree"). It works out only what decides
+// the colour — the state, the 0-100 score of someone reached, stalled for
+// someone being tried, late money on a won one — never the words.
+//
+// Two halves, so each can be checked on its own:
+// - pulseRulesSql(): the rules, from one row of plain inputs per person.
+//   scripts/health-check.ts runs every leadHealth() fixture through it and
+//   checks the two agree on the state, score, band, stalled and warmth.
+// - contactPulseInputs(): those inputs for every person in a workspace,
+//   from the same tables and the same definitions as the health loader
+//   (src/lib/health-load.ts): the stored lastTouchAt / lastConnectAt
+//   (kept by the triggers with the loader's own touch and connect rules),
+//   the latest move into a talk status, tries since the last talk, what is
+//   booked or late, paperwork out, late money. health-check.ts checks the
+//   two together against loadContactHealth() on its seeded workspace.
+//
+// Never stored: worked out when the list asks, like the score itself.
+
+// The keys the Pulse filter offers, warmest first (browser-safe, in
+// list-params.ts).
+export { PULSE_KEYS, PULSE_LABELS, type PulseKey } from "@/lib/list-params";
+
+// The same sets leadHealth() reads.
+export const PULSE_CLOSED = ["NOT_INTERESTED", "LOST", "ARCHIVED"] as const;
+export const PULSE_REACHED = ["CONNECTED", "INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT"] as const;
+export type PulseState = "NEW" | "TRYING" | "REACHED" | "WON" | "CLOSED";
+export const STATE_OF_PULSE: Record<PulseKey, PulseState> = {
+  won: "WON",
+  owes: "WON",
+  warm: "REACHED",
+  cooling: "REACHED",
+  cold: "REACHED",
+  trying: "TRYING",
+  stalled: "TRYING",
+  new: "NEW",
+  closed: "CLOSED",
+};
+
+export type PulseClock = { now: Date; timeZone: string; quietDays: number };
+
+// The clock's moment as the columns hold one: a UTC timestamp.
+function nowSql(clock: PulseClock) {
+  return Prisma.sql`(${clock.now.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+}
+
+// The rules. `source` is a SELECT giving one row per person with:
+//   key text, status text, tries int, talks int,
+//   last_touch timestamptz, last_connect timestamptz, status_talk timestamptz,
+//   since int (tries after the later of the two talks),
+//   next_on date (the soonest thing booked, the workspace's day; null for none),
+//   late_n int (follow-ups gone late), paper jsonb (an array of sent-at
+//   timestamps of quotes and contracts out), owes_late boolean.
+// Gives key, state, pulse, score (reached only), stalled, warmth (the
+// same number as warmth() in health.ts).
+export function pulseRulesSql(source: Prisma.Sql, clock: PulseClock): Prisma.Sql {
+  // A whole number of days, written into the statement as a number.
+  const q = Prisma.raw(String(Math.max(1, Math.round(clock.quietDays || 8))));
+  const now = nowSql(clock);
+  const tz = clock.timeZone;
+  // A calendar day in the workspace's zone, as daysSince() counts them.
+  // Every date column is a timestamp without a zone holding UTC.
+  const day = (at: Prisma.Sql) => Prisma.sql`((${at}) AT TIME ZONE 'UTC' AT TIME ZONE ${tz})::date`;
+  const today = day(now);
+  // daysAgo(): null for no date, never below 0.
+  const ago = (at: Prisma.Sql) => Prisma.sql`CASE WHEN ${at} IS NULL THEN NULL ELSE GREATEST(0, ${today} - ${day(at)}) END`;
+  return Prisma.sql`
+    SELECT i.key, s.state,
+           CASE s.state
+             WHEN 'WON' THEN CASE WHEN COALESCE(i.owes_late, false) THEN 'owes' ELSE 'won' END
+             WHEN 'CLOSED' THEN 'closed'
+             WHEN 'NEW' THEN 'new'
+             WHEN 'TRYING' THEN CASE WHEN f.stalled THEN 'stalled' ELSE 'trying' END
+             ELSE CASE WHEN sc.score >= 70 THEN 'warm' WHEN sc.score >= 40 THEN 'cooling' ELSE 'cold' END
+           END AS pulse,
+           CASE WHEN s.state = 'REACHED' THEN sc.score END AS score,
+           (s.state = 'TRYING' AND f.stalled) AS stalled,
+           d.late, b.booked,
+           CASE s.state
+             WHEN 'WON' THEN 400
+             WHEN 'REACHED' THEN 200 + sc.score
+             WHEN 'TRYING' THEN CASE WHEN f.stalled THEN 110 ELSE 120 END
+             WHEN 'NEW' THEN 100
+             ELSE 0
+           END AS warmth
+      FROM (${source}) i
+      CROSS JOIN LATERAL (
+        SELECT ${ago(Prisma.sql`i.last_touch`)} AS lt,
+               ${ago(Prisma.sql`GREATEST(i.last_connect, CASE WHEN i.status_talk <= ${now} THEN i.status_talk END)`)} AS ltalk,
+               COALESCE(i.late_n, 0) > 0 AS late,
+               (i.next_on IS NOT NULL AND i.next_on >= ${today}) AS has_next,
+               -- Most people have no paperwork out: skip the look inside.
+               CASE WHEN i.paper IS NULL OR jsonb_array_length(i.paper) = 0 THEN false
+                    ELSE COALESCE((SELECT bool_or(${ago(Prisma.sql`p.v::timestamp`)} <= ${q})
+                                     FROM jsonb_array_elements_text(i.paper) p(v)), false) END AS paper_recent,
+               CASE WHEN i.paper IS NULL OR jsonb_array_length(i.paper) = 0 THEN false
+                    ELSE COALESCE((SELECT bool_or(${ago(Prisma.sql`p.v::timestamp`)} > ${q}
+                                                  AND (i.last_touch IS NULL OR i.last_touch < p.v::timestamp))
+                                     FROM jsonb_array_elements_text(i.paper) p(v)), false) END AS paper_drag
+      ) d
+      CROSS JOIN LATERAL (SELECT (d.has_next OR d.paper_recent) AS booked) b
+      CROSS JOIN LATERAL (
+        SELECT CASE
+                 WHEN i.status = 'WON' THEN 'WON'
+                 WHEN i.status IN (${Prisma.join([...PULSE_CLOSED])}) THEN 'CLOSED'
+                 WHEN i.last_connect IS NOT NULL OR COALESCE(i.talks, 0) > 0 OR i.status IN (${Prisma.join([...PULSE_REACHED])}) THEN 'REACHED'
+                 WHEN i.last_touch IS NULL AND COALESCE(i.tries, 0) = 0 AND i.status = 'NOT_ACTIONED' THEN 'NEW'
+                 ELSE 'TRYING'
+               END AS state
+      ) s
+      CROSS JOIN LATERAL (
+        SELECT (d.late OR (NOT b.booked AND d.lt IS NOT NULL AND d.lt > ${q})) AS stalled
+      ) f
+      CROSS JOIN LATERAL (
+        SELECT LEAST(100, GREATEST(0,
+                 (CASE WHEN d.lt IS NULL THEN 0 WHEN d.lt <= 2 THEN 40 WHEN d.lt <= ${q} / 2.0 THEN 25 WHEN d.lt <= ${q} THEN 10 ELSE 0 END)
+               + GREATEST(0, (CASE WHEN d.ltalk IS NULL THEN 10 WHEN d.ltalk <= ${q} THEN 30 WHEN d.ltalk <= ${q} * 2 THEN 20 ELSE 10 END)
+                             - CASE WHEN COALESCE(i.since, 0) >= 5 THEN 10 ELSE 0 END)
+               + CASE WHEN b.booked THEN CASE WHEN d.late THEN 15 ELSE 30 END ELSE 0 END
+               - CASE WHEN d.paper_drag THEN 15 ELSE 0 END))::int AS score
+      ) sc`;
+}
+
+// The inputs for the workspace's people, optionally only one rep's
+// (`owner`: an id, or null for nobody's). Every statement is scoped to
+// the workspace and grouped; nothing is read per person.
+//
+// `candidatesOnly` (the list's sets): only the people whose colour can be
+// anything but the plain one for their state — won, or touched within Q
+// days, or talked (or moved into a talk status) within 2Q days, or with
+// something booked, late or paperwork out. Everyone else reached scores at
+// most 10 (no recent touch, a talk 10, nothing booked): Cold; everyone else
+// being tried has nothing late or booked. At 200,000 people that is a few
+// thousand rows to score instead of all of them.
+export function contactPulseInputs(
+  organizationId: string,
+  clock: PulseClock,
+  owner?: string | null,
+  options: { candidatesOnly?: boolean } = {},
+): Prisma.Sql {
+  const now = nowSql(clock);
+  const q = Math.max(1, Math.round(clock.quietDays || 8));
+  // The first moment of the workspace's day n days back, as a UTC timestamp.
+  const dayStart = (n: number) =>
+    Prisma.sql`(((((${clock.now.toISOString()}::timestamptz) AT TIME ZONE ${clock.timeZone})::date - ${Prisma.raw(String(n))})::timestamp AT TIME ZONE ${clock.timeZone}) AT TIME ZONE 'UTC')`;
+  const candidateClause = options.candidatesOnly
+    ? Prisma.sql`AND (c.status = 'WON' OR c."lastTouchAt" >= ${dayStart(q)} OR c."lastConnectAt" >= ${dayStart(q * 2)}
+                      OR c.id IN (SELECT id FROM booked UNION SELECT id FROM late UNION SELECT id FROM paper
+                                  UNION SELECT id FROM st WHERE st.at >= ${dayStart(q * 2)}))`
+    : Prisma.empty;
+  const today = zoneDay(clock.now, clock.timeZone);
+  const ownerClause =
+    owner === undefined ? Prisma.empty : owner === null ? Prisma.sql`AND c."ownerId" IS NULL` : Prisma.sql`AND c."ownerId" = ${owner}`;
+  // A touch and a connect, as the loader and the triggers read them.
+  const touch = Prisma.sql`a.marketing = false AND a."occurredAt" <= ${now} AND a.outcome IS DISTINCT FROM 'NO_SHOW'`;
+  return Prisma.sql`
+    WITH st AS (
+      SELECT s."contactId" AS id, MAX(s."on") AS at
+        FROM "StatusChange" s
+       WHERE s."organizationId" = ${organizationId} AND s."contactId" IS NOT NULL
+         AND s."toStatus" IN (${Prisma.join([...TALK_STATUSES])}) AND s."on" <= ${now}
+       GROUP BY 1
+    ),
+    booked AS (
+      SELECT e."contactId" AS id FROM "CalendarEvent" e
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NOT NULL
+         AND (e."startOn" >= ${today}::date OR e."endOn" >= ${today}::date)
+      UNION
+      SELECT ea."B" FROM "_EventAttendees" ea JOIN "CalendarEvent" e ON e.id = ea."A"
+       WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
+         AND (e."startOn" >= ${today}::date OR e."endOn" >= ${today}::date)
+      UNION
+      SELECT a."contactId" FROM "Activity" a
+       WHERE a."organizationId" = ${organizationId} AND a.marketing = false AND a."occurredAt" > ${now} AND a."contactId" IS NOT NULL
+      UNION
+      SELECT oc."contactId" FROM "OpportunityMeeting" om
+        JOIN "Opportunity" o ON o.id = om."opportunityId"
+        JOIN "OpportunityContact" oc ON oc."opportunityId" = o.id AND oc.role <> 'HIDDEN'
+        LEFT JOIN "Activity" act ON act.id = om."activityId"
+       WHERE o."organizationId" = ${organizationId} AND om."on" > ${now} AND om.outcome IS NULL
+         AND (act.outcome IS NULL OR act.outcome::text NOT IN ('HELD', 'NO_SHOW'))
+    ),
+    late AS (
+      SELECT id, COUNT(*)::int AS n FROM (
+        SELECT e."contactId" AS id FROM "CalendarEvent" e
+         WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NOT NULL
+           AND e.type IN (${Prisma.join(OVERDUE_TYPES)})
+           AND e."startOn" < ${today}::date AND (e."endOn" IS NULL OR e."endOn" < ${today}::date)
+        UNION
+        SELECT ea."B" FROM "_EventAttendees" ea JOIN "CalendarEvent" e ON e.id = ea."A"
+         WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
+           AND e.type IN (${Prisma.join(OVERDUE_TYPES)})
+           AND e."startOn" < ${today}::date AND (e."endOn" IS NULL OR e."endOn" < ${today}::date)
+      ) x GROUP BY id
+    ),
+    paper AS (
+      SELECT id, jsonb_agg(sent_at) AS items FROM (
+        SELECT q."contactId" AS id, q."sentAt" AS sent_at FROM "Quote" q
+         WHERE q."organizationId" = ${organizationId} AND q.status = 'SENT' AND q."sentAt" IS NOT NULL AND q."contactId" IS NOT NULL
+        UNION ALL
+        SELECT k."contactId", k."sentAt" FROM "Contract" k
+         WHERE k."organizationId" = ${organizationId} AND k.status = 'SENT' AND k.payable = false AND k."sentAt" IS NOT NULL AND k."contactId" IS NOT NULL
+      ) x GROUP BY id
+    ),
+    people AS (
+      SELECT c.id, c.status::text AS status, c."lastTouchAt" AS last_touch, c."lastConnectAt" AS last_connect
+        FROM "Contact" c
+       WHERE c."organizationId" = ${organizationId} ${ownerClause} ${candidateClause}
+    ),
+    talk AS (
+      SELECT p.id, GREATEST(p.last_connect, st.at) AS at
+        FROM people p JOIN st ON st.id = p.id
+      UNION ALL
+      SELECT p.id, p.last_connect FROM people p
+       WHERE p.last_connect IS NOT NULL AND NOT EXISTS (SELECT 1 FROM st WHERE st.id = p.id)
+    ),
+    since AS (
+      SELECT t.id, COUNT(DISTINCT COALESCE(a."batchId", a.id))::int AS n
+        FROM talk t
+        JOIN "Activity" a ON a."contactId" = t.id AND a."organizationId" = ${organizationId}
+       WHERE ${touch} AND a."occurredAt" > t.at
+       GROUP BY 1
+    ),
+    -- Booked today or later: an open calendar entry (theirs or one they
+    -- attend), a touch dated ahead, or a meeting ahead on their
+    -- opportunity nobody has answered yet (the loader's om_next).
+    won AS (SELECT p.id AS key FROM people p WHERE p.status = 'WON'),
+    owes AS (
+      SELECT k.key
+      ${owedRowsSql(organizationId, Prisma.sql`JOIN won k ON k.key = c."contactId"`)}
+         AND cp."paidAt" IS NULL AND cp."amountCents" > 0 AND cp."dueOn" < ${today}::date
+         AND cp."amountCents" - COALESCE(paid.total, 0) > 0
+       GROUP BY k.key
+    )
+    SELECT p.id AS key, p.status, 0 AS tries, 0 AS talks, p.last_touch, p.last_connect, st.at AS status_talk,
+           since.n AS since,
+           CASE WHEN booked.id IS NOT NULL THEN ${today}::date END AS next_on,
+           late.n AS late_n, paper.items AS paper, (owes.key IS NOT NULL) AS owes_late
+      FROM people p
+      LEFT JOIN st ON st.id = p.id
+      LEFT JOIN since ON since.id = p.id
+      LEFT JOIN (SELECT DISTINCT id FROM booked) booked ON booked.id = p.id
+      LEFT JOIN late ON late.id = p.id
+      LEFT JOIN paper ON paper.id = p.id
+      LEFT JOIN owes ON owes.key = p.id`;
+}
+
+// ---- The list's side --------------------------------------------------
+
+// What the Contacts list needs to filter and order by Pulse. Everything a
+// stored column can say is a where-clause on it:
+// - the state (status, lastTouchAt, lastConnectAt — leadHealth()'s step 1);
+// - Trying vs stalled: stalled is a follow-up gone late, or nothing booked
+//   and the last try more than Q days ago — lastTouchAt against the first
+//   moment of the day Q days back, plus the ids of the people being tried
+//   who have something late or booked (a short list: calendar entries and
+//   paperwork).
+// Only the score needs ids: inside Reached, and Won with or without late
+// money, the twin returns everyone whose pulse isn't that state's biggest,
+// so the biggest is "the state, less those". Together the lists never pass
+// PULSE_ID_CAP: Postgres takes about 32,000 values in one statement, and a
+// preset's list (10,000) and Owes money's (10,000) can sit beside it. Past
+// the cap the warmest are kept and the rest narrow a little less, as the
+// presets' lists do; `capped` says so.
+export const PULSE_ID_CAP = 12_000;
+
+export type PulseSets = {
+  // Reached and Won: the biggest pulse, and the ids of each of the others.
+  big: Partial<Record<PulseState, PulseKey>>;
+  ids: Partial<Record<PulseKey, string[]>>;
+  // Trying: who has something late, who has something booked, and the
+  // last moment a try can be and still be "more than Q days ago".
+  late: string[];
+  booked: string[];
+  staleBefore: Date;
+  capped: boolean;
+};
+
+export async function loadPulseSets(organizationId: string, clock: PulseClock, owner?: string | null): Promise<PulseSets> {
+  const tz = clock.timeZone;
+  const q = Prisma.raw(String(Math.max(1, Math.round(clock.quietDays || 8))));
+  const today = Prisma.sql`((${clock.now.toISOString()}::timestamptz) AT TIME ZONE ${tz})::date`;
+  // The planner prices the per-person paperwork look as if every row
+  // had some and reaches for JIT compilation, which alone took about two
+  // seconds at 200,000 people; the statement runs in well under one
+  // without it. Off for this statement only.
+  const rows = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL jit = off`;
+    return tx.$queryRaw<{ id: string | null; kind: string; value: string }[]>(Prisma.sql`
+    WITH tw AS MATERIALIZED (${pulseRulesSql(contactPulseInputs(organizationId, clock, owner, { candidatesOnly: true }), clock)}),
+    -- Only candidates are scored, so Reached's biggest is always Cold (the
+    -- rest of Reached); Won's people are all here, so its count is exact.
+    counts AS (SELECT state, pulse, COUNT(*)::int AS n FROM tw WHERE state = 'WON' GROUP BY 1, 2),
+    big AS ((SELECT DISTINCT ON (state) state, pulse FROM counts ORDER BY state, n DESC, pulse)
+            UNION ALL SELECT 'REACHED', 'cold')
+    SELECT NULL AS id, 'big' AS kind, state || ':' || pulse AS value FROM big
+    UNION ALL
+    SELECT NULL, 'stale', to_char(((${today} - ${q})::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    UNION ALL
+    (SELECT id, kind, value FROM (
+       SELECT tw.key AS id, 'pulse' AS kind, tw.pulse AS value, tw.warmth AS w FROM tw JOIN big ON big.state = tw.state
+        WHERE tw.pulse <> big.pulse
+       UNION ALL
+       SELECT tw.key, 'late', '', 150 FROM tw WHERE tw.state = 'TRYING' AND tw.late
+       UNION ALL
+       SELECT tw.key, 'booked', '', 150 FROM tw WHERE tw.state = 'TRYING' AND tw.booked
+     ) x ORDER BY w DESC, id LIMIT ${PULSE_ID_CAP + 1})`);
+  });
+  const sets: PulseSets = { big: {}, ids: {}, late: [], booked: [], staleBefore: new Date(0), capped: false };
+  let count = 0;
+  for (const row of rows) {
+    if (row.kind === "big") {
+      const [state, pulse] = row.value.split(":");
+      sets.big[state as PulseState] = pulse as PulseKey;
+      continue;
+    }
+    if (row.kind === "stale") {
+      sets.staleBefore = new Date(row.value);
+      continue;
+    }
+    count += 1;
+    if (count > PULSE_ID_CAP) {
+      sets.capped = true;
+      continue;
+    }
+    if (row.kind === "late") sets.late.push(row.id!);
+    else if (row.kind === "booked") sets.booked.push(row.id!);
+    else (sets.ids[row.value as PulseKey] ??= []).push(row.id!);
+  }
+  return sets;
+}
+
+// The stored-column clause for a state (what leadHealth()'s step 1 reads).
+export function pulseStateClause(state: PulseState): object {
+  const notClosed = { status: { notIn: ["WON", ...PULSE_CLOSED] } };
+  switch (state) {
+    case "WON":
+      return { status: "WON" };
+    case "CLOSED":
+      return { status: { in: [...PULSE_CLOSED] } };
+    case "REACHED":
+      return { AND: [notClosed, { OR: [{ lastConnectAt: { not: null } }, { status: { in: [...PULSE_REACHED] } }] }] };
+    case "NEW":
+      return { status: "NOT_ACTIONED", lastTouchAt: null, lastConnectAt: null };
+    case "TRYING":
+      return {
+        AND: [
+          { status: { notIn: ["WON", ...PULSE_CLOSED, ...PULSE_REACHED] } },
+          { lastConnectAt: null },
+          { NOT: { status: "NOT_ACTIONED", lastTouchAt: null } },
+        ],
+      };
+  }
+}
+
+// Trying, stalled: a follow-up late, or nothing booked and the last try
+// more than Q days ago.
+function stalledClause(sets: PulseSets): object {
+  return {
+    OR: [
+      ...(sets.late.length ? [{ id: { in: sets.late } }] : []),
+      { AND: [...(sets.booked.length ? [{ id: { notIn: sets.booked } }] : []), { lastTouchAt: { lt: sets.staleBefore } }] },
+    ],
+  };
+}
+function notStalledClause(sets: PulseSets): object {
+  return {
+    AND: [
+      ...(sets.late.length ? [{ id: { notIn: sets.late } }] : []),
+      {
+        OR: [
+          ...(sets.booked.length ? [{ id: { in: sets.booked } }] : []),
+          { lastTouchAt: null },
+          { lastTouchAt: { gte: sets.staleBefore } },
+        ],
+      },
+    ],
+  };
+}
+
+// The where-clause for any set of pulses, each id written at most once.
+export function pulseWhere(keys: readonly PulseKey[], sets: PulseSets): object {
+  const wanted = new Set(keys);
+  const or: object[] = [];
+  for (const state of ["WON", "REACHED", "TRYING", "NEW", "CLOSED"] as PulseState[]) {
+    const mine = PULSE_KEYS.filter((key) => STATE_OF_PULSE[key] === state);
+    const picked = mine.filter((key) => wanted.has(key));
+    if (picked.length === 0) continue;
+    const base = pulseStateClause(state);
+    if (picked.length === mine.length) {
+      or.push(base);
+      continue;
+    }
+    if (state === "TRYING") {
+      or.push({ AND: [base, picked[0] === "stalled" ? stalledClause(sets) : notStalledClause(sets)] });
+      continue;
+    }
+    // Reached and Won, by ids around the state's biggest pulse.
+    const big = sets.big[state];
+    if (big === undefined) continue;
+    if (picked.includes(big)) {
+      const left = mine.filter((key) => !picked.includes(key)).flatMap((key) => sets.ids[key] ?? []);
+      or.push(left.length ? { AND: [base, { id: { notIn: left } }] } : base);
+    } else {
+      const ids = picked.flatMap((key) => sets.ids[key] ?? []);
+      if (ids.length) or.push({ AND: [base, { id: { in: ids } }] });
+    }
+  }
+  if (or.length === 0) return { id: { in: [] as string[] } };
+  return or.length === 1 ? or[0] : { OR: or };
+}
+
+// One pulse (a tier of Warmest first).
+export function pulseClause(key: PulseKey, sets: PulseSets): object {
+  return pulseWhere([key], sets);
+}

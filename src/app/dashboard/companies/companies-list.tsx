@@ -7,9 +7,11 @@ import { formatCents, formatDate } from "@/lib/format";
 import { locationLabel } from "@/lib/companies";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { OPEN_DEAL_STAGES } from "@/lib/constants";
-import { PageHeader, Card, EmptyState, StatusBadge } from "@/components/ui";
+import { Card, EmptyState, StatusBadge } from "@/components/ui";
+import { ListHeader } from "@/components/list-header";
 import { IconPlus, IconBuilding, IconGlobe, IconUsers } from "@/components/icons";
 import { parseListParams, listHref, pageWindow, PRESET_LABELS, type ListLock } from "@/lib/list-params";
+import { PAGE_SIZES } from "@/lib/constants";
 import { companyWhere, getFilterOptions, pageIds as listPageIds } from "@/lib/list-query";
 import { resolveListView } from "@/lib/list-prefs";
 import { ListFilters } from "@/components/list-filters";
@@ -125,8 +127,8 @@ export async function CompaniesList({
       .sort((a, b) => warmthOf(peopleHealth.get(b.id)) - warmthOf(peopleHealth.get(a.id)));
 
   return (
-    <div className="min-w-0">
-      <PageHeader
+    <div className="relative min-w-0">
+      <ListHeader
         eyebrow="Relationships"
         title={title}
         subtitle={
@@ -136,9 +138,9 @@ export async function CompaniesList({
         actions={
           <>
             <CleanUpMenu kind="companies" reps={reps} />
-            <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm min-h-[44px] md:min-h-0">
+            <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm min-h-[44px] max-md:w-11 max-md:justify-center max-md:!px-0 md:min-h-0">
               <IconPlus size={14} />
-              Add company
+              <span className="max-md:sr-only">Add company</span>
             </Link>
           </>
         }
@@ -165,6 +167,7 @@ export async function CompaniesList({
             leadLabels={leadLabels}
             total={total}
             columns={columns}
+            initialPhone={initialPhone}
           />
           <Card lit>
             {companies.length === 0 ? (
@@ -278,7 +281,7 @@ export async function CompaniesList({
                                 .reduce((sum, deal) => sum + dealValueCents(deal), 0)
                             : 0;
                         return [
-                          <tr key={company.id} data-testid="company-row">
+                          <tr key={company.id} data-testid="company-row" className="group/row">
                             <td className="whitespace-nowrap pr-0">
                               <RowCheck id={company.id} label={company.name} />
                               <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} />
@@ -403,6 +406,7 @@ export async function CompaniesList({
               pages={window.pages}
               hrefFor={(page) => listHref(basePath, params, { page }, lock)}
               noun="companies"
+              perPage={{ value: params.per, options: PAGE_SIZES.map((size) => ({ size, href: listHref(basePath, params, { per: size }, lock) })) }}
             />
           </Card>
         </BulkAssign>

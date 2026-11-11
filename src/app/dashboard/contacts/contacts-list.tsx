@@ -2,10 +2,14 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { PageHeader, Card, EmptyState, StatusBadge } from "@/components/ui";
-import { IconPlus, IconUsers, IconNote, IconGlobe } from "@/components/icons";
+import { Card, EmptyState, StatusBadge } from "@/components/ui";
+import { ListHeader } from "@/components/list-header";
+import { IconPlus, IconUsers, IconNote, IconGlobe, IconMessage, IconMail, IconPhone, IconCalendar } from "@/components/icons";
 import { INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
 import { parseListParams, listHref, pageWindow, PRESET_LABELS, type ListLock } from "@/lib/list-params";
+import { PAGE_SIZES } from "@/lib/constants";
+import { lastContactedContacts } from "@/lib/last-contacted";
+import { LastContactedCell } from "@/components/last-contacted-cell";
 import { contactWhere, companyIdsMatching, getFilterOptions, namesForCompanies, pageIds as listPageIds } from "@/lib/list-query";
 import { resolveListView } from "@/lib/list-prefs";
 import { ListFilters } from "@/components/list-filters";
@@ -92,10 +96,12 @@ export async function ContactsList({
   // Health, what's owed and (when shown) marketing, for just this page: a
   // few grouped statements, never one per row.
   const pageIds = contacts.map((contact) => contact.id);
-  const [health, owed, marketing] = await Promise.all([
+  const [health, owed, marketing, lastContacted] = await Promise.all([
     loadContactHealth(organizationId, pageIds, { settings }),
     owedBy(organizationId, "contact", pageIds, todayIso(timeZone)),
     show.has("marketing") ? marketingContacts(organizationId, pageIds) : Promise.resolve(new Map()),
+    // Last Contacted By, in one statement for the page, only when shown.
+    show.has("lastContacted") ? lastContactedContacts(organizationId, pageIds) : Promise.resolve(new Map()),
   ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
   const showRep = params.scope !== "mine";
@@ -104,8 +110,8 @@ export async function ContactsList({
   const presetName = params.preset ? PRESET_LABELS.contacts[params.preset] : null;
 
   return (
-    <div className="min-w-0">
-      <PageHeader
+    <div className="relative min-w-0">
+      <ListHeader
         eyebrow="Relationships"
         title={title}
         subtitle={
@@ -117,10 +123,17 @@ export async function ContactsList({
             <span className="hidden md:contents">
               <EmailButton />
             </span>
-            <CleanUpMenu kind="contacts" reps={reps} openImport={searchParams.import === "1"} />
-            <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm min-h-[44px] md:min-h-0">
+            <CleanUpMenu
+              kind="contacts"
+              reps={reps}
+              openImport={searchParams.import === "1"}
+              // My day's "Import my list" (?import=1): a Member's own file
+              // lands on their Mine. Everywhere else it starts Unassigned.
+              importAssignTo={searchParams.import === "1" && role === "MEMBER" ? userId : ""}
+            />
+            <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm min-h-[44px] max-md:w-11 max-md:justify-center max-md:!px-0 md:min-h-0">
               <IconPlus size={14} />
-              Add contact
+              <span className="max-md:sr-only">Add contact</span>
             </Link>
           </>
         }
@@ -148,6 +161,7 @@ export async function ContactsList({
             leadLabels={leadLabels}
             total={total}
             columns={columns}
+            initialPhone={initialPhone}
           />
           <Card lit>
             {contacts.length === 0 ? (
@@ -240,6 +254,8 @@ export async function ContactsList({
                         <th>Next step</th>
                         <th>Best phone</th>
                         {showRep && <th>Rep</th>}
+                        {show.has("activity") && <th>Activity</th>}
+                        {show.has("lastContacted") && <th>Last Contacted By</th>}
                         {show.has("email") && <th>Email</th>}
                         {show.has("phone2") && <th>Phone 2</th>}
                         {show.has("location") && <th>Location</th>}
@@ -258,7 +274,7 @@ export async function ContactsList({
                         const others = otherPhones(contact);
                         const location = [contact.city, contact.state].filter(Boolean).join(", ");
                         return (
-                          <tr key={contact.id} data-testid="contact-row" data-contact-id={contact.id}>
+                          <tr key={contact.id} data-testid="contact-row" data-contact-id={contact.id} className="group/row">
                             <td className="whitespace-nowrap pr-0">
                               <RowCheck id={contact.id} label={contact.name} />
                               <StarButton id={contact.id} favorite={contact.favorite} action={setContactFavorite} label={contact.name} />
@@ -297,6 +313,16 @@ export async function ContactsList({
                             {showRep && (
                               <td>
                                 <RepCell name={repName(contact.owner)} />
+                              </td>
+                            )}
+                            {show.has("activity") && (
+                              <td>
+                                <ActivityChips contactId={contact.id} byType={h?.counts.byType ?? null} />
+                              </td>
+                            )}
+                            {show.has("lastContacted") && (
+                              <td>
+                                <LastContactedCell last={lastContacted.get(contact.id)} timeZone={timeZone} />
                               </td>
                             )}
                             {show.has("email") && (
@@ -399,6 +425,7 @@ export async function ContactsList({
               pages={window.pages}
               hrefFor={(page) => listHref(basePath, params, { page }, lock)}
               noun="contacts"
+              perPage={{ value: params.per, options: PAGE_SIZES.map((size) => ({ size, href: listHref(basePath, params, { per: size }, lock) })) }}
             />
           </Card>
         </BulkAssign>
@@ -418,6 +445,47 @@ async function totalInWorkspace(organizationId: string, lock: ListLock) {
       ...(lock.interested ? { status: "INTERESTED" as const } : {}),
     },
   });
+}
+
+// The Activity column's four count chips (calls, texts, emails, meetings),
+// from the page's health load: touches counted once per batch, never a
+// marketing send or a no-show, the same counts as the Pulse caption.
+const ACTIVITY_CHIPS = [
+  { key: "calls", Icon: IconPhone, title: "Phone calls logged" },
+  { key: "texts", Icon: IconMessage, title: "Texts logged" },
+  { key: "emails", Icon: IconMail, title: "Emails logged" },
+  { key: "meetings", Icon: IconCalendar, title: "Meetings logged" },
+] as const;
+
+function ActivityChips({
+  contactId,
+  byType,
+}: {
+  contactId: string;
+  byType: { calls: number; texts: number; emails: number; meetings: number } | null;
+}) {
+  return (
+    <div className="flex items-center gap-1" data-testid="activity-chips">
+      {ACTIVITY_CHIPS.map(({ key, Icon, title }) => {
+        const count = byType?.[key] ?? 0;
+        return (
+          <Link
+            key={key}
+            href={`/dashboard/contacts/${contactId}#activity`}
+            title={`${count} ${title}`}
+            aria-label={`${count} ${title}`}
+            data-testid={`activity-${key}`}
+            className={`num inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[0.7rem] transition-colors ${
+              count > 0 ? "border-[var(--border-strong)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-faint)]"
+            } hover:border-[var(--brand)]`}
+          >
+            <Icon size={12} />
+            {count}
+          </Link>
+        );
+      })}
+    </div>
+  );
 }
 
 export function TagCell({ industries, types }: { industries: string[]; types: string[] }) {

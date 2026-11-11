@@ -42,6 +42,9 @@ const rowSchema = z.object({
   status: statusSchema,
   company: companySchema.nullable(),
   notes: z.array(z.string()).optional(),
+  // The file's Notes / Lead Source columns as one note (round 2), only when
+  // the preview's offer was ticked.
+  keptNote: z.string().trim().max(4000).nullable().optional(),
 });
 
 const batchSchema = z.array(rowSchema).min(1).max(IMPORT_BATCH_SIZE);
@@ -301,10 +304,68 @@ export async function importContactsBatch(input: unknown, options?: { assignTo?:
     await prisma.contact.createMany({ data: creates });
     result.contactsCreated += creates.length;
   }
+  result.notesKept += await keepNotes(organizationId, userId, people, companyIds);
 
   await fillInBlanks(organizationId, Array.from(companyIds.values()), result, batchRows);
   revalidateLists();
   return result;
+}
+
+// The preview's "Keep Notes and Lead Source as a note" (round 2, Nov 11,
+// 2026): one GENERAL note a person, written once the batch's contacts are
+// in, on whoever the row became or updated (found by the same rule: email,
+// else name at the company). A person who already has that exact note
+// isn't given it again, so re-importing the same file adds nothing.
+async function keepNotes(
+  organizationId: string,
+  userId: string,
+  people: z.infer<typeof rowSchema>[],
+  companyIds: Map<string, string>,
+): Promise<number> {
+  const rows = people.filter((row) => row.keptNote);
+  if (rows.length === 0) return 0;
+  const emails = rows.map((row) => row.email).filter((email): email is string => Boolean(email));
+  const found = await prisma.contact.findMany({
+    where: {
+      organizationId,
+      OR: [
+        ...(emails.length ? [{ email: { in: emails, mode: "insensitive" as const } }] : []),
+        { name: { in: rows.map((row) => row.name!), mode: "insensitive" } },
+      ],
+    },
+    select: { id: true, email: true, name: true, companyId: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const byEmail = new Map<string, string>();
+  const byName = new Map<string, string>();
+  for (const contact of found) {
+    if (contact.email && !byEmail.has(lower(contact.email))) byEmail.set(lower(contact.email), contact.id);
+    const key = `${lower(contact.name)}|${contact.companyId ?? ""}`;
+    if (!byName.has(key)) byName.set(key, contact.id);
+  }
+  const wanted = new Map<string, string>();
+  for (const row of rows) {
+    const companyId = row.company ? (companyIds.get(lower(row.company.name)) ?? null) : null;
+    const id = (row.email ? byEmail.get(lower(row.email)) : undefined) ?? byName.get(`${lower(row.name!)}|${companyId ?? ""}`);
+    if (id) wanted.set(`${id}\u0000${row.keptNote!}`, id);
+  }
+  if (wanted.size === 0) return 0;
+  const existing = await prisma.note.findMany({
+    where: { organizationId, contactId: { in: Array.from(new Set(wanted.values())) }, body: { in: Array.from(wanted.keys()).map((key) => key.split("\u0000")[1]) } },
+    select: { contactId: true, body: true },
+  });
+  for (const note of existing) wanted.delete(`${note.contactId}\u0000${note.body}`);
+  if (wanted.size === 0) return 0;
+  await prisma.note.createMany({
+    data: Array.from(wanted.entries()).map(([key, contactId]) => ({
+      organizationId,
+      contactId,
+      authorId: userId,
+      body: key.split("\u0000")[1],
+      label: "GENERAL" as const,
+    })),
+  });
+  return wanted.size;
 }
 
 // After the file's own values are in: tag every company this batch

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { IconChevronLeft, IconChevronRight } from "@/components/icons";
+import { PerPageSelect } from "@/components/per-page-select";
 
 // "Showing 51–100 of 12,340" with Previous / Next and a few page numbers.
 // Plain links, so it renders from a server component and Back works.
@@ -11,6 +12,7 @@ export function Pagination({
   pages,
   hrefFor,
   noun,
+  perPage,
 }: {
   total: number;
   from: number;
@@ -19,6 +21,9 @@ export function Pagination({
   pages: number;
   hrefFor: (page: number) => string;
   noun: string;
+  // Rows per page, shown beside the page numbers (the Contacts and
+  // Companies lists): the size now and the address for each choice.
+  perPage?: { value: number; options: { size: number; href: string }[] };
 }) {
   const numbers = pageNumbers(page, pages);
   return (
@@ -28,6 +33,8 @@ export function Pagination({
           ? `No ${noun}`
           : `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} ${noun}`}
       </p>
+      <div className="flex flex-wrap items-center gap-3">
+      {perPage && total > 0 && <PerPageSelect value={perPage.value} options={perPage.options} />}
       {pages > 1 && (
         <nav className="flex items-center gap-1" aria-label="Pages">
           <PageLink href={hrefFor(page - 1)} disabled={page <= 1} label="Previous page">
@@ -49,6 +56,7 @@ export function Pagination({
           </PageLink>
         </nav>
       )}
+      </div>
     </div>
   );
 }

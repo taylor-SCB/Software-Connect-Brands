@@ -248,9 +248,15 @@ export function BulkAssign({
   );
 }
 
+// A desktop row's box (round 2, Nov 11, 2026, the plan's hiddenNotRemoved):
+// it keeps its place, so nothing moves, but shows only while the row is
+// hovered or has the keyboard in it, once anything is ticked, or in Select
+// mode. A screen with no hover (a tablet showing the table) always shows
+// it. It is never taken out of the tab order: Tab still lands on it.
 export function RowCheck({ id, label }: { id: string; label: string }) {
   const selection = useContext(SelectionContext);
   if (!selection) return null;
+  const shown = selection.selecting || selection.ids.size > 0;
   return (
     <input
       type="checkbox"
@@ -259,7 +265,12 @@ export function RowCheck({ id, label }: { id: string; label: string }) {
       aria-label="Select this row"
       title={label}
       data-testid="row-check"
-      className="mr-1.5 h-3.5 w-3.5 align-middle accent-[var(--brand)]"
+      data-shown={shown ? "1" : undefined}
+      className={`mr-1.5 h-3.5 w-3.5 align-middle accent-[var(--brand)] ${
+        shown
+          ? ""
+          : "opacity-0 focus:opacity-100 group-hover/row:opacity-100 group-focus-within/row:opacity-100 [@media(hover:none)]:opacity-100"
+      }`}
     />
   );
 }
@@ -291,7 +302,7 @@ export function SelectToggle() {
       type="button"
       onClick={() => selection.setSelecting(!selection.selecting)}
       aria-pressed={selection.selecting}
-      className={`btn btn-sm min-h-[44px] ${selection.selecting ? "btn-primary" : "btn-ghost"}`}
+      className={`btn btn-sm min-h-[44px] md:min-h-0 ${selection.selecting ? "btn-primary" : "btn-ghost"}`}
       data-testid="select-mode"
     >
       {selection.selecting ? "Done selecting" : "Select"}

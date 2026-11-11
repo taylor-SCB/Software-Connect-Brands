@@ -18,7 +18,7 @@ import {
 } from "@/lib/contacts-csv";
 import { importContactsBatch } from "@/app/dashboard/contacts/import-actions";
 import { describeFilled } from "@/lib/enrich";
-import { ImportCleanup } from "@/components/import-cleanup";
+import { ImportCleanup, useExistingMatches, type ExistingCheck } from "@/components/import-cleanup";
 
 // "Import CSV" on the Contacts and Companies lists. The browser reads the
 // whole file (any size), shows what it found, then sends the rows up in
@@ -28,14 +28,21 @@ import { ImportCleanup } from "@/components/import-cleanup";
 // `startOpen` opens the dialog on arrival (the Contacts list's ?import=1,
 // which My day's "Import my list" links to); closing it takes ?import=1
 // off the address, so a refresh doesn't open it again.
+//
+// `defaultAssignTo` (round 2, Nov 11, 2026): who "Assign everyone in this
+// file to" starts on. The Contacts list passes the Member's own id only
+// when they arrived from My day's "Import my list" (?import=1), so their
+// own list lands on their Mine; everywhere else it starts Unassigned.
 export function ImportCsvButton({
   kind,
   reps = [],
   startOpen = false,
+  defaultAssignTo = "",
 }: {
   kind: "contacts" | "companies";
   reps?: { id: string; name: string; removed?: boolean }[];
   startOpen?: boolean;
+  defaultAssignTo?: string;
 }) {
   const [open, setOpen] = useState(startOpen);
   const close = () => {
@@ -55,7 +62,7 @@ export function ImportCsvButton({
         <IconUpload size={14} />
         Import CSV
       </button>
-      {open && <ImportDialog kind={kind} reps={reps} onClose={close} />}
+      {open && <ImportDialog kind={kind} reps={reps} onClose={close} defaultAssignTo={defaultAssignTo} />}
     </>
   );
 }
@@ -77,7 +84,7 @@ type Phase =
   | { step: "reading" }
   // text and mapped: the file as read and any columns placed by hand from
   // the clean-up's suggestions, so the preview can be planned again.
-  | { step: "preview"; plan: ContactImportPlan; text?: string; mapped?: Partial<Record<ContactCsvColumn, number>> }
+  | { step: "preview"; plan: ContactImportPlan; text?: string; mapped?: Partial<Record<ContactCsvColumn, number>>; keepNotes?: boolean }
   | { step: "running"; plan: ContactImportPlan; done: number; totals: ImportBatchResult }
   | { step: "finished"; plan: ContactImportPlan; done: number; totals: ImportBatchResult; stopped: boolean; error?: string };
 
@@ -85,14 +92,19 @@ function ImportDialog({
   kind,
   reps,
   onClose,
+  defaultAssignTo,
 }: {
   kind: "contacts" | "companies";
   reps: { id: string; name: string; removed?: boolean }[];
   onClose: () => void;
+  defaultAssignTo: string;
 }) {
   const router = useRouter();
-  // "Assign everyone in this file to" (Nov 10, 2026): Unassigned unless picked.
-  const [assignTo, setAssignTo] = useState("");
+  // "Assign everyone in this file to" (Nov 10, 2026): Unassigned unless
+  // picked, or the importing Member from "Import my list" (round 2).
+  const [assignTo, setAssignTo] = useState(() =>
+    defaultAssignTo && reps.some((rep) => rep.id === defaultAssignTo && !rep.removed) ? defaultAssignTo : "",
+  );
   const [phase, setPhase] = useState<Phase>({ step: "pick" });
   const [planError, setPlanError] = useState("");
   const stopRef = useRef(false);
@@ -213,22 +225,16 @@ function ImportDialog({
           )}
 
           {phase.step === "preview" && (
-            <>
-              <Preview plan={phase.plan} />
+            <PreviewStep
+              phase={phase}
+              replan={(mapped, keepNotes) => {
+                if (phase.text === undefined) return;
+                const planned = planContactImport(phase.text, mapped ?? {}, { keepNotes });
+                if (planned.ok) setPhase({ step: "preview", plan: planned.plan, text: phase.text, mapped, keepNotes });
+              }}
+            >
               <AssignToSelect reps={reps} value={assignTo} onChange={setAssignTo} />
-            </>
-          )}
-          {phase.step === "preview" && phase.text !== undefined && (
-            <div className="mt-3">
-              <ImportCleanup
-                plan={phase.plan}
-                onMap={(more) => {
-                  const mapped = { ...phase.mapped, ...more };
-                  const planned = planContactImport(phase.text!, mapped);
-                  if (planned.ok) setPhase({ step: "preview", plan: planned.plan, text: phase.text, mapped });
-                }}
-              />
-            </div>
+            </PreviewStep>
           )}
 
           {(phase.step === "running" || phase.step === "finished") && (
@@ -314,15 +320,62 @@ function AssignToSelect({
   );
 }
 
-function Preview({ plan }: { plan: ContactImportPlan }) {
+// The preview, top to bottom (round 2, Nov 11, 2026): what was found, the
+// duplicate summary, the offer to keep Notes / Lead Source, then the first
+// rows as Person · Reach · Company with "Updates <name>" on a row that
+// lands on someone already here, then who it's assigned to. The existing-
+// contact check runs once and feeds both the summary and the badges.
+function PreviewStep({
+  phase,
+  replan,
+  children,
+}: {
+  phase: Extract<Phase, { step: "preview" }>;
+  replan: (mapped: Partial<Record<ContactCsvColumn, number>> | undefined, keepNotes: boolean) => void;
+  children: React.ReactNode;
+}) {
+  const plan = phase.plan;
+  const existing = useExistingMatches(plan);
+  return (
+    <div className="space-y-3">
+      <PreviewHead plan={plan} />
+      {phase.text !== undefined && (
+        <ImportCleanup plan={plan} existing={existing} onMap={(more) => replan({ ...phase.mapped, ...more }, Boolean(phase.keepNotes))} />
+      )}
+      {phase.text !== undefined && (plan.noteColumns?.length ?? 0) > 0 && (
+        <label className="flex items-start gap-2 rounded-lg border border-[var(--border)] p-3 text-xs" data-testid="import-keep-notes-offer">
+          <input
+            type="checkbox"
+            checked={Boolean(phase.keepNotes)}
+            onChange={(event) => replan(phase.mapped, event.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
+            data-testid="import-keep-notes"
+          />
+          <span>
+            <span className="font-medium">
+              Keep {plan.noteColumns!.map((index) => `“${plan.headers[index]}”`).join(" and ")} as a note on each contact
+            </span>
+            <span className="faint block">
+              These columns don&apos;t have a place of their own. Ticked, each person gets one note with them; importing the same file again doesn&apos;t add it twice.
+            </span>
+          </span>
+        </label>
+      )}
+      <PreviewTable plan={plan} existing={existing} />
+      <PreviewWarnings plan={plan} />
+      {children}
+    </div>
+  );
+}
+
+function PreviewHead({ plan }: { plan: ContactImportPlan }) {
   const matched = CONTACT_CSV_COLUMNS.filter((column) => plan.columns[column] !== undefined);
   // Headers nothing claimed, so a column the importer can't place is said
   // out loud instead of silently dropped.
   const claimed = new Set(Object.values(plan.columns));
   const unused = plan.headers.filter((header, index) => header && !claimed.has(index));
-  const rowsWithNotes = plan.rows.filter((row) => row.notes.length > 0);
   return (
-    <div className="space-y-3">
+    <div className="space-y-1.5">
       <p className="text-sm font-semibold" data-testid="import-summary">
         {plan.contactRows.toLocaleString()} {plan.contactRows === 1 ? "contact" : "contacts"} and{" "}
         {plan.companiesNamed.toLocaleString()} {plan.companiesNamed === 1 ? "company" : "companies"} found
@@ -342,54 +395,89 @@ function Preview({ plan }: { plan: ContactImportPlan }) {
         A company that already exists is reused and only its blank details are filled in. A contact whose email
         already exists is updated instead of added twice. A contact with no company counts as Individual / Personal.
       </p>
-      <div className="overflow-x-auto">
-        <table className="table">
+    </div>
+  );
+}
+
+const PREVIEW_ROWS = 6;
+
+// Three columns that fit the dialog: who, how to reach them, where they
+// work. The company's own phone sits under the company, so a sheet whose
+// only number is the business line doesn't read as "no phone".
+function PreviewTable({ plan, existing }: { plan: ContactImportPlan; existing: ExistingCheck | null }) {
+  const updates = new Map((existing?.matches ?? []).filter((match) => match.updates).map((match) => [match.line, match]));
+  const shown = plan.rows.slice(0, PREVIEW_ROWS);
+  return (
+    <div>
+      <div className="min-w-0 overflow-x-auto">
+        <table className="table w-full table-fixed text-xs" data-testid="import-preview">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Title</th>
-              <th>City, State</th>
-              <th>Email</th>
-              <th>Phone</th>
-              <th>Mobile</th>
-              <th>Company</th>
-              <th>Industry · Type</th>
+              <th className="w-[38%]">Person</th>
+              <th className="w-[30%]">Reach</th>
+              <th className="w-[32%]">Company</th>
             </tr>
           </thead>
           <tbody>
-            {plan.rows.slice(0, 6).map((row) => (
-              <tr key={row.line}>
-                <td className="max-w-[12rem] truncate">{row.name ?? <span className="faint">(company only)</span>}</td>
-                <td className="max-w-[10rem] truncate text-xs">{row.title ?? "—"}</td>
-                <td className="whitespace-nowrap text-xs">
-                  {[row.city ?? row.company?.city, row.state ?? row.company?.state].filter(Boolean).join(", ") || "—"}
-                </td>
-                <td className="faint max-w-[12rem] truncate text-xs">{row.email ?? "—"}</td>
-                <td className="num whitespace-nowrap text-xs">{row.phone ?? "—"}</td>
-                <td className="num whitespace-nowrap text-xs" data-testid="import-preview-mobile">{row.mobile ?? "—"}</td>
-                <td className="max-w-[12rem] truncate">{row.company?.name ?? <span className="faint">—</span>}</td>
-                <td className="text-xs">{[...(row.company?.industries ?? []), ...(row.company?.companyTypes ?? [])].join(", ") || "—"}</td>
-              </tr>
-            ))}
+            {shown.map((row) => {
+              const update = updates.get(row.line);
+              const place = [row.city ?? row.company?.city, row.state ?? row.company?.state].filter(Boolean).join(", ");
+              const tags = [...(row.company?.industries ?? []), ...(row.company?.companyTypes ?? [])].join(", ");
+              return (
+                <tr key={row.line} data-testid="import-preview-row" data-line={row.line}>
+                  <td className="min-w-0 align-top">
+                    <p className="truncate text-sm font-medium">{row.name ?? <span className="faint font-normal">(company only)</span>}</p>
+                    {row.title && <p className="faint truncate">{row.title}</p>}
+                    {place && <p className="faint truncate">{place}</p>}
+                    {update && (
+                      <span className="badge mt-1 max-w-full truncate border-[var(--border-strong)]" data-testid="import-updates-badge" title={`This row updates ${update.contactName}, already in your contacts`}>
+                        Updates {update.contactName}
+                      </span>
+                    )}
+                  </td>
+                  <td className="min-w-0 align-top">
+                    <p className="truncate">{row.email ?? <span className="faint">No email</span>}</p>
+                    <p className="num truncate">
+                      <span className="faint">Phone </span>
+                      {row.phone ?? "—"}
+                    </p>
+                    <p className="num truncate">
+                      <span className="faint">Mobile </span>
+                      <span data-testid="import-preview-mobile">{row.mobile ?? "—"}</span>
+                    </p>
+                  </td>
+                  <td className="min-w-0 align-top">
+                    <p className="truncate">{row.company?.name ?? <span className="faint">Individual / Personal</span>}</p>
+                    {row.company?.phone && <p className="faint num truncate">Main {row.company.phone}</p>}
+                    {tags && <p className="faint truncate">{tags}</p>}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-      {plan.rows.length > 6 && <p className="faint text-xs">…and {(plan.rows.length - 6).toLocaleString()} more.</p>}
-      {rowsWithNotes.length > 0 && (
-        <div className="text-xs">
-          <p className="font-medium text-[var(--warn)]">
-            {rowsWithNotes.length.toLocaleString()} {rowsWithNotes.length === 1 ? "row needs" : "rows need"} a look (they still import):
-          </p>
-          <ul className="faint mt-1 list-disc space-y-0.5 pl-4">
-            {rowsWithNotes.slice(0, 4).map((row) => (
-              <li key={row.line}>
-                Line {row.line}: {row.notes.join("; ")}
-              </li>
-            ))}
-            {rowsWithNotes.length > 4 && <li>…and {(rowsWithNotes.length - 4).toLocaleString()} more.</li>}
-          </ul>
-        </div>
-      )}
+      {plan.rows.length > PREVIEW_ROWS && <p className="faint mt-1 text-xs">…and {(plan.rows.length - PREVIEW_ROWS).toLocaleString()} more.</p>}
+    </div>
+  );
+}
+
+function PreviewWarnings({ plan }: { plan: ContactImportPlan }) {
+  const rowsWithNotes = plan.rows.filter((row) => row.notes.length > 0);
+  if (rowsWithNotes.length === 0) return null;
+  return (
+    <div className="text-xs">
+      <p className="font-medium text-[var(--warn)]">
+        {rowsWithNotes.length.toLocaleString()} {rowsWithNotes.length === 1 ? "row needs" : "rows need"} a look (they still import):
+      </p>
+      <ul className="faint mt-1 list-disc space-y-0.5 pl-4">
+        {rowsWithNotes.slice(0, 4).map((row) => (
+          <li key={row.line}>
+            Line {row.line}: {row.notes.join("; ")}
+          </li>
+        ))}
+        {rowsWithNotes.length > 4 && <li>…and {(rowsWithNotes.length - 4).toLocaleString()} more.</li>}
+      </ul>
     </div>
   );
 }
@@ -450,6 +538,11 @@ function Progress({
           {describeFilled(totals, "Nothing filled in by the app")}
           {totals.tagged + totals.phonesFilled + totals.websitesFilled > 0 &&
             " from your spreadsheet and the people at each company. Anything filled in wears a small “auto” mark until you confirm it."}
+        </p>
+      )}
+      {totals.notesKept > 0 && (
+        <p className="faint text-xs" data-testid="import-notes-kept">
+          {totals.notesKept.toLocaleString()} {totals.notesKept === 1 ? "note" : "notes"} kept from the file&apos;s notes columns.
         </p>
       )}
       {totals.skipped.length > 0 && (

@@ -25,7 +25,7 @@ import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   bandOf,
-  leadHealth,
+  leadHealth as leadHealthRules,
   pulseCaption,
   reasonWords,
   recentPoints,
@@ -44,6 +44,33 @@ import { LifecycleMeter } from "../src/components/lifecycle-meter";
 import { HealthDot, HealthRing, HealthWordStatic } from "../src/components/health-marks";
 import { HealthWord } from "../src/components/health-word";
 import { DealJourney } from "../src/components/deal-journey";
+
+// Every leadHealth() call below is kept as a fixture, so the database part
+// can run each one through the SQL twin (src/lib/health-sql.ts) and check
+// the two agree (round 2, Nov 11, 2026).
+const FIXTURES: { input: HealthInput; ctx: HealthContext; health: LeadHealth }[] = [];
+function leadHealth(input: HealthInput, ctx: HealthContext): LeadHealth {
+  const health = leadHealthRules(input, ctx);
+  FIXTURES.push({ input, ctx, health });
+  return health;
+}
+
+// The pulse key a health reads as (what the Contacts list's Pulse filter
+// offers): the twin must land every fixture on the same one.
+function pulseKeyOf(health: LeadHealth): string {
+  switch (health.state) {
+    case "WON":
+      return health.owes ? "owes" : "won";
+    case "CLOSED":
+      return "closed";
+    case "NEW":
+      return "new";
+    case "TRYING":
+      return health.stalled ? "stalled" : "trying";
+    default:
+      return health.band === "WARM" ? "warm" : health.band === "COOLING" ? "cooling" : "cold";
+  }
+}
 
 // Tuesday Nov 10, 2026, noon in Chicago.
 const NOW = new Date("2026-11-10T18:00:00Z");
@@ -936,10 +963,142 @@ async function database() {
       const none = await loadOpportunityHealth(other.id, [kristenOpp.id]);
       assert.equal(none.size, 0, "not across workspaces");
     });
+
+    await twinChecks(prisma, O, ids.filter((id) => id !== stranger.id), people);
   } finally {
     await prisma.organization.deleteMany({ where: { slug: { in: ["test-health-check", "test-health-check-other"] } } });
     await prisma.$disconnect();
   }
+}
+
+// The SQL twin (src/lib/health-sql.ts): the rules against every fixture
+// above, then the inputs from the tables against the batched loader on the
+// seeded workspace, then the list's where-clauses built from it.
+async function twinChecks(
+  prisma: (typeof import("../src/lib/prisma"))["prisma"],
+  organizationId: string,
+  ids: string[],
+  people: Map<string, LeadHealth>,
+) {
+  const { Prisma } = await import("../src/generated/prisma/client");
+  const { pulseRulesSql, contactPulseInputs, loadPulseSets, pulseClause, pulseWhere, PULSE_KEYS } = await import("../src/lib/health-sql");
+  const { warmth } = await import("../src/lib/health");
+  type Out = { key: string; state: string; pulse: string; score: number | null; stalled: boolean; warmth: number };
+
+  // A few the rules above don't reach, recorded like the rest: an odd
+  // quiet-days setting (Q/2 = 3.5), Q of 1, a talk status dated ahead, a
+  // try counted with no date, Connected with nothing logged, late money
+  // on someone still open, paperwork exactly Q days out.
+  for (const quietDays of [7, 1, 30]) {
+    const ctx = { ...CTX, quietDays };
+    for (const days of [0, 1, 2, 3, 4, 7, 8, 31]) {
+      leadHealth(input({ status: "INTERESTED", tries: 3, talks: 1, lastTouchAt: ago(days), lastConnectAt: ago(days + 1), triesSinceTalk: days % 6 }), ctx);
+      leadHealth(input({ status: "CONTACTED", tries: 2, lastTouchAt: ago(days) }), ctx);
+      leadHealth(input({ status: "MEETING_SET", lastTouchAt: ago(days), paperwork: [{ kind: "quote", sentAt: ago(quietDays) }] }), ctx);
+    }
+  }
+  leadHealth(input({ status: "CONNECTED", statusTalkAt: new Date(NOW.getTime() + 86_400_000) }), CTX);
+  leadHealth(input({ status: "NOT_ACTIONED", tries: 1 }), CTX);
+  leadHealth(input({ status: "CONNECTED" }), CTX);
+  leadHealth(input({ status: "QUOTE_SENT", lastTouchAt: ago(1), owed: { billedCents: 500_00, receivedCents: 0, lateCents: 500_00, oldestLateOn: "2026-11-01" } }), CTX);
+  leadHealth(input({ status: "CONTACTED", tries: 4, lastTouchAt: ago(20), next: { on: "2026-11-09", time: null, kind: "call" } }), CTX);
+
+  await checkAsync(`Sprint: the SQL twin agrees with leadHealth() on all ${FIXTURES.length} fixtures (state, score, pulse, stalled, warmth)`, async () => {
+    assert.ok(FIXTURES.length >= 80, `only ${FIXTURES.length} fixtures recorded`);
+    // One statement per clock the fixtures used.
+    const byClock = new Map<string, { ctx: HealthContext; rows: { index: number; fixture: (typeof FIXTURES)[number] }[] }>();
+    FIXTURES.forEach((fixture, index) => {
+      const ctx = fixture.ctx;
+      const key = `${ctx.now.toISOString()}|${ctx.timeZone}|${ctx.quietDays}`;
+      const group = byClock.get(key) ?? { ctx, rows: [] };
+      group.rows.push({ index, fixture });
+      byClock.set(key, group);
+    });
+    const iso = (at: Date | null | undefined) => (at ? at.toISOString() : null);
+    let compared = 0;
+    for (const { ctx, rows } of byClock.values()) {
+      const json = JSON.stringify(
+        rows.map(({ index, fixture: { input } }) => ({
+          key: String(index),
+          status: input.status,
+          tries: input.tries,
+          talks: input.talks,
+          last_touch: iso(input.lastTouchAt),
+          last_connect: iso(input.lastConnectAt),
+          status_talk: iso(input.statusTalkAt),
+          since: input.triesSinceTalk,
+          next_on: input.next?.on ?? null,
+          late_n: input.overdue?.count ?? 0,
+          paper: input.paperwork.map((paper) => paper.sentAt.toISOString()),
+          owes_late: Boolean(input.owed && input.owed.lateCents > 0),
+        })),
+      );
+      const source = Prisma.sql`
+        SELECT * FROM jsonb_to_recordset(${json}::jsonb) AS x(
+          key text, status text, tries int, talks int, last_touch timestamp, last_connect timestamp,
+          status_talk timestamp, since int, next_on date, late_n int, paper jsonb, owes_late boolean)`;
+      const out = await prisma.$queryRaw<Out[]>(pulseRulesSql(source, { now: ctx.now, timeZone: ctx.timeZone, quietDays: ctx.quietDays }));
+      assert.equal(out.length, rows.length);
+      for (const row of out) {
+        const fixture = FIXTURES[Number(row.key)];
+        const h = fixture.health;
+        const label = `fixture ${row.key} (${fixture.input.status}, ${h.word} ${h.score ?? ""})`;
+        assert.equal(row.state, h.state, `${label}: state`);
+        assert.equal(row.score, h.score, `${label}: score`);
+        assert.equal(row.pulse, pulseKeyOf(h), `${label}: pulse`);
+        assert.equal(row.stalled, h.state === "TRYING" && h.stalled, `${label}: stalled`);
+        assert.equal(row.warmth, warmth(h), `${label}: warmth`);
+        compared += 1;
+      }
+    }
+    assert.equal(compared, FIXTURES.length);
+  });
+
+  const settings = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { timeZone: true, quietDays: true } });
+  const clock = { now: new Date(), timeZone: settings.timeZone, quietDays: settings.quietDays };
+
+  await checkAsync("Sprint: the twin's inputs from the tables agree with the batched loader on every seeded person", async () => {
+    const out = await prisma.$queryRaw<Out[]>(pulseRulesSql(contactPulseInputs(organizationId, clock), clock));
+    const byId = new Map(out.map((row) => [row.key, row]));
+    assert.ok(ids.length >= 9);
+    for (const id of ids) {
+      const h = people.get(id)!;
+      const row = byId.get(id);
+      assert.ok(row, `${id} is read`);
+      const label = `${id} (${h.word} ${h.score ?? ""}, ${h.reason})`;
+      assert.equal(row.state, h.state, `${label}: state`);
+      assert.equal(row.score, h.score, `${label}: score`);
+      assert.equal(row.pulse, pulseKeyOf(h), `${label}: pulse`);
+      assert.equal(row.warmth, warmth(h), `${label}: warmth`);
+    }
+  });
+
+  await checkAsync("Sprint: the Pulse where-clauses put every seeded person under exactly their own pulse, alone and in any combination", async () => {
+    const sets = await loadPulseSets(organizationId, clock);
+    const seen = new Map<string, string[]>();
+    for (const key of PULSE_KEYS) {
+      const found = await prisma.contact.findMany({
+        where: { AND: [{ organizationId, id: { in: ids } }, pulseClause(key, sets) as object] },
+        select: { id: true },
+      });
+      for (const { id } of found) seen.set(id, [...(seen.get(id) ?? []), key]);
+    }
+    for (const id of ids) assert.deepEqual(seen.get(id), [pulseKeyOf(people.get(id)!)], id);
+    // Any choices together are exactly everyone under any of them.
+    const keyOf = new Map(ids.map((id) => [id, pulseKeyOf(people.get(id)!)]));
+    const combos: (typeof PULSE_KEYS)[number][][] = [];
+    for (let a = 0; a < PULSE_KEYS.length; a += 1)
+      for (let b = a + 1; b < PULSE_KEYS.length; b += 1) combos.push([PULSE_KEYS[a], PULSE_KEYS[b]]);
+    combos.push(["warm", "cooling", "cold"], ["won", "owes"], ["trying", "stalled", "new"], [...PULSE_KEYS]);
+    for (const combo of combos) {
+      const found = await prisma.contact.findMany({
+        where: { AND: [{ organizationId, id: { in: ids } }, pulseWhere(combo, sets) as object] },
+        select: { id: true },
+      });
+      const expected = ids.filter((id) => combo.includes(keyOf.get(id) as (typeof PULSE_KEYS)[number])).sort();
+      assert.deepEqual(found.map((row) => row.id).sort(), expected, combo.join("+"));
+    }
+  });
 }
 
 async function main() {

@@ -3,10 +3,15 @@
 // the server's reading of User.uiPrefs share it.
 export type ListKind = "contacts" | "companies";
 
-export const CONTACT_COLUMNS = ["email", "phone2", "location", "industry", "notes", "marketing", "added", "addedBy", "status"] as const;
+// "activity" (the four count chips) and "lastContacted" (Last Contacted
+// By) came back in round 2, Nov 11, 2026, as the plan's hiddenNotRemoved
+// says: folded into Pulse by default, one tick away here.
+export const CONTACT_COLUMNS = ["activity", "lastContacted", "email", "phone2", "location", "industry", "notes", "marketing", "added", "addedBy", "status"] as const;
 export const COMPANY_COLUMNS = ["phone", "website", "industry", "people", "marketing", "pipeline", "status", "added"] as const;
 
 export const COLUMN_LABELS: Record<string, string> = {
+  activity: "Activity",
+  lastContacted: "Last Contacted By",
   email: "Email",
   phone2: "Phone 2",
   location: "Location",
