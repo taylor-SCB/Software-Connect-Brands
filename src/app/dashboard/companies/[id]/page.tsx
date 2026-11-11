@@ -13,7 +13,6 @@ import { AutoPill } from "@/components/auto-pill";
 import { TagCell } from "../../contacts/contacts-list";
 import { deleteCompany, setCompanyFavorite } from "../actions";
 import { HeaderDeleteButton } from "@/components/header-delete-button";
-import { StatusPicker } from "@/components/status-picker";
 import { meetingSetDay } from "@/lib/status";
 import { dayInZone } from "@/lib/calendar-auto";
 import { AddPersonSearch } from "@/components/add-person-search";
@@ -41,7 +40,7 @@ import { HealthWord } from "@/components/health-word";
 import { companyHealth, healthSettings, loadContactHealth } from "@/lib/health-load";
 import { aheadDay, isoDiff, pastDay, shortDay, time12, warmth, wholeDollars, zoneDay, zoneTime, type LeadHealth } from "@/lib/health";
 import { CompanyShell } from "./company-shell";
-import { HeaderActions, type MainAction } from "./header-actions";
+import { CompanyStatusPicker, HeaderActions, type MainAction } from "./header-actions";
 import { WhoToCall, type CallRow } from "./who-to-call";
 import { FoldCard, HistoryChunk, HistoryShell, LogTouch, NextStepStrip, PhoneBar, ShowCounts } from "./sections";
 import { lastTouchLines, mainContactIds, meetingFor, openOpportunities, stageOrder, whoToCallPage } from "./load";
@@ -467,12 +466,12 @@ export default async function CompanyDetailPage({
                   <MergeButton kind="companies" initial={[{ id: company.id, name: company.name, city: company.city, state: company.state }]} label="Merge" />
                   <span className="inline-flex items-center gap-1.5 text-xs">
                     <span className="faint">Set status by hand</span>
-                    <StatusPicker
-                      kind="company"
+                    <CompanyStatusPicker
                       id={company.id}
                       status={company.status}
                       meetingSetOn={meetingSet ? dayInZone(meetingSet, timeZone) : null}
                       today={today}
+                      bookFor={(warmest ?? about)?.id ?? null}
                     />
                   </span>
                   <span className="ml-auto">
