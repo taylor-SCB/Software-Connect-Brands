@@ -20,12 +20,15 @@ import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 //   month can read above 100% when last month's meetings complete in this
 //   one. Close rate is Won / (Won + Lost).
 
-export const FUNNEL = ["CONTACTED", "INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"] as const;
+// Connected (Nov 11, 2026) sits between Attempted (CONTACTED) and
+// Interested; Interested is a side step a person may skip.
+export const FUNNEL = ["CONTACTED", "CONNECTED", "INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"] as const;
 export type FunnelStep = (typeof FUNNEL)[number];
 
 // The hand-offs whose time Stats measures, in pipeline order.
 export const VELOCITY_PAIRS = [
-  ["CONTACTED", "MEETING_SET"],
+  ["CONTACTED", "CONNECTED"],
+  ["CONNECTED", "MEETING_SET"],
   ["MEETING_SET", "MEETING_COMPLETED"],
   ["MEETING_COMPLETED", "QUOTE_SENT"],
   ["QUOTE_SENT", "CONTRACT_SENT"],

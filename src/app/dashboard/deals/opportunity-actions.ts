@@ -4,15 +4,16 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { BOARD_DEAL_STAGES, CONTACT_COLUMNS, PIPELINE_COLUMNS, type PipelineColumn } from "@/lib/constants";
+import { BOARD_DEAL_STAGES, CONTACT_COLUMNS, PIPELINE_COLUMNS, STATUS_REASONS, type PipelineColumn } from "@/lib/constants";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { canonicalLeadLabel, isBuiltInLeadLabel } from "@/lib/lead-labels";
-import { CONVERTED_STAGES, opportunityColumn, syncOpportunity } from "@/lib/opportunities";
+import { CONVERTED_STAGES, opportunityColumn, stampLostReason, syncOpportunity } from "@/lib/opportunities";
 import { loadWorkspaceUsers } from "@/lib/workspace-users";
 import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
 import { zonedNoon } from "@/lib/money";
-import { isRealDay } from "@/lib/calendar";
+import { cleanTime, isRealDay } from "@/lib/calendar";
+import { meetingHeldAnswer, meetingNoShowAnswer, meetingRescheduleAnswer } from "@/lib/meetings";
 import { updateDealStage } from "./actions";
 
 // The Pipeline's tiles (Oct 27, 2026): open one, move it, convert it to a
@@ -359,4 +360,86 @@ export async function setOpportunityLabel(id: string, label: string | null): Pro
   if (saved.count === 0) return { error: "That opportunity is no longer on the board" };
   revalidatePath("/dashboard/deals");
   return { success: "Label saved" };
+}
+
+/* -------------------------------- Meetings -------------------------------- */
+
+// Held / No-show / Reschedule on a meeting (BDR redesign, Nov 11, 2026),
+// for the Pipeline's "Happened — how did it go?" tiles, the panel's
+// meetings and Up next. The rules are in src/lib/meetings.ts. Each hands
+// back a batchId for "Saved · Undo" (undoLog in contacts/actions.ts).
+
+function revalidateMeeting(contactIds: string[] = []) {
+  revalidateBoard();
+  revalidatePath("/dashboard/calendar");
+  for (const id of contactIds) revalidatePath(`/dashboard/contacts/${id}`);
+}
+
+// Held: HELD on the meeting's own history line (a MEETING line is written
+// only when it has none, so nothing is counted twice), everyone in it
+// Connected, and the tile and its people at Meeting Completed (decision
+// 4). A meeting whose day is still ahead comes back as { confirmEarly:
+// "yyyy-mm-dd" } ("This meeting is Tue Nov 17. Did it happen early?") and
+// is held only when called again with { early: true }.
+export async function markMeetingHeld(
+  meetingId: string,
+  options: { early?: boolean; note?: string } = {},
+): Promise<Result & { batchId?: string; confirmEarly?: string; opportunityId?: string }> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = z
+    .object({ meetingId: idSchema, early: z.boolean().optional(), note: z.string().trim().max(5000).optional() })
+    .safeParse({ meetingId, ...options });
+  if (!parsed.success) return { error: "That meeting isn't valid" };
+  const { contactIds, ...answer } = await meetingHeldAnswer({ organizationId, userId }, parsed.data.meetingId, {
+    early: parsed.data.early,
+    note: parsed.data.note,
+  });
+  if (answer.success) revalidateMeeting(contactIds);
+  return answer;
+}
+
+// No-show: they stay Meeting Set; the meeting and its line read NO_SHOW,
+// which is neither a touch nor a connect. Offer reschedule next.
+export async function markMeetingNoShow(meetingId: string): Promise<Result & { batchId?: string }> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = idSchema.safeParse(meetingId);
+  if (!parsed.success) return { error: "That meeting isn't valid" };
+  const answer = await meetingNoShowAnswer({ organizationId, userId }, parsed.data);
+  if (answer.success) revalidateMeeting();
+  return answer;
+}
+
+// Reschedule to a day (today or later) and an optional "HH:MM". A meeting
+// still to come moves; one whose day has gone by is marked a no-show and a
+// new meeting is booked on the same tile (meetingId is the new one, and
+// batchId takes both back).
+export async function rescheduleMeeting(
+  meetingId: string,
+  input: { on: string; time?: string | null },
+): Promise<Result & { meetingId?: string; batchId?: string }> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = z
+    .object({ meetingId: idSchema, on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the new day"), time: z.string().max(8).nullish() })
+    .safeParse({ meetingId, ...input });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Pick the new day" };
+  if (!isRealDay(parsed.data.on)) return { error: "That day isn't a real date" };
+  const answer = await meetingRescheduleAnswer({ organizationId, userId }, parsed.data.meetingId, {
+    on: parsed.data.on,
+    time: cleanTime(parsed.data.time),
+  });
+  if (answer.success) revalidateMeeting();
+  return answer;
+}
+
+// The one-tap reason a deal was lost (decision 14: Price · Timing · Has a
+// vendor · No budget · Other), asked right after a tile is moved or
+// converted to Lost: written on that move's StatusChange rows — the
+// deal's and its people's latest Lost.
+export async function saveLostReason(opportunityId: string, reason: string): Promise<Result> {
+  const { organizationId } = await requireSession();
+  const parsed = z.object({ id: idSchema, reason: z.enum(STATUS_REASONS) }).safeParse({ id: opportunityId, reason });
+  if (!parsed.success) return { error: "Pick one of the reasons" };
+  const answer = await stampLostReason(organizationId, parsed.data.id, parsed.data.reason);
+  if (answer.success) revalidateBoard();
+  return answer;
 }

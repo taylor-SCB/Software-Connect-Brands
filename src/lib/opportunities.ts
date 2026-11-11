@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { advanceContact } from "@/lib/status";
+import { advanceContact, type Who } from "@/lib/status";
 import type { ContactStatusValue, PipelineColumn } from "@/lib/constants";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -8,8 +8,6 @@ import type { Prisma } from "@/generated/prisma/client";
 // file holds the rules, so the meeting forms, the paperwork and the board
 // all apply the same ones. Not "use server": every function here takes an
 // organizationId and must never be callable from a browser.
-
-type Who = { organizationId: string; userId?: string | null };
 
 // A deal at one of these has been "created" in Taylor's sense: the sale
 // reached Quote Sent or further. Lead / Contacted is a quote not yet sent.
@@ -49,11 +47,15 @@ function titleFor(contact: { name: string; company: { name: string } | null }) {
 // them is already on an open opportunity the meeting joins it and anyone
 // new from the meeting is added as Associated; otherwise it starts one,
 // with the first person as Primary. Every meeting path calls this through
-// markMeetingSet.
+// markMeetingSet. `opportunity` lets the Book meeting sheet choose: "new"
+// always starts one, an open opportunity's id joins that one (the
+// company's open tile with someone else on it), anything else is the rule
+// above. The rep who booked it is kept on the meeting (bookedById, never
+// edited) so a held meeting is credited to them (decision 13).
 export async function attachMeeting(
   who: Who,
   contactIds: string[],
-  meeting: { on: Date; activityId?: string | null; eventId?: string | null },
+  meeting: { on: Date; activityId?: string | null; eventId?: string | null; opportunity?: string | null },
 ) {
   const ids = Array.from(new Set(contactIds));
   if (ids.length === 0) return null;
@@ -65,11 +67,22 @@ export async function attachMeeting(
   const ordered = ids.map((id) => people.find((person) => person.id === id)).filter((person) => person !== undefined);
   if (ordered.length === 0) return null;
 
-  const existing = await prisma.opportunity.findFirst({
-    where: { organizationId, ...OPEN_OPPORTUNITY, contacts: { some: { contactId: { in: ordered.map((person) => person.id) } } } },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, contacts: { select: { contactId: true } } },
-  });
+  const pick = meeting.opportunity && meeting.opportunity !== "auto" && meeting.opportunity !== "new" ? meeting.opportunity : null;
+  const chosen = pick
+    ? await prisma.opportunity.findFirst({
+        where: { id: pick, organizationId, ...OPEN_OPPORTUNITY },
+        select: { id: true, contacts: { select: { contactId: true } } },
+      })
+    : null;
+  const existing =
+    chosen ??
+    (meeting.opportunity === "new"
+      ? null
+      : await prisma.opportunity.findFirst({
+          where: { organizationId, ...OPEN_OPPORTUNITY, contacts: { some: { contactId: { in: ordered.map((person) => person.id) } } } },
+          orderBy: { updatedAt: "desc" },
+          select: { id: true, contacts: { select: { contactId: true } } },
+        }));
 
   let opportunityId: string;
   if (existing) {
@@ -115,7 +128,13 @@ export async function attachMeeting(
     });
   } else {
     await prisma.opportunityMeeting.create({
-      data: { opportunityId, on: meeting.on, activityId: meeting.activityId ?? null, eventId: meeting.eventId ?? null },
+      data: {
+        opportunityId,
+        on: meeting.on,
+        activityId: meeting.activityId ?? null,
+        eventId: meeting.eventId ?? null,
+        bookedById: who.userId ?? null,
+      },
     });
   }
   await prisma.opportunity.updateMany({ where: { id: opportunityId, organizationId }, data: { updatedAt: new Date() } });
@@ -394,6 +413,32 @@ export async function followContactStatus(who: Who, contactId: string, status: s
   if (!stage || stage === opportunity.stage) return;
   await prisma.opportunity.updateMany({ where: { id: opportunity.id, organizationId: who.organizationId }, data: { stage } });
   await syncOpportunity(who, opportunity.id);
+}
+
+// The one-tap reason a deal was lost (decision 14), written on that move's
+// StatusChange rows: the deal's latest Lost and each of its people's.
+export async function stampLostReason(organizationId: string, opportunityId: string, reason: string) {
+  const opportunity = await prisma.opportunity.findFirst({
+    where: { id: opportunityId, organizationId },
+    select: { dealId: true, deal: { select: { stage: true } }, contacts: { select: { contactId: true } } },
+  });
+  if (!opportunity) return { error: "That opportunity is no longer on the board" };
+  if (!opportunity.dealId || opportunity.deal?.stage !== "LOST") return { error: "Move it to Lost first" };
+  const latest = await prisma.statusChange.findFirst({
+    where: { organizationId, dealId: opportunity.dealId, contactId: null, toStatus: "LOST" },
+    orderBy: { on: "desc" },
+    select: { id: true },
+  });
+  const people = await prisma.statusChange.findMany({
+    where: { organizationId, dealId: opportunity.dealId, contactId: { in: opportunity.contacts.map((row) => row.contactId) }, toStatus: "LOST" },
+    orderBy: { on: "desc" },
+    distinct: ["contactId"],
+    select: { id: true },
+  });
+  const ids = [latest?.id, ...people.map((row) => row.id)].filter((id): id is string => Boolean(id));
+  if (!ids.length) return { error: "Move it to Lost first" };
+  await prisma.statusChange.updateMany({ where: { organizationId, id: { in: ids } }, data: { reason } });
+  return { success: "Reason saved" };
 }
 
 export { CLOSED_DEAL_STAGES, CONVERTED_STAGES };

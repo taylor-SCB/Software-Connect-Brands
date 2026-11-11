@@ -45,8 +45,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
   const toggleRep = (id: string) => (repIds.includes(id) ? repIds.filter((r) => r !== id) : [...repIds, id]);
 
   // Interested is a side step a person may skip, so Meeting Set is
-  // measured against Contacted, not against Interested.
-  const base = (index: number) => (FUNNEL[index] === "MEETING_SET" ? "CONTACTED" : FUNNEL[index - 1]);
+  // measured against Connected, not against Interested.
+  const base = (index: number) => (FUNNEL[index] === "MEETING_SET" ? "CONNECTED" : FUNNEL[index - 1]);
   const funnel = FUNNEL.map((step, index) => ({
     label: CONTACT_STATUS_LABELS[step as ContactStatusValue],
     value: t.steps[step],

@@ -252,6 +252,63 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   console.log(`     ${assignSeconds.toFixed(2)}s  assign 1,000 of all Unassigned`);
   assert.ok(assignSeconds <= BUDGET_S * 2, `bulk assign took ${assignSeconds.toFixed(2)}s`);
 
+  // BDR redesign (Nov 11, 2026): lastConnectAt rides the same statement
+  // triggers as lastTouchAt. Outcomes written in bulk, a connect dated
+  // ahead coming due, and the "not connected in 30 days" range all stay
+  // inside budget at this size, and the rows agree with Activity.
+  log("Sprint: lastConnectAt at 200,000 — 20,000 calls marked Talked in one UPDATE keep both dates, inside budget");
+  const bulkStart = Date.now();
+  await sql(
+    `UPDATE "Activity" SET outcome = 'TALKED'
+      WHERE id IN (SELECT id FROM "Activity" WHERE "organizationId" = $1 AND type = 'PHONE_CALL' AND marketing = false ORDER BY id LIMIT 20000)`,
+    [org],
+  );
+  const bulkSeconds = (Date.now() - bulkStart) / 1000;
+  console.log(`     ${bulkSeconds.toFixed(2)}s  20,000 outcomes written, both dates recomputed`);
+  assert.ok(bulkSeconds <= BUDGET_S * 5, `the bulk outcome update took ${bulkSeconds.toFixed(2)}s`);
+  const agree = (
+    await sql(
+      `SELECT (SELECT count(*) FROM "Contact" WHERE "organizationId" = $1 AND "lastConnectAt" IS NOT NULL)::int AS rows,
+              (SELECT count(DISTINCT "contactId") FROM "Activity" WHERE "organizationId" = $1 AND marketing = false AND "occurredAt" <= now()
+                  AND (outcome IN ('TALKED','REPLIED','HELD') OR (type = 'MEETING' AND outcome IS NULL)))::int AS truth,
+              (SELECT count(*) FROM "Company" WHERE "organizationId" = $1 AND "lastConnectAt" IS NOT NULL)::int AS companies,
+              (SELECT count(DISTINCT c."companyId") FROM "Contact" c WHERE c."organizationId" = $1 AND c."lastConnectAt" IS NOT NULL AND c."companyId" IS NOT NULL)::int AS companyTruth,
+              (SELECT count(*) FROM "Contact" c WHERE c."organizationId" = $1 AND c."lastConnectAt" IS NOT NULL AND c."lastConnectAt" > c."lastTouchAt")::int AS ahead`,
+      [org],
+    )
+  ).rows[0];
+  assert.equal(agree.rows, agree.truth, "every connected person has the date, and nobody else");
+  assert.equal(agree.companies, agree.companytruth, "and every company with a connected person");
+  assert.equal(agree.ahead, 0, "a connect is never later than the last touch");
+  assert.ok(agree.rows >= 19000, `${agree.rows} people connected`);
+
+  log("Sprint: a talk dated ahead comes due through crm_touch_due, and the not-connected-in-30-days range answers fast");
+  await sql(
+    `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, outcome, "occurredAt", "createdAt")
+     SELECT 'lt' || lpad(g::text, 8, '0'), $1, 'lp' || lpad((g * 2 + 1)::text, 8, '0'), $2, 'PHONE_CALL', 'Talk for later', 'TALKED',
+            now() + interval '1 second', now()
+       FROM generate_series(1, 2000) g`,
+    [org, owner],
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const dueStart = Date.now();
+  await sql(`SELECT crm_touch_due($1)`, [org]);
+  const dueSeconds = (Date.now() - dueStart) / 1000;
+  const due = (await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId" = $1 AND id IN (SELECT "contactId" FROM "Activity" WHERE id LIKE 'lt%') AND "lastConnectAt" IS NOT NULL`, [org])).rows[0].n;
+  console.log(`     ${dueSeconds.toFixed(2)}s  crm_touch_due brought ${due} talks on`);
+  assert.equal(due, 2000);
+  assert.ok(dueSeconds <= BUDGET_S, `crm_touch_due took ${dueSeconds.toFixed(2)}s`);
+  const rangeStart = Date.now();
+  const quiet = (
+    await sql(
+      `SELECT count(*)::int AS n FROM "Contact" WHERE "organizationId" = $1 AND ("lastConnectAt" IS NULL OR "lastConnectAt" < now() - interval '30 days')`,
+      [org],
+    )
+  ).rows[0].n;
+  const rangeSeconds = (Date.now() - rangeStart) / 1000;
+  console.log(`     ${rangeSeconds.toFixed(2)}s  ${quiet.toLocaleString()} not connected in 30 days`);
+  assert.ok(rangeSeconds <= 1, `the not-connected range took ${rangeSeconds.toFixed(2)}s`);
+
   log("type-to-search answers fast");
   for (const [label, url] of [
     ["company search 'granite hold'", `${BASE}/dashboard/companies/search?q=granite%20hold`],

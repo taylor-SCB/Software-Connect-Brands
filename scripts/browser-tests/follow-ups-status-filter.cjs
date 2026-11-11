@@ -10,7 +10,8 @@
  * make two open calendar entries with the same people under whoever
  * logged it, they show on the contact's Coming up and the calendar's
  * Upcoming log, "No thanks" writes nothing, the box opens again for the
- * next call, a Meeting follow-up sets Meeting Set, a day before today is
+ * next call, a Meeting follow-up is "Try to book a meeting" (a reminder
+ * call that moves no status, Nov 11, 2026), a day before today is
  * refused, scheduling a call ahead opens no box, and a company-page log
  * (with and without people ticked) gets the same box.
  *
@@ -92,7 +93,8 @@ const isoOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 1
 
 const LADDER = [
   "Not Actioned",
-  "Contacted",
+  "Attempted",
+  "Connected",
   "Not Interested",
   "Interested",
   "Meeting Set",
@@ -110,7 +112,8 @@ async function followUps(org) {
     await sql(
       `SELECT e.id, e.type, e.title, e.notes, e."startOn", e."startTime", e."doneAt", e.auto, e."ownerId", e."contactId", e."companyId",
               (SELECT array_agg(a."B" ORDER BY a."B") FROM "_EventAttendees" a WHERE a."A"=e.id) AS attendees
-       FROM "CalendarEvent" e WHERE e."organizationId"=$1 AND e.title LIKE 'Follow up ·%' ORDER BY e."startOn", e.type`,
+       FROM "CalendarEvent" e WHERE e."organizationId"=$1 AND (e.title LIKE 'Follow up ·%' OR e.title LIKE 'Try to book a meeting ·%')
+       ORDER BY e."startOn", e.type`,
       [org],
     )
   ).rows;
@@ -298,7 +301,7 @@ async function followUps(org) {
   assert.equal((await followUps(org)).length, 2, "still the two from before");
   assert.equal(await status("Contact", "ctc_fu_dana"), "CONTACTED", "a Meeting ticked then skipped sets nothing");
 
-  log("a Meeting follow-up is a meeting booked: Eli goes to Meeting Set");
+  log("Sprint: a Meeting follow-up is “Try to book a meeting” — a reminder call that moves no status (decision 5)");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_eli`);
   await form.getByRole("button", { name: "Email", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Sent the brochure");
@@ -308,10 +311,15 @@ async function followUps(org) {
   await box.locator("[data-testid=follow-up-on-MEETING]").fill(daysOn(5));
   await box.locator("[data-testid=follow-up-save]").click();
   await box.waitFor({ state: "detached" });
-  assert.match(await page.locator("[data-testid=follow-up-notice]").textContent(), /Meeting follow-up on the calendar for/);
-  await until(async () => (await status("Contact", "ctc_fu_eli")) === "MEETING_SET", "Eli meeting set");
+  assert.match(await page.locator("[data-testid=follow-up-notice]").textContent(), /“Try to book a meeting” on the calendar for/);
   const eli = (await followUps(org)).filter((row) => row.contactId === "ctc_fu_eli");
-  assert.deepEqual(eli.map((row) => [row.type, isoOf(row.startOn), row.title]), [["Meeting", daysOn(5), "Follow up · Eli Park"]]);
+  assert.deepEqual(eli.map((row) => [row.type, isoOf(row.startOn), row.title]), [["Call", daysOn(5), "Try to book a meeting · Eli Park"]]);
+  assert.equal(await status("Contact", "ctc_fu_eli"), "INTERESTED", "the reminder books nothing, so Eli stays where he was");
+  assert.equal(
+    (await sql(`SELECT count(*)::int n FROM "OpportunityMeeting" m JOIN "Opportunity" o ON o.id=m."opportunityId" WHERE o."organizationId"=$1`, [org])).rows[0].n,
+    0,
+    "and nothing lands on the Pipeline",
+  );
 
   log("a day before today is refused, and the box stays open to fix it");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);

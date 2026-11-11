@@ -129,7 +129,7 @@ function isoDaysAgo(n) {
   log("a new contact starts Not Actioned; the new form offers only the pre-pipeline statuses");
   await page.goto(`${BASE}/dashboard/contacts/new`);
   const options = await page.locator("select[name=status] option").allTextContents();
-  assert.deepEqual(options, ["Not Actioned", "Contacted", "Not Interested", "Interested"]);
+  assert.deepEqual(options, ["Not Actioned", "Attempted", "Connected", "Not Interested", "Interested"]);
   await page.fill("#companyName", "Aster Homes");
   await page.fill("#name", "Ava Stone");
   await page.getByRole("button", { name: "Save contact" }).click();
@@ -157,6 +157,13 @@ function isoDaysAgo(n) {
   await page.locator("[data-testid=status-picker]").click();
   await page.locator("[data-testid=status-option-INTERESTED]").click();
   await until(async () => (await status("Contact", ava)) === "INTERESTED", "Ava interested");
+  log("Sprint: Interested from Attempted passes through Connected the same day, for Ava and Aster Homes");
+  const avaSteps = (await sql(`SELECT "fromStatus", "toStatus", auto, to_char("on", 'YYYY-MM-DD') AS day FROM "StatusChange" WHERE "contactId"=$1 ORDER BY "createdAt", "toStatus" = 'INTERESTED'`, [ava])).rows;
+  assert.deepEqual(avaSteps.map((r) => `${r.fromStatus}>${r.toStatus}`), ["NOT_ACTIONED>CONTACTED", "CONTACTED>CONNECTED", "CONNECTED>INTERESTED"]);
+  assert.equal(avaSteps[1].day, avaSteps[2].day, "Connected is dated the day Interested was");
+  assert.deepEqual([avaSteps[1].auto, avaSteps[2].auto], [true, false], "the pass-through is the app's step; Interested is the person's");
+  const asterSteps = (await sql(`SELECT "toStatus" FROM "StatusChange" WHERE "companyId"=$1 ORDER BY "createdAt", "toStatus" = 'INTERESTED'`, [aster])).rows.map((r) => r.toStatus);
+  assert.deepEqual(asterSteps, ["CONTACTED", "CONNECTED", "INTERESTED"]);
   await page.goto(`${BASE}/dashboard/contacts/interested`);
   await page.locator("[data-testid=contact-row]", { hasText: "Ava Stone" }).waitFor();
   await page.goto(`${BASE}/dashboard/companies/${aster}`);
@@ -313,7 +320,7 @@ function isoDaysAgo(n) {
   // Won: Cara. Lost: Eli. Close rate 50%.
   assert.match(await page.locator("[data-testid=stats-close-rate]").textContent(), /50%/);
   const funnelCounts = await page.locator("[data-testid=funnel-count]").allTextContents();
-  assert.equal(funnelCounts.length, 7);
+  assert.equal(funnelCounts.length, 8, "Attempted, Connected, Interested, Meeting Set … Won");
   await shot(page, "04-stats");
 
   log("the leaderboard credits Nic with Ava's meeting and Cara's win");
@@ -354,7 +361,7 @@ function isoDaysAgo(n) {
       sideways: wrap.scrollWidth - wrap.clientWidth,
     };
   });
-  assert.equal(layout.steps.length, 5, JSON.stringify(layout.steps));
+  assert.equal(layout.steps.length, 6, JSON.stringify(layout.steps));
   for (const s of layout.steps) assert.ok(!s.cut, `"${s.text}" is cut off`);
   assert.equal(layout.last, today, "the last label is today");
   assert.ok(layout.lastRight <= layout.svgRight + 0.5, `"${layout.last}" runs ${Math.round(layout.lastRight - layout.svgRight)}px past the chart`);
