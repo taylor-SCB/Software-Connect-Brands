@@ -306,7 +306,7 @@ function backLink(page) {
   assert.equal((await fiberTile.getByTestId("tile-person").innerText()).trim(), "Danny Ortiz");
   await fiberTile.getByTestId("tile-open").click();
   const fiberPanel = page.getByTestId("opportunity-panel");
-  assert.ok(await fiberPanel.getByText("QUO-1000").isVisible(), "quotes listed in the deal's panel");
+  await fiberPanel.getByText("QUO-1000").waitFor(); // quotes listed in the deal's panel
   await fiberPanel.getByRole("link", { name: "Danny Ortiz" }).click();
   await page.waitForURL(dannyUrl);
   await backLink(page).getByText("Pipeline").waitFor();
