@@ -7,6 +7,15 @@ import type { Headline } from "@/lib/reports/common";
 const dollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0, minimumFractionDigits: 0 });
 const count = new Intl.NumberFormat("en-US");
 
+// Tries and talks (Nov 11, 2026): every touch is a try; the part that
+// didn't connect is grey, the talks are the fixed health "good" colour
+// (the same in every workspace, like the health marks). Passed as `colors`
+// to the report and Stats charts; their four series colours stay the
+// default everywhere else. Kept here, out of the "use client" chart files,
+// so server pages can hand it over.
+export const TRY_TALK_COLORS = ["var(--health-none)", "var(--health-good)"] as const;
+export const TRY_TALK_SERIES = ["Attempts", "Talks"];
+
 export function money(cents: number) {
   return dollars.format(Math.round(cents / 100));
 }
