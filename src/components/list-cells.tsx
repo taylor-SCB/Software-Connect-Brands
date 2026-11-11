@@ -59,8 +59,21 @@ export function otherPhones(contact: { mobile: string | null; phone: string | nu
   return [contact.phone, contact.phone2].filter((number): number is string => Boolean(number) && number !== best);
 }
 
+// The number to dial or text, without an extension: "(512) 555-0100 x204"
+// is 5125550100, never 5125550100204 (audit fix, Nov 11, 2026). A call
+// waits and then dials the extension (the comma); a text never carries it.
+const EXTENSION = /\s*(?:x|ext\.?|extension)\s*(\d+)\s*$/i;
+export function dialNumber(number: string) {
+  const match = number.match(EXTENSION);
+  const main = (match ? number.slice(0, match.index) : number).replace(/[^\d+]/g, "");
+  return { main, extension: match?.[1] ?? null };
+}
 export function telHref(number: string) {
-  return `tel:${number.replace(/[^\d+]/g, "")}`;
+  const { main, extension } = dialNumber(number);
+  return `tel:${main}${extension ? `,${extension}` : ""}`;
+}
+export function smsHref(number: string) {
+  return `sms:${dialNumber(number).main}`;
 }
 
 // Tap to call. data-contact-id lets the list open "How did it go?" when the
@@ -86,7 +99,7 @@ export function CardActions({ number, contactId, log }: { number: string | null;
         </a>
       )}
       {number && contactId && (
-        <a href={`sms:${number.replace(/[^\d+]/g, "")}`} className={button} data-contact-id={contactId} data-testid="card-text">
+        <a href={smsHref(number)} className={button} data-contact-id={contactId} data-testid="card-text">
           <IconMessage size={14} />
           Text
         </a>
@@ -101,7 +114,11 @@ export function cardCaption(health: LeadHealth | undefined) {
   if (!health) return "";
   const days = health.counts.lastTouchDays;
   const tries = health.counts.tries;
-  const when = days === null ? "Not tried yet" : days === 0 ? "Today" : `${days}d ago`;
+  // Never touched is "Not tried yet" only while nobody has tried them; a
+  // person at Attempted or further by status (imported, set by hand) reads
+  // as the desktop Pulse does (audit fix, Nov 11, 2026).
+  if (days === null) return health.state === "NEW" ? "Not tried yet" : health.miniCaption;
+  const when = days === 0 ? "Today" : `${days}d ago`;
   return tries > 0 ? `${when} · ${tries} ${tries === 1 ? "try" : "tries"}` : when;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles, IconFileText } from "@/components/icons";
@@ -568,16 +568,40 @@ function FilterGroup({ title, children }: { title: string; children: React.React
 // body, with "Show 27 people" pinned at its foot. The dropdowns inside it
 // float above it (FloatingMenu sits higher).
 function PhoneSheet({ title, onClose, showLabel, children }: { title: string; onClose: () => void; showLabel: string; children: React.ReactNode }) {
+  const panel = useRef<HTMLDivElement>(null);
+  // A modal sheet (audit fix, Nov 11, 2026): the keyboard goes in when it
+  // opens, Tab wraps inside it, and it goes back to Filters when it closes.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => {
+      if (panel.current && !panel.current.contains(document.activeElement)) tabStops(panel.current)[0]?.focus({ preventScroll: true });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // A filter's menu open above the sheet takes this Escape for itself
+      // (audit fix, Nov 11, 2026: both closed). Its panel is drawn
+      // straight on the page body.
+      if (document.querySelector('body > [role="dialog"]')) return;
+      onClose();
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
   }, [onClose]);
+  const wrap = (toEnd: boolean) => {
+    const stops = panel.current ? tabStops(panel.current) : [];
+    (toEnd ? stops[stops.length - 1] : stops[0])?.focus();
+  };
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-end bg-[var(--scrim)]" onClick={onClose}>
+      <FocusGuard onFocus={() => wrap(true)} />
       <div
+        ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -598,6 +622,7 @@ function PhoneSheet({ title, onClose, showLabel, children }: { title: string; on
           </button>
         </div>
       </div>
+      <FocusGuard onFocus={() => wrap(false)} />
     </div>,
     document.body,
   );
@@ -657,11 +682,23 @@ export function Toggle({ on, onClick, children, testId }: { on: boolean; onClick
   );
 }
 
+// The ✕ is named for its chip ("Remove filter State: TX") and is a 44px
+// target on a phone (audit fix, Nov 11, 2026: a 10px box, every one read
+// "Remove filter").
 export function Chip({ children, onRemove }: { children: React.ReactNode; onRemove: () => void }) {
+  const id = useId();
   return (
-    <span className="badge gap-1 border-[var(--border-strong)]">
-      {children}
-      <button type="button" onClick={onRemove} aria-label="Remove filter" className="opacity-70 hover:opacity-100">
+    <span className="badge gap-1 border-[var(--border-strong)] max-md:min-h-[44px] max-md:pr-0">
+      <span id={`${id}-text`}>{children}</span>
+      <span id={`${id}-remove`} hidden>
+        Remove filter
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-labelledby={`${id}-remove ${id}-text`}
+        className="inline-flex items-center justify-center opacity-70 hover:opacity-100 max-md:min-h-[44px] max-md:min-w-[44px]"
+      >
         <IconX size={10} />
       </button>
     </span>
@@ -690,7 +727,7 @@ export function Chip({ children, onRemove }: { children: React.ReactNode; onRemo
 // are two empty stops either side of the choices (FocusGuard), so the
 // browser still walks a date box's month / day / year and a radio group.
 const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]';
-function tabStops(root: ParentNode): HTMLElement[] {
+export function tabStops(root: ParentNode): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => {
     if (el.tabIndex < 0 || (el as HTMLInputElement).disabled || el.hasAttribute("data-focus-guard") || el.getClientRects().length === 0) return false;
     // A radio group is one stop: its ticked radio, or its first.
@@ -701,7 +738,7 @@ function tabStops(root: ParentNode): HTMLElement[] {
     return true;
   });
 }
-function FocusGuard({ onFocus }: { onFocus: () => void }) {
+export function FocusGuard({ onFocus }: { onFocus: () => void }) {
   return <span tabIndex={0} data-focus-guard="" className="sr-only" onFocus={onFocus} />;
 }
 
@@ -806,7 +843,9 @@ function Dropdown({
       </button>
       <FloatingMenu anchor={button} open={open} onClose={close} width={256} testId={`${testId}-menu`} label={label}>
         <FocusGuard onFocus={() => leave(false)} />
-        <div ref={panel} className="py-1">
+        {/* A phone's choices are 44px tall: FilterGroup's rule can't reach
+            them, the menu is drawn on the page body (audit fix, Nov 11, 2026). */}
+        <div ref={panel} className="py-1 max-md:[&_label]:min-h-[44px] max-md:[&_.btn]:min-h-[44px] max-md:[&_.btn]:min-w-[44px]">
           {children(close)}
         </div>
         <FocusGuard onFocus={() => leave(true)} />

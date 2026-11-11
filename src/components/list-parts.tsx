@@ -9,6 +9,7 @@ import { MergeButton } from "@/components/merge-button";
 import { EmailButton } from "@/components/email-composer";
 import { FillMissingButton } from "@/app/dashboard/companies/fill-missing-button";
 import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
+import { FocusGuard, tabStops } from "@/components/list-filters";
 
 // The client pieces of the Contacts and Companies lists (BDR redesign, Nov
 // 11, 2026): the Clean up ▾ menu, the Log button and the tap-to-call
@@ -35,6 +36,34 @@ export function CleanUpMenu({
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const host = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  // The keyboard walks the menu like the filter menus (audit fix, Nov 11,
+  // 2026: the menu is drawn at the end of the page, so Tab never reached
+  // it and scrolling there closed it). Opened with Enter or Space it goes
+  // to the first item; Tab from the button goes in; off either end it
+  // leaves to the button or the next thing on the page; Escape puts it
+  // back on the button.
+  const fromKeys = useRef(false);
+  const items = () => (menu.current ? tabStops(menu.current) : []);
+  useEffect(() => {
+    if (!open || !fromKeys.current) return;
+    const frame = requestAnimationFrame(() => items()[0]?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  const leave = (forward: boolean) => {
+    const anchor = button.current;
+    const next =
+      forward && anchor
+        ? tabStops(document.body).find((el) => !menu.current?.contains(el) && !!(anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))
+        : null;
+    (next ?? anchor)?.focus();
+    setOpen(false);
+  };
+  const close = () => {
+    const inside = !!menu.current?.contains(document.activeElement);
+    setOpen(false);
+    if (inside) button.current?.focus({ preventScroll: true });
+  };
   const press = (index: number) => {
     setOpen(false);
     const target = host.current?.querySelectorAll<HTMLElement>(":scope > span > button")[index];
@@ -65,7 +94,17 @@ export function CleanUpMenu({
       <button
         ref={button}
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={(event) => {
+          fromKeys.current = event.detail === 0;
+          setOpen(!open);
+        }}
+        onKeyDown={(event) => {
+          if (!open || event.key !== "Tab" || event.shiftKey) return;
+          const first = items()[0];
+          if (!first) return;
+          event.preventDefault();
+          first.focus({ preventScroll: true });
+        }}
         aria-expanded={open}
         aria-haspopup="menu"
         className="btn btn-ghost btn-sm min-h-[44px] md:min-h-0"
@@ -75,8 +114,9 @@ export function CleanUpMenu({
         <span className="px-1 text-base leading-none md:hidden" aria-label="More">⋯</span>
         <IconChevronDown size={12} className="hidden opacity-70 md:inline" />
       </button>
-      <FloatingMenu anchor={button} open={open} onClose={() => setOpen(false)} width={240} testId="cleanup-menu" label="Clean up">
-        <div className="py-1" role="menu">
+      <FloatingMenu anchor={button} open={open} onClose={close} width={240} testId="cleanup-menu" label="Clean up">
+        <FocusGuard onFocus={() => leave(false)} />
+        <div ref={menu} className="py-1" role="menu">
           {kind === "contacts" && (
             <button type="button" role="menuitem" className={`${item} md:hidden`} onClick={() => press(2)} data-testid="cleanup-email">
               <IconMail size={14} /> Email
@@ -97,6 +137,7 @@ export function CleanUpMenu({
             </button>
           )}
         </div>
+        <FocusGuard onFocus={() => leave(true)} />
       </FloatingMenu>
     </>
   );

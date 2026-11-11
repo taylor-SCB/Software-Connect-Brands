@@ -240,7 +240,22 @@ export function searchTerms(q: string): string[] {
   return terms.length ? terms.slice(0, MAX_SEARCH_WORDS) : [text];
 }
 
+// A single-valued parameter, read as its first value when it comes as a
+// list. Bulk Assign's "all matching" reads the list's address back as
+// lists for every key (audit fix, Nov 11, 2026: `fav === "1"` was false
+// for ["1"], so Favorites, With deals, Missing info, Owes money, Mine,
+// the presets and the sort were dropped and records the list didn't show
+// were assigned; an Activity filter threw).
+function one(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value) ?? "";
+}
+
 export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams {
+  const flag = (key: string) => one(raw[key]) === "1";
+  const act = one(raw.act);
+  const scope = one(raw.scope);
+  const preset = one(raw.preset);
+  const sort = one(raw.sort);
   const per = Number(Array.isArray(raw.per) ? raw.per[0] : raw.per);
   const page = Number(Array.isArray(raw.page) ? raw.page[0] : raw.page);
   return {
@@ -254,13 +269,13 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     statuses: lock.interested
       ? []
       : list(raw.status).filter((value): value is ContactStatusValue => (CONTACT_STATUSES as readonly string[]).includes(value)),
-    fav: lock.fav || raw.fav === "1",
-    deals: lock.deals || raw.deals === "1",
-    attn: raw.attn === "1",
-    auto: raw.auto === "1",
-    owed: raw.owed === "1",
+    fav: lock.fav || flag("fav"),
+    deals: lock.deals || flag("deals"),
+    attn: flag("attn"),
+    auto: flag("auto"),
+    owed: flag("owed"),
     interested: Boolean(lock.interested),
-    act: (ACTIVITY_WINDOWS as readonly string[]).includes(String(raw.act)) ? (raw.act as ActivityWindow) : "",
+    act: (ACTIVITY_WINDOWS as readonly string[]).includes(act) ? (act as ActivityWindow) : "",
     titles: list(raw.title),
     reps: list(raw.rep),
     addedBy: list(raw.by),
@@ -271,10 +286,10 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     phone: presence(raw.phone),
     labels: list(raw.label),
     pulses: list(raw.pulse).filter((value): value is PulseKey => (PULSE_KEYS as readonly string[]).includes(value)),
-    scope: (LIST_SCOPES as readonly string[]).includes(String(raw.scope)) ? (raw.scope as ListScope) : "",
+    scope: (LIST_SCOPES as readonly string[]).includes(scope) ? (scope as ListScope) : "",
     // Checked against the kind of list by the page (presetsFor).
-    preset: typeof raw.preset === "string" && /^[a-z]{1,12}$/.test(raw.preset) ? raw.preset : "",
-    sort: (LIST_SORTS as readonly string[]).includes(String(raw.sort)) ? (raw.sort as ListSort) : "",
+    preset: /^[a-z]{1,12}$/.test(preset) ? preset : "",
+    sort: (LIST_SORTS as readonly string[]).includes(sort) ? (sort as ListSort) : "",
     me: "",
   };
 }

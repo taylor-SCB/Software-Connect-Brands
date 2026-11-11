@@ -6,7 +6,8 @@ export type LastContact = { at: Date; by: string };
 // call, email, text or meeting anybody logged, and who logged it. Only
 // touches that have happened count — a call dated ahead is on the
 // calendar, not in anyone's history. Marketing sends are not a touch
-// (Taylor, Nov 10, 2026): they have their own Marketing column.
+// (Taylor, Nov 10, 2026): they have their own Marketing column. Nor is
+// a no-show, the touch rule everywhere else (audit fix, Nov 11, 2026).
 //
 // Asked for the rows on one page only, so it is the same speed at fifty
 // contacts or two hundred thousand.
@@ -19,7 +20,7 @@ export async function lastContactedContacts(organizationId: string, contactIds: 
      WHERE a."organizationId" = ${organizationId}
        AND a."contactId" = ANY(${contactIds})
        AND a."occurredAt" <= now()
-       AND a.marketing = false
+       AND a.marketing = false AND a.outcome IS DISTINCT FROM 'NO_SHOW'
      ORDER BY a."contactId", a."occurredAt" DESC, a."createdAt" DESC
   `;
   return toMap(rows);
@@ -38,7 +39,7 @@ export async function lastContactedCompanies(organizationId: string, companyIds:
          WHERE a."organizationId" = ${organizationId}
            AND a."companyId" = ANY(${companyIds})
            AND a."occurredAt" <= now()
-           AND a.marketing = false
+           AND a.marketing = false AND a.outcome IS DISTINCT FROM 'NO_SHOW'
         UNION ALL
         SELECT c."companyId" AS key, a."occurredAt" AS at, a."createdAt" AS made, u.name AS by
           FROM "Activity" a
@@ -47,7 +48,7 @@ export async function lastContactedCompanies(organizationId: string, companyIds:
          WHERE a."organizationId" = ${organizationId}
            AND c."companyId" = ANY(${companyIds})
            AND a."occurredAt" <= now()
-           AND a.marketing = false
+           AND a.marketing = false AND a.outcome IS DISTINCT FROM 'NO_SHOW'
       ) t
      ORDER BY t.key, t.at DESC, t.made DESC
   `;

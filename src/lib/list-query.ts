@@ -10,6 +10,7 @@ import { NO_LEAD_LABEL } from "@/lib/lead-labels";
 import { OVERDUE_TYPES } from "@/lib/calendar-data";
 import { startOfWeek } from "@/lib/calendar";
 import { addDays } from "@/lib/payments";
+import { zonedMidnight } from "@/lib/reports/period";
 import { zoneDay, TALK_STATUSES } from "@/lib/health";
 import { effectiveSort, type ListSort } from "@/lib/list-params";
 import { Prisma as P } from "@/generated/prisma/client";
@@ -491,14 +492,14 @@ async function meetingWeekContactIds(organizationId: string, today: string, time
        WHERE e."organizationId" = ${organizationId} AND e.type = 'Meeting'
          AND e."startOn" BETWEEN ${first}::date AND ${last}::date
       UNION ALL
-      SELECT oc."contactId", to_char(om."on" AT TIME ZONE ${timeZone}, 'YYYY-MM-DD HH24:MI')
+      SELECT oc."contactId", to_char(om."on" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone}, 'YYYY-MM-DD HH24:MI')
         FROM "OpportunityMeeting" om
         JOIN "Opportunity" o ON o.id = om."opportunityId"
         JOIN "OpportunityContact" oc ON oc."opportunityId" = o.id
        WHERE o."organizationId" = ${organizationId} AND oc.role <> 'HIDDEN'
-         AND (om."on" AT TIME ZONE ${timeZone})::date BETWEEN ${first}::date AND ${last}::date
+         AND (om."on" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone})::date BETWEEN ${first}::date AND ${last}::date
       UNION ALL
-      SELECT a."contactId", to_char(a."occurredAt" AT TIME ZONE ${timeZone}, 'YYYY-MM-DD HH24:MI')
+      SELECT a."contactId", to_char(a."occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${timeZone}, 'YYYY-MM-DD HH24:MI')
         FROM "Activity" a
        WHERE a."organizationId" = ${organizationId} AND a.marketing = false AND a.type = 'MEETING' AND a."contactId" IS NOT NULL
          AND a."occurredAt" >= (${first}::date::timestamp AT TIME ZONE ${timeZone})
@@ -589,7 +590,11 @@ async function companyPresetClauses(organizationId: string, p: ListParams): Prom
       return [{ ownerId: p.me || "__nobody__" }, { status: { notIn: [...CLOSED_STATUSES] } }];
     case "quiet": {
       await touchesDue(organizationId);
-      const since = new Date(Date.now() - clock.quietDays * 86_400_000);
+      // Whole days on the workspace's calendar, as the row's "8d" and the
+      // health rules count them (quiet is more than Q days; audit fix,
+      // Nov 11, 2026: rolling 24-hour days listed a company touched
+      // exactly Q days ago, earlier in the day).
+      const since = zonedMidnight(addDays(clock.today, -clock.quietDays), clock.timeZone);
       return [{ lastTouchAt: { lt: since } }, { status: { notIn: [...CLOSED_STATUSES] } }];
     }
     case "talked":

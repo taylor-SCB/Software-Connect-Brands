@@ -1289,6 +1289,196 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await shot(p, "04-phone");
   await phone.close();
 
+  // ---------------------------------------------------------------------
+  // The final audit of the BDR sprint (Nov 11, 2026), lists area.
+  await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago', "quietDays"=8 WHERE id=$1`, [org]);
+  const waitActive = async (pg, test, what) => {
+    for (let i = 0; i < 40; i++) {
+      if (await pg.evaluate(test)) return;
+      await pg.waitForTimeout(50);
+    }
+    assert.fail(`${what}: focus is on ${await pg.evaluate(() => document.activeElement?.outerHTML.slice(0, 120))}`);
+  };
+  const activeIs = (pg, testId, what) => waitActive(pg, `document.activeElement?.dataset?.testid === ${JSON.stringify(testId)}`, what);
+
+  log("audit fixes: Meetings this week reads an opportunity meeting on the workspace's own day (Saturday 8 PM in Chicago is this week, last Saturday's is not)");
+  {
+    const wkSat = await seedContact({ name: "Wkmeet Saturday" });
+    const wkPrev = await seedContact({ name: "Wkmeet Lastweek" });
+    // This week's Saturday and last week's, at 8 PM on Chicago's clock,
+    // stored as UTC like every DateTime.
+    const at = (offset) =>
+      `(((((now() AT TIME ZONE 'America/Chicago')::date - extract(dow from (now() AT TIME ZONE 'America/Chicago'))::int + ${offset}) + time '20:00') AT TIME ZONE 'America/Chicago') AT TIME ZONE 'UTC')`;
+    for (const [id, contactId, offset] of [["cd_wk_sat", wkSat, 6], ["cd_wk_prev", wkPrev, -1]]) {
+      await sql(`INSERT INTO "Opportunity" (id, "organizationId", title, "updatedAt") VALUES ($1, $2, 'Wk meeting', now())`, [id, org]);
+      await sql(`INSERT INTO "OpportunityContact" (id, "opportunityId", "contactId", role) VALUES ($1, $1, $2, 'PRIMARY')`, [id, contactId]);
+      await sql(`INSERT INTO "OpportunityMeeting" (id, "opportunityId", "on") VALUES ($1, $1, ${at(offset)})`, [id]);
+    }
+    assert.deepEqual(await contactsAt(page, "scope=all&preset=week&q=Wkmeet"), ["Wkmeet Saturday"]);
+  }
+
+  log("audit fixes: Going quiet counts whole days on the workspace's calendar — touched exactly 8 days ago (earlier in the day) is not quiet yet, 9 days is");
+  {
+    const edge = await seedCompany({ name: "Quietaud Edge" });
+    const past = await seedCompany({ name: "Quietaud Past" });
+    const dayStart = (back) => `((((now() AT TIME ZONE 'America/Chicago')::date - ${back})::timestamp AT TIME ZONE 'America/Chicago') AT TIME ZONE 'UTC')`;
+    await sql(
+      `INSERT INTO "Activity" (id, "organizationId", "companyId", "userId", type, body, "occurredAt") VALUES
+         ('cd_quiet_edge', $1, $2, $4, 'PHONE_CALL', 'Edge', ${dayStart(8)} + interval '1 minute'),
+         ('cd_quiet_past', $1, $3, $4, 'PHONE_CALL', 'Past', ${dayStart(9)} + interval '12 hours')`,
+      [org, edge, past, taylor.id],
+    );
+    assert.deepEqual(await companiesAt(page, "scope=all&preset=quiet&q=Quietaud"), ["Quietaud Past"]);
+  }
+
+  log("audit fixes: bulk Assign 'all matching' takes the first 1,000 in the list's own order (Warmest first puts a tried lead added long ago ahead of 1,000 new ones)");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id, "organizationId", name, "updatedAt") SELECT 'cd_ord_' || g, $1, 'Bulkord New ' || g, now() FROM generate_series(1, 1001) g`,
+      [org],
+    );
+    const old = await seedContact({ name: "Bulkord Oldtried", createdAt: new Date(Date.now() - 30 * 86_400_000).toISOString() });
+    await seedActivity(old, 1);
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&sort=pulse&q=Bulkord`);
+    await page.locator("[data-testid=page-summary]").waitFor();
+    assert.equal((await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").first().textContent()).trim(), "Bulkord Oldtried", "Warmest first shows the tried lead on top");
+    await page.getByTestId("page-check").check();
+    await page.getByTestId("bulk-all").click();
+    await page.getByTestId("bulk-me").click();
+    await page.getByTestId("bulk-message").filter({ hasText: "1,000 records → Taylor Test." }).waitFor();
+    assert.equal((await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [old])).rows[0].ownerId, taylor.id, "the top of the list was in the 1,000");
+  }
+
+  log("audit fixes: bulk Assign 'all matching' keeps every filter on the list — with Favorites and an Activity window on, only those records are assigned");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id, "organizationId", name, favorite, "updatedAt")
+       SELECT 'cd_favaud_' || g, $1, 'Favaud ' || g, g <= 12, now() FROM generate_series(1, 17) g`,
+      [org],
+    );
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&fav=1&act=never&q=Favaud&per=10`);
+    assert.match(await page.getByTestId("page-summary").textContent(), /of 12 contacts/);
+    await page.getByTestId("page-check").check();
+    await page.getByTestId("bulk-all").click();
+    await page.getByTestId("bulk-me").click();
+    await page.getByTestId("bulk-message").filter({ hasText: "12 records → Taylor Test." }).waitFor();
+    const owned = (await sql(`SELECT favorite, count(*)::int AS n FROM "Contact" WHERE id LIKE 'cd_favaud_%' AND "ownerId"=$1 GROUP BY favorite`, [taylor.id])).rows;
+    assert.deepEqual(owned.map((row) => ({ ...row })), [{ favorite: true, n: 12 }], "only the favorites the list showed");
+  }
+
+  log("audit fixes: Last Contacted By leaves out a no-show, like every other touch count");
+  {
+    const lc = await seedContact({ name: "Lcnoshow Person" });
+    await seedActivity(lc, 6);
+    await sql(
+      `INSERT INTO "Activity" (id, "organizationId", "contactId", "userId", type, body, outcome, "occurredAt") VALUES ('cd_lc_noshow', $1, $2, $3, 'MEETING', 'No-show', 'NO_SHOW', now() - interval '1 day')`,
+      [org, lc, nicId],
+    );
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&q=Lcnoshow`);
+    await showColumn(page, "lastContacted");
+    const cell = await rowOf(page, "Lcnoshow Person").getByTestId("last-contacted").textContent();
+    assert.match(cell, /Taylor/, `the call, not the no-show: ${cell}`);
+    assert.doesNotMatch(cell, /Nic/);
+  }
+
+  log("audit fixes: a number with an extension dials the number then the extension, and texts the number alone");
+  const extn = await seedContact({ name: "Extn Person", phone: "(512) 555-0100 x204" });
+  await sql(`UPDATE "Contact" SET status='INTERESTED' WHERE id=$1`, [extn]);
+  await page.goto(`${BASE}/dashboard/contacts?scope=all&q=Extn`);
+  assert.equal(await rowOf(page, "Extn Person").locator('a[href^="tel:"]').first().getAttribute("href"), "tel:5125550100,204");
+
+  log("audit fixes: a filter chip's ✕ says which filter it removes");
+  await page.goto(`${BASE}/dashboard/contacts?scope=all&state=TX`);
+  await page.getByRole("button", { name: /^Remove filter .*TX/ }).waitFor();
+
+  log("audit fixes: Clean up is walked from the keyboard (Enter to Import CSV, Escape back to the button)");
+  await page.goto(`${BASE}/dashboard/contacts?scope=all`);
+  await page.getByTestId("cleanup").focus();
+  await page.keyboard.press("Enter");
+  await activeIs(page, "cleanup-import", "Enter on Clean up");
+  await page.keyboard.press("Escape");
+  await activeIs(page, "cleanup", "Escape in Clean up");
+
+  log("audit fixes: the bulk bar keeps the keyboard — the question takes it, Cancel gives it back to Assign to me, Yes and Undo to the message");
+  {
+    await seedContact({ name: "Kbfocus Nicsown", ownerId: nicId });
+    await page.goto(`${BASE}/dashboard/contacts?scope=all&q=Kbfocus`);
+    await page.getByTestId("row-check").first().check();
+    await page.getByTestId("bulk-me").focus();
+    await page.keyboard.press("Enter");
+    await activeIs(page, "bulk-confirm-yes", "the question");
+    await page.getByTestId("bulk-confirm-no").focus();
+    await page.keyboard.press("Enter");
+    await activeIs(page, "bulk-me", "after Cancel");
+    await page.keyboard.press("Enter");
+    await activeIs(page, "bulk-confirm-yes", "the question again");
+    await page.keyboard.press("Enter");
+    await waitActive(page, `document.activeElement?.getAttribute("role") === "status"`, "after Yes");
+    await page.getByTestId("bulk-undo").focus();
+    await page.keyboard.press("Enter");
+    await waitActive(page, `document.activeElement?.getAttribute("role") === "status"`, "after Undo");
+  }
+
+  log("audit fixes (phone): the bulk bar sits above the tab bar with 44px buttons; cards are inset and their boxes inside; page links, chips and filter choices are 44px; the Filters sheet holds the keyboard and Escape in a menu closes only the menu; the card's call and caption");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const q = await ctx.newPage();
+    await login(q, EMAIL);
+    const tall = async (loc, what) => {
+      const box = await loc.boundingBox();
+      assert.ok(box && box.height >= 43.5, `${what} is ${box && Math.round(box.height)}px tall`);
+    };
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&q=Bulkord`);
+    await q.locator("[data-testid=contact-card]").first().waitFor();
+    await q.getByTestId("select-mode").tap();
+    await q.locator("[data-testid=card-check]").first().check();
+    await q.getByTestId("bulk-bar").waitFor();
+    const barBox = await q.getByTestId("bulk-bar").boundingBox();
+    const tabs = await q.getByTestId("phone-tabs").boundingBox();
+    assert.ok(barBox.y + barBox.height <= tabs.y + 0.5, `the bar ends at ${Math.round(barBox.y + barBox.height)}, the tabs start at ${Math.round(tabs.y)}`);
+    for (const id of ["bulk-me", "bulk-to", "bulk-assign", "bulk-unassign"]) await tall(q.getByTestId(id), id);
+    const inside = await q.locator("[data-testid=card-check]").first().evaluate((box) => {
+      const label = box.closest("label").getBoundingClientRect();
+      const card = box.closest(".card").getBoundingClientRect();
+      const text = box.closest("li").querySelector("a").getBoundingClientRect();
+      return { label: label.left >= card.left, text: text.left - card.left };
+    });
+    assert.ok(inside.label, "the Select box sits inside the card");
+    assert.ok(inside.text >= 12, `the card's words are inset ${Math.round(inside.text)}px`);
+    await tall(q.locator('a[aria-label="Next page"]'), "Next page");
+    // Many pages of 44px links wrap rather than widen the phone's page.
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&q=Bulkord&per=10&page=50`);
+    await q.locator("[data-testid=contact-card]").first().waitFor();
+    assert.ok(await q.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "the pager wraps on a phone");
+    await q.getByTestId("select-mode").tap();
+
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&state=TX`);
+    await tall(q.getByRole("button", { name: /^Remove filter .*TX/ }), "a chip's ✕");
+
+    await q.goto(`${BASE}/dashboard/contacts?scope=all`);
+    await q.getByTestId("filters-toggle").tap();
+    await q.getByTestId("filters-sheet").waitFor();
+    await waitActive(q, `!!document.querySelector('[data-testid=filters-sheet]')?.contains(document.activeElement)`, "the opened sheet");
+    await q.getByTestId("filter-status").tap();
+    const menu = q.getByTestId("filter-status-menu");
+    await menu.waitFor();
+    await tall(menu.locator("label").first(), "a Status choice");
+    await q.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
+    assert.ok(await q.getByTestId("filters-sheet").isVisible(), "Escape in the menu leaves the sheet open");
+    await q.keyboard.press("Escape");
+    await q.getByTestId("filters-sheet").waitFor({ state: "detached" });
+    await activeIs(q, "filters-toggle", "the closed sheet");
+
+    await q.goto(`${BASE}/dashboard/contacts?scope=all&q=Extn`);
+    const card = q.locator("[data-testid=contact-card]").first();
+    await card.waitFor();
+    assert.equal(await card.getByTestId("card-call").getAttribute("href"), "tel:5125550100,204");
+    assert.equal(await card.getByTestId("card-text").getAttribute("href"), "sms:5125550100");
+    assert.doesNotMatch(await card.textContent(), /Not tried yet/, "an Interested contact isn't 'Not tried yet'");
+    await ctx.close();
+  }
+
   await browser.close();
   catcher.close();
   await db.end();

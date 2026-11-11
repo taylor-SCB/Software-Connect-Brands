@@ -45,8 +45,14 @@ export function ImportCsvButton({
   defaultAssignTo?: string;
 }) {
   const [open, setOpen] = useState(startOpen);
+  // The Member's own id is for the dialog that opened on arrival only; once
+  // it closes, a later Import CSV on the same page starts Unassigned like
+  // anywhere else (audit fix, Nov 11, 2026: it kept starting on the Member,
+  // who could then take a shared list and teammates' people unawares).
+  const [assignDefault, setAssignDefault] = useState(startOpen ? defaultAssignTo : "");
   const close = () => {
     setOpen(false);
+    setAssignDefault("");
     if (startOpen) {
       const url = new URL(window.location.href);
       if (url.searchParams.has("import")) {
@@ -62,7 +68,7 @@ export function ImportCsvButton({
         <IconUpload size={14} />
         Import CSV
       </button>
-      {open && <ImportDialog kind={kind} reps={reps} onClose={close} defaultAssignTo={defaultAssignTo} />}
+      {open && <ImportDialog kind={kind} reps={reps} onClose={close} defaultAssignTo={assignDefault} />}
     </>
   );
 }

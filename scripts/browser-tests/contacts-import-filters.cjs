@@ -909,6 +909,69 @@ async function assertMenuInside(page, menu, what) {
   assert.equal(await page.getByTestId("import-assign").inputValue(), "", "an Owner's ?import=1 starts Unassigned");
   await page.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
 
+  // ---------------------------------------------------------------------
+  // The final audit of the BDR sprint (Nov 11, 2026), lists area.
+  log("audit fixes: a Member's Import my list default ends with that dialog; Clean up → Import CSV on the same page starts Unassigned");
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const mp2 = await ctx.newPage();
+    await mp2.goto(`${BASE}/login`);
+    await mp2.fill("#email", "test-cif-member@example.com");
+    await mp2.fill("#password", PASSWORD);
+    await mp2.click("button[type=submit]");
+    await mp2.waitForURL(/\/dashboard$/);
+    await mp2.goto(`${BASE}/dashboard/contacts?import=1`);
+    await mp2.getByTestId("import-file").setInputFiles(r2Path);
+    await mp2.getByTestId("import-summary").waitFor();
+    assert.equal(await mp2.getByTestId("import-assign").inputValue(), memberId, "the arrival dialog starts on the Member");
+    await mp2.getByRole("dialog", { name: "Import CSV" }).getByRole("button", { name: "Close" }).click();
+    // No navigation: the same page, the same mounted button.
+    await cleanUp(mp2, "import");
+    await mp2.getByTestId("import-file").setInputFiles(r2Path);
+    await mp2.getByTestId("import-summary").waitFor();
+    assert.equal(await mp2.getByTestId("import-assign").inputValue(), "", "a later Import CSV starts Unassigned");
+    await ctx.close();
+  }
+
+  log("audit fixes: a kept note lands on the person its row updated (two share an email), a NUL in a note is dropped and never doubled, and 'Spoke to gatekeeper' imports as Attempted");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id, "organizationId", name, email, "createdAt", "updatedAt") VALUES
+         ('cif_pat_old', $1, 'Pat Shared', 'pat@shared.test', now() - interval '3 days', now()),
+         ('cif_pat_new', $1, 'Pat Shared', 'pat@shared.test', now() - interval '1 day', now())`,
+      [org],
+    );
+    const auditFile = [
+      "Name,Email,Title,Status,Notes",
+      "Pat Shared,pat@shared.test,Buyer,,Called back Tuesday",
+      "Gina Gate,gina@gate.test,,Spoke to gatekeeper,",
+      "Nul Note,nul@note.test,,,Said hi\u0000 then left",
+    ];
+    const auditPath = path.join(OUT, "audit-notes.csv");
+    fs.writeFileSync(auditPath, auditFile.join("\r\n") + "\r\n");
+    const runImport = async () => {
+      await page.goto(`${BASE}/dashboard/contacts`);
+      await cleanUp(page, "import");
+      await page.getByTestId("import-file").setInputFiles(auditPath);
+      await page.getByTestId("import-keep-notes").check();
+      await page.getByTestId("import-start").click();
+      await page.getByText("Imported 3 rows").waitFor({ timeout: 60000 });
+      await page.getByTestId("import-done").click();
+    };
+    await runImport();
+    const pats = (await sql(`SELECT c.id, c.title, (SELECT count(*)::int FROM "Note" n WHERE n."contactId" = c.id) AS notes FROM "Contact" c WHERE c."organizationId"=$1 AND c.email='pat@shared.test' ORDER BY c.id`, [org])).rows;
+    const updated = pats.find((row) => row.title === "Buyer");
+    assert.ok(updated, `one Pat was updated: ${JSON.stringify(pats)}`);
+    assert.equal(updated.id, "cif_pat_old", "the oldest of two sharing an email is the one updated");
+    assert.deepEqual(pats.map((row) => [row.id, row.notes]), [["cif_pat_new", 0], ["cif_pat_old", 1]], "and the note went on that same person");
+    assert.equal((await sql(`SELECT status FROM "Contact" WHERE "organizationId"=$1 AND email='gina@gate.test'`, [org])).rows[0].status, "CONTACTED", "a front desk is an attempt, not a talk");
+    const nulNotes = async () => (await sql(`SELECT n.body FROM "Note" n JOIN "Contact" c ON c.id = n."contactId" WHERE c."organizationId"=$1 AND c.email='nul@note.test'`, [org])).rows.map((row) => row.body);
+    assert.deepEqual(await nulNotes(), ["Notes: Said hi then left"], "the whole note, without the NUL");
+    await runImport();
+    assert.deepEqual(await nulNotes(), ["Notes: Said hi then left"], "a re-import adds nothing");
+    assert.equal((await sql(`SELECT count(*)::int AS n FROM "Note" WHERE "contactId" IN ('cif_pat_old','cif_pat_new')`)).rows[0].n, 1, "nor to Pat");
+  }
+
   void acmeUrl;
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED. Screenshots in ${OUT}`);
