@@ -22,7 +22,9 @@ import { useBookMeeting } from "@/components/book-meeting/book-meeting";
 // with Front desk; on a row: that person) and booking the shared Book
 // meeting sheet, each with its own Saved · Undo.
 
-export type BookPerson = { id: string; name: string; title: string | null };
+// opportunityId: the tile their Book meeting is offered on first (the
+// no-show's, else their open one; bookingTiles in load.ts).
+export type BookPerson = { id: string; name: string; title: string | null; opportunityId?: string | null };
 
 type Saved = { message: string; batchId?: string | null; href?: { label: string; to: string } | null };
 
@@ -116,7 +118,7 @@ export function CompanyShell({
         saved({ message: "Add the person you'll meet to this company first, then book it with them." });
         return;
       }
-      openBook({ contactId: id, name: person?.name, today });
+      openBook({ contactId: id, name: person?.name, today, opportunityId: person?.opportunityId ?? null });
     },
     [openBook, saved, today],
   );

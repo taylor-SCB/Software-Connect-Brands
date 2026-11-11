@@ -219,3 +219,28 @@ export async function meetingFor(organizationId: string, contactId: string, now:
     entryId: entry?.id ?? null,
   };
 }
+
+// The tile a Book meeting (or a Reschedule after a no-show) for each person
+// here is offered on first (round 2, Nov 11, 2026), as the contact page
+// does: the tile whose meeting was a no-show (`missed`, by the one rule in
+// src/lib/meeting-rule.ts through waitingMeetings), else the person's open
+// tile (Primary or Associated, the latest touched), else none (the sheet
+// then picks, as before). Two statements for the whole page.
+export async function bookingTiles(organizationId: string, ids: string[], now: Date, timeZone: string): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (!ids.length) return result;
+  const [waiting, open] = await Promise.all([
+    waitingMeetings(organizationId, { contactIds: ids }, { now, timeZone }),
+    prisma.opportunityContact.findMany({
+      where: { contactId: { in: ids }, role: { not: "HIDDEN" }, opportunity: { organizationId, ...OPEN_OPPORTUNITY } },
+      orderBy: { opportunity: { updatedAt: "desc" } },
+      select: { contactId: true, opportunityId: true },
+    }),
+  ]);
+  for (const row of open) if (!result.has(row.contactId)) result.set(row.contactId, row.opportunityId);
+  for (const id of ids) {
+    const missed = waiting.get(id)?.missed;
+    if (missed) result.set(id, missed.opportunityId);
+  }
+  return result;
+}

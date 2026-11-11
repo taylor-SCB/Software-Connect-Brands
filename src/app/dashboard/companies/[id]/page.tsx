@@ -43,7 +43,7 @@ import { CompanyShell } from "./company-shell";
 import { CompanyStatusPicker, HeaderActions, type MainAction } from "./header-actions";
 import { WhoToCall, type CallRow } from "./who-to-call";
 import { FoldCard, HistoryChunk, HistoryShell, LogTouch, NextStepStrip, PhoneBar, ShowCounts } from "./sections";
-import { lastTouchLines, mainContactIds, meetingFor, openOpportunities, stageOrder, whoToCallPage } from "./load";
+import { bookingTiles, lastTouchLines, mainContactIds, meetingFor, openOpportunities, stageOrder, whoToCallPage } from "./load";
 
 // A company can have thousands of people and years of activity, so the
 // page shows the people fifty at a time and the latest slice of every
@@ -253,6 +253,9 @@ export default async function CompanyDetailPage({
   // on file has that one.
   const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone ?? person.mobile }));
 
+  // Which tile each person's Book meeting / Reschedule is offered on first.
+  const tiles = await bookingTiles(organizationId, rows.map((row) => row.id), now, timeZone);
+
   /* ------------------------------ Main action ------------------------------ */
 
   // The company wears the meter of its person furthest along; the main
@@ -407,7 +410,7 @@ export default async function CompanyDetailPage({
       <CompanyShell
         companyId={company.id}
         companyName={company.name}
-        people={rows.map((row) => ({ id: row.id, name: row.name, title: row.title }))}
+        people={rows.map((row) => ({ id: row.id, name: row.name, title: row.title, opportunityId: tiles.get(row.id) ?? null }))}
         companyPeople={companyPeople}
         userName={userName}
         today={today}
