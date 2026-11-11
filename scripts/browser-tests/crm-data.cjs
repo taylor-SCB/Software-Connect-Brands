@@ -494,8 +494,10 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
 
   log("a call logged from the page counts at once for the person and their company");
   await page.goto(`${BASE}/dashboard/contacts/${month}`);
-  await page.locator("textarea[name=body]").first().fill("Called about the renewal");
-  await page.click("button:has-text('Log phone call')");
+  // The log is the How did it go? sheet behind the "What happened?" bar (Nov 11, 2026).
+  await page.locator("[data-testid=log-bar]").click();
+  await page.locator("[data-testid=log-activity-form] textarea[name=body]").fill("Called about the renewal");
+  await page.locator("[data-testid=log-activity-form] [data-testid=activity-submit]").click();
   for (let i = 0; i < 40; i++) {
     if ((await sql(`SELECT "lastTouchAt" > now() - interval '1 hour' AS t FROM "Company" WHERE id=$1`, [quietCo])).rows[0].t) break;
     await page.waitForTimeout(150);

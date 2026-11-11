@@ -2,13 +2,14 @@
 
 import { ink } from "@/lib/ink";
 import { useActionState, useRef, useEffect, useState } from "react";
-import { addNote, logActivity, createDealForContact } from "../actions";
-import { FormError, FormSuccess } from "@/components/ui";
+import { addNote, createDealForContact } from "../actions";
+import { FormError } from "@/components/ui";
 import { ContactMultiSelect, type PickableContact } from "@/components/contact-multi-select";
-import { CompanyPeoplePicker, type CompanyPerson } from "@/components/company-people-picker";
+import type { CompanyPerson } from "@/components/company-people-picker";
+import { HowDidItGo, TYPE_ORDER } from "@/components/how-did-it-go/how-did-it-go";
+import { useDialReturn } from "@/components/how-did-it-go/dial-return";
 import {
   ACTIVITY_LABELS,
-  ACTIVITY_TYPES,
   NOTE_LABELS,
   NOTE_LABEL_NAMES,
   NOTE_LABEL_COLORS,
@@ -24,8 +25,6 @@ import {
   IconTag,
 } from "@/components/icons";
 import type { ActionState } from "@/lib/forms";
-import type { FollowUpSeed, LogActivityState } from "@/lib/logging";
-import { FollowUpPrompt } from "@/components/follow-up-prompt";
 
 const ACTIVITY_ICONS = {
   TEXT: IconMessage,
@@ -46,9 +45,7 @@ type FormAction = (state: ActionState, formData: FormData) => Promise<ActionStat
 // Clears the form once the action reports success, so the box is ready
 // for the next entry instead of keeping stale text around. The counter
 // re-keys any client-side state (label chips, extra contacts) too.
-// `onResult` sees every result as it lands, for a form that opens
-// something else off the back of a save.
-function useResettingAction(action: FormAction, onResult?: (result: ActionState) => void) {
+function useResettingAction(action: FormAction) {
   const ref = useRef<HTMLFormElement>(null);
   const [resetKey, setResetKey] = useState(0);
   // Counts every result, success or refusal, so a field keyed on it is
@@ -59,7 +56,6 @@ function useResettingAction(action: FormAction, onResult?: (result: ActionState)
       const result = await action(previous, formData);
       if (result?.success) setResetKey((key) => key + 1);
       setAttempt((n) => n + 1);
-      onResult?.(result);
       return result;
     },
     {},
@@ -148,150 +144,102 @@ function NoteLabelChips() {
   );
 }
 
+// "Log activity" is the "What happened with Kristen?" bar (BDR redesign,
+// Nov 11, 2026): one tap opens the How did it go? sheet, set to Call, or
+// to the kind of touch tapped beside it. The sheet holds everything the
+// old inline form had — the note, When and Time behind "Just now ▾", "+
+// others", the company's people — with the outcome chips first. Coming
+// back to the page from a tel: or sms: tap opens it on its own.
 export function LogActivityForm({
   target,
   current,
   companyPeople,
   userName,
   today,
+  name,
 }: {
   target: LogTargetProps;
-  // The contact whose page this is, for "+ Include multiple contacts".
+  // The contact whose page this is, for "+ others".
   current?: PickableContact;
   // On a company page: its first people, offered as ticks.
   companyPeople?: CompanyPerson[];
-  // On a company page: who is logging, for the bypass line.
+  // On a company page: who is logging, for the Front desk line.
   userName?: string;
   // Today in the workspace's zone, for the "When" field's default. Comes
   // from the server so the form never guesses from the browser's clock.
   today: string;
+  // Who the bar names ("What happened with Kristen?"); the contact's name
+  // by default, the company's when given on a company page.
+  name?: string;
 }) {
-  // The "Want to set a follow-up?" box opens under the form for the touch
-  // just logged, and the line it leaves behind when it closes. Set from
-  // each result as it lands, not by comparing messages: two calls in a
-  // row report the same words and the second must open the box again.
-  const [followUp, setFollowUp] = useState<FollowUpSeed | null>(null);
-  const [notice, setNotice] = useState<string | undefined>();
-  const { ref, resetKey, attempt, state, formAction, pending } = useResettingAction(logActivity, (result: LogActivityState) => {
-    if (result?.followUp) {
-      setFollowUp(result.followUp);
-      setNotice(undefined);
-    }
-  });
+  const [open, setOpen] = useState(false);
   const [type, setType] = useState<ActivityTypeValue>("PHONE_CALL");
-  const [when, setWhen] = useState(today);
-  const ahead = when > today;
+  const [picks, setPicks] = useState<string[]>([]);
+  const who = name ?? current?.name ?? "";
+  const first = target.companyId ? who : who.split(/\s+/)[0];
+
+  useDialReturn(
+    { contactIds: target.contactId ? [target.contactId] : [], companyId: target.companyId ?? null, page: true },
+    (tap) => {
+      setType(tap.type);
+      setPicks(target.companyId && tap.contactId ? [tap.contactId] : []);
+      setOpen(true);
+    },
+  );
+
+  const openAs = (next: ActivityTypeValue) => {
+    setType(next);
+    setPicks([]);
+    setOpen(true);
+  };
 
   return (
-    <div>
-      <form ref={ref} action={formAction} className="space-y-3 p-5" data-testid="log-activity-form">
-        <TargetFields target={target} />
-        <input type="hidden" name="type" value={type} />
-
-        <div className="flex flex-wrap gap-1.5">
-          {ACTIVITY_TYPES.map((option) => {
-            const Icon = ACTIVITY_ICONS[option];
-            const selected = option === type;
-            return (
-              <button
-                key={option}
-                type="button"
-                onClick={() => setType(option)}
-                aria-pressed={selected}
-                className={`btn btn-sm ${selected ? "btn-primary" : "btn-ghost"}`}
-              >
-                <Icon size={13} />
-                {ACTIVITY_LABELS[option]}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Keyed on the attempt so a refusal redraws it with what was
-            typed (React empties a form whose action refuses). */}
-        <textarea
-          key={`body-${attempt}-${resetKey}`}
-          name="body"
-          rows={2}
-          defaultValue={state?.kept?.body}
-          placeholder="Left a voicemail about the kitchen quote…"
-          className="textarea"
-        />
-
-        {target.companyId && companyPeople && (
-          <CompanyPeoplePicker key={`people-${resetKey}`} companyId={target.companyId} people={companyPeople} userName={userName} />
-        )}
-
-        {/* When it happened — or when it will. Either way it lands on the
-            calendar; only a day that has been is written to the history. */}
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="block text-xs">
-            <span className="faint block">When</span>
-            <input
-              key={`when-${resetKey}`}
-              type="date"
-              name="occurredOn"
-              value={when}
-              onChange={(event) => setWhen(event.target.value || today)}
-              className="input input-sm"
-              data-testid="activity-when"
-            />
-          </label>
-          <label className="block text-xs">
-            <span className="faint block">Time · optional</span>
-            <input
-              key={`at-${attempt}-${resetKey}`}
-              type="time"
-              name="atTime"
-              defaultValue={state?.kept?.atTime}
-              className="input input-sm"
-              data-testid="activity-time"
-            />
-          </label>
-          <p className="faint pb-1.5 text-xs" data-testid="activity-when-note">
-            {ahead
-              ? "That's ahead: it goes on the calendar as something to do, not into the history yet."
-              : "Goes on the calendar on that day, too."}
-          </p>
-        </div>
-
-        <FormError message={state?.error} />
-        {/* A scheduled call leaves nothing behind on this page, so the one
-            line saying where it went is the only sign it worked. */}
-        {state?.success?.startsWith("Scheduled") && <FormSuccess message={state.success} />}
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="submit" disabled={pending} className="btn btn-ghost btn-sm" data-testid="activity-submit">
-            {pending ? (ahead ? "Scheduling…" : "Logging…") : `${ahead ? "Schedule" : "Log"} ${ACTIVITY_LABELS[type].toLowerCase()}`}
-          </button>
-          {target.contactId && current && (
-            <ContactMultiSelect key={`multi-${resetKey}`} current={current} />
-          )}
-        </div>
-      </form>
-
-      {/* Outside the form on purpose: Enter in one of its date boxes must
-          not log a second call. */}
-      {followUp && (
-        <div className="px-5 pb-5">
-          <FollowUpPrompt
-            key={`follow-${resetKey}`}
-            seed={followUp}
-            today={today}
-            onClose={(message) => {
-              setFollowUp(null);
-              setNotice(message);
-            }}
-          />
-        </div>
-      )}
-      {notice && !followUp && (
-        <div className="px-5 pb-5" data-testid="follow-up-notice">
-          <FormSuccess message={notice} />
-        </div>
-      )}
+    <div className="space-y-2 p-5" data-testid="log-bar-wrap">
+      <button
+        type="button"
+        onClick={() => openAs("PHONE_CALL")}
+        className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-left text-sm font-medium transition-colors hover:border-[var(--border-strong)]"
+        aria-haspopup="dialog"
+        data-testid="log-bar"
+      >
+        <span className="min-w-0 truncate">{first ? `What happened with ${first}?` : "What happened?"}</span>
+        <span aria-hidden className="faint shrink-0">▸</span>
+      </button>
+      <div className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap" role="group" aria-label="Log a touch">
+        {TYPE_ORDER.map((option) => {
+          const Icon = ACTIVITY_ICONS[option];
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => openAs(option)}
+              className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+              aria-label={`Log ${ACTIVITY_LABELS[option].toLowerCase()}`}
+              data-testid={`log-bar-${option}`}
+            >
+              <Icon size={13} />
+              {BAR_WORDS[option]}
+            </button>
+          );
+        })}
+      </div>
+      <HowDidItGo
+        open={open}
+        onClose={() => setOpen(false)}
+        target={target}
+        type={type}
+        name={who || undefined}
+        today={today}
+        current={current}
+        companyPeople={companyPeople}
+        userName={userName}
+        pickContactIds={picks}
+      />
     </div>
   );
 }
+
+const BAR_WORDS: Record<ActivityTypeValue, string> = { PHONE_CALL: "Call", TEXT: "Text", EMAIL: "Email", MEETING: "Meeting" };
 
 export function AddDealForm({ contactId }: { contactId: string }) {
   const { ref, state, formAction, pending } = useResettingAction(createDealForContact);

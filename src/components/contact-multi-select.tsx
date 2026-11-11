@@ -10,7 +10,9 @@ export type PickableContact = { id: string; name: string; company: string | null
 // picker that searches the workspace's contacts as you type; the contact
 // whose page you are on is locked in. Each extra pick becomes a hidden
 // `extraContactIds` field, so the server writes one copy per person.
-export function ContactMultiSelect({ current }: { current: PickableContact }) {
+// `label` replaces "+ Include multiple contacts" on the button ("+ others"
+// in the How did it go? sheet).
+export function ContactMultiSelect({ current, label }: { current: PickableContact; label?: string }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Map<string, PickableContact>>(new Map());
@@ -52,7 +54,7 @@ export function ContactMultiSelect({ current }: { current: PickableContact }) {
           className={`btn btn-sm ${picked.length ? "btn-primary" : "btn-ghost"}`}
         >
           <IconUsers size={13} />
-          {picked.length ? `Includes ${picked.length + 1} contacts` : "+ Include multiple contacts"}
+          {picked.length ? `Includes ${picked.length + 1} contacts` : (label ?? "+ Include multiple contacts")}
         </button>
         {picked.map((contact) => (
           <span key={contact.id} className="badge gap-1">
