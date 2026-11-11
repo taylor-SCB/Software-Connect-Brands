@@ -134,11 +134,16 @@ function backLink(page) {
   const dannyId = dannyUrl.split("/").pop();
   const me = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
 
-  log("audit fixes (UX review): + Event in the narrow Coming up column fits its width and starts on Meeting");
+  log("audit fixes (UX review): + Event in the narrow Coming up column fits its width and starts on a sales type");
   await page.locator("[data-testid=upcoming-add-event]").click();
   const upcomingForm = page.locator("[data-testid=upcoming-card] [data-testid=event-form]");
   await upcomingForm.waitFor();
-  assert.equal(await upcomingForm.locator("[data-testid=event-type]").inputValue(), "Meeting", "a meeting is what gets booked from a person's page, not an Install");
+  // Sprint (round 2): a lead nobody has reached yet starts on Call (the
+  // meter's next step); Meeting once they have been reached. Never Install.
+  assert.equal(await upcomingForm.locator("[data-testid=event-type]").inputValue(), "Call", "an untouched lead's + Event starts on Call, not an Install");
+  const typeOrder = await upcomingForm.locator("[data-testid=event-type] option").allTextContents();
+  assert.deepEqual(typeOrder.slice(0, 4), ["Call", "Meeting", "Email", "Text"], `sales types first (${typeOrder.slice(0, 6)})`);
+  assert.ok(typeOrder.indexOf("Install") > typeOrder.indexOf("Contract closed"), "Install comes after the sales types");
   await upcomingForm.locator("[data-testid=event-timed]").check();
   const narrow = await upcomingForm.evaluate((form) => ({
     width: form.getBoundingClientRect().width,

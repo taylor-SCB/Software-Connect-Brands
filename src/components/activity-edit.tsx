@@ -19,6 +19,18 @@ import { UNDO_MS } from "@/components/how-did-it-go/undo-toast";
 // old words, outcome and time back through the same action. It is not the
 // page's toast: an edit isn't a new save, and the page's Undo (undoLog)
 // would take the whole line away.
+//
+// A line whose day changed moves to another day's group and is drawn
+// afresh, so the "Saved · Undo" it owes is kept here by line, for its ten
+// seconds, and picked up again by the new copy.
+type SavedEdit = { words: string; previous: ActivityEditValues; at: number };
+const recent = new Map<string, SavedEdit>();
+function stillSaved(activityId: string): SavedEdit | null {
+  const saved = recent.get(activityId);
+  if (!saved || Date.now() - saved.at >= UNDO_MS) return null;
+  return saved;
+}
+
 export function ActivityEdit({
   activityId,
   type,
@@ -42,16 +54,24 @@ export function ActivityEdit({
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<ActivityEditValues>({ activityId, body, outcome: outcome ?? "", on, time: time ?? "" });
   const [error, setError] = useState<string | undefined>();
-  const [saved, setSaved] = useState<{ words: string; previous: ActivityEditValues } | null>(null);
+  const [saved, setSavedState] = useState<SavedEdit | null>(() => stillSaved(activityId));
+  const setSaved = (next: SavedEdit | null) => {
+    if (next) recent.set(activityId, next);
+    else recent.delete(activityId);
+    setSavedState(next);
+  };
   const [undone, setUndone] = useState(false);
   const [pending, start] = useTransition();
   const outcomes = OUTCOMES_BY_TYPE[type as ActivityTypeValue] ?? [];
 
   useEffect(() => {
     if (!saved) return;
-    const timer = window.setTimeout(() => setSaved(null), UNDO_MS);
+    const timer = window.setTimeout(() => {
+      recent.delete(activityId);
+      setSavedState(null);
+    }, Math.max(0, UNDO_MS - (Date.now() - saved.at)));
     return () => window.clearTimeout(timer);
-  }, [saved]);
+  }, [saved, activityId]);
 
   function begin() {
     setValues({ activityId, body, outcome: outcome ?? "", on, time: time ?? "" });
@@ -68,7 +88,7 @@ export function ActivityEdit({
       if (result.error || !result.previous) return setError(result.error ?? "That didn't save");
       setOpen(false);
       setUndone(false);
-      setSaved({ words: result.success ?? "Saved", previous: result.previous });
+      setSaved({ words: result.success ?? "Saved", previous: result.previous, at: Date.now() });
       router.refresh();
     });
   }
@@ -117,6 +137,7 @@ export function ActivityEdit({
     <form
       className="mt-2 basis-full space-y-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3"
       data-testid="activity-edit-form"
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         save();
