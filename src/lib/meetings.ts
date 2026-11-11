@@ -9,6 +9,7 @@ import { dayInZone, zonedMoment } from "@/lib/calendar-auto";
 import { markConnected, markContacted, markMeetingSet, type Who } from "@/lib/status";
 import { CONVERTED_STAGES, opportunityColumn, syncOpportunity } from "@/lib/opportunities";
 import { answerOf, waitingOf, type MeetingAnswer, type MeetingFact } from "@/lib/meeting-rule";
+import { stashMeeting } from "@/lib/undo-log";
 
 // Meetings on the Pipeline (BDR redesign, Nov 11, 2026): Held, No-show,
 // Reschedule and Book, the rules every screen shares. Not "use server":
@@ -146,6 +147,8 @@ export async function recordMeetingHeld(who: Actor, meetingId: string, options: 
     at = now;
   }
 
+  // What Undo puts back (only this save's, only by its owner).
+  await stashMeeting(organizationId, meeting.id, who);
   let contactIds: string[];
   let companyId: string | null = null;
   if (lines.length) {
@@ -221,6 +224,7 @@ export async function recordMeetingNoShow(who: Actor, meetingId: string): Promis
   const { day } = whenOf(meeting, event, timeZone);
   if (day > todayIso(timeZone)) return { error: "That meeting hasn't happened yet. Reschedule it instead." };
   const lines = await linkedLines(organizationId, meeting, event);
+  await stashMeeting(organizationId, meeting.id, who);
   await prisma.$transaction([
     ...(lines.length
       ? [prisma.activity.updateMany({ where: { organizationId, id: { in: lines.map((row) => row.id) } }, data: { outcome: "NO_SHOW" as const } })]

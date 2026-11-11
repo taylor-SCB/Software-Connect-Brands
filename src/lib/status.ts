@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   CONTRACT_ARCHIVE_DAYS,
@@ -47,104 +48,127 @@ export function stepsTo(current: string, target: ContactStatusValue): ContactSta
   return below && PASS_THROUGH_CONNECTED.includes(target) ? ["CONNECTED", target] : [target];
 }
 
-// Moves a contact forward to `target` if they are not already there or
-// further, and their company with them. Returns whether it moved.
+// One step of a move as written to StatusChange.
+type Step = { to: ContactStatusValue; auto: boolean; reason: string | null };
+type MoveOptions = { on?: Date; auto?: boolean; dealId?: string | null; reason?: string | null };
+
+// Moves every record in `ids` that `plan` says moves from where it is now,
+// set-based (final audit, Nov 11, 2026): one read, then one statement per
+// status the records start from, however many people a save is on. Each
+// statement moves only rows still at that status when it runs, and writes
+// the StatusChange rows for exactly the rows it moved, so two saves at
+// once can never move a record backwards or leave a ladder that doesn't
+// match its status. Returns the records moved, with their company.
+async function moveRecords(
+  kind: "contact" | "company",
+  who: Who,
+  ids: string[],
+  plan: (current: string) => Step[] | null,
+  options: { on: Date; dealId?: string | null },
+): Promise<{ id: string; companyId: string | null }[]> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return [];
+  const rows =
+    kind === "contact"
+      ? await prisma.contact.findMany({ where: { id: { in: unique }, organizationId: who.organizationId }, select: { id: true, status: true } })
+      : await prisma.company.findMany({ where: { id: { in: unique }, organizationId: who.organizationId }, select: { id: true, status: true } });
+  const groups = new Map<string, string[]>();
+  for (const row of rows) groups.set(row.status, [...(groups.get(row.status) ?? []), row.id]);
+  const moved: { id: string; companyId: string | null }[] = [];
+  // createdAt counts up a millisecond a step, so a record's ladder reads in
+  // order (Stats and Undo order by it).
+  // Dates go in as UTC text: the columns are timestamps without a zone,
+  // holding UTC, whatever zone the database session is in.
+  const utc = (date: Date) => Prisma.sql`(${date.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+  const stamp = new Date();
+  for (const [from, group] of groups) {
+    const steps = plan(from);
+    if (!steps?.length) continue;
+    const fromList = steps.map((_, index) => (index === 0 ? from : steps[index - 1].to));
+    const target = steps[steps.length - 1].to;
+    const table = kind === "contact" ? Prisma.raw(`"Contact"`) : Prisma.raw(`"Company"`);
+    const owner = kind === "contact" ? Prisma.raw(`"contactId"`) : Prisma.raw(`"companyId"`);
+    const companyCol = kind === "contact" ? Prisma.raw(`"companyId"`) : Prisma.raw(`NULL::text`);
+    const result = await prisma.$queryRaw<{ id: string; companyId: string | null }[]>`
+      WITH moved AS (
+        UPDATE ${table} SET status = ${target}::"ContactStatus", "updatedAt" = ${utc(stamp)}
+         WHERE "organizationId" = ${who.organizationId} AND id = ANY(${group}::text[]) AND status = ${from}::"ContactStatus"
+        RETURNING id, ${companyCol} AS "companyId"
+      ),
+      written AS (
+        INSERT INTO "StatusChange" (id, "organizationId", ${owner}, "dealId", "userId", "fromStatus", "toStatus", "on", auto, "batchId", reason, "createdAt")
+        SELECT 'sc' || replace(gen_random_uuid()::text, '-', ''), ${who.organizationId}, m.id, ${options.dealId ?? null}, ${who.userId ?? null},
+               s.f, s.t, ${utc(options.on)}, s.a, ${who.batchId ?? null}, s.r, ${utc(stamp)} + (s.n * interval '1 millisecond')
+          FROM moved m
+          CROSS JOIN unnest(${fromList}::text[], ${steps.map((step) => step.to)}::text[], ${steps.map((step) => step.auto)}::boolean[],
+                            ${steps.map((step) => step.reason)}::text[]) WITH ORDINALITY AS s(f, t, a, r, n)
+        RETURNING 1
+      )
+      SELECT id, "companyId" FROM moved`;
+    moved.push(...result);
+  }
+  return moved;
+}
+
+// Whether an automatic forward move to `target` takes a record at `current`.
+// Lost comes from a deal lost or the contract clock, and only takes
+// someone who was in the pipeline and not already won. From Lost the only
+// way back is a new meeting or new paperwork: a call, a reply or a talk
+// (Contacted, Connected) leaves a Lost record Lost.
+function forwardSteps(current: string, target: ContactStatusValue, options: MoveOptions): Step[] | null {
+  const auto = options.auto ?? true;
+  const reason = options.reason ?? null;
+  if (target === "LOST") {
+    return statusRank(current) >= statusRank("MEETING_SET") && current !== "WON" ? [{ to: "LOST", auto, reason }] : null;
+  }
+  if (current === "ARCHIVED" || statusRank(target) <= statusRank(current)) return null;
+  if (current === "LOST" && (target === "CONTACTED" || target === "CONNECTED")) return null;
+  const path = stepsTo(current, target);
+  return path.map((step) => ({ to: step, auto, reason: step === target ? reason : null }));
+}
+
+// Moves contacts forward to `target` if they are not already there or
+// further, and their companies with them. Returns the ids that moved.
+export async function advanceContacts(who: Who, contactIds: string[], target: ContactStatusValue, options: MoveOptions = {}) {
+  const on = options.on ?? new Date();
+  const moved = await moveRecords("contact", who, contactIds, (current) => forwardSteps(current, target, options), { on, dealId: options.dealId });
+  const companies = [...new Set(moved.map((row) => row.companyId).filter((id): id is string => Boolean(id)))];
+  if (companies.length) await advanceCompanies(who, companies, target, { on, auto: true });
+  return moved.map((row) => row.id);
+}
+
 export async function advanceContact(
   who: Who,
   contactId: string,
   target: ContactStatusValue,
-  options: { on?: Date; auto?: boolean; dealId?: string | null; reason?: string | null } = {},
+  options: MoveOptions = {},
 ): Promise<boolean> {
-  const contact = await prisma.contact.findFirst({
-    where: { id: contactId, organizationId: who.organizationId },
-    select: { status: true, companyId: true },
-  });
-  if (!contact) return false;
-  // From Lost the only way back is a new meeting or new paperwork (Lost
-  // ranks below everything, so any forward move lifts it).
-  // Lost comes from a deal lost or the contract clock, and only takes
-  // someone who was in the pipeline and not already won.
-  const moves =
-    target === "LOST"
-      ? statusRank(contact.status) >= statusRank("MEETING_SET") && contact.status !== "WON"
-      : statusRank(target) > statusRank(contact.status) && contact.status !== "ARCHIVED";
-  if (!moves) return false;
+  return (await advanceContacts(who, [contactId], target, options)).length > 0;
+}
 
+// A company is as far along as the furthest of its people; it is never
+// Lost because one of them is, and Archived stays put.
+export async function advanceCompanies(who: Who, companyIds: string[], target: ContactStatusValue, options: Omit<MoveOptions, "dealId"> = {}) {
+  if (target === "LOST") return [];
   const on = options.on ?? new Date();
-  const steps = target === "LOST" ? [target] : stepsTo(contact.status, target);
-  let from: string = contact.status;
-  const rows = steps.map((step) => {
-    const row = prisma.statusChange.create({
-      data: {
-        organizationId: who.organizationId,
-        contactId,
-        dealId: options.dealId ?? null,
-        userId: who.userId ?? null,
-        fromStatus: from,
-        toStatus: step,
-        on,
-        auto: options.auto ?? true,
-        batchId: who.batchId ?? null,
-        reason: step === target ? (options.reason ?? null) : null,
-      },
-    });
-    from = step;
-    return row;
-  });
-  await prisma.$transaction([
-    prisma.contact.updateMany({ where: { id: contactId, organizationId: who.organizationId }, data: { status: target } }),
-    ...rows,
-  ]);
-  if (contact.companyId) await advanceCompany(who, contact.companyId, target, { on, auto: true });
-  return true;
+  const moved = await moveRecords("company", who, companyIds, (current) => forwardSteps(current, target, options), { on });
+  return moved.map((row) => row.id);
 }
 
 export async function advanceCompany(
   who: Who,
   companyId: string,
   target: ContactStatusValue,
-  options: { on?: Date; auto?: boolean; reason?: string | null } = {},
+  options: Omit<MoveOptions, "dealId"> = {},
 ): Promise<boolean> {
-  const company = await prisma.company.findFirst({
-    where: { id: companyId, organizationId: who.organizationId },
-    select: { status: true },
-  });
-  if (!company) return false;
-  // A company is not Lost because one of its people is.
-  if (target === "LOST" || company.status === "ARCHIVED") return false;
-  if (statusRank(target) <= statusRank(company.status)) return false;
-
-  const on = options.on ?? new Date();
-  let from: string = company.status;
-  const rows = stepsTo(company.status, target).map((step) => {
-    const row = prisma.statusChange.create({
-      data: {
-        organizationId: who.organizationId,
-        companyId,
-        userId: who.userId ?? null,
-        fromStatus: from,
-        toStatus: step,
-        on,
-        auto: options.auto ?? true,
-        batchId: who.batchId ?? null,
-        reason: step === target ? (options.reason ?? null) : null,
-      },
-    });
-    from = step;
-    return row;
-  });
-  await prisma.$transaction([
-    prisma.company.updateMany({ where: { id: companyId, organizationId: who.organizationId }, data: { status: target } }),
-    ...rows,
-  ]);
-  return true;
+  return (await advanceCompanies(who, [companyId], target, options)).length > 0;
 }
 
 // The first logged touch: Not Actioned becomes Contacted (shown as
 // "Attempted"). Called for every contact an activity was logged on, and
 // for a company logged directly.
 export async function markContacted(who: Who, target: { contactIds: string[]; companyId?: string | null }, on: Date) {
-  for (const contactId of target.contactIds) await advanceContact(who, contactId, "CONTACTED", { on });
+  await advanceContacts(who, target.contactIds, "CONTACTED", { on });
   if (target.companyId) await advanceCompany(who, target.companyId, "CONTACTED", { on });
 }
 
@@ -153,7 +177,7 @@ export async function markContacted(who: Who, target: { contactIds: string[]; co
 // follows like it does for every automatic move. A company logged
 // directly (nobody linked) connects on its own.
 export async function markConnected(who: Who, target: { contactIds: string[]; companyId?: string | null }, on: Date) {
-  for (const contactId of target.contactIds) await advanceContact(who, contactId, "CONNECTED", { on });
+  await advanceContacts(who, target.contactIds, "CONNECTED", { on });
   if (target.companyId) await advanceCompany(who, target.companyId, "CONNECTED", { on });
 }
 
@@ -172,48 +196,17 @@ export async function markByHand(
   reason: string | null = null,
 ) {
   const before = ["NOT_ACTIONED", "CONTACTED", "CONNECTED", "INTERESTED", "NOT_INTERESTED"];
-  const moved: string[] = [];
-  const records = [
-    ...target.contactIds.map((id) => ({ kind: "contact" as const, id })),
-    ...(target.companyId && !target.contactIds.length ? [{ kind: "company" as const, id: target.companyId }] : []),
-  ];
-  for (const record of records) {
-    const row =
-      record.kind === "contact"
-        ? await prisma.contact.findFirst({ where: { id: record.id, organizationId: who.organizationId }, select: { status: true, companyId: true } })
-        : await prisma.company.findFirst({ where: { id: record.id, organizationId: who.organizationId }, select: { status: true } });
-    if (!row || !before.includes(row.status) || row.status === mark) continue;
-    let from: string = row.status;
-    const steps = stepsTo(row.status, mark);
-    const scope = record.kind === "contact" ? { contactId: record.id } : { companyId: record.id };
-    const writes = steps.map((step) => {
-      const write = prisma.statusChange.create({
-        data: {
-          organizationId: who.organizationId,
-          ...scope,
-          userId: who.userId ?? null,
-          fromStatus: from,
-          toStatus: step,
-          on,
-          auto: step !== mark,
-          batchId: who.batchId ?? null,
-          reason: step === mark ? reason : null,
-        },
-      });
-      from = step;
-      return write;
-    });
-    await prisma.$transaction([
-      record.kind === "contact"
-        ? prisma.contact.updateMany({ where: { id: record.id, organizationId: who.organizationId }, data: { status: mark } })
-        : prisma.company.updateMany({ where: { id: record.id, organizationId: who.organizationId }, data: { status: mark } }),
-      ...writes,
-    ]);
-    moved.push(record.id);
-    const companyId = "companyId" in row && typeof row.companyId === "string" ? row.companyId : null;
-    if (companyId) await advanceCompany(who, companyId, mark, { on, auto: true, reason });
+  const plan = (current: string): Step[] | null =>
+    before.includes(current) && current !== mark
+      ? stepsTo(current, mark).map((step) => ({ to: step, auto: step !== mark, reason: step === mark ? reason : null }))
+      : null;
+  if (!target.contactIds.length) {
+    return target.companyId ? (await moveRecords("company", who, [target.companyId], plan, { on })).map((row) => row.id) : [];
   }
-  return moved;
+  const moved = await moveRecords("contact", who, target.contactIds, plan, { on });
+  const companies = [...new Set(moved.map((row) => row.companyId).filter((id): id is string => Boolean(id)))];
+  if (companies.length) await advanceCompanies(who, companies, mark, { on, auto: true, reason });
+  return moved.map((row) => row.id);
 }
 
 // A meeting booked with someone for the first time: Meeting Set. Only a
@@ -229,7 +222,7 @@ export async function markMeetingSet(
   on: Date,
   meeting: { on?: Date; activityId?: string | null; eventId?: string | null; opportunity?: string | null } = {},
 ) {
-  for (const contactId of contactIds) await advanceContact(who, contactId, "MEETING_SET", { on });
+  await advanceContacts(who, contactIds, "MEETING_SET", { on });
   // Imported when called: opportunities.ts builds on this file.
   const { attachMeeting } = await import("@/lib/opportunities");
   return attachMeeting(who, contactIds, {

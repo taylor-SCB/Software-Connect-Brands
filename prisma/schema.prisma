@@ -2601,6 +2601,10 @@ model OpportunityMeeting {
   // Who booked it (credited with it being held) and how it went.
   bookedById String?
   outcome    ActivityOutcome?
+  // What the save that last answered it found (batchId, who, outcome, day,
+  // calendar tick, history lines), so Undo restores exactly that save
+  // (stashMeeting in src/lib/undo-log.ts).
+  outcomeUndo Json?
 
   @@index([opportunityId])
   @@index([eventId])

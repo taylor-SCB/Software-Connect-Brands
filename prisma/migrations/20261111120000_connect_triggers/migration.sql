@@ -16,11 +16,6 @@ CREATE INDEX "StatusChange_batchId_idx" ON "StatusChange"("batchId");
 ALTER TABLE "CalendarEvent" ADD COLUMN "batchId" TEXT;
 CREATE INDEX "CalendarEvent_batchId_idx" ON "CalendarEvent"("batchId");
 
--- "Talks counted from": today for every workspace that exists, and the day
--- a new one is made.
-UPDATE "Organization" SET "outcomesSince" = now() WHERE "outcomesSince" IS NULL;
-ALTER TABLE "Organization" ALTER COLUMN "outcomesSince" SET DEFAULT CURRENT_TIMESTAMP;
-
 -- Backfill, set-based, while the old functions are still in place (they
 -- ignore lastConnectAt, so these UPDATEs recompute nothing else).
 UPDATE "Contact" c SET "lastConnectAt" = t.at
@@ -115,3 +110,11 @@ BEGIN
        AND (a."outcome" IS NULL OR a."outcome" <> 'NO_SHOW')
        AND a."occurredAt" <= now() AND (co."lastTouchAt" IS NULL OR co."lastTouchAt" < a."occurredAt")));
 END $$;
+
+-- "Talks counted from": today for every workspace that exists, and the day
+-- a new one is made. Last on purpose (final audit, Nov 11, 2026): SET
+-- DEFAULT locks the Organization table until this file commits, so it
+-- waits until the backfills above are done (7.6 s of blocked sign-ins at
+-- 200,000 contacts when it came first).
+UPDATE "Organization" SET "outcomesSince" = now() WHERE "outcomesSince" IS NULL;
+ALTER TABLE "Organization" ALTER COLUMN "outcomesSince" SET DEFAULT CURRENT_TIMESTAMP;

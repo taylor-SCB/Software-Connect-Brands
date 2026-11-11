@@ -155,6 +155,7 @@ type BookRow = {
   ahead_at: Date | null;
   ahead_type: string | null;
   om_next: Date | null;
+  om_next_untimed: boolean | null;
   meet_at: Date | null;
   meet_marked: boolean | null;
   meet_noshow: boolean | null;
@@ -213,17 +214,20 @@ function bookSql(
        ORDER BY m.key, a."occurredAt"
     ),
     om AS (
-      SELECT DISTINCT x.key, om.id, om."on", om.outcome::text AS outcome, act.outcome::text AS act_outcome
+      SELECT DISTINCT x.key, om.id, om."on", om.outcome::text AS outcome, act.outcome::text AS act_outcome,
+             (oe.id IS NOT NULL AND oe."startTime" IS NULL) AS untimed
         FROM oppmap x
         JOIN "Opportunity" o ON o.id = x.opp_id AND o."organizationId" = ${organizationId}
         JOIN "OpportunityMeeting" om ON om."opportunityId" = o.id
         LEFT JOIN "Activity" act ON act.id = om."activityId"
+        LEFT JOIN "CalendarEvent" oe ON oe.id = om."eventId"
     ),
     -- A meeting ahead that is already answered (held early) books nothing.
+    -- A meeting booked with no time is kept at noon; it says no time.
     om_next AS (
-      SELECT key, MIN("on") AS at FROM om
+      SELECT DISTINCT ON (key) key, "on" AS at, untimed FROM om
        WHERE "on" > now() AND outcome IS NULL AND (act_outcome IS NULL OR act_outcome NOT IN ('HELD', 'NO_SHOW'))
-       GROUP BY key
+       ORDER BY key, "on", untimed
     ),
     lastmeet AS (
       SELECT DISTINCT ON (key) key, at, marked, noshow FROM (
@@ -260,7 +264,7 @@ function bookSql(
            ev_next.day AS next_on, ev_next.time AS next_time, ev_next.type AS next_type,
            ev_late.n AS late_n, ev_late.oldest AS late_oldest,
            ahead.at AS ahead_at, ahead.type AS ahead_type,
-           om_next.at AS om_next,
+           om_next.at AS om_next, om_next.untimed AS om_next_untimed,
            lastmeet.at AS meet_at, lastmeet.marked AS meet_marked, lastmeet.noshow AS meet_noshow,
            paper_agg.items AS paper,
            owed.billed, owed.received, owed.late, owed.oldest_late
@@ -296,7 +300,8 @@ function inputFrom(
   if (book?.next_on) candidates.push({ on: iso(book.next_on)!, time: book.next_time, kind: nextKindOf(book.next_type ?? "") });
   if (book?.ahead_at)
     candidates.push({ on: zoneDay(book.ahead_at, tz), time: zoneTime(book.ahead_at, tz), kind: ACTIVITY_KIND[book.ahead_type ?? ""] ?? "touch" });
-  if (book?.om_next) candidates.push({ on: zoneDay(book.om_next, tz), time: zoneTime(book.om_next, tz), kind: "meeting" });
+  if (book?.om_next)
+    candidates.push({ on: zoneDay(book.om_next, tz), time: book.om_next_untimed ? null : zoneTime(book.om_next, tz), kind: "meeting" });
   candidates.sort((a, b) => `${a.on} ${a.time ?? "99:99"}`.localeCompare(`${b.on} ${b.time ?? "99:99"}`));
 
   const owedBilled = num(book?.billed);

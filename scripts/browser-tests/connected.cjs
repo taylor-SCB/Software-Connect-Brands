@@ -162,6 +162,27 @@ function core(module, fn, args) {
   if (!line) throw new Error(`${fn}: no answer: ${out.slice(0, 300)}`);
   return JSON.parse(line.slice(2));
 }
+// core(), without blocking this process: for a step that must hold a lock
+// while the call waits on it.
+function coreAsync(module, fn, args) {
+  const code = `import * as lib from "./src/lib/${module}";
+    const args = JSON.parse(process.env.CORE_ARGS).map((a) => (typeof a === "string" && /^\\d{4}-\\d{2}-\\d{2}T/.test(a) ? new Date(a) : a));
+    lib.${fn}(...args).then(
+      (answer) => { console.log("@@" + JSON.stringify(answer ?? null)); process.exit(0); },
+      (err) => { console.error(err); process.exit(1); });`;
+  return new Promise((resolve, reject) => {
+    require("node:child_process").execFile(
+      path.join(process.cwd(), "node_modules/.bin/tsx"),
+      ["-e", code],
+      { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, CORE_ARGS: JSON.stringify(args) } },
+      (err, out) => {
+        if (err) return reject(err);
+        const line = out.split("\n").find((row) => row.startsWith("@@"));
+        resolve(line ? JSON.parse(line.slice(2)) : null);
+      },
+    );
+  });
+}
 async function meetingAction(page, actor, name, ...args) {
   if (hasAction(OPP_ACTIONS, name)) return action(page, OPP_ACTIONS, name, ...args);
   return core("meetings", MEETING_CORE[name], [actor, ...args]);
@@ -665,6 +686,349 @@ async function logWith(page, fields, { body = "", type } = {}) {
   const funnelText = await page.locator("[data-testid=stats-funnel]").first().textContent();
   assert.match(funnelText, /Attempted[\s\S]*Connected[\s\S]*Meeting Set/);
   await shot(page, "03-stats");
+
+  /* ------------------------------------------------------------------ */
+  /* Final audit, data area (Nov 11, 2026): each step fails on the code  */
+  /* before its fix.                                                      */
+  /* ------------------------------------------------------------------ */
+  // AUDIT_SOFT=1 runs every audit step even when one fails, and lists the
+  // failures: how each was shown to fail on the code before its fix.
+  const AUDIT_SOFT = process.env.AUDIT_SOFT === "1";
+  const auditFailed = [];
+  const bid = (ms) => `${ms.toString(36)}.${require("node:crypto").randomUUID()}`;
+  const CAL_ACTIONS = "src/app/dashboard/calendar/actions.ts";
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"companyId","updatedAt") VALUES
+       ('ctc_au_m1',$1,'Audit Meeting','MEETING_SET','cmp_cn_red',now()),
+       ('ctc_au_p1',$1,'Audit Pat','CONNECTED',NULL,now()),
+       ('ctc_au_p2',$1,'Audit Lee','CONNECTED',NULL,now()),
+       ('ctc_au_late',$1,'Audit Later',DEFAULT,NULL,now()),
+       ('ctc_au_ahead',$1,'Audit Ahead',DEFAULT,NULL,now()),
+       ('ctc_au_tmr',$1,'Audit Tomorrow','CONNECTED',NULL,now()),
+       ('ctc_au_past',$1,'Audit Past','CONNECTED',NULL,now()),
+       ('ctc_au_lost',$1,'Audit Lost','LOST',NULL,now()),
+       ('ctc_au_two',$1,'Audit Two Tiles','CONNECTED',NULL,now()),
+       ('ctc_au_edit',$1,'Audit Edit','MEETING_SET',NULL,now()),
+       ('ctc_au_race',$1,'Audit Race','CONTACTED',NULL,now()),
+       ('ctc_au_untimed',$1,'Audit Untimed','CONNECTED',NULL,now())`,
+    [org],
+  );
+
+  try {
+    log("audit fixes: a Member can't undo a teammate's No-show, by its batchId or a made-up one (D1)");
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_au_m1", on: TODAY, time: "09:00" });
+    var m1 = await one(`SELECT m.id, m."eventId" FROM "OpportunityMeeting" m JOIN "CalendarEvent" e ON e.id=m."eventId" WHERE e."contactId"='ctc_au_m1'`);
+    await sql(`UPDATE "CalendarEvent" SET "startOn"=$2::date WHERE id=$1`, [m1.eventId, shift(TODAY, -2)]);
+    await sql(`UPDATE "OpportunityMeeting" SET "on"=now() - interval '2 days' WHERE id=$1`, [m1.id]);
+    var ns1 = await meetingAction(page, me, "markMeetingNoShow", m1.id);
+    assert.match(ns1.success ?? "", /No-show/, JSON.stringify(ns1));
+    assert.ok((await one(`SELECT "doneAt" FROM "CalendarEvent" WHERE id=$1`, [m1.eventId])).doneAt, "the no-show ticked its entry");
+    var nicReal = await action(nic, CONTACT_ACTIONS, "undoLog", ns1.batchId);
+    assert.match(nicReal.error ?? "", /Only whoever logged it, or an Owner or Admin/, JSON.stringify(nicReal));
+    var nicForged = await action(nic, CONTACT_ACTIONS, "undoLog", `m:${m1.id}:made-up`);
+    assert.ok(nicForged.error, JSON.stringify(nicForged));
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [m1.id])).outcome, "NO_SHOW", "Taylor's no-show stands");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: Undo of a No-show unticks the calendar entry it ticked (D11)");
+    var ns1Undo = await action(page, CONTACT_ACTIONS, "undoLog", ns1.batchId);
+    assert.equal(ns1Undo.success, "Undone", JSON.stringify(ns1Undo));
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [m1.id])).outcome, null);
+    assert.equal((await one(`SELECT "doneAt" FROM "CalendarEvent" WHERE id=$1`, [m1.eventId])).doneAt, null, "the entry asks again");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: an older Undo never clears a later answer; Held after a No-show undoes back to No-show (D3, D11)");
+    var ns2 = await meetingAction(page, me, "markMeetingNoShow", m1.id);
+    var held2 = await meetingAction(page, me, "markMeetingHeld", m1.id, {});
+    assert.match(held2.success ?? "", /Held/, JSON.stringify(held2));
+    var stale = await action(page, CONTACT_ACTIONS, "undoLog", ns2.batchId);
+    assert.ok(stale.error, `the no-show's Undo is spent once the meeting was held: ${JSON.stringify(stale)}`);
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [m1.id])).outcome, "HELD");
+    var held2Undo = await action(page, CONTACT_ACTIONS, "undoLog", held2.batchId);
+    assert.equal(held2Undo.success, "Undone", JSON.stringify(held2Undo));
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [m1.id])).outcome, "NO_SHOW", "back to what Held found");
+    assert.ok((await one(`SELECT "doneAt" FROM "CalendarEvent" WHERE id=$1`, [m1.eventId])).doneAt, "still ticked by the no-show");
+    assert.equal(await status("Contact", "ctc_au_m1"), "MEETING_SET");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: deleting an hour-old booking leaves a teammate's later person and Held on that tile alone (D2)");
+    var bA = bid(Date.now() - 3_600_000);
+    var savedA = core("meetings", "bookMeetingCore", [
+      { organizationId: org, userId: taylor.id, batchId: bA },
+      { contactIds: ["ctc_au_p1"], companyId: null, on: TODAY, time: "07:00" },
+    ]);
+    var oppA = savedA.opportunityId;
+    assert.ok(oppA, JSON.stringify(savedA));
+    // The save is an hour old.
+    await sql(`UPDATE "CalendarEvent" SET "createdAt"="createdAt" - interval '1 hour' WHERE "batchId"=$1`, [bA]);
+    await sql(`UPDATE "StatusChange" SET "createdAt"="createdAt" - interval '1 hour' WHERE "batchId"=$1`, [bA]);
+    await sql(`UPDATE "Opportunity" SET "createdAt"="createdAt" - interval '1 hour', "updatedAt"="updatedAt" - interval '1 hour' WHERE id=$1`, [oppA]);
+    await sql(`UPDATE "OpportunityContact" SET "createdAt"="createdAt" - interval '1 hour' WHERE "opportunityId"=$1`, [oppA]);
+    await sql(`UPDATE "OpportunityMeeting" SET "createdAt"="createdAt" - interval '1 hour' WHERE "opportunityId"=$1`, [oppA]);
+    // Now Nic books Lee onto the same tile and it is held.
+    var lee = await action(nic, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_au_p2", on: TODAY, time: "08:00", opportunity: oppA });
+    assert.match(lee.success ?? "", /Booked/, JSON.stringify(lee));
+    var leeMeeting = await one(`SELECT m.id FROM "OpportunityMeeting" m JOIN "CalendarEvent" e ON e.id=m."eventId" WHERE e."contactId"='ctc_au_p2'`);
+    var leeHeld = await meetingAction(nic, { organizationId: org, userId: nicId }, "markMeetingHeld", leeMeeting.id, { early: true });
+    assert.match(leeHeld.success ?? "", /Held/, JSON.stringify(leeHeld));
+    assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id=$1`, [oppA])).stage, "MEETING_COMPLETED");
+    var undoA = await action(page, CONTACT_ACTIONS, "undoLog", bA);
+    assert.equal(undoA.success, "Undone", JSON.stringify(undoA));
+    assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id=$1`, [oppA])).stage, "MEETING_COMPLETED", "Nic's Held stands");
+    assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityContact" WHERE "opportunityId"=$1 AND "contactId"='ctc_au_p2'`, [oppA])).n, 1, "Lee stays on it");
+    assert.ok((await one(`SELECT count(*)::int n FROM "OpportunityLog" WHERE "opportunityId"=$1 AND kind='OPPORTUNITY_CREATED'`, [oppA])).n > 0, "its Opportunity Created lines stay");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a talk logged for later today counts now, and they are Connected (D6)");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_au_late`);
+    await logWith(page, { outcome: "TALKED", occurredOn: TODAY, atTime: "23:59" }, { body: "Talked about the bid" });
+    await until(async () => (await status("Contact", "ctc_au_late")) === "CONNECTED", "Later is Connected");
+    var lateLine = await one(`SELECT "occurredAt" FROM "Activity" WHERE "contactId"='ctc_au_late'`);
+    assert.ok(+lateLine.occurredAt <= Date.now() + 5_000, "the line is dated now, not tonight");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a touch dated ahead that books a meeting is refused, not silently dropped (D7)");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_au_ahead`);
+    await logWith(page, { occurredOn: shift(TODAY, 1), next: "meeting", nextOn: shift(TODAY, 3), nextTime: "10:00" }, { body: "Planning the call" });
+    var aheadForm = page.locator("[data-testid=log-activity-form]");
+    await aheadForm.getByRole("alert").waitFor();
+    assert.match(await aheadForm.getByRole("alert").textContent(), /dated ahead/);
+    assert.equal((await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "contactId"='ctc_au_ahead'`)).n, 0, "nothing scheduled or booked");
+    assert.equal(await status("Contact", "ctc_au_ahead"), "NOT_ACTIONED");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a meeting ticked done a day early with no chip asks first, then is Held (D4)");
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_au_tmr", on: shift(TODAY, 1), time: "10:00" });
+    var tmrEvent = await one(`SELECT id FROM "CalendarEvent" WHERE "contactId"='ctc_au_tmr' AND type='Meeting'`);
+    var tmrAsk = await action(page, CAL_ACTIONS, "completeEventWithLog", tmrEvent.id, { activityType: "MEETING", note: "Met them early" });
+    assert.equal(tmrAsk.confirmEarly, shift(TODAY, 1), JSON.stringify(tmrAsk));
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_au_tmr'`)).n, 0, "nothing written yet");
+    var tmrDone = await action(page, CAL_ACTIONS, "completeEventWithLog", tmrEvent.id, { activityType: "MEETING", note: "Met them early", early: true });
+    assert.ok(!tmrDone.error, JSON.stringify(tmrDone));
+    var tmrLine = await one(`SELECT outcome, "occurredAt" FROM "Activity" WHERE "contactId"='ctc_au_tmr'`);
+    assert.equal(tmrLine.outcome, "HELD");
+    assert.ok(+tmrLine.occurredAt <= Date.now() + 5_000, "held now, not tomorrow");
+    assert.equal(await status("Contact", "ctc_au_tmr"), "MEETING_COMPLETED");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a meeting logged as having happened, with no chip, is Held; old ones stop asking (D5)");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_au_past`);
+    await logWith(page, { occurredOn: shift(TODAY, -1) }, { type: "Meeting", body: "Walked the site" });
+    await until(async () => (await status("Contact", "ctc_au_past")) === "MEETING_COMPLETED", "Past meeting completed");
+    assert.equal((await one(`SELECT outcome FROM "Activity" WHERE "contactId"='ctc_au_past'`)).outcome, "HELD");
+    // The release's one-time catch-up for meetings logged before it.
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,"occurredAt") VALUES ('act_au_old',$1,'ctc_au_edit',$2,'MEETING','Old walk',now() - interval '3 days')`,
+      [org, taylor.id],
+    );
+    await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","updatedAt") VALUES ('opp_au_old',$1,'Audit Old','MEETING_SET',$2,now())`, [org, taylor.id]);
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","activityId") VALUES ('om_au_old','opp_au_old',now() - interval '3 days','act_au_old')`);
+    var auditSql = fs.readFileSync(path.join(process.cwd(), "prisma/migrations/20261111170000_audit_data/migration.sql"), "utf8");
+    var catchUp = /UPDATE "OpportunityMeeting"[\s\S]*?;/.exec(auditSql)[0];
+    await sql(catchUp);
+    await sql(catchUp);
+    assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='om_au_old'`)).outcome, "HELD", "answered");
+    assert.equal((await one(`SELECT outcome FROM "Activity" WHERE id='act_au_old'`)).outcome, null, "its line stays not recorded");
+    await sql(`DELETE FROM "Opportunity" WHERE id='opp_au_old'`);
+    await sql(`DELETE FROM "Activity" WHERE id='act_au_old'`);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a talk with someone Lost leaves them Lost (D8)");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_au_lost`);
+    await logWith(page, { outcome: "TALKED" }, { body: "Caught up" });
+    await until(async () => (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "contactId"='ctc_au_lost'`)).n === 1, "Lost call logged");
+    await page.waitForTimeout(1500);
+    assert.equal(await status("Contact", "ctc_au_lost"), "LOST");
+    assert.equal((await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "contactId"='ctc_au_lost'`)).n, 0);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a booked meeting logged on its day is held on the tile it was booked on, not their newer one (D9)");
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_au_two", on: TODAY, time: "06:00", opportunity: "new" });
+    var twoA = await one(`SELECT m.id, m."opportunityId" FROM "OpportunityMeeting" m JOIN "CalendarEvent" e ON e.id=m."eventId" WHERE e."contactId"='ctc_au_two'`);
+    await sql(`UPDATE "Opportunity" SET "updatedAt"=now() - interval '1 hour' WHERE id=$1`, [twoA.opportunityId]);
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_au_two", on: shift(TODAY, 5), time: "10:00", opportunity: "new" });
+    var twoB = await one(
+      `SELECT DISTINCT m."opportunityId" FROM "OpportunityMeeting" m JOIN "CalendarEvent" e ON e.id=m."eventId" WHERE e."contactId"='ctc_au_two' AND m."opportunityId"<>$1`,
+      [twoA.opportunityId],
+    );
+    await page.goto(`${BASE}/dashboard/contacts/ctc_au_two`);
+    await logWith(page, { outcome: "HELD" }, { type: "Meeting", body: "Met at the site" });
+    await until(async () => (await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [twoA.id])).outcome === "HELD", "tile A's meeting held");
+    assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [twoB.opportunityId])).n, 1, "no meeting added to tile B");
+    assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id=$1`, [twoB.opportunityId])).stage, "MEETING_SET");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: editing a meeting line to Held completes its tile; clearing a time clears it on the calendar copy (D13)");
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,"occurredAt") VALUES ('act_au_edit',$1,'ctc_au_edit',$2,'MEETING','Site walk',now() - interval '1 day')`,
+      [org, taylor.id],
+    );
+    await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","updatedAt") VALUES ('opp_au_edit',$1,'Audit Edit','MEETING_SET',$2,now())`, [org, taylor.id]);
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('oc_au_edit','opp_au_edit','ctc_au_edit','PRIMARY',true)`);
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","activityId") VALUES ('om_au_edit','opp_au_edit',now() - interval '1 day','act_au_edit')`);
+    var editDay = dayInZone(new Date(Date.now() - 86_400_000));
+    var edited = await action(page, CONTACT_ACTIONS, "updateActivity", { activityId: "act_au_edit", body: "Site walk", outcome: "HELD", on: editDay, time: "" });
+    assert.ok(edited.success, JSON.stringify(edited));
+    assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id='opp_au_edit'`)).stage, "MEETING_COMPLETED");
+    assert.equal(await status("Contact", "ctc_au_edit"), "MEETING_COMPLETED");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_au_edit`);
+    await logWith(page, { outcome: "TALKED", occurredOn: editDay, atTime: "09:15" }, { body: "Early call" });
+    await until(async () => (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "contactId"='ctc_au_edit' AND auto=true AND "startTime"='09:15'`)).n === 1, "timed copy");
+    var timed = await one(`SELECT id FROM "Activity" WHERE "contactId"='ctc_au_edit' AND type='PHONE_CALL'`);
+    var cleared = await action(page, CONTACT_ACTIONS, "updateActivity", { activityId: timed.id, body: "Early call", outcome: "TALKED", on: editDay, time: "" });
+    assert.ok(cleared.success, JSON.stringify(cleared));
+    assert.equal((await one(`SELECT "startTime" FROM "CalendarEvent" WHERE "activityId"=$1`, [timed.id])).startTime, null, "no time on the copy either");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: two preference saves at once both stick (D14)");
+    await sql(`UPDATE "User" SET "uiPrefs"=NULL WHERE id=$1`, [taylor.id]);
+    var holder = new Client({ connectionString: DB });
+    await holder.connect();
+    await holder.query("BEGIN");
+    await holder.query(`UPDATE "User" SET "uiPrefs" = '{"audit":{"a":1}}'::jsonb WHERE id=$1`, [taylor.id]);
+    var second = action(page, "src/app/dashboard/prefs-actions.ts", "saveUiPref", "audit", "b", 2);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await holder.query("COMMIT");
+    await holder.end();
+    await second;
+    assert.deepEqual((await one(`SELECT "uiPrefs" AS p FROM "User" WHERE id=$1`, [taylor.id])).p, { audit: { a: 1, b: 2 } });
+    await sql(`UPDATE "User" SET "uiPrefs"=NULL WHERE id=$1`, [taylor.id]);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: a status a teammate moved while a save waited is never moved back (D15)");
+    var raceHolder = new Client({ connectionString: DB });
+    await raceHolder.connect();
+    await raceHolder.query("BEGIN");
+    await raceHolder.query(`SELECT 1 FROM "Contact" WHERE id='ctc_au_race' FOR UPDATE`);
+    var racing = coreAsync("status", "markConnected", [{ organizationId: org, userId: taylor.id }, { contactIds: ["ctc_au_race"] }, new Date().toISOString()]);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await raceHolder.query(`UPDATE "Contact" SET status='MEETING_SET' WHERE id='ctc_au_race'`);
+    await raceHolder.query("COMMIT");
+    await raceHolder.end();
+    await racing;
+    assert.equal(await status("Contact", "ctc_au_race"), "MEETING_SET");
+    assert.equal((await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "contactId"='ctc_au_race'`)).n, 0, "no ladder line for a move that didn't happen");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: an untimed meeting reads with no time, not 12:00 PM (D16)");
+    await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "ctc_au_untimed", on: shift(TODAY, 2) });
+    var untimed = core("health-load", "contactHealth", [org, "ctc_au_untimed"]);
+    assert.match(untimed.nextText ?? "", /meeting/i, JSON.stringify(untimed.nextText));
+    assert.doesNotMatch(untimed.nextText, /12:00/);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: one log on 60 people writes 60 lines in order and moves them all (D18, D22)");
+    var many = Array.from({ length: 60 }, (_, i) => `ctc_au_many${String(i).padStart(2, "0")}`);
+    await sql(
+      `INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") SELECT x, $1, 'Audit Many ' || x, now() FROM unnest($2::text[]) x`,
+      [org, many],
+    );
+    await page.goto(`${BASE}/dashboard/contacts/${many[0]}`);
+    await logWith(page, { outcome: "TALKED", extraContactIds: many.slice(1) }, { body: "Group call" });
+    await until(async () => (await one(`SELECT count(*)::int n FROM "Contact" WHERE id = ANY($1) AND status='CONNECTED'`, [many])).n === 60, "all 60 connected");
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId" = ANY($1)`, [many])).n, 60);
+    var copy = await one(`SELECT a."contactId" FROM "CalendarEvent" e JOIN "Activity" a ON a.id=e."activityId" WHERE a."contactId" = ANY($1)`, [many]);
+    assert.equal(copy.contactId, many[0], "the calendar copy is the page's person's line");
+    assert.deepEqual(await ladder(many[37]), ["NOT_ACTIONED>CONTACTED", "CONTACTED>CONNECTED"]);
+    var manyBatch = (await one(`SELECT "batchId" FROM "Activity" WHERE "contactId"=$1`, [many[0]])).batchId;
+    var manyUndo = await action(page, CONTACT_ACTIONS, "undoLog", manyBatch);
+    assert.equal(manyUndo.success, "Undone", JSON.stringify(manyUndo));
+    assert.equal((await one(`SELECT count(*)::int n FROM "Contact" WHERE id = ANY($1) AND status='NOT_ACTIONED'`, [many])).n, 60, "Undo puts all 60 back");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: the before-rollback script leaves nobody at Connected, and nothing else changes (D17)");
+    var rollbackSql = fs.readFileSync(path.join(process.cwd(), "scripts/before-rollback-to-pre-bdr.sql"), "utf8").replace(/^\s*(BEGIN|COMMIT);\s*$/gm, "");
+    var tryer = new Client({ connectionString: DB });
+    await tryer.connect();
+    await tryer.query("BEGIN");
+    var connectedBefore = (await tryer.query(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1 AND status='CONNECTED'`, [org])).rows[0].n;
+    assert.ok(connectedBefore > 0);
+    await tryer.query(rollbackSql);
+    assert.equal((await tryer.query(`SELECT count(*)::int n FROM "Contact" WHERE status='CONNECTED'`)).rows[0].n, 0);
+    assert.equal((await tryer.query(`SELECT count(*)::int n FROM "Company" WHERE status='CONNECTED'`)).rows[0].n, 0);
+    await tryer.query("ROLLBACK");
+    await tryer.end();
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes: the touch and connect dates read the newest index row, and match a full recount (D21)");
+    // On a table this small the planner would scan it anyway; with scans
+    // and sorts off it shows whether the index can answer the query.
+    const planner = new Client({ connectionString: DB });
+    await planner.connect();
+    await planner.query("SET enable_seqscan = off");
+    await planner.query("SET enable_sort = off");
+    await planner.query("SET enable_bitmapscan = off");
+    var plan = (await planner.query(
+      `EXPLAIN SELECT a."occurredAt" FROM "Activity" a WHERE a."contactId"='ctc_au_late' AND a.marketing = false AND a."occurredAt" <= now()
+         AND (a."outcome" IN ('TALKED', 'REPLIED', 'HELD') OR (a.type = 'MEETING' AND a."outcome" IS NULL)) ORDER BY a."occurredAt" DESC LIMIT 1`,
+    )).rows.map((row) => row["QUERY PLAN"]).join("\n");
+    await planner.end();
+    assert.match(plan, /Activity_contact_connect_idx/, plan);
+    await sql(`SELECT crm_touch_contacts(ARRAY(SELECT id FROM "Contact" WHERE "organizationId"=$1))`, [org]);
+    var drift = await one(
+      `SELECT count(*)::int n FROM "Contact" c WHERE c."organizationId"=$1 AND (
+         c."lastTouchAt" IS DISTINCT FROM (SELECT max("occurredAt") FROM "Activity" a WHERE a."contactId"=c.id AND a.marketing=false AND a."occurredAt"<=now() AND (a.outcome IS NULL OR a.outcome<>'NO_SHOW'))
+         OR c."lastConnectAt" IS DISTINCT FROM (SELECT max("occurredAt") FROM "Activity" a WHERE a."contactId"=c.id AND a.marketing=false AND a."occurredAt"<=now()
+              AND (a.outcome IN ('TALKED','REPLIED','HELD') OR (a.type='MEETING' AND a.outcome IS NULL))))`,
+      [org],
+    );
+    assert.equal(drift.n, 0);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  if (AUDIT_SOFT) {
+    console.log(`\nAUDIT_SOFT: ${auditFailed.length} audit step(s) failed`);
+    for (const line of auditFailed) console.log(`  FAILED ${line}`);
+  }
 
   await nicContext.close();
   await browser.close();
