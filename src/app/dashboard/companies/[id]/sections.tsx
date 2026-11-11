@@ -70,20 +70,28 @@ export function FoldCard({
   return (
     <div className="card card-lit scroll-mt-4" id={id} data-testid={testId} data-open={open ? "" : undefined}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline-3)] px-5 py-3.5">
-        <h2 className="min-w-0 flex-1">
+        {/* A phone-only fold is a plain heading on a wide screen, where
+            the body is always open, so the toggle is not in the way. */}
+        {mode === "phone" && (
+          <h2 className="hidden min-w-0 flex-1 lg:block">
+            <span className="block text-sm font-semibold">{title}</span>
+            {subtitle && <span className="faint mt-0.5 block text-xs font-normal">{subtitle}</span>}
+          </h2>
+        )}
+        <h2 className={`min-w-0 flex-1 ${mode === "phone" ? "lg:hidden" : ""}`}>
           <button
             type="button"
             onClick={() => setOpen(!open)}
             aria-expanded={open}
             aria-controls={bodyId}
-            className={`flex w-full items-center gap-2 text-left pointer-coarse:min-h-11 ${mode === "phone" ? "lg:pointer-events-none" : ""}`}
+            className="flex w-full items-center gap-2 text-left pointer-coarse:min-h-11"
             data-testid={testId ? `${testId}-toggle` : undefined}
           >
             <span className="min-w-0">
               <span className="block text-sm font-semibold">{title}</span>
               {subtitle && <span className="faint mt-0.5 block text-xs font-normal">{subtitle}</span>}
             </span>
-            <IconChevronDown size={14} className={`${CHEVRON} ml-auto ${open ? "rotate-180" : ""} ${mode === "phone" ? "lg:hidden" : ""}`} />
+            <IconChevronDown size={14} className={`${CHEVRON} ml-auto ${open ? "rotate-180" : ""}`} />
           </button>
         </h2>
         {actions && <div className={`flex items-center gap-2 ${shown}`}>{actions}</div>}
