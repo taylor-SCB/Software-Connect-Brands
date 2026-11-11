@@ -22,6 +22,9 @@ export type LogContext = {
   // toAnswer): the latest one that has come and nobody marked, else the
   // next one ahead, else the latest no-show with nothing booked since.
   meeting: { id: string; eventId: string | null; on: string; time: string | null; ahead: boolean; noShow?: boolean } | null;
+  // A calendar entry with nobody on it (a front-desk try's follow-up): it
+  // can only be logged as a try (final audit, Nov 11, 2026).
+  nobody?: boolean;
 };
 
 // One save the sheet made, for "Saved · Undo" and the next step.

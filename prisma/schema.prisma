@@ -2406,9 +2406,13 @@ model CalendarEvent {
   @@index([contractId])
   // Also "CalendarEvent_open_startOn_idx" on (organizationId, startOn) WHERE
   // "doneAt" IS NULL, the open entries only (audit, Nov 11, 2026, migration
-  // 20261111190000_audit_cross): My day's due follow-ups, the Rundown's and
-  // the calendar's Overdue. Hand-written in SQL, because a partial index
-  // needs Prisma's partialIndexes preview; Prisma's diff leaves it alone.
+  // 20261111190100_audit_cross_calendar): My day's due follow-ups, the
+  // Rundown's and the calendar's Overdue; and "CalendarEvent_runs_endOn_idx"
+  // on (organizationId, endOn) WHERE "endOn" IS NOT NULL, the multi-day
+  // entries only, for the "started before and still running" arm of the
+  // Rundown's On today and every calendar window. Hand-written in SQL,
+  // because a partial index needs Prisma's partialIndexes preview; Prisma's
+  // diff leaves them alone.
 }
 
 // A thing to do on a job, with an optional day it is wanted by. Kept

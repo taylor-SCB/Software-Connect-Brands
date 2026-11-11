@@ -57,12 +57,14 @@ export async function logContext(input: {
   let companyId = parsed.data.companyId ?? null;
   let eventMeeting: { id: string; eventId: string | null; on: Date } | null = null;
   let event: { id: string; startOn: Date; startTime: string | null } | null = null;
+  let nobody = false;
   if (parsed.data.eventId) {
     const row = await prisma.calendarEvent.findFirst({
       where: { id: parsed.data.eventId, organizationId },
-      select: { id: true, contactId: true, companyId: true, startOn: true, startTime: true },
+      select: { id: true, contactId: true, companyId: true, startOn: true, startTime: true, _count: { select: { attendees: true } } },
     });
     if (!row) return { error: "That day is no longer on the calendar" };
+    nobody = !row.contactId && row._count.attendees === 0;
     contactId = row.contactId;
     companyId = row.contactId ? null : row.companyId;
     event = row;
@@ -114,6 +116,7 @@ export async function logContext(input: {
       tries: health?.counts.tries ?? 0,
       parkAfterTries: settings.parkAfterTries,
       meeting: null,
+      nobody,
     };
   }
   return { error: "Missing record reference" };

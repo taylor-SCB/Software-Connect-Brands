@@ -233,11 +233,14 @@ export async function loadLogs(organizationId: string, today: string, filters?: 
 // Agenda shows only this, and ran the whole loadLogs — three 60-row reads
 // with every relation — for it. Oldest first: the one that has waited
 // longest is at the top. Reads the open entries' index
-// (CalendarEvent_open_startOn_idx), never the done history.
+// (CalendarEvent_open_startOn_idx), never the done history. The clauses
+// are ANDed, not spread: spread, OVERDUE_WHERE's type list replaced the
+// toolbar's Type filter, so ?type=Call still listed overdue emails and
+// texts, and ?type=Install listed every overdue entry.
 export async function loadOverdue(organizationId: string, today: string, filters?: EventFilters) {
   const from = new Date(`${today}T00:00:00.000Z`);
   const overdue = await prisma.calendarEvent.findMany({
-    where: { organizationId, ...filterWhere(filters), ...pastBefore(from), ...OVERDUE_WHERE },
+    where: { AND: [{ organizationId, ...filterWhere(filters) }, pastBefore(from), OVERDUE_WHERE] },
     orderBy: [{ startOn: "asc" }, { startTime: "asc" }],
     take: LOG_ROWS,
     select: EVENT_SELECT,

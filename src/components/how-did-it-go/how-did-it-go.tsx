@@ -322,6 +322,11 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   // company page, or the entry's person.
   const bookWith = target?.contactId ?? (company ? people[0] : null) ?? ctx?.contactId ?? event?.contactId ?? null;
   const meeting = ctx?.meeting ?? null;
+  // A calendar entry with nobody on it (a front-desk try's follow-up) is a
+  // try, like the front desk on a company page: no talk, reply, held
+  // meeting or Interested (final audit, Nov 11, 2026; the server refuses
+  // them too).
+  const nobody = eventMode && Boolean(ctx?.nobody);
   // "Booked Tue, Nov 17, 10:00 AM · Kristen is on your Pipeline in Meeting
   // Set" — "the Pipeline" when the tile is a teammate's (the server says
   // which in its own words).
@@ -721,7 +726,13 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
       )}
       {phase === "log" && eventMode && (
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-          <button type="submit" disabled={pending} className="btn btn-ghost col-span-2 min-h-11" data-testid="done-log">
+          <button
+            type="submit"
+            disabled={pending || (nobody && type === "MEETING")}
+            title={nobody && type === "MEETING" ? "Nobody is on this entry, so it's a try. Put who you met with on it to log the meeting." : undefined}
+            className="btn btn-ghost col-span-2 min-h-11"
+            data-testid="done-log"
+          >
             <IconCheck size={12} />
             {pending ? "Saving…" : `Log ${ACTIVITY_LABELS[type].toLowerCase()} and tick it`}
           </button>
@@ -883,11 +894,15 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                       key={chip.key}
                       connect={chip.connect}
                       onClick={() => tapChip(chip)}
-                      disabled={pending || meetingWaiting || (chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule))}
+                      disabled={
+                        pending || meetingWaiting || (chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule)) || (nobody && chip.connect)
+                      }
                       title={
                         frontDesk && (chip.connect || chip.reschedule)
                           ? "The front desk is a try. Tick who you spoke with to log a talk."
-                          : chip.book && !bookWith
+                          : nobody && chip.connect
+                            ? "Nobody is on this entry, so it's a try. Put who you spoke with on it to log a talk."
+                            : chip.book && !bookWith
                             ? "Pick who it was with first"
                             : undefined
                       }

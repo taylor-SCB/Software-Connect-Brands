@@ -53,9 +53,11 @@ function titleFor(contact: { name: string; company: { name: string } | null }) {
 // always starts one, an open opportunity's id joins that one (the
 // company's open tile with someone else on it), anything else is the rule
 // above. A meeting that already has its row (its calendar entry or history
-// line, on any open tile) stays on that tile whatever is picked. The rep
-// who booked it is kept on the meeting (bookedById, never edited) so a
-// held meeting is credited to them (decision 13).
+// line, on any tile in the workspace) stays on that tile whatever is
+// picked; on a closed tile (Won or Lost) its row is updated in place and
+// nothing else changes. The rep who booked it is kept on the meeting
+// (bookedById, never edited) so a held meeting is credited to them
+// (decision 13).
 export async function attachMeeting(
   who: Who,
   contactIds: string[],
@@ -73,16 +75,21 @@ export async function attachMeeting(
 
   // The meeting this already is — a calendar entry or history line that
   // already has its row, wherever that sits in the workspace — stays on its
-  // own open tile (final audit, Nov 11, 2026). Only the tile picked below
-  // used to be searched, so the calendar form or a claim naming a booked
-  // entry without a tile wrote a second meeting on the person's newest tile
-  // and left the booked one asking "how did it go?".
+  // own tile (final audit, Nov 11, 2026). Only the tile picked below used to
+  // be searched, so the calendar form or a claim naming a booked entry
+  // without a tile wrote a second meeting on the person's newest tile and
+  // left the booked one asking "how did it go?". Looked up on every tile,
+  // closed ones too (fix review): a booked entry whose tile has since been
+  // Won or Lost, re-saved from the calendar form (it books on every Meeting
+  // save, a typo fix included) or ticked done, found nothing open and
+  // started a new Meeting Set tile with a second row for the same entry,
+  // asking "how did it go?" about a meeting long past.
   const known =
     meeting.eventId || meeting.activityId
       ? await prisma.opportunityMeeting.findFirst({
           where: {
             ...(meeting.eventId ? { eventId: meeting.eventId } : { activityId: meeting.activityId }),
-            opportunity: { organizationId, ...OPEN_OPPORTUNITY },
+            opportunity: { organizationId },
           },
           orderBy: { createdAt: "asc" },
           select: { id: true, opportunityId: true },
@@ -90,10 +97,20 @@ export async function attachMeeting(
       : null;
   const ownTile = known
     ? await prisma.opportunity.findFirst({
-        where: { id: known.opportunityId, organizationId },
+        where: { id: known.opportunityId, organizationId, ...OPEN_OPPORTUNITY },
         select: { id: true, contacts: { select: { contactId: true } } },
       })
     : null;
+  if (known && !ownTile) {
+    // On a closed tile the meeting is history there: its row takes the
+    // new moment (and the history line it was logged as), and nobody is
+    // added, no tile is started and no second row is written.
+    await prisma.opportunityMeeting.update({
+      where: { id: known.id },
+      data: { on: meeting.on, ...(meeting.activityId ? { activityId: meeting.activityId } : {}) },
+    });
+    return known.opportunityId;
+  }
   const pick = meeting.opportunity && meeting.opportunity !== "auto" && meeting.opportunity !== "new" ? meeting.opportunity : null;
   const chosen =
     ownTile ??
@@ -295,8 +312,8 @@ export async function syncOpportunity(who: Who, opportunityId: string) {
   // Everyone listed moves forward with it (never back) — except that a
   // person's status follows their own meetings (final audit, Nov 11, 2026):
   // someone booked onto a tile already at Meeting Completed hasn't met yet,
-  // so they stay at Meeting Set until that meeting is held (or its time has
-  // passed). They used to jump straight to Meeting Completed on the booking.
+  // so they stay at Meeting Set until one of their meetings is held. They
+  // used to jump straight to Meeting Completed on the booking.
   const target: ContactStatusValue | undefined = opportunity.deal
     ? (STATUS_FOR_STAGE[opportunity.deal.stage] ?? (opportunity.stage === "MEETING_COMPLETED" ? "MEETING_COMPLETED" : undefined))
     : opportunity.stage === "MEETING_COMPLETED"
@@ -311,12 +328,18 @@ export async function syncOpportunity(who: Who, opportunityId: string) {
   }
 }
 
-// The people on a tile whose own meeting on it is still to come with no
-// answer, and who were in none of its held meetings: Meeting Completed
-// waits for them. Only people not yet at Meeting Completed are looked at,
-// so a tile everyone has caught up with costs one read. A meeting's people
-// are its calendar entry's (who it is with and who is expected) and its
-// history line's (one row per person in the save).
+// The people on a tile who are on at least one of its meetings and in none
+// of its held ones: Meeting Completed waits for them, whatever the timing —
+// a meeting still ahead, one that passed with nobody answering, a No-show
+// (they stay Meeting Set, as a No-show always leaves them) (fix review,
+// Nov 11, 2026: only a meeting still ahead held them back, so the next sync
+// after it passed, or after a No-show, moved them on though they never met;
+// and that test read the row's own moment, the evening before for an old
+// calendar row). People on the tile with no meeting of theirs (added by
+// hand) follow the tile. Only people not yet at Meeting Completed are looked
+// at, so a tile everyone has caught up with costs one read. A meeting's
+// people are its calendar entry's (who it is with and who is expected) and
+// its history line's (one row per person in the save).
 async function stillToMeet(organizationId: string, opportunityId: string, listed: string[]) {
   const waiting = new Set<string>();
   if (!listed.length) return waiting;
@@ -326,7 +349,7 @@ async function stillToMeet(organizationId: string, opportunityId: string, listed
   if (!behind.length) return waiting;
   const meetings = await prisma.opportunityMeeting.findMany({
     where: { opportunityId, opportunity: { organizationId } },
-    select: { on: true, outcome: true, activityId: true, eventId: true },
+    select: { outcome: true, activityId: true, eventId: true },
   });
   if (!meetings.length) return waiting;
   const eventIds = meetings.map((row) => row.eventId).filter((id): id is string => Boolean(id));
@@ -345,9 +368,8 @@ async function stillToMeet(organizationId: string, opportunityId: string, listed
     : [];
   const eventById = new Map(events.map((row) => [row.id, row]));
   const lineById = new Map(lines.map((row) => [row.id, row]));
-  const now = Date.now();
   const held = new Set<string>();
-  const ahead = new Set<string>();
+  const onMeeting = new Set<string>();
   for (const meeting of meetings) {
     const event = meeting.eventId ? eventById.get(meeting.eventId) : undefined;
     const line = meeting.activityId ? lineById.get(meeting.activityId) : undefined;
@@ -355,11 +377,10 @@ async function stillToMeet(organizationId: string, opportunityId: string, listed
     if (event) [event.contactId, ...event.attendees.map((row) => row.id)].forEach((id) => id && people.add(id));
     if (line?.contactId) people.add(line.contactId);
     if (line?.batchId) siblings.filter((row) => row.batchId === line.batchId && row.contactId).forEach((row) => people.add(row.contactId!));
-    const answer = answerOf(meeting.outcome, line?.outcome);
-    if (answer === "HELD") people.forEach((id) => held.add(id));
-    else if (answer === null && meeting.on.getTime() > now) people.forEach((id) => ahead.add(id));
+    people.forEach((id) => onMeeting.add(id));
+    if (answerOf(meeting.outcome, line?.outcome) === "HELD") people.forEach((id) => held.add(id));
   }
-  for (const row of behind) if (ahead.has(row.id) && !held.has(row.id)) waiting.add(row.id);
+  for (const row of behind) if (onMeeting.has(row.id) && !held.has(row.id)) waiting.add(row.id);
   return waiting;
 }
 

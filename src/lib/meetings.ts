@@ -7,7 +7,7 @@ import { ensureEventType } from "@/lib/event-types";
 import { ACTIVITY_EVENT_TYPE } from "@/lib/constants";
 import { dayInZone, zonedMoment } from "@/lib/calendar-auto";
 import { markConnected, markContacted, markMeetingSet, type Who } from "@/lib/status";
-import { CONVERTED_STAGES, opportunityColumn, syncOpportunity } from "@/lib/opportunities";
+import { CLOSED_DEAL_STAGES, CONVERTED_STAGES, opportunityColumn, syncOpportunity } from "@/lib/opportunities";
 import { answerOf, waitingOf, type MeetingAnswer, type MeetingFact } from "@/lib/meeting-rule";
 import { stashMeeting } from "@/lib/undo-log";
 
@@ -207,7 +207,11 @@ export async function recordMeetingHeld(who: Actor, meetingId: string, options: 
       data: { stage: "MEETING_COMPLETED" },
     });
   }
-  await syncOpportunity(who, meeting.opportunityId);
+  // A meeting on a tile since Won or Lost (an old entry ticked done, found
+  // there by attachMeeting) is history on it: the tile isn't synced, so
+  // nobody on it is moved to Won or Lost by a meeting being logged.
+  const closed = meeting.opportunity.stage === "LOST" || Boolean(deal && CLOSED_DEAL_STAGES.includes(deal.stage));
+  if (!closed) await syncOpportunity(who, meeting.opportunityId);
   return { ok: true, opportunityId: meeting.opportunityId, contactIds, already: meeting.outcome === "HELD" };
 }
 
@@ -237,31 +241,22 @@ export async function recordMeetingNoShow(who: Actor, meetingId: string): Promis
   return { ok: true, opportunityId: meeting.opportunityId };
 }
 
-// Books a meeting: "Meeting · <name>" on the calendar under whoever booked
-// it, with the people on it, and the same steps as every meeting path —
-// Meeting Set (through Connected from below it), the opportunity, and the
-// booker kept on the meeting. `on` is today or later (checked by callers).
-export async function bookMeetingCore(
+// A meeting's calendar entry: "Meeting · <name>" under whoever booked it,
+// with the people on it (the first is who it is with, the rest expected),
+// tagged with the save when there is one. Null when none of the people is
+// in this workspace.
+async function writeMeetingEntry(
   who: Actor,
-  input: {
-    contactIds: string[];
-    companyId: string | null;
-    on: string;
-    time: string | null;
-    where?: string | null;
-    note?: string | null;
-    opportunity?: string | null;
-  },
+  input: { contactIds: string[]; companyId: string | null; on: string; time: string | null; where?: string | null; note?: string | null },
 ) {
   const { organizationId } = who;
-  const timeZone = await zoneOf(organizationId);
   const people = await prisma.contact.findMany({
     where: { organizationId, id: { in: input.contactIds } },
     select: { id: true, name: true, companyId: true },
   });
   const byId = new Map(people.map((row) => [row.id, row]));
   const contactIds = input.contactIds.filter((id) => byId.has(id));
-  if (!contactIds.length) return { error: "Pick who the meeting is with" as const };
+  if (!contactIds.length) return null;
   const first = byId.get(contactIds[0])!;
   const type = (await ensureEventType(organizationId, ACTIVITY_EVENT_TYPE.MEETING)) ?? ACTIVITY_EVENT_TYPE.MEETING;
   const event = await prisma.calendarEvent.create({
@@ -281,6 +276,30 @@ export async function bookMeetingCore(
     },
     select: { id: true },
   });
+  return { event, contactIds, first };
+}
+
+// Books a meeting: "Meeting · <name>" on the calendar under whoever booked
+// it, with the people on it, and the same steps as every meeting path —
+// Meeting Set (through Connected from below it), the opportunity, and the
+// booker kept on the meeting. `on` is today or later (checked by callers).
+export async function bookMeetingCore(
+  who: Actor,
+  input: {
+    contactIds: string[];
+    companyId: string | null;
+    on: string;
+    time: string | null;
+    where?: string | null;
+    note?: string | null;
+    opportunity?: string | null;
+  },
+) {
+  const { organizationId } = who;
+  const timeZone = await zoneOf(organizationId);
+  const entry = await writeMeetingEntry(who, input);
+  if (!entry) return { error: "Pick who the meeting is with" as const };
+  const { event, contactIds, first } = entry;
   const meetingAt = input.time ? zonedMoment(input.on, input.time, timeZone) : zonedNoon(input.on, timeZone);
   const opportunityId = await markMeetingSet(who, contactIds, new Date(), { on: meetingAt, eventId: event.id, opportunity: input.opportunity ?? null });
   const when = `${formatDay(`${input.on}T12:00:00Z`)}${input.time ? `, ${formatTime(input.time)}` : ""}`;
@@ -348,6 +367,31 @@ export async function rescheduleMeetingCore(
       ]
     : [];
 
+  // Still to come with no calendar entry of its own: it moves in place too
+  // (fix review, Nov 11, 2026), and gets an entry on its new day. It used to
+  // be replaced by a new booking and deleted, its loose lines settled
+  // outside the reschedule's save, so the Undo the sheet then offered took
+  // back only the new booking: the person was left with no meeting, the
+  // original line gone or reading No-show. Moving in place keeps the
+  // meeting (and its booker's credit), and offers no Undo it can't honor,
+  // as a move with an entry never did.
+  if (ahead && !event) {
+    const people = lines.length
+      ? [...new Set(lines.map((row) => row.contactId).filter((id): id is string => Boolean(id)))]
+      : peopleOf(meeting, null);
+    const at = input.time ? zonedMoment(input.on, input.time, timeZone) : zonedNoon(input.on, timeZone);
+    const entry = await writeMeetingEntry({ ...who, batchId: null }, { contactIds: people, companyId: lines[0]?.companyId ?? null, on: input.on, time: input.time });
+    if (!entry) return { error: "Nobody is on this meeting to move it" };
+    await prisma.$transaction([
+      prisma.opportunityMeeting.update({
+        where: { id: meeting.id },
+        data: { on: at, outcome: null, eventId: entry.event.id, ...(loose.length ? { activityId: null } : {}) },
+      }),
+      ...settleLoose,
+    ]);
+    return { ok: true, opportunityId: meeting.opportunityId, meetingId: meeting.id, message: `Moved to ${when}` };
+  }
+
   if (ahead && event && (!event.activityId || loose.length)) {
     const at = input.time ? zonedMoment(input.on, input.time, timeZone) : zonedNoon(input.on, timeZone);
     await prisma.$transaction([
@@ -363,8 +407,8 @@ export async function rescheduleMeetingCore(
     return { ok: true, opportunityId: meeting.opportunityId, meetingId: meeting.id, message: `Moved to ${when}` };
   }
 
-  // Still to come with nothing to move (no calendar entry of its own): the
-  // new booking replaces it. Gone by: it didn't happen, so it is a no-show.
+  // Gone by: it didn't happen, so it is a no-show, and a new meeting is
+  // booked on the same tile.
   if (!ahead && !meeting.outcome) {
     const missed = await recordMeetingNoShow(who, meeting.id);
     if ("error" in missed) return missed;
@@ -382,9 +426,9 @@ export async function rescheduleMeetingCore(
     opportunity: meeting.opportunityId,
   });
   if ("error" in booked) return { error: booked.error ?? "That couldn't be booked" };
-  if (ahead && (!meeting.activityId || loose.length)) {
-    await prisma.$transaction([...settleLoose, prisma.opportunityMeeting.deleteMany({ where: { id: meeting.id } })]);
-  }
+  // Still to come, its entry ticked with a line that isn't this meeting's
+  // (nothing of it to keep): the new booking replaces it.
+  if (ahead && !meeting.activityId) await prisma.opportunityMeeting.deleteMany({ where: { id: meeting.id } });
   const fresh = await prisma.opportunityMeeting.findFirst({
     where: { opportunityId: meeting.opportunityId, eventId: booked.eventId },
     select: { id: true },

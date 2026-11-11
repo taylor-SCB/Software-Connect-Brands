@@ -30,6 +30,11 @@
  * or Not interested; Held in two tabs at once logging one meeting and one
  * next step; a calendar meeting waited for at its entry's own time; a
  * meeting with a line logged for later today moving on reschedule (M16).
+ * And the fix review's: a second Done arriving mid-write refused; an entry
+ * with nobody on it logged only as a try (and the Done box's chips off); a
+ * Held line deleted a day later leaving Not moving forward's Lost standing,
+ * and a stale save not joined; the meeting-moment repair; a no-entry
+ * meeting with a loose line moved in place on reschedule.
  *
  * Calls the server actions the new screens will use straight over HTTP
  * (the action ids come from .next/server/server-reference-manifest.json),
@@ -1240,6 +1245,209 @@ async function logWith(page, fields, { body = "", type } = {}) {
     assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE id='act_fx_m16'`)).n, 0, "the line dated ahead is gone, so it never counts as held");
     var m16Event = await one(`SELECT to_char("startOn",'YYYY-MM-DD') AS day, "startTime", "activityId", "doneAt" FROM "CalendarEvent" WHERE id=$1`, [m16.eventId]);
     assert.deepEqual({ ...m16Event }, { day: shift(TODAY, 1), startTime: "10:00", activityId: null, doneAt: null }, "its entry moved, open again");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Fix review (Nov 11, 2026): what the skeptics found in the fixes     */
+  /* above. Each step fails on the code before its fix.                  */
+  /* ------------------------------------------------------------------ */
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"companyId","updatedAt") VALUES
+       ('ctc_rv_mid',$1,'Review Midway','CONNECTED',NULL,now()),
+       ('ctc_rv_old',$1,'Review Oldsave','CONNECTED',NULL,now()),
+       ('ctc_rv_stale',$1,'Review Stale','CONNECTED',NULL,now()),
+       ('ctc_rv_moved',$1,'Review Moved','MEETING_SET',NULL,now())`,
+    [org],
+  );
+  try {
+    log("audit fixes (fix review): a second Done arriving while the first is still writing its lines is refused — one line, one next step");
+    // The claim used to be a changed tick with no line yet, which reads the
+    // same as "Just tick it": a second tap that read the entry between the
+    // first's claim and its link got through. Review Midway's row is held,
+    // so the first save waits mid-write (its line moves her last touch);
+    // the second arrives while it waits.
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","contactId","ownerId","updatedAt") VALUES ('ev_rv_mid',$1,'Call · Review Midway','Call',$2::date,'ctc_rv_mid',$3,now())`,
+      [org, TODAY, taylor.id],
+    );
+    var midInput = { activityType: "PHONE_CALL", note: "Talked it through", outcome: "TALKED", next: { kind: "follow", on: shift(TODAY, 2), type: "PHONE_CALL", withContactIds: [] } };
+    var midLock = new Client({ connectionString: DB });
+    await midLock.connect();
+    await midLock.query("BEGIN");
+    await midLock.query(`SELECT 1 FROM "Contact" WHERE id='ctc_rv_mid' FOR UPDATE`);
+    var midFirst = action(page, CAL_ACTIONS, "completeEventWithLog", "ev_rv_mid", midInput);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    var midSecond = action(page, CAL_ACTIONS, "completeEventWithLog", "ev_rv_mid", midInput);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await midLock.query("COMMIT");
+    await midLock.end();
+    var midAnswers = await Promise.all([midFirst, midSecond]);
+    assert.equal(midAnswers.filter((answer) => answer.success).length, 1, JSON.stringify(midAnswers));
+    assert.match(midAnswers.find((answer) => answer.error)?.error ?? "", /just logged/);
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_rv_mid'`)).n, 1, "one line");
+    assert.equal(
+      (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "contactId"='ctc_rv_mid' AND "doneAt" IS NULL AND title LIKE 'Follow up%'`)).n,
+      1,
+      "one follow-up booked",
+    );
+    var midEntry = await one(`SELECT e."activityId", a."contactId" FROM "CalendarEvent" e JOIN "Activity" a ON a.id=e."activityId" WHERE e.id='ev_rv_mid'`);
+    assert.equal(midEntry.contactId, "ctc_rv_mid", "the entry is linked to the line that won");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes (fix review): a calendar entry with nobody on it (a front-desk try's follow-up) is a try when ticked Done — a talk, Interested or a held meeting is refused, and the Done box turns them off");
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","companyId","ownerId","updatedAt") VALUES
+         ('ev_rv_desk1',$1,'Try again · Redwood','Call',$2::date,'cmp_cn_red',$3,now()),
+         ('ev_rv_desk2',$1,'Meeting · Redwood front desk','Meeting',$2::date,'cmp_cn_red',$3,now())`,
+      [org, TODAY, taylor.id],
+    );
+    var deskStatus2 = await status("Company", "cmp_cn_red");
+    var deskDates2 = await dates("Company", "cmp_cn_red");
+    for (const [eventId, input] of [
+      ["ev_rv_desk1", { activityType: "PHONE_CALL", note: "", outcome: "TALKED" }],
+      ["ev_rv_desk1", { activityType: "PHONE_CALL", note: "", outcome: "NO_ANSWER", mark: "INTERESTED" }],
+      ["ev_rv_desk2", { activityType: "MEETING", note: "Met them" }],
+      ["ev_rv_desk2", { activityType: "MEETING", note: "", outcome: "HELD", early: true }],
+    ]) {
+      const answer = await action(page, CAL_ACTIONS, "completeEventWithLog", eventId, input);
+      assert.match(answer.error ?? "", /Front desk \/ main line is a try/, `${eventId} ${JSON.stringify(input)}: ${JSON.stringify(answer)}`);
+    }
+    assert.equal((await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE id IN ('ev_rv_desk1','ev_rv_desk2') AND "activityId" IS NOT NULL`)).n, 0, "nothing logged");
+    assert.equal(await status("Company", "cmp_cn_red"), deskStatus2);
+    assert.equal(+(await dates("Company", "cmp_cn_red")).lastConnectAt, +deskDates2.lastConnectAt, "no connect on the company");
+    // The Done box: the talk chips and "Log meeting" are off on such an entry.
+    await page.goto(`${BASE}/dashboard/calendar?layout=log`);
+    await page.locator(`[data-testid=log-row][data-event-id="ev_rv_desk2"] [data-testid=log-done]`).click();
+    var deskBox = page.locator("[data-testid=done-box]");
+    await deskBox.waitFor();
+    await until(async () => await deskBox.locator("[data-testid=done-log]").isDisabled(), "Log meeting turned off");
+    assert.ok(await deskBox.locator("[data-testid=outcome-HELD]").isDisabled(), "Held is off");
+    await deskBox.locator("[data-testid=done-type-PHONE_CALL]").click();
+    assert.ok(await deskBox.locator("[data-testid=outcome-TALKED]").isDisabled(), "Talked is off");
+    assert.ok(!(await deskBox.locator("[data-testid=outcome-NO_ANSWER]").isDisabled()), "a try is still on");
+    await deskBox.getByRole("button", { name: "Cancel", exact: true }).click();
+    await deskBox.waitFor({ state: "detached" });
+    // A try still logs.
+    var deskTry = await action(page, CAL_ACTIONS, "completeEventWithLog", "ev_rv_desk1", { activityType: "PHONE_CALL", note: "", outcome: "NO_ANSWER" });
+    assert.ok(deskTry.success, JSON.stringify(deskTry));
+    assert.equal((await one(`SELECT a.outcome, a."companyId" FROM "CalendarEvent" e JOIN "Activity" a ON a.id=e."activityId" WHERE e.id='ev_rv_desk1'`)).outcome, "NO_ANSWER");
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes (fix review): deleting a Held line a day after Not moving forward undoes the Held alone — the Lost deal, its reason and the person's Lost stand");
+    await page.goto(`${BASE}/dashboard/contacts/ctc_rv_old`);
+    await logWith(page, { outcome: "HELD" }, { type: "Meeting", body: "Walked the site, priced out" });
+    await until(async () => (await status("Contact", "ctc_rv_old")) === "MEETING_COMPLETED", "the meeting held");
+    var oldBatch = (await one(`SELECT "batchId" FROM "Activity" WHERE "contactId"='ctc_rv_old' AND type='MEETING'`)).batchId;
+    var oldLost = await action(page, SHEET_ACTIONS, "notMovingForward", { batchId: oldBatch, reason: "PRICE" });
+    assert.equal(oldLost.batchId, oldBatch, `joined while the Held is recent: ${JSON.stringify(oldLost)}`);
+    var oldDeal = await one(`SELECT id, stage FROM "Deal" WHERE "contactId"='ctc_rv_old'`);
+    assert.equal(oldDeal.stage, "LOST");
+    // A day later: the Lost move's rows are a day old (the Held's own rows
+    // too; its batchId still says when it began).
+    await sql(`UPDATE "StatusChange" SET "createdAt"="createdAt" - interval '1 day' WHERE "organizationId"=$1 AND "batchId" IN ($2, $2 || '+j')`, [org, oldBatch]);
+    var oldDelete = await action(page, CONTACT_ACTIONS, "undoLog", oldBatch);
+    assert.equal(oldDelete.success, "Undone", JSON.stringify(oldDelete));
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_rv_old' AND type='MEETING'`)).n, 0, "the Held line is gone");
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE id=$1`, [oldDeal.id])).stage, "LOST", "the Lost deal stands");
+    assert.equal(await status("Contact", "ctc_rv_old"), "LOST", "and so does the person's Lost");
+    assert.equal(
+      (await one(`SELECT reason FROM "StatusChange" WHERE "dealId"=$1 AND "contactId" IS NULL AND "toStatus"='LOST'`, [oldDeal.id])).reason,
+      "PRICE",
+      "with its reason",
+    );
+    assert.equal(
+      (await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "organizationId"=$1 AND "batchId" LIKE $2`, [org, `${oldBatch}%`])).n,
+      0,
+      "the Lost move is its own move now, in no save",
+    );
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes (fix review): Not moving forward on a save begun minutes ago isn't added to it — the move stands alone and offers no Undo");
+    await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","updatedAt") VALUES ('opp_rv_stale',$1,'Review Stale','MEETING_COMPLETED',$2,now())`, [org, taylor.id]);
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('oc_rv_stale','opp_rv_stale','ctc_rv_stale','PRIMARY',true)`);
+    // The Held's save, begun five minutes ago (a sheet left open on step 2).
+    var staleBatch = bid(Date.now() - 5 * 60_000);
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,outcome,body,"batchId","occurredAt","createdAt") VALUES ('act_rv_stale',$1,'ctc_rv_stale',$2,'MEETING','HELD','Walked it',$3,now() - interval '5 minutes',now() - interval '5 minutes')`,
+      [org, taylor.id, staleBatch],
+    );
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","activityId",outcome,"bookedById") VALUES ('om_rv_stale','opp_rv_stale',now() - interval '5 minutes','act_rv_stale','HELD',$1)`, [taylor.id]);
+    var staleLost = await action(page, SHEET_ACTIONS, "notMovingForward", { opportunityId: "opp_rv_stale", batchId: staleBatch });
+    assert.match(staleLost.success ?? "", /moved to Lost/, JSON.stringify(staleLost));
+    assert.equal(staleLost.batchId, undefined, "no Undo offered for a save it wasn't added to");
+    var staleDeal = await one(`SELECT d.id, d.stage FROM "Deal" d JOIN "Opportunity" o ON o."dealId"=d.id WHERE o.id='opp_rv_stale'`);
+    assert.equal(staleDeal.stage, "LOST");
+    assert.equal(
+      (await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "dealId"=$1 AND "batchId" IS NOT NULL`, [staleDeal.id])).n,
+      0,
+      "the move's rows are in no save",
+    );
+    var staleForged = await action(page, OPP_ACTIONS, "moveOpportunity", "opp_rv_stale", "WON", { batchId: staleBatch });
+    assert.ok(staleForged.error, `a move can't join it either: ${JSON.stringify(staleForged)}`);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes (fix review): the one-off repair puts an old calendar meeting's moment on its row, so the tiles and health read the entry's time as the contact page does");
+    // Om_fx_wait above holds midnight UTC on its day, as the calendar form
+    // wrote it before the Nov 11 audit; its entry says 3pm.
+    var repairSql = fs.readFileSync(path.join(process.cwd(), "prisma/migrations/20261111190200_meeting_moments/migration.sql"), "utf8");
+    await sql(
+      `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId",outcome,"bookedById") VALUES ('om_rv_answered','opp_fx_wait',$1::date,'ev_fx_wait','NO_SHOW',$2)`,
+      [shift(TODAY, 1), taylor.id],
+    );
+    await sql(repairSql);
+    await sql(repairSql);
+    var repairedAt = coreDated("calendar-auto", "zonedMoment", [shift(TODAY, 1), "15:00", ZONE]);
+    assert.equal((await one(`SELECT "on" FROM "OpportunityMeeting" WHERE id='om_fx_wait'`)).on.toISOString(), repairedAt, "3pm in Chicago, not midnight UTC");
+    assert.equal(
+      (await one(`SELECT to_char("on",'YYYY-MM-DD HH24:MI') AS at FROM "OpportunityMeeting" WHERE id='om_rv_answered'`)).at,
+      `${shift(TODAY, 1)} 00:00`,
+      "an answered meeting keeps its own moment",
+    );
+    await sql(`DELETE FROM "OpportunityMeeting" WHERE id='om_rv_answered'`);
+  } catch (err) {
+    if (!AUDIT_SOFT) throw err;
+    auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);
+  }
+  try {
+    log("audit fixes (fix review): a meeting still ahead with no calendar entry and a line logged for later, rescheduled, moves in place — kept, given an entry, no Undo it can't honor");
+    await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","updatedAt") VALUES ('opp_rv_moved',$1,'Review Moved','MEETING_SET',$2,now())`, [org, taylor.id]);
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('oc_rv_moved','opp_rv_moved','ctc_rv_moved','PRIMARY',true)`);
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,"occurredAt") VALUES ('act_rv_moved',$1,'ctc_rv_moved',$2,'MEETING','Site walk later',now() + interval '2 hours')`,
+      [org, taylor.id],
+    );
+    await sql(
+      `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","activityId","bookedById") VALUES ('om_rv_moved','opp_rv_moved',now() + interval '2 hours','act_rv_moved',$1)`,
+      [nicId],
+    );
+    var movedTo = shift(TODAY, 3);
+    var movedAnswer = await meetingAction(page, me, "rescheduleMeeting", "om_rv_moved", { on: movedTo, time: "10:00" });
+    assert.match(movedAnswer.success ?? "", /Moved to/, JSON.stringify(movedAnswer));
+    assert.equal(movedAnswer.batchId, undefined, "no Undo offered");
+    assert.equal(movedAnswer.meetingId, "om_rv_moved", "the same meeting");
+    var movedRows = (await sql(`SELECT id, "eventId", "activityId", outcome, "bookedById" FROM "OpportunityMeeting" WHERE "opportunityId"='opp_rv_moved'`)).rows;
+    assert.equal(movedRows.length, 1, "kept, not replaced");
+    assert.equal(movedRows[0].bookedById, nicId, "its booker keeps the credit");
+    assert.deepEqual([movedRows[0].activityId, movedRows[0].outcome], [null, null]);
+    var movedEntry = await one(`SELECT to_char("startOn",'YYYY-MM-DD') AS day, "startTime", "contactId" FROM "CalendarEvent" WHERE id=$1`, [movedRows[0].eventId]);
+    assert.deepEqual({ ...movedEntry }, { day: movedTo, startTime: "10:00", contactId: "ctc_rv_moved" }, "on the calendar on its new day");
+    assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE id='act_rv_moved'`)).n, 0, "the line dated ahead is gone, so it never counts as held");
+    assert.equal(await status("Contact", "ctc_rv_moved"), "MEETING_SET");
   } catch (err) {
     if (!AUDIT_SOFT) throw err;
     auditFailed.push(`[${String(step).padStart(2, "0")}] ${String(err.message).split("\n")[0]}`);

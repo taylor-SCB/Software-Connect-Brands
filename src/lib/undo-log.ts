@@ -29,7 +29,10 @@ import { CONVERTED_STAGES } from "@/lib/opportunities";
 //   tile to Lost inside the Held's save) is deleted, while nothing has been
 //   added to it, and comes off its tile; a deal it moved goes back to its
 //   stage and the day it got there, while still where the save left it.
-//   The tile's "Deal Created" goes with it.
+//   The tile's "Deal Created" goes with it. Those rows carry the save's
+//   joined batchId (joinedBatchId) and are taken back only while the move
+//   is recent — the toast's Undo; deleting the Held's history line later
+//   leaves the Lost decision standing, as it did before the join existed.
 //
 // Not "use server": takes an organizationId. Marketing sends can't be
 // undone here (they went out).
@@ -76,14 +79,15 @@ function readStash(value: unknown): MeetingStash | null {
   return typeof row.batchId === "string" && typeof row.on === "string" ? (row as MeetingStash) : null;
 }
 
-// `seen.doneAt`: the calendar tick as the save found it, when the save has
-// already claimed the entry (logEventDone changes the tick first, so two
-// tabs can't both log it) and the row no longer shows it.
+// `seen`: the calendar entry's tick and line as the save found them, when
+// the save has already claimed the entry (logEventDone links its own line
+// and ticks it first, so two tabs can't both log it) and the row no longer
+// shows them.
 export async function stashMeeting(
   organizationId: string,
   meetingId: string,
   who: { batchId?: string | null; userId?: string | null },
-  seen: { doneAt?: Date | null } = {},
+  seen: { doneAt?: Date | null; activityId?: string | null } = {},
 ) {
   if (!who.batchId) return;
   const meeting = await prisma.opportunityMeeting.findFirst({
@@ -99,7 +103,7 @@ export async function stashMeeting(
       ? prisma.activity.findFirst({ where: { id: meeting.activityId, organizationId }, select: { id: true, batchId: true } })
       : Promise.resolve(null),
   ]);
-  const lineId = first?.id ?? event?.activityId ?? null;
+  const lineId = first?.id ?? ("activityId" in seen ? seen.activityId : event?.activityId) ?? null;
   const head = first ?? (lineId ? await prisma.activity.findFirst({ where: { id: lineId, organizationId }, select: { id: true, batchId: true } }) : null);
   const lines = head
     ? await prisma.activity.findMany({
@@ -125,7 +129,7 @@ export async function stashMeetingForEvent(
   organizationId: string,
   eventId: string,
   who: { batchId?: string | null; userId?: string | null },
-  seen: { doneAt?: Date | null } = {},
+  seen: { doneAt?: Date | null; activityId?: string | null } = {},
 ) {
   const row = await prisma.opportunityMeeting.findFirst({
     where: { eventId, opportunity: { organizationId } },
@@ -140,6 +144,15 @@ export async function stashMeetingForEvent(
 // one request). Anything later on a tile is somebody's later work, which
 // Undo never takes back.
 const SAVE_WINDOW_MS = 120_000;
+
+// The batchId a later step's ladder rows carry when they join a save (Not
+// moving forward after a Held; see mayJoinSave). Kept apart from the
+// save's own rows so its window and a later Delete read the save alone
+// (final audit, Nov 11, 2026).
+const JOIN_SUFFIX = "+j";
+export function joinedBatchId(batchId: string) {
+  return `${batchId}${JOIN_SUFFIX}`;
+}
 
 // Whose save this is, as Undo reads it: whoever its rows name, else whoever
 // made the meeting answer it holds. `found` is false when nothing carries
@@ -164,8 +177,13 @@ async function saveOwner(organizationId: string, batchId: string) {
 
 // Whether a later step may write into this save, so its Undo takes that
 // step back too ("Not moving forward" after a Held, final audit Nov 11,
-// 2026): only a save that exists, by whoever may undo it.
+// 2026): only a save that exists, by whoever may undo it, and only while it
+// is recent (begun within the save window). A sheet left open for longer
+// moves on its own and offers no Undo.
 export async function mayJoinSave(organizationId: string, batchId: string, actor: { userId: string; canManage: boolean }) {
+  if (batchId.endsWith(JOIN_SUFFIX)) return false;
+  const began = startedAt(batchId);
+  if (!began || Date.now() - began.getTime() > SAVE_WINDOW_MS) return false;
   const save = await saveOwner(organizationId, batchId);
   return save.found && (actor.canManage || save.owner === actor.userId);
 }
@@ -179,17 +197,28 @@ export async function undoLogCore(
   batchId: string,
   actor: { userId: string; canManage: boolean },
 ): Promise<UndoResult> {
+  // A joined step is undone with its save, never on its own.
+  if (batchId.endsWith(JOIN_SUFFIX)) return { error: "That has already been undone" };
   const meetingId = batchId.startsWith("m:") ? batchId.split(":")[1] || null : null;
-  const [activities, events, changes, meetingRow] = await Promise.all([
+  const joinedId = joinedBatchId(batchId);
+  const changeSelect = {
+    id: true,
+    contactId: true,
+    companyId: true,
+    dealId: true,
+    fromStatus: true,
+    toStatus: true,
+    userId: true,
+    createdAt: true,
+  } as const;
+  const [activities, events, ownChanges, joinedChanges, meetingRow] = await Promise.all([
     prisma.activity.findMany({
       where: { organizationId, batchId },
       select: { id: true, userId: true, contactId: true, companyId: true, marketing: true, createdAt: true },
     }),
     prisma.calendarEvent.findMany({ where: { organizationId, batchId }, select: { id: true, ownerId: true, createdAt: true } }),
-    prisma.statusChange.findMany({
-      where: { organizationId, batchId },
-      select: { id: true, contactId: true, companyId: true, dealId: true, fromStatus: true, toStatus: true, userId: true, createdAt: true },
-    }),
+    prisma.statusChange.findMany({ where: { organizationId, batchId }, select: changeSelect }),
+    prisma.statusChange.findMany({ where: { organizationId, batchId: joinedId }, select: changeSelect }),
     meetingId
       ? prisma.opportunityMeeting.findFirst({
           where: { id: meetingId, opportunity: { organizationId } },
@@ -202,18 +231,21 @@ export async function undoLogCore(
   // batchId) leaves nothing of it to take back.
   const meetingStash = meetingRow ? readStash(meetingRow.outcomeUndo) : null;
   const meetingSet = Boolean(meetingRow && meetingStash?.batchId === batchId);
-  if (!activities.length && !events.length && !changes.length && !meetingSet) {
+  if (!activities.length && !events.length && !ownChanges.length && !meetingSet) {
     return { error: "That has already been undone" };
   }
   if (activities.some((row) => row.marketing)) return { error: "A marketing email can't be undone. It went out." };
-  const owner = activities[0]?.userId ?? events[0]?.ownerId ?? changes[0]?.userId ?? (meetingSet ? meetingStash?.by : null) ?? null;
+  const owner = activities[0]?.userId ?? events[0]?.ownerId ?? ownChanges[0]?.userId ?? (meetingSet ? meetingStash?.by : null) ?? null;
   // Nobody on record (nothing it wrote names anyone): only an Owner or
   // Admin, never any teammate.
   if (!actor.canManage && owner !== actor.userId) {
     return { error: "Only whoever logged it, or an Owner or Admin, can undo it" };
   }
 
-  const stamps = [...activities, ...events, ...changes].map((row) => row.createdAt.getTime());
+  // The save's own rows set its window; a step joined into it (its rows
+  // under joinedId) never widens it (final audit, Nov 11, 2026: a sheet left
+  // open on step 2 stretched it over a teammate's later work).
+  const stamps = [...activities, ...events, ...ownChanges].map((row) => row.createdAt.getTime());
   const savedAt = stamps.length ? new Date(Math.min(...stamps)) : null;
   // When the save began, by the clock that stamps completedAt.
   const began = startedAt(batchId) ?? savedAt;
@@ -223,6 +255,15 @@ export async function undoLogCore(
   const from = began;
   const until = from ? new Date(Math.max(from.getTime(), ...stamps) + SAVE_WINDOW_MS) : null;
   const inSave = (date: Date | null | undefined) => Boolean(date && from && until && date >= from && date <= until);
+  // A joined step (Not moving forward's Lost move and the deal it made) is
+  // taken back only while it is recent: the toast's Undo, a moment after.
+  // Deleting the Held's history line later undoes the Held alone and the
+  // Lost decision stands; its rows then belong to no save.
+  const joinedLast = joinedChanges.length ? Math.max(...joinedChanges.map((row) => row.createdAt.getTime())) : null;
+  const withJoined = joinedLast !== null && Date.now() - joinedLast <= SAVE_WINDOW_MS;
+  const changes = withJoined ? [...ownChanges, ...joinedChanges] : ownChanges;
+  const inJoin = (date: Date | null | undefined) =>
+    Boolean(withJoined && date && from && joinedLast !== null && date >= from && date.getTime() <= joinedLast + SAVE_WINDOW_MS);
   const activityIds = activities.map((row) => row.id);
   const eventIds = events.map((row) => row.id);
 
@@ -292,7 +333,7 @@ export async function undoLogCore(
     const tos = new Set(rows.map((row) => row.toStatus));
     const start = rows.find((row) => !tos.has(row.fromStatus ?? ""))?.fromStatus ?? rows[0].fromStatus;
     const end = rows[rows.length - 1].toStatus;
-    if (inSave(deal.createdAt)) {
+    if (inSave(deal.createdAt) || inJoin(deal.createdAt)) {
       if (!deal.project && deal._count.quotes === 0 && deal._count.contracts === 0) dropDeals.push(deal.id);
       continue;
     }
@@ -306,7 +347,7 @@ export async function undoLogCore(
         contactId: null,
         companyId: null,
         toStatus: start === "ARCHIVED" ? "CONTRACT_SENT" : start,
-        OR: [{ batchId: null }, { batchId: { not: batchId } }],
+        OR: [{ batchId: null }, { batchId: { notIn: [batchId, joinedId] } }],
       },
       orderBy: { on: "desc" },
       select: { on: true },
@@ -446,7 +487,7 @@ export async function undoLogCore(
         // Not a deal (any more): no deal, or one back before Quote Sent. Its
         // "Deal Created" goes when the save is what converted it.
         const converted = Boolean(opportunity.deal && CONVERTED_STAGES.includes(opportunity.deal.stage));
-        if (!converted && opportunity.convertedAt && inSave(opportunity.convertedAt)) {
+        if (!converted && opportunity.convertedAt && (inSave(opportunity.convertedAt) || inJoin(opportunity.convertedAt))) {
           await tx.opportunity.updateMany({ where: { id: opportunity.id, organizationId }, data: { convertedAt: null } });
           await tx.opportunityLog.deleteMany({
             where: { opportunityId: opportunity.id, kind: "DEAL_CREATED", occurredAt: opportunity.convertedAt },
@@ -477,7 +518,11 @@ export async function undoLogCore(
                                            ${companyChains.map((chain) => chain.end)}::text[]) AS v(id, start, fin)
                               WHERE c.id = v.id AND c."organizationId" = ${organizationId} AND c.status::text = v.fin`;
       }
-      if (changes.length) await tx.statusChange.deleteMany({ where: { organizationId, batchId } });
+      if (changes.length) await tx.statusChange.deleteMany({ where: { organizationId, batchId: { in: withJoined ? [batchId, joinedId] : [batchId] } } });
+      // A joined step left standing is its own move from here on.
+      if (!withJoined && joinedChanges.length) {
+        await tx.statusChange.updateMany({ where: { organizationId, batchId: joinedId }, data: { batchId: null } });
+      }
       if (eventIds.length) await tx.calendarEvent.deleteMany({ where: { organizationId, batchId } });
       if (activityIds.length) await tx.activity.deleteMany({ where: { organizationId, batchId } });
     },

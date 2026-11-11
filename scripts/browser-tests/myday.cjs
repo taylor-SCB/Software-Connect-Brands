@@ -22,7 +22,7 @@
  * an Owner's bare calendar on a phone swapping to the Agenda. The final
  * audit's cross-area steps (Nov 11, 2026): a rep's own quiet account in the
  * greeting past the workspace's 300 quietest, and the Agenda's Overdue read
- * on its own answering exactly as the Log's.
+ * on its own answering exactly as the Log's, and keeping the Type filter.
  *
  * Runs against a built app and a local Postgres that has had `prisma
  * migrate deploy`. It signs up its own workspace and deletes it again on
@@ -968,6 +968,17 @@ const ago = (days) => `now() - interval '${days} days'`;
   const tom = await agendaOverdue("scope=team&contacts=ctc_md_tom");
   assert.deepEqual(tom, ["ev_md_ag2"], "a contact filter narrows it");
   assert.deepEqual(tom, await logOverdue("scope=team&contacts=ctc_md_tom"));
+
+  log("audit fixes: the Agenda's and the Log's Overdue keep the toolbar's Type: a Call filter lists the overdue call alone, an Install filter no Overdue at all");
+  // loadOverdue spread its own list of overdue types after the filter, so
+  // the type list replaced the Type picked: ?type=Call still listed the
+  // overdue email and text, and ?type=Install every overdue entry.
+  const calls = await agendaOverdue(`users=${M}&type=Call`);
+  assert.deepEqual(calls.filter((id) => id.startsWith("ev_md_ag")), ["ev_md_ag1"], "the overdue Email and Text are not Calls");
+  assert.deepEqual(calls, await logOverdue(`users=${M}&type=Call`), "the Log's Overdue column the same");
+  await am.goto(`${BASE}/dashboard/calendar?view=agenda&users=${M}&type=Install`);
+  await am.locator("[data-testid=agenda]").waitFor();
+  assert.equal(await am.locator("[data-testid=agenda-overdue]").count(), 0, "an Install is a day of work, never overdue");
   await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_md_ag%'`);
   await auditM.close();
 

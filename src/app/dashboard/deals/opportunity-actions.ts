@@ -18,7 +18,7 @@ import { healthSettings, opportunityHealth } from "@/lib/health-load";
 import { zoneDay, type LeadHealth } from "@/lib/health";
 import { loadDealJourney, type JourneyRefs } from "@/lib/deal-journey-load";
 import type { JourneyState } from "@/lib/health-journey";
-import { mayJoinSave, undoLogCore } from "@/lib/undo-log";
+import { joinedBatchId, mayJoinSave, undoLogCore } from "@/lib/undo-log";
 import { updateDealStage } from "./actions";
 
 // The Pipeline's tiles (Oct 27, 2026): open one, move it, convert it to a
@@ -239,8 +239,9 @@ const joinSchema = z.string().trim().min(1).max(200).optional();
 
 // A save a move may write into (`batchId`, so that save's one Undo takes
 // the move back too: "Not moving forward" after a Held, final audit Nov 11,
-// 2026). Only one that exists, by whoever may undo it; a made-up or
-// someone else's batchId is refused rather than quietly joined.
+// 2026). Only one that exists, by whoever may undo it, begun within the
+// save window; a made-up, stale or someone else's batchId is refused rather
+// than quietly joined. The move's rows carry joinedBatchId(batchId).
 async function joinable(session: { organizationId: string; userId: string; role: string }, batchId: string | undefined) {
   if (!batchId) return true;
   return mayJoinSave(session.organizationId, batchId, { userId: session.userId, canManage: session.role === "OWNER" || session.role === "ADMIN" });
@@ -291,7 +292,7 @@ export async function moveOpportunity(id: string, column: string, options: { ear
     if (joined && moved.success !== "No change") {
       await prisma.statusChange.updateMany({
         where: { organizationId, dealId, batchId: null, userId, id: { notIn: earlier } },
-        data: { batchId: joined },
+        data: { batchId: joinedBatchId(joined) },
       });
     }
     return { success: "Moved" };
@@ -442,7 +443,7 @@ export async function convertOpportunity(
         data: { stage, stageChangedAt: at, title, valueCents },
       }),
       prisma.statusChange.create({
-        data: { organizationId, dealId, userId, fromStatus: opportunity.deal.stage, toStatus: stage, on: at, auto: false, batchId: joined ?? null },
+        data: { organizationId, dealId, userId, fromStatus: opportunity.deal.stage, toStatus: stage, on: at, auto: false, batchId: joined ? joinedBatchId(joined) : null },
       }),
     ]);
   } else {
@@ -462,11 +463,11 @@ export async function convertOpportunity(
       return { error: "Someone else just converted this one. Refresh the board." };
     }
     await prisma.statusChange.create({
-      data: { organizationId, dealId, userId, fromStatus: "LEAD", toStatus: stage, on: at, auto: false, batchId: joined ?? null },
+      data: { organizationId, dealId, userId, fromStatus: "LEAD", toStatus: stage, on: at, auto: false, batchId: joined ? joinedBatchId(joined) : null },
     });
   }
   await prisma.opportunity.updateMany({ where: { id: opportunity.id, organizationId }, data: { stage: "MEETING_COMPLETED" } });
-  await syncOpportunity({ organizationId, userId, batchId: joined ?? null }, opportunity.id);
+  await syncOpportunity({ organizationId, userId, batchId: joined ? joinedBatchId(joined) : null }, opportunity.id);
   if (mode === "manual" && stage === "LOST" && parsed.data.reason) await stampLostReason(organizationId, opportunity.id, parsed.data.reason);
   revalidateBoard();
   return {

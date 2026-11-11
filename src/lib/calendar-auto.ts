@@ -710,6 +710,10 @@ export function canLogOnDone(event: { contactId: string | null; companyId: strin
 // written NO_SHOW (not a touch) and keeps Meeting Set. Any other outcome
 // on an entry dated later today or ahead means it happened now. Every row
 // the save writes carries its batchId, for undoLog.
+// Thrown inside logEventDone's transaction when another save linked the
+// entry first, so this save's lines roll back.
+class AlreadyLogged extends Error {}
+
 export async function logEventDone(input: {
   organizationId: string;
   userId: string;
@@ -766,6 +770,20 @@ export async function logEventDone(input: {
   // with no chip it used to write a line dated ahead that never completed
   // the tile and was counted held anyway once its time came).
   if (meeting && !outcome) outcome = "HELD";
+  const contactIds = [...new Set([event.contactId, ...event.attendees.map((row) => row.id)].filter((id): id is string => Boolean(id)))];
+  // Front desk / main line is always a try (final audit, Nov 11, 2026): an
+  // entry with nobody on it (a front-desk try's follow-up is one) can't be
+  // logged as a talk, a reply or a held meeting — a meeting ticked with no
+  // chip is Held, so that is refused too — or marked Interested / Not
+  // interested, here as in logActivity and afterLog, before anything is
+  // written. The sheet turns those chips off for such an entry.
+  if (!contactIds.length && ((outcome && CONNECT_OUTCOMES.includes(outcome)) || input.mark)) {
+    return {
+      error:
+        "Front desk / main line is a try, not a talk. Put who you spoke or met with on the entry to log a talk, a reply, a held meeting or Interested / Not interested.",
+    };
+  }
+
   if (meeting && outcome === "HELD" && day > today && !input.early) {
     return { error: `This meeting is ${formatDay(`${day}T12:00:00Z`)}. Did it happen early?`, confirmEarly: day };
   }
@@ -781,67 +799,71 @@ export async function logEventDone(input: {
     event.notes.trim() ||
     event.title;
 
-  const contactIds = [...new Set([event.contactId, ...event.attendees.map((row) => row.id)].filter((id): id is string => Boolean(id)))];
   const rows = contactIds.length
     ? contactIds.map((contactId) => ({ contactId, companyId: null as string | null }))
     : [{ contactId: null as string | null, companyId: event.companyId }];
 
-  // Claim the entry before anything is written (final audit, Nov 11, 2026):
-  // the same Done tapped in two tabs, or twice before the first answered,
-  // wrote two lines, held the meeting twice and booked the next step twice.
-  // Only the save that still finds it unlogged, with the tick it read,
-  // goes on; the other stops here. (An entry ticked with "Just tick it",
-  // or by a no-show, can still be logged: the tick it had is what it
-  // must still have.)
+  // The line is the claim (final audit, Nov 11, 2026): the same Done tapped
+  // in two tabs, or twice before the first answered, wrote two lines, held
+  // the meeting twice and booked the next step twice. The lines and the
+  // entry's link to the first of them are one transaction, and the link is
+  // made only while the entry has none; a second save waits on the first's
+  // row lock, then finds it linked, and its lines roll back. A linked entry
+  // can't be mistaken for one ticked with "Just tick it" (no line), which
+  // stays loggable. logActivity's booked-day path and recordMeetingHeld link
+  // the same way (activityId still null), so they can't race this either.
   const doneAt = occurredAt > now ? now : occurredAt;
-  const claimAt = event.doneAt && event.doneAt.getTime() === doneAt.getTime() ? new Date(doneAt.getTime() + 1) : doneAt;
-  const claimed = await prisma.calendarEvent.updateMany({
-    where: { id: event.id, organizationId: input.organizationId, activityId: null, doneAt: event.doneAt },
-    data: { doneAt: claimAt },
-  });
-  if (claimed.count === 0) return { error: "That was just logged, in another tab or by someone else. Refresh to see it." };
-
   const batchId = newBatchId();
-  // The meeting this entry was booked as, with what it was before this
-  // save, for Undo (read before anything below changes it).
-  const { stashMeetingForEvent } = await import("@/lib/undo-log");
-  const booked = meeting
-    ? await stashMeetingForEvent(input.organizationId, event.id, { batchId, userId: input.userId }, { doneAt: event.doneAt })
-    : null;
-
   let written: { id: string }[];
   try {
-    written = await prisma.$transaction(
-      rows.map((row) =>
-        prisma.activity.create({
-          data: {
-            organizationId: input.organizationId,
-            contactId: row.contactId,
-            companyId: row.companyId,
-            projectId: event.projectId,
-            userId: input.userId,
-            type: input.activityType,
-            outcome,
-            body,
-            batchId,
-            occurredAt,
-          },
-          select: { id: true },
-        }),
-      ),
-    );
+    written = await prisma.$transaction(async (tx) => {
+      const lines: { id: string }[] = [];
+      for (const row of rows) {
+        lines.push(
+          await tx.activity.create({
+            data: {
+              organizationId: input.organizationId,
+              contactId: row.contactId,
+              companyId: row.companyId,
+              projectId: event.projectId,
+              userId: input.userId,
+              type: input.activityType,
+              outcome,
+              body,
+              batchId,
+              occurredAt,
+            },
+            select: { id: true },
+          }),
+        );
+      }
+      const linked = await tx.calendarEvent.updateMany({
+        where: { id: event.id, organizationId: input.organizationId, activityId: null },
+        data: { activityId: lines[0].id, doneAt },
+      });
+      if (linked.count === 0) throw new AlreadyLogged();
+      return lines;
+      // A save that finds another tab mid-write waits for it here (its row
+      // lock), so it gets more than Prisma's default 5 s.
+    }, { timeout: 15_000 });
   } catch (err) {
-    // Nothing was logged: the entry goes back to how it was.
-    await prisma.calendarEvent.updateMany({
-      where: { id: event.id, organizationId: input.organizationId, activityId: null, doneAt: claimAt },
-      data: { doneAt: event.doneAt },
-    });
+    if (err instanceof AlreadyLogged) return { error: "That was just logged, in another tab or by someone else. Refresh to see it." };
     throw err;
   }
-  await prisma.calendarEvent.update({
-    where: { id: event.id },
-    data: { doneAt, activityId: written[0].id },
-  });
+
+  // The meeting this entry was booked as, with what it was before this
+  // save, for Undo — only once this save has won the entry, so a losing tab
+  // never writes over the winner's stash. The tick and the line are as this
+  // save found them, before its own link.
+  const { stashMeetingForEvent } = await import("@/lib/undo-log");
+  const booked = meeting
+    ? await stashMeetingForEvent(
+        input.organizationId,
+        event.id,
+        { batchId, userId: input.userId },
+        { doneAt: event.doneAt, activityId: event.activityId },
+      )
+    : null;
   const who = { organizationId: input.organizationId, userId: input.userId, batchId };
   const companyOnly = contactIds.length ? null : event.companyId;
   const notices: string[] = [];

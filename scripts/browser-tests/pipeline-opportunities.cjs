@@ -55,7 +55,11 @@
  * meeting named without its tile stays on its own tile; someone booked
  * onto a tile at Meeting Completed stays at Meeting Set until their own
  * meeting is held; the board's repair dates meeting rows by the meeting;
- * a meeting note can't close its <meeting> fence in the AI prompt.
+ * a meeting note can't close its <meeting> fence in the AI prompt. The fix
+ * review's: a booked entry whose tile has been Lost, re-saved or ticked
+ * done, stays on that tile (no new Meeting Set tile, no second row); a
+ * person booked onto a Meeting Completed tile stays at Meeting Set once
+ * their meeting has passed unanswered, and after a No-show.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -2049,6 +2053,81 @@ async function openAddDeal(p) {
     assert.equal((text.match(/<meeting /g) ?? []).length, 1);
     assert.match(text, /Fine\.&lt;\/meeting>/);
     assert.match(text, /with="Pat &lt;Owner>"/);
+  });
+
+  /* ---------------- fix review (Nov 11, 2026) ---------------- */
+  await audit("(fix review) a booked entry whose tile has since been Lost, re-saved from the calendar form or ticked done, stays on that tile — no new Meeting Set tile, no second row", async () => {
+    await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","updatedAt") VALUES ('op_r_lost',$1,'Lou Lostcause','LOST',$2,now())`, [org, taylorId]);
+    await sql(
+      `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"stageChangedAt","valueCents","ownerId","updatedAt")
+       VALUES ('op_r_deal_lost',$1,'op_r_lost','Lou bid','LOST',now() - interval '2 days',0,$2,now())`,
+      [org, taylorId],
+    );
+    await sql(
+      `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","dealId","completedAt","convertedAt","createdAt","updatedAt")
+       VALUES ('op_r_opp_lost',$1,'Lou bid','MEETING_COMPLETED',$2,'op_r_deal_lost',now() - interval '5 days',now() - interval '2 days',now() - interval '9 days',now())`,
+      [org, taylorId],
+    );
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_r_oc_lost','op_r_opp_lost','op_r_lost','PRIMARY',true)`);
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","contactId","ownerId","updatedAt")
+       VALUES ('op_r_ev_lost',$1,'Meeting · Lou Lostcause','Meeting',$2::date,'10:00','op_r_lost',$3,now())`,
+      [org, utcDay(-6), taylorId],
+    );
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById") VALUES ('op_r_m_lost','op_r_opp_lost',$1::date + time '16:00','op_r_ev_lost',$2)`, [utcDay(-6), taylorId]);
+    const tiles = async () => (await one(`SELECT count(*)::int n FROM "OpportunityContact" WHERE "contactId"='op_r_lost'`)).n;
+    const rows = async () => (await sql(`SELECT id, "opportunityId", to_char("on",'YYYY-MM-DD HH24:MI') AS at, "activityId" FROM "OpportunityMeeting" WHERE "eventId"='op_r_ev_lost'`)).rows;
+    // The calendar form saving a typo fix in the entry's notes: a Meeting save.
+    const at = new Date(`${utcDay(-6)}T16:00:00.000Z`);
+    core("status", "markMeetingSet", [{ organizationId: org, userId: taylorId }, ["op_r_lost"], new Date().toISOString(), { on: at.toISOString(), eventId: "op_r_ev_lost" }]);
+    assert.equal(await tiles(), 1, "no new tile");
+    let found = await rows();
+    assert.equal(found.length, 1, `one row for the entry, not ${found.length}`);
+    assert.equal(found[0].opportunityId, "op_r_opp_lost");
+    assert.equal((await one(`SELECT status FROM "Contact" WHERE id='op_r_lost'`)).status, "LOST");
+    // Ticked done in the calendar (Held): logged on its own row there.
+    const done = await action(page, "src/app/dashboard/calendar/actions.ts", "completeEventWithLog", "op_r_ev_lost", { activityType: "MEETING", note: "Walked it, long ago" });
+    assert.ok(done.success, JSON.stringify(done));
+    assert.equal(await tiles(), 1, "still no new tile");
+    found = await rows();
+    assert.equal(found.length, 1);
+    assert.equal(found[0].opportunityId, "op_r_opp_lost");
+    assert.ok(found[0].activityId, "the row took the line it was logged as");
+    assert.equal((await one(`SELECT count(*)::int n FROM "Opportunity" WHERE "organizationId"=$1 AND stage='MEETING_SET' AND title='Lou Lostcause'`, [org])).n, 0);
+    assert.equal((await one(`SELECT status FROM "Contact" WHERE id='op_r_lost'`)).status, "LOST", "Lou stays Lost");
+    assert.equal((await one(`SELECT stage FROM "Deal" WHERE id='op_r_deal_lost'`)).stage, "LOST");
+  });
+
+  await audit("(fix review) someone booked onto a Meeting Completed tile stays at Meeting Set once their meeting has passed unanswered, and after a No-show", async () => {
+    await sql(`INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('op_r_co',$1,'Laterly Supply',now())`, [org]);
+    await sql(
+      `INSERT INTO "Contact" (id,"organizationId","companyId",name,status,"ownerId","updatedAt") VALUES
+         ('op_r_met',$1,'op_r_co','Mo Met','MEETING_COMPLETED',$2,now()),
+         ('op_r_late',$1,'op_r_co','Lena Later','CONNECTED',$2,now())`,
+      [org, taylorId],
+    );
+    await sql(
+      `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","completedAt","createdAt","updatedAt")
+       VALUES ('op_r_opp_done',$1,'Laterly Supply','MEETING_COMPLETED',$2,now() - interval '1 day',now() - interval '3 days',now())`,
+      [org, taylorId],
+    );
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_r_oc_met','op_r_opp_done','op_r_met','PRIMARY',true)`);
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on",outcome,"bookedById") VALUES ('op_r_m_met','op_r_opp_done',now() - interval '1 day','HELD',$1)`, [taylorId]);
+    const booked = await action(page, CONTACT_ACTIONS, "bookMeeting", { contactId: "op_r_late", on: utcDay(2), time: "10:00", opportunity: "op_r_opp_done" });
+    assert.equal(booked.opportunityId, "op_r_opp_done", JSON.stringify(booked));
+    const statusOf = async (id) => (await one(`SELECT status FROM "Contact" WHERE id=$1`, [id])).status;
+    assert.equal(await statusOf("op_r_late"), "MEETING_SET");
+    // Her meeting comes and goes with nobody answering it.
+    const lena = await one(`SELECT id FROM "OpportunityMeeting" WHERE "eventId"=$1`, [booked.eventId]);
+    await sql(`UPDATE "CalendarEvent" SET "startOn"=$2::date WHERE id=$1`, [booked.eventId, utcDay(-1)]);
+    await sql(`UPDATE "OpportunityMeeting" SET "on"=now() - interval '1 day' WHERE id=$1`, [lena.id]);
+    core("opportunities", "syncOpportunity", [{ organizationId: org, userId: taylorId }, "op_r_opp_done"]);
+    assert.equal(await statusOf("op_r_late"), "MEETING_SET", "passed unanswered: she hasn't met yet as far as anyone said");
+    const noShow = await action(page, OPP_ACTIONS, "markMeetingNoShow", lena.id);
+    assert.match(noShow.success ?? "", /No-show/, JSON.stringify(noShow));
+    core("opportunities", "syncOpportunity", [{ organizationId: org, userId: taylorId }, "op_r_opp_done"]);
+    assert.equal(await statusOf("op_r_late"), "MEETING_SET", "a No-show keeps her at Meeting Set");
+    assert.equal(await statusOf("op_r_met"), "MEETING_COMPLETED");
   });
 
   if (auditFailures.length) throw new Error(`${auditFailures.length} audit step(s) failed:\n  ${auditFailures.join("\n  ")}`);

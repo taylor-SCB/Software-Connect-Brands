@@ -8,7 +8,9 @@
  * lists goes live. Since the final audit (Nov 11, 2026) My day, the Daily
  * Rundown and the Agenda are timed again after the calendar seed, beside a
  * done calendar entry for every seeded touch, and the plans are checked for
- * the open-entries and Activity-by-rep indexes.
+ * the open-entries and Activity-by-rep indexes, and (fix review) for the
+ * running-entries index on endOn in the Rundown's On today and a calendar
+ * window.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it.
@@ -363,6 +365,26 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
       `SELECT 1 FROM "Activity" a WHERE a."organizationId" = '${org}' AND a."userId" = '${quietMate}' AND a.marketing = false AND a."createdAt" >= now() - interval '30 days' LIMIT 1`,
     );
     assert.match(sellingPlan, /Activity_organizationId_userId_createdAt_idx/, `sellingReps' probe for a teammate with nothing logged: ${sellingPlan.slice(0, 300)}`);
+    // Fix review (Nov 11, 2026): the reads that take done entries too — the
+    // Rundown's On today count and Done today list, and every calendar
+    // window — have an arm for an entry started before and still running
+    // (endOn), which no index covered, so they read (organizationId,
+    // startOn) from the start of history. With CalendarEvent_runs_endOn_idx
+    // both arms are index reads; neither plan scans the whole range.
+    const day = (offset) => `'${new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10)}'::timestamp`;
+    const onTodayPlan = await planOf(
+      `SELECT count(*) FROM "CalendarEvent" WHERE "organizationId" = '${org}' AND "startOn" <= ${day(0)}
+         AND (("endOn" IS NULL AND "startOn" = ${day(0)}) OR "endOn" >= ${day(0)})`,
+    );
+    assert.match(onTodayPlan, /CalendarEvent_runs_endOn_idx/, `the Rundown's On today reads running entries by their end: ${onTodayPlan.slice(0, 400)}`);
+    assert.doesNotMatch(onTodayPlan, /Seq Scan/, "and never the whole table");
+    const windowPlan = await planOf(
+      `SELECT id FROM "CalendarEvent" WHERE "organizationId" = '${org}'
+         AND (("startOn" >= ${day(-3)} AND "startOn" <= ${day(3)}) OR ("startOn" < ${day(-3)} AND "endOn" >= ${day(-3)}))
+       ORDER BY "startOn" ASC, "startTime" ASC`,
+    );
+    assert.match(windowPlan, /CalendarEvent_runs_endOn_idx/, `a calendar window's "still running" arm reads by end: ${windowPlan.slice(0, 400)}`);
+    assert.doesNotMatch(windowPlan, /Seq Scan/, "and never the whole table");
 
     await timed(page, "audit fixes: My day after the calendar seed (due follow-ups from 3,000 open entries among 100,000 done)", `${BASE}/dashboard?view=myday`, "[data-testid=up-next-row]");
     assert.ok((await page.locator("[data-testid=up-next-row][data-category=late]").count()) > 0, "Up next has the seed's late follow-ups: the due lookup ran on real entries");
