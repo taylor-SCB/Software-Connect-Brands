@@ -169,6 +169,14 @@ model Organization {
   // Other workspaces' supplier records that point at this account.
   platformSupplierLinks Distributor[]          @relation("PlatformSupplier")
 
+  // BDR redesign: optional weekly goals, the try limit before parking a
+  // lead, and the day outcomes started being recorded ("Talks counted from").
+  weeklyTryGoal     Int?
+  weeklyTalkGoal    Int?
+  weeklyMeetingGoal Int?
+  parkAfterTries    Int       @default(6)
+  outcomesSince     DateTime?
+
   @@index([status])
   @@index([accountType, status])
 }
@@ -270,6 +278,10 @@ model User {
   accountTypeDecisions  AccountTypeRequest[]   @relation("AccountTypeDecider")
   productImagesAdded    ProductImage[]         @relation("ProductImageAddedBy")
 
+  // Per-person view choices (list scope, preset, sort, columns, calendar
+  // view), merged key by key and checked when read.
+  uiPrefs Json?
+
   @@index([organizationId])
 }
 
@@ -307,6 +319,9 @@ model PasswordReset {
 enum ContactStatus {
   NOT_ACTIONED
   CONTACTED
+  // BDR redesign (Nov 11, 2026): talked, replied or met. Its own migration
+  // (a Postgres enum value can't be used in the transaction that adds it).
+  CONNECTED
   NOT_INTERESTED
   INTERESTED
   MEETING_SET
@@ -316,6 +331,21 @@ enum ContactStatus {
   WON
   LOST
   ARCHIVED
+}
+
+// How a touch went (BDR redesign, Nov 11, 2026). A connect is TALKED,
+// REPLIED or HELD; empty on old rows means "not recorded" and reads as an
+// attempt, except a past meeting, which reads as held.
+enum ActivityOutcome {
+  NO_ANSWER
+  VOICEMAIL
+  GATEKEEPER
+  BAD_NUMBER
+  TALKED
+  REPLIED
+  SENT
+  HELD
+  NO_SHOW
 }
 
 // A business the workspace sells to. Contacts are the people at it; a
@@ -381,6 +411,9 @@ model Company {
   supplierQuoteLines QuoteLineItem[]    @relation("QuoteLineSupplier")
   photoLinks         ProjectPhotoLink[]
 
+  // Latest connect, its own or its people's, kept by triggers.
+  lastConnectAt DateTime?
+
   @@index([organizationId])
   @@index([organizationId, name])
   @@index([organizationId, updatedAt])
@@ -400,6 +433,7 @@ model Company {
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_name_trgm_idx")
   @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_phone_trgm_idx")
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_city_trgm_idx")
+  @@index([organizationId, lastConnectAt])
 }
 
 // Which side of someone's life an email or phone number belongs to.
@@ -485,6 +519,9 @@ model Contact {
   attending       CalendarEvent[]      @relation("EventAttendees")
   photoGrants     PhotoGrant[]
 
+  // Latest connect (talked, replied, held), kept by triggers like lastTouchAt.
+  lastConnectAt DateTime?
+
   @@index([organizationId])
   @@index([companyId])
   @@index([organizationId, updatedAt])
@@ -501,6 +538,7 @@ model Contact {
   @@index([email2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_email2_trgm_idx")
   @@index([phone2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_phone2_trgm_idx")
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_city_trgm_idx")
+  @@index([organizationId, lastConnectAt])
 }
 
 // Every move up or down the status ladder, for Stats' time-between-
@@ -525,6 +563,9 @@ model StatusChange {
   on             DateTime
   auto           Boolean      @default(false)
   createdAt      DateTime     @default(now())
+
+  // The one-tap reason for Not interested, Lost or a no-show.
+  reason String?
 
   @@index([organizationId, on])
   @@index([contactId])
@@ -682,6 +723,9 @@ model Activity {
   // form (one per batch, on the first contact's row).
   calendarEvent CalendarEvent?
 
+  // BDR redesign: how it went. Null on rows logged before outcomes existed.
+  outcome ActivityOutcome?
+
   @@index([organizationId])
   @@index([contactId])
   @@index([contactId, type])
@@ -690,6 +734,7 @@ model Activity {
   @@index([companyId])
   @@index([projectId])
   @@index([batchId])
+  @@index([contactId, outcome, occurredAt])
 }
 
 // Every quote line must carry one of these so the tag totals grid at the
@@ -2538,6 +2583,10 @@ model OpportunityMeeting {
   activityId    String?
   eventId       String?
   createdAt     DateTime    @default(now())
+
+  // Who booked it (credited with it being held) and how it went.
+  bookedById String?
+  outcome    ActivityOutcome?
 
   @@index([opportunityId])
   @@index([eventId])
