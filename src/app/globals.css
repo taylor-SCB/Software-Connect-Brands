@@ -1306,6 +1306,18 @@
     }
   }
   @media (max-width: 639px) {
+    /* A size container is the box its position:fixed children are placed
+       against, so a strip with a pinned Next stops being one on a phone
+       and collapses by this media query instead (paperwork sprint). */
+    .dj:has(> .dj-row > .dj-next[data-sticky]) {
+      container-type: normal;
+    }
+    .dj:has(> .dj-row > .dj-next[data-sticky]) .dj-steps {
+      display: none;
+    }
+    .dj:has(> .dj-row > .dj-next[data-sticky]) .dj-dots {
+      display: flex;
+    }
     .dj-next[data-sticky] {
       position: fixed;
       inset-inline: 0;

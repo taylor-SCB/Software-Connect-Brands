@@ -4,14 +4,45 @@ import { prisma } from "@/lib/prisma";
 import { Card, CardHeader, BackLink, PageHeader, EmptyState } from "@/components/ui";
 import { IconUsers } from "@/components/icons";
 import { NewQuoteForm } from "./form";
+import { StartQuote } from "./start-quote";
 
 export default async function NewQuotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string; dealId?: string; draft?: string }>;
+  searchParams: Promise<{ contactId?: string; dealId?: string; draft?: string; form?: string }>;
 }) {
   const { organizationId } = await requireSession();
-  const { contactId, dealId, draft } = await searchParams;
+  const { contactId, dealId, draft, form } = await searchParams;
+
+  // Build Quote, or New quote for a deal with no quote yet: skip the setup
+  // form and start the quote titled after the deal (ux-gaps). ?form=1 asks
+  // for the form after all.
+  if (dealId && form !== "1") {
+    const deal = await prisma.deal.findFirst({
+      where: { id: dealId, organizationId },
+      select: { id: true, title: true, _count: { select: { quotes: true } } },
+    });
+    if (deal && deal._count.quotes === 0) {
+      const formParams = new URLSearchParams({ dealId, form: "1" });
+      if (contactId) formParams.set("contactId", contactId);
+      if (draft) formParams.set("draft", draft);
+      return (
+        <div className="max-w-2xl">
+          <BackLink href="/dashboard/quotes" label="Quotes" />
+          <PageHeader eyebrow="Sales" title="New quote" />
+          <Card lit>
+            <StartQuote
+              dealId={deal.id}
+              contactId={contactId ?? null}
+              dealTitle={deal.title}
+              draftFromMeeting={draft === "meeting"}
+              formHref={`/dashboard/quotes/new?${formParams.toString()}`}
+            />
+          </Card>
+        </div>
+      );
+    }
+  }
 
   const [contacts, deals] = await Promise.all([
     prisma.contact.findMany({

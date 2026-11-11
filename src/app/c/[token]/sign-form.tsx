@@ -35,7 +35,10 @@ export function SignForm({
           <input
             id="signerName"
             name="signerName"
-            defaultValue={contactName}
+            // Empty to start (ux-gaps): the words above say typing the name
+            // is the signature, so the app never types it for them.
+            placeholder="Type your full name"
+            autoComplete="name"
             required
             className="input"
           />

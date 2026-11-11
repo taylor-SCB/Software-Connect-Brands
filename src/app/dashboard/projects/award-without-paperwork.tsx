@@ -225,10 +225,11 @@ export function AwardWithoutPaperwork({
             onClick={() => setOpen(true)}
             disabled={openRows.length === 0}
             title={openRows.length === 0 ? "Write the quote first" : undefined}
-            className="btn btn-primary btn-sm"
+            // A text link, not the page's brightest button (BDR redesign,
+            // Release 8): the contract is the way most deals go.
+            className="link min-h-11 text-sm disabled:cursor-not-allowed disabled:text-[var(--text-dim)] disabled:no-underline sm:min-h-0"
             data-testid="award-without-paperwork"
           >
-            <IconHardHat size={13} />
             Award without paperwork
           </button>
         )}

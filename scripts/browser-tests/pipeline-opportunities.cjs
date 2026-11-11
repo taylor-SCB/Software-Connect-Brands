@@ -427,7 +427,14 @@ async function pixelContrast(page, png) {
   assert.equal(await convert.locator("[data-testid=convert-stage-CONTRACT_SENT]").isChecked(), true);
   await convert.locator("[data-testid=convert-mode-quote]").check();
   await convert.locator("[data-testid=convert-save]").click();
-  await page.waitForURL(/\/dashboard\/quotes\/new\?contactId=op_abby&dealId=/);
+  // Build Quote starts the quote on the new deal and opens it (paperwork
+  // sprint: no setup form in between).
+  await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+$/);
+  assert.equal(
+    (await one(`SELECT count(*)::int n FROM "Quote" q JOIN "Deal" d ON d.id=q."dealId" WHERE d."contactId"='op_abby'`)).n,
+    1,
+    "Build Quote made exactly one quote",
+  );
   const abbyDeal = await one(`SELECT d.stage FROM "Deal" d WHERE d."contactId"='op_abby'`);
   assert.equal(abbyDeal.stage, "CONTRACT_SENT");
 
