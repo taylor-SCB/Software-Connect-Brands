@@ -83,7 +83,7 @@ export default async function ContractsPage() {
               <tbody>
                 {contracts.map((contract) => (
                   <tr key={contract.id}>
-                    <td className="num faint text-xs">CON-{contract.number}</td>
+                    <td className="docnum faint text-xs">CON-{contract.number}</td>
                     <td>
                       <Link
                         href={`/dashboard/contracts/${contract.id}`}

@@ -157,7 +157,7 @@ export default async function ProjectsPage({
                         <Link href={`/dashboard/projects/${project.id}`} className="link">
                           {project.name}
                         </Link>
-                        <p className="faint num text-xs">PRJ-{project.number}</p>
+                        <p className="faint docnum text-xs">PRJ-{project.number}</p>
                       </td>
                       <td className="muted text-sm">
                         {project.companyId ? (

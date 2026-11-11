@@ -40,6 +40,17 @@
  * (and the Products tabs) draws no stray bar beside the page you are on,
  * while the sidebar keeps it.
  *
+ * BDR sprint, the look (Nov 11, 2026, "Sprint: ..." steps): the fixed
+ * health tokens in both looks and under the workspace's brand; numbers in
+ * the sans font with even-width digits and document numbers still mono;
+ * status chips on one brand ramp (Connected included), closed grey, words
+ * at 4.5:1; the lifecycle meter, health ring, word, dot and DealJourney
+ * (drawn from scripts/health-check.ts --render onto a card, since no page
+ * mounts them yet) in the health colours with readable words, the next
+ * step outlined, breathing only without reduced motion, solid/outlined in
+ * forced colours, keyboard focus drawn; and on a 390px phone the folded
+ * header, 8px steps, 44px targets and no sideways scroll.
+ *
  * Contrast rule: every sampled piece of text must clear 4.5:1 in Light.
  * Dark is the look as it was before this work and is held to 3:1 so the
  * suite reports it without failing on the slate "Archived"-style chips
@@ -947,6 +958,264 @@ async function textContrast(locator) {
     await settle(page);
     assert.equal(await page.locator("aside a[aria-current=page]").first().evaluate((el) => getComputedStyle(el, "::before").content), '""', "the sidebar keeps its bar");
     assert.equal(await page.locator("main a[aria-current=page]").first().evaluate((el) => getComputedStyle(el, "::before").content), "none", "the Products tabs draw no bar");
+  }
+  await sql(`UPDATE "User" SET theme = NULL WHERE email = $1`, [EMAIL]);
+
+  /* ---------------- BDR sprint: the look and health (Nov 11, 2026) ---------------- */
+  const HEALTH_HEX = {
+    dark: { good: "#0d9488", warn: "#d97706", risk: "#e11d48", none: "#7e889c" },
+    light: { good: "#0d9488", warn: "#d97706", risk: "#be123c", none: "#5b6473" },
+  };
+  const rgbOf = (hex) => `rgb(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)})`;
+  // A computed colour ("rgb(…)", "rgba(…)" or "color(srgb … / a)") as
+  // [r, g, b, a] without a canvas round-trip, which loses the hue of a
+  // 5%-strong fill.
+  const parseColour = (css) => {
+    let m = css.match(/^color\(srgb ([\d.e-]+) ([\d.e-]+) ([\d.e-]+)(?: \/ ([\d.e-]+))?\)$/);
+    if (m) return [+m[1] * 255, +m[2] * 255, +m[3] * 255, m[4] === undefined ? 1 : +m[4]];
+    m = css.match(/^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/);
+    if (m) return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]];
+    throw new Error(`unreadable colour ${css}`);
+  };
+
+  log("Sprint: the health colours are fixed tokens in both looks, the same under the workspace's brand colour");
+  for (const look of LOOKS) {
+    await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+    await page.goto(`${BASE}/dashboard/contacts`);
+    await settle(page);
+    const tokens = await page.evaluate(() => {
+      const read = (el) => {
+        const s = getComputedStyle(el);
+        return Object.fromEntries(["good", "warn", "risk", "none"].map((k) => [k, s.getPropertyValue(`--health-${k}`).trim().toLowerCase()]));
+      };
+      const main = document.querySelector("main");
+      return { root: read(document.documentElement), main: read(main), brand: getComputedStyle(main).getPropertyValue("--brand").trim().toLowerCase() };
+    });
+    assert.deepEqual(tokens.root, HEALTH_HEX[look], `${look}: the health tokens`);
+    assert.deepEqual(tokens.main, HEALTH_HEX[look], `${look}: the same inside the workspace's branded shell`);
+    assert.equal(tokens.brand, BRAND, `${look}: the shell carries the workspace's brand`);
+  }
+
+  log("Sprint: numbers, dates and phones in the normal sans font with even-width digits; document numbers stay mono");
+  {
+    await page.goto(`${BASE}/dashboard/quotes`);
+    await settle(page);
+    const fonts = await page.evaluate(() => {
+      const num = document.querySelector("main .num");
+      const doc = document.querySelector("main .docnum");
+      return {
+        body: getComputedStyle(document.body).fontFamily,
+        num: num && getComputedStyle(num).fontFamily,
+        digits: num && getComputedStyle(num).fontVariantNumeric,
+        doc: doc && getComputedStyle(doc).fontFamily,
+        docText: doc && doc.textContent.trim(),
+      };
+    });
+    assert.ok(fonts.num, "a number on the quotes list");
+    assert.equal(fonts.num, fonts.body, `numbers use the page's own sans font (${fonts.num})`);
+    assert.match(fonts.digits, /tabular-nums/, "with even-width digits");
+    assert.match(fonts.docText, /^QUO-\d+$/);
+    assert.notEqual(fonts.doc, fonts.body);
+    assert.match(fonts.doc, /mono/i, `the document number keeps the mono font (${fonts.doc})`);
+  }
+
+  log("Sprint: status chips are one brand ramp, light to dark (Connected included); closed is grey; no amber or red; words read in both looks");
+  {
+    const LADDER = ["CONTACTED", "CONNECTED", "INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT", "WON"];
+    const seeded = [...LADDER, "NOT_INTERESTED"];
+    for (const [i, status] of seeded.entries()) {
+      await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ($1,$2,$3,$4,now()) ON CONFLICT (id) DO NOTHING`, [
+        `lk_ramp_${i}`,
+        org,
+        `Ramp ${String(i).padStart(2, "0")} ${status}`,
+        status,
+      ]);
+    }
+    const brand = [parseInt(BRAND.slice(1, 3), 16), parseInt(BRAND.slice(3, 5), 16), parseInt(BRAND.slice(5, 7), 16)];
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      await page.goto(`${BASE}/dashboard/contacts`);
+      await settle(page);
+      const chips = await page.evaluate((statuses) =>
+        statuses.map((s) => {
+          const el = document.querySelector(`main .status-chip[data-status="${s}"]`);
+          if (!el) return { s, missing: true };
+          return {
+            s,
+            ramp: el.dataset.ramp,
+            text: el.textContent.trim(),
+            fill: getComputedStyle(el).backgroundColor,
+            dot: getComputedStyle(el.querySelector(".badge-dot")).backgroundColor,
+          };
+        }),
+      seeded);
+      for (const chip of chips) assert.ok(!chip.missing, `${look}: a ${chip.s} chip on the Contacts list`);
+      const ladder = chips.slice(0, LADDER.length).map((chip) => ({ ...chip, fillRgba: parseColour(chip.fill), dotRgba: parseColour(chip.dot) }));
+      for (const chip of ladder) {
+        for (const [k, v] of chip.fillRgba.slice(0, 3).entries()) assert.ok(Math.abs(v - brand[k]) <= 2, `${look} ${chip.s}: the fill is the brand (${chip.fill})`);
+        for (const [k, v] of chip.dotRgba.slice(0, 3).entries()) assert.ok(Math.abs(v - brand[k]) <= 2, `${look} ${chip.s}: the dot is the brand (${chip.dot})`);
+      }
+      for (let i = 1; i < ladder.length; i += 1) {
+        assert.ok(
+          ladder[i].fillRgba[3] > ladder[i - 1].fillRgba[3] && ladder[i].dotRgba[3] >= ladder[i - 1].dotRgba[3],
+          `${look}: ${ladder[i].s} is stronger than ${ladder[i - 1].s} (${ladder[i].fill} vs ${ladder[i - 1].fill})`,
+        );
+      }
+      assert.equal(chips.find((c) => c.s === "CONNECTED").text, "Connected");
+      const closed = chips.find((c) => c.s === "NOT_INTERESTED");
+      assert.equal(closed.ramp, "closed", "Not Interested is grey, off the ramp");
+      assert.equal(parseColour(closed.dot).slice(0, 3).map(Math.round).join(","), rgbOf(HEALTH_HEX[look].none).replace(/[^\d,]/g, ""));
+      for (const status of seeded) {
+        const r = await textContrast(page.locator(`main .status-chip[data-status="${status}"]`).first());
+        assert.ok(r.ratio >= 4.5, `${look}: the ${status} chip's words are ${r.ratio}:1`);
+      }
+    }
+  }
+
+  log("Sprint: the lifecycle meter, health ring, word and dot on a card: fixed health colours, words at 4.5:1, the next step outlined, breathing only without reduced motion, solid and outlined in forced colours");
+  {
+    // The components aren't on any page yet (the screen work mounts them),
+    // so the suite draws them with the app's own stylesheet: the markup
+    // comes from the components rendered on the server by
+    // scripts/health-check.ts --render and is put on a card on Contacts.
+    const { execFileSync } = require("node:child_process");
+    const samples = JSON.parse(
+      execFileSync("npx", ["tsx", "scripts/health-check.ts", "--render"], {
+        cwd: path.join(__dirname, "..", ".."),
+        encoding: "utf8",
+        maxBuffer: 1 << 24,
+      }),
+    );
+    const markup =
+      samples.people.map((p) => `<div data-person="${p.name}" data-tone="${p.tone}" class="space-y-3">${p.header}${p.mini}</div>`).join("") + samples.journey;
+    const inject = (p) =>
+      p.evaluate((html) => {
+        const box = document.createElement("div");
+        box.id = "sprint-health";
+        box.className = "card mb-6 space-y-8 p-5";
+        box.tabIndex = -1;
+        box.innerHTML = html;
+        document.querySelector("main").prepend(box);
+      }, markup);
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      await page.emulateMedia({ reducedMotion: "no-preference", forcedColors: "none" });
+      await page.goto(`${BASE}/dashboard/contacts`);
+      await settle(page);
+      await inject(page);
+      await page.locator("#sprint-health").screenshot({ path: path.join(OUT, `sprint-health-${look}.png`) });
+
+      // The fill of each person's reached steps is their health colour.
+      await page.evaluate(COLOUR_MATHS);
+      const people = await page.evaluate(() => {
+        const { rgba, ratio, behind } = window.__uxColour;
+        return [...document.querySelectorAll("#sprint-health [data-person]")].map((el) => {
+          const seg = el.querySelector('.lm-header .lm-seg[data-state="done"], .lm-header .lm-seg[data-state="current"], .lm-header .lm-seg[data-state="closed"]');
+          const next = el.querySelector('.lm-header .lm-seg[data-state="next"]');
+          const card = document.querySelector("#sprint-health");
+          return {
+            name: el.dataset.person,
+            tone: el.dataset.tone,
+            fill: seg && getComputedStyle(seg).backgroundColor,
+            state: seg && seg.dataset.state,
+            vsCard: seg && ratio(rgba(getComputedStyle(seg).backgroundColor), behind(card)),
+            next: next && { bg: getComputedStyle(next).backgroundColor, ring: getComputedStyle(next).boxShadow },
+          };
+        });
+      });
+      for (const person of people) {
+        if (!person.fill) continue; // Seth: nothing reached yet
+        const expected = person.state === "closed" ? HEALTH_HEX[look].none : HEALTH_HEX[look][person.tone];
+        assert.equal(person.fill, rgbOf(expected), `${look} ${person.name}: the meter is the ${person.tone} health colour`);
+        assert.ok(person.vsCard >= 3, `${look} ${person.name}: the meter's colour is ${person.vsCard}:1 on the card`);
+        if (person.next) {
+          assert.equal(person.next.bg, "rgba(0, 0, 0, 0)", `${look} ${person.name}: the next step is an outline`);
+          assert.match(person.next.ring, /inset/, `${look} ${person.name}: the next step is outlined`);
+        }
+      }
+      assert.ok(people.filter((p) => p.fill).length >= 5, "the sample people were drawn");
+
+      // Words: names, dates, reasons, captions, the word chips, DealJourney.
+      const report = await contrastReport(page, "#sprint-health");
+      assert.ok(report.length > 40, `found the meter's words (${report.length})`);
+      const faint = report.filter((r) => r.ratio < 4.5);
+      assert.equal(faint.length, 0, `${look}: faint words on the meter — ${faint.slice(0, 5).map((r) => `"${r.text}" ${r.ratio}:1`).join("; ")}`);
+      const text = await page.locator("#sprint-health").innerText();
+      assert.doesNotMatch(text, /= \d+|Recent \d+/, "the number is only in the breakdown, never on the card");
+
+      // The current step breathes on the header size; the mini one doesn't.
+      const breathing = await page.evaluate(() => {
+        const header = document.querySelector('#sprint-health [data-person="Jessica Moreno"] .lm-header .lm-seg[data-state="current"]');
+        const mini = document.querySelector('#sprint-health [data-person="Jessica Moreno"] .lm-mini .lm-seg[data-state="current"]');
+        return { header: header.getAnimations().map((a) => a.animationName), mini: mini.getAnimations().length };
+      });
+      assert.deepEqual(breathing.header, ["lmBreathe"], `${look}: the header's current step breathes`);
+      assert.equal(breathing.mini, 0, "the mini size stays still");
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const still = await page.evaluate(() => [...document.querySelectorAll("#sprint-health .lm-seg")].reduce((n, el) => n + el.getAnimations().length, 0));
+      assert.equal(still, 0, `${look}: nothing moves under reduced motion`);
+
+      // Keyboard focus is visible on the meter's controls.
+      await page.locator("#sprint-health").focus();
+      await page.keyboard.press("Tab");
+      const focus = await page.evaluate(() => {
+        const el = document.activeElement;
+        const s = getComputedStyle(el);
+        return { testid: el.dataset.testid, visible: el.matches(":focus-visible"), outline: s.outlineStyle, width: parseFloat(s.outlineWidth) };
+      });
+      assert.equal(focus.testid, "health-word", "the first stop is Kristen's health word");
+      assert.ok(focus.visible && focus.outline !== "none" && focus.width >= 2, `${look}: focus is drawn (${JSON.stringify(focus)})`);
+
+      // High contrast: reached steps solid, the rest outlines.
+      await page.emulateMedia({ reducedMotion: "reduce", forcedColors: "active" });
+      const forced = await page.evaluate(() => {
+        const header = document.querySelector('#sprint-health [data-person="Jessica Moreno"] .lm-header');
+        const done = getComputedStyle(header.querySelector('.lm-seg[data-state="done"]'));
+        const todo = getComputedStyle(header.querySelector('.lm-seg[data-state="todo"]'));
+        return { done: done.backgroundColor, todo: todo.backgroundColor, todoRing: todo.boxShadow };
+      });
+      assert.notEqual(forced.done, forced.todo, `${look}: in forced colours a reached step is solid (${JSON.stringify(forced)})`);
+      assert.match(forced.todoRing, /inset/, `${look}: and a step to come is an outline`);
+      await page.emulateMedia({ reducedMotion: "no-preference", forcedColors: "none" });
+    }
+
+    log("Sprint: on a phone (390px) the meter header names only the current and next step, runs full width at 8px, the mini meter is a 44px target, DealJourney folds to dots, nothing scrolls sideways");
+    const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const phone = await mobile.newPage();
+    for (const look of LOOKS) {
+      await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
+      await phone.goto(`${BASE}/dashboard/contacts`);
+      await settle(phone);
+      await inject(phone);
+      const width = await phone.evaluate(() => document.documentElement.scrollWidth);
+      assert.ok(width <= 391, `${look}: the meter card scrolls sideways on a phone (${width}px)`);
+      const jessica = phone.locator('#sprint-health [data-person="Jessica Moreno"]');
+      assert.equal(await jessica.locator("[data-testid=lifecycle-phone]").innerText(), "Meeting Set → next: Meeting Completed");
+      assert.equal(await jessica.locator(".lm-names").isVisible(), false, "the seven names fold away");
+      const seg = await jessica.locator(".lm-header .lm-seg").first().boundingBox();
+      assert.equal(Math.round(seg.height), 8, "8px steps on a phone");
+      const bars = await jessica.locator(".lm-header .lm-bars").boundingBox();
+      const card = await phone.locator("#sprint-health").boundingBox();
+      assert.ok(bars.width >= card.width - 2 * 21 - 1, `the steps run the card's width (${bars.width} of ${card.width})`);
+      const mini = await jessica.locator("button.lm-mini").boundingBox();
+      assert.ok(mini.height >= 44, `the mini meter is a 44px target on touch (${mini.height})`);
+      // The word chip stays small but a thumb landing just above it still
+      // hits it (a 44px reach on touch screens).
+      const chip = await jessica.locator("button[data-testid=health-word]").boundingBox();
+      const reach = await phone.evaluate(
+        ([x, y]) => document.elementFromPoint(x, y)?.closest("button")?.dataset.testid ?? null,
+        [chip.x + chip.width / 2, chip.y + chip.height / 2 - 20],
+      );
+      assert.ok(chip.height < 44 && reach === "health-word", `the word chip has a 44px reach (${chip.height}px tall, hit ${reach})`);
+      assert.equal(await phone.locator("#sprint-health [data-testid=deal-journey-summary]").isVisible(), true);
+      assert.match(await phone.locator("#sprint-health [data-testid=deal-journey-summary]").innerText(), /Step 4 of 5 · Contract sent/);
+      assert.equal(await phone.locator("#sprint-health .dj-steps").isVisible(), false);
+      const report = await contrastReport(phone, "#sprint-health");
+      const faint = report.filter((r) => r.ratio < 4.5);
+      assert.equal(faint.length, 0, `${look} phone: faint words — ${faint.slice(0, 5).map((r) => `"${r.text}" ${r.ratio}:1`).join("; ")}`);
+      await phone.locator("#sprint-health").screenshot({ path: path.join(OUT, `sprint-health-phone-${look}.png`) });
+    }
+    await mobile.close();
   }
   await sql(`UPDATE "User" SET theme = NULL WHERE email = $1`, [EMAIL]);
 
