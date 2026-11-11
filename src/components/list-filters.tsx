@@ -4,7 +4,7 @@ import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition 
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles, IconFileText } from "@/components/icons";
-import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES, type ContactStatusValue } from "@/lib/constants";
+import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, INDIVIDUAL_COMPANY_TYPE, type ContactStatusValue } from "@/lib/constants";
 import {
   listHref,
   activeFilterCount,
@@ -18,8 +18,11 @@ import {
   type Presence,
   type ListScope,
   type ListSort,
+  type PulseKey,
   LIST_SCOPES,
-  LIST_SORTS,
+  PULSE_KEYS,
+  PULSE_LABELS,
+  sortsFor,
   SCOPE_LABELS,
   SORT_LABELS,
   PRESET_LABELS,
@@ -54,7 +57,8 @@ function useIsPhone() {
 
 // The bar above the Contacts and Companies lists (BDR redesign, Nov 11,
 // 2026): [Mine | Everyone | Unowned], the search box, Filters (n), Sort,
-// Columns and rows per page on one line, the one-tap presets under it, and
+// and Columns on one line (rows per page is in the list's footer since
+// round 2), the one-tap presets under it, and
 // the active filters as chips that come off with a tap. Every filter there
 // was before is still here, one tap deeper, grouped Who / Stage / Where /
 // Data quality in the Filters panel (a bottom sheet on a phone). Every
@@ -176,7 +180,7 @@ export function ListFilters({
             className="select input-sm min-h-[44px] w-[11.5rem] py-1 pr-7 md:min-h-0"
           >
             {sort === "meeting" && <option value="meeting">Meeting time</option>}
-            {LIST_SORTS.map((key) => (
+            {sortsFor(kind).map((key) => (
               <option key={key} value={key}>
                 {SORT_LABELS[key]}
               </option>
@@ -184,24 +188,6 @@ export function ListFilters({
           </select>
         </label>
   );
-  const perPageControl = (
-<label className="flex items-center gap-1.5 text-xs">
-          <span className="faint">Per page</span>
-          <select
-            value={params.per}
-            onChange={(event) => go({ per: Number(event.target.value) })}
-            aria-label="Rows per page"
-            className="select input-sm min-h-[44px] w-[4.75rem] py-1 pr-7 md:min-h-0"
-          >
-            {PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
-  );
-
   const groups = (
     <div className="space-y-3" data-testid="filters-panel">
       <FilterGroup title="Who">
@@ -237,6 +223,17 @@ export function ListFilters({
             onToggle={(value) => go({ statuses: toggle(params.statuses, value as ContactStatusValue) as ContactStatusValue[] })}
             onClear={() => go({ statuses: [] })}
             empty="No statuses."
+          />
+        )}
+        {kind === "contacts" && (
+          <MultiSelect
+            label="Pulse"
+            values={params.pulses}
+            choices={[...PULSE_KEYS]}
+            labels={PULSE_LABELS}
+            onToggle={(value) => go({ pulses: toggle(params.pulses, value) as PulseKey[] })}
+            onClear={() => go({ pulses: [] })}
+            empty="No choices."
           />
         )}
         <ActivitySelect value={params.act} onPick={(act) => go({ act })} />
@@ -391,12 +388,10 @@ export function ListFilters({
             <ColumnsMenu kind={kind} columns={columns} onSave={(next) => remember({ columns: next })} />
           </div>
         )}
-
-        <div className="hidden md:ml-auto md:flex">{perPageControl}</div>
       </div>
 
       {(lock.fav || lock.deals || lock.interested) && (
-        <div className="flex justify-end md:hidden">
+        <div className="flex justify-end">
           <SelectToggle />
         </div>
       )}
@@ -414,7 +409,9 @@ export function ListFilters({
               {PRESET_LABELS[kind][preset]}
             </button>
           ))}
-          <span className="order-first shrink-0 md:hidden">
+          {/* Select mode: the row boxes stay out until a row is hovered or
+              focused, or this is on (round 2: on desktop too). */}
+          <span className="order-first shrink-0 md:order-last md:ml-auto">
             <SelectToggle />
           </span>
         </div>
@@ -426,7 +423,6 @@ export function ListFilters({
           <div className="mb-3">
             <FilterGroup title="Order">
               {sortControl}
-              {perPageControl}
             </FilterGroup>
           </div>
           {groups}
@@ -491,6 +487,11 @@ export function ListFilters({
           {params.mobile && <Chip onRemove={() => go({ mobile: "" })}>{presenceLabel("mobile", params.mobile)}</Chip>}
           {params.email && <Chip onRemove={() => go({ email: "" })}>{presenceLabel("email", params.email)}</Chip>}
           {params.phone && <Chip onRemove={() => go({ phone: "" })}>{presenceLabel("phone", params.phone)}</Chip>}
+          {params.pulses.map((pulse) => (
+            <Chip key={`p-${pulse}`} onRemove={() => go({ pulses: toggle(params.pulses, pulse) as PulseKey[] })}>
+              Pulse: {PULSE_LABELS[pulse]}
+            </Chip>
+          ))}
           {params.labels.map((label) => (
             <Chip key={`l-${label}`} onRemove={() => go({ labels: toggle(params.labels, label) })}>
               Lead Label: {labelNames[label] ?? label}

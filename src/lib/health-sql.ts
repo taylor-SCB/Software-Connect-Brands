@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { owedRowsSql } from "@/lib/money";
 import { OVERDUE_TYPES } from "@/lib/calendar-data";
 import { TALK_STATUSES, zoneDay } from "@/lib/health";
+import { PULSE_KEYS, type PulseKey } from "@/lib/list-params";
 
 // The SQL twin of leadHealth() (src/lib/health.ts), for the Contacts
 // list's Pulse filter and sort (BDR redesign, round 2, Nov 11, 2026; the
@@ -25,20 +26,9 @@ import { TALK_STATUSES, zoneDay } from "@/lib/health";
 //
 // Never stored: worked out when the list asks, like the score itself.
 
-// The keys the Pulse filter offers, warmest first — the sort's order.
-export const PULSE_KEYS = ["won", "owes", "warm", "cooling", "cold", "trying", "stalled", "new", "closed"] as const;
-export type PulseKey = (typeof PULSE_KEYS)[number];
-export const PULSE_LABELS: Record<PulseKey, string> = {
-  won: "Won",
-  owes: "Won — owes money",
-  warm: "Warm",
-  cooling: "Cooling",
-  cold: "Cold",
-  trying: "Trying",
-  stalled: "Trying — stalled",
-  new: "New",
-  closed: "Closed",
-};
+// The keys the Pulse filter offers, warmest first (browser-safe, in
+// list-params.ts).
+export { PULSE_KEYS, PULSE_LABELS, type PulseKey } from "@/lib/list-params";
 
 // The same sets leadHealth() reads.
 export const PULSE_CLOSED = ["NOT_INTERESTED", "LOST", "ARCHIVED"] as const;

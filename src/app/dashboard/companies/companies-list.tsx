@@ -10,6 +10,7 @@ import { OPEN_DEAL_STAGES } from "@/lib/constants";
 import { PageHeader, Card, EmptyState, StatusBadge } from "@/components/ui";
 import { IconPlus, IconBuilding, IconGlobe, IconUsers } from "@/components/icons";
 import { parseListParams, listHref, pageWindow, PRESET_LABELS, type ListLock } from "@/lib/list-params";
+import { PAGE_SIZES } from "@/lib/constants";
 import { companyWhere, getFilterOptions, pageIds as listPageIds } from "@/lib/list-query";
 import { resolveListView } from "@/lib/list-prefs";
 import { ListFilters } from "@/components/list-filters";
@@ -278,7 +279,7 @@ export async function CompaniesList({
                                 .reduce((sum, deal) => sum + dealValueCents(deal), 0)
                             : 0;
                         return [
-                          <tr key={company.id} data-testid="company-row">
+                          <tr key={company.id} data-testid="company-row" className="group/row">
                             <td className="whitespace-nowrap pr-0">
                               <RowCheck id={company.id} label={company.name} />
                               <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} />
@@ -403,6 +404,7 @@ export async function CompaniesList({
               pages={window.pages}
               hrefFor={(page) => listHref(basePath, params, { page }, lock)}
               noun="companies"
+              perPage={{ value: params.per, options: PAGE_SIZES.map((size) => ({ size, href: listHref(basePath, params, { per: size }, lock) })) }}
             />
           </Card>
         </BulkAssign>

@@ -49,6 +49,10 @@ export type ListParams = {
   phone: Presence;
   // On an opportunity with this Lead Label (a company: any of its people).
   labels: string[];
+  // Contacts only (round 2, Nov 11, 2026): how warm they are, as the
+  // Pulse cell colours them (PULSE_KEYS; the SQL twin of the health rules,
+  // src/lib/health-sql.ts).
+  pulses: PulseKey[];
   // BDR redesign (Nov 11, 2026). Whose records: Mine, Everyone or Unowned.
   // "" only before the page has filled it in from the person's saved
   // choice or their role (resolveListView in src/lib/list-prefs.ts); every
@@ -67,7 +71,7 @@ export const LIST_SCOPES = ["mine", "all", "unowned"] as const;
 export type ListScope = (typeof LIST_SCOPES)[number];
 export const SCOPE_LABELS: Record<ListScope, string> = { mine: "Mine", all: "Everyone", unowned: "Unowned" };
 
-export const LIST_SORTS = ["touch", "recent", "added", "name", "edited"] as const;
+export const LIST_SORTS = ["touch", "recent", "added", "name", "edited", "pulse"] as const;
 export type ListSort = (typeof LIST_SORTS)[number];
 export const SORT_LABELS: Record<ListSort, string> = {
   touch: "Oldest touch first",
@@ -75,6 +79,27 @@ export const SORT_LABELS: Record<ListSort, string> = {
   added: "Recently added",
   name: "Name",
   edited: "Recently edited",
+  pulse: "Warmest first",
+};
+// Pulse is a person's health, so only the Contacts list sorts by it.
+export function sortsFor(kind: "contacts" | "companies"): readonly ListSort[] {
+  return kind === "contacts" ? LIST_SORTS : LIST_SORTS.filter((sort) => sort !== "pulse");
+}
+
+// The Pulse filter's choices, warmest first (the order Warmest first
+// reads in). Browser-safe; the rules are in src/lib/health-sql.ts.
+export const PULSE_KEYS = ["won", "owes", "warm", "cooling", "cold", "trying", "stalled", "new", "closed"] as const;
+export type PulseKey = (typeof PULSE_KEYS)[number];
+export const PULSE_LABELS: Record<PulseKey, string> = {
+  won: "Won",
+  owes: "Won — owes money",
+  warm: "Warm",
+  cooling: "Cooling",
+  cold: "Cold",
+  trying: "Trying",
+  stalled: "Trying — stalled",
+  new: "New",
+  closed: "Closed",
 };
 
 // The presets. Each is a few filters and an order, worked out in
@@ -117,7 +142,8 @@ export const ACTIVITY_WINDOW_LABELS: Record<ActivityWindow, string> = {
   n90: "Not touched in the last 90 days",
   never: "Never touched",
   // Connected (BDR redesign): a live talk, a reply or a held meeting,
-  // from lastConnectAt. Never connected includes never touched.
+  // from lastConnectAt, or a status that already means a talk (round 2).
+  // Never connected includes never touched.
   nc7: "Not connected in 7 days",
   nc30: "Not connected in 30 days",
   nconn: "Never connected",
@@ -244,6 +270,7 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     email: presence(raw.email),
     phone: presence(raw.phone),
     labels: list(raw.label),
+    pulses: list(raw.pulse).filter((value): value is PulseKey => (PULSE_KEYS as readonly string[]).includes(value)),
     scope: (LIST_SCOPES as readonly string[]).includes(String(raw.scope)) ? (raw.scope as ListScope) : "",
     // Checked against the kind of list by the page (presetsFor).
     preset: typeof raw.preset === "string" && /^[a-z]{1,12}$/.test(raw.preset) ? raw.preset : "",
@@ -282,6 +309,7 @@ export function listHref(basePath: string, params: ListParams, overrides: Partia
   if (next.email) search.set("email", next.email);
   if (next.phone) search.set("phone", next.phone);
   for (const label of next.labels) search.append("label", label);
+  for (const pulse of next.pulses) search.append("pulse", pulse);
   if (next.scope) search.set("scope", next.scope);
   if (next.preset) search.set("preset", next.preset);
   if (next.sort) search.set("sort", next.sort);
@@ -309,7 +337,8 @@ export function activeFilterCount(params: ListParams, lock: ListLock = {}) {
     (params.mobile ? 1 : 0) +
     (params.email ? 1 : 0) +
     (params.phone ? 1 : 0) +
-    params.labels.length
+    params.labels.length +
+    params.pulses.length
   );
 }
 
@@ -336,6 +365,7 @@ export const NO_FILTERS = {
   email: "",
   phone: "",
   labels: [],
+  pulses: [],
 } satisfies Partial<ListParams>;
 
 // The address-bar keys that are a filter, a search or a page: an address
@@ -343,7 +373,7 @@ export const NO_FILTERS = {
 // company page), so it opens as written rather than on the saved view.
 export const VIEW_KEYS = [
   "q", "page", "per", "state", "industry", "type", "company", "status", "fav", "deals", "attn", "auto", "owed",
-  "act", "title", "rep", "by", "from", "to", "mobile", "email", "phone", "label", "scope", "preset", "sort",
+  "act", "title", "rep", "by", "from", "to", "mobile", "email", "phone", "label", "pulse", "scope", "preset", "sort",
 ] as const;
 
 export function pageWindow(total: number, per: number, page: number) {

@@ -23,11 +23,14 @@ export function CleanUpMenu({
   kind,
   reps,
   openImport = false,
+  importAssignTo = "",
 }: {
   kind: "contacts" | "companies";
   reps: { id: string; name: string; removed?: boolean }[];
   // Open Import CSV on arrival (?import=1).
   openImport?: boolean;
+  // Who Import CSV's "Assign everyone in this file to" starts on.
+  importAssignTo?: string;
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -44,7 +47,7 @@ export function CleanUpMenu({
       {/* The real buttons, hidden; their dialogs are their siblings and show. */}
       <span ref={host} className="contents">
         <span className="contents [&>button]:hidden">
-          <ImportCsvButton kind={kind} reps={reps} startOpen={openImport} />
+          <ImportCsvButton kind={kind} reps={reps} startOpen={openImport} defaultAssignTo={importAssignTo} />
         </span>
         <span className="contents [&>button]:hidden">
           <MergeButton kind={kind} />

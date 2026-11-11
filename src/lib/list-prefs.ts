@@ -1,7 +1,7 @@
 import { readUiPrefsWithLegacy } from "@/lib/user-prefs";
 import {
   LIST_SCOPES,
-  LIST_SORTS,
+  sortsFor,
   VIEW_KEYS,
   presetsFor,
   type ListLock,
@@ -67,6 +67,11 @@ export async function resolveListView(
 
   const params: ListParams = { ...parsed, me: viewer.userId };
   if (!presets.includes(params.preset)) params.preset = "";
+  // Pulse (the filter and Warmest first) is the Contacts list's only.
+  if (kind === "companies") {
+    params.pulses = [];
+    if (params.sort === "pulse") params.sort = "";
+  }
 
   if (bare) {
     params.scope = choice<ListScope>(prefs, `${kind}.scope`, LIST_SCOPES) ?? (member ? "mine" : "all");
@@ -74,7 +79,7 @@ export async function resolveListView(
       const saved = choice(prefs, `${kind}.preset`, [...presets, "none"]);
       params.preset = saved === "none" ? "" : saved ?? (member && kind === "contacts" ? "call" : "");
     }
-    params.sort = choice<ListSort>(prefs, `${kind}.sort`, LIST_SORTS) ?? "";
+    params.sort = choice<ListSort>(prefs, `${kind}.sort`, sortsFor(kind)) ?? "";
   } else if (!params.scope) {
     params.scope = "all";
   }
