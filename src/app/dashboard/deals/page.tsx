@@ -17,6 +17,7 @@ import { ruleLeadLabels } from "@/lib/ai-assist";
 import { aiConfigured } from "@/lib/ai";
 import { healthSettings, loadOpportunityHealth } from "@/lib/health-load";
 import { zoneDay } from "@/lib/health";
+import { prefChoice, readUiPrefsWithLegacy, type UiPrefs } from "@/lib/user-prefs";
 import { Prisma } from "@/generated/prisma/client";
 import { PipelineBoard, type BoardTile } from "./pipeline-board";
 import { PipelineFilters } from "./pipeline-filters";
@@ -31,17 +32,24 @@ import { groupOf, meetingFocus, meetingSortKey, tileAction, tileLine, type TileM
 //
 // The bar: Mine | Everyone (Members open on Mine, approved decision 17;
 // the choice is in the address bar and remembered on User.uiPrefs as
-// pipelineScope), Search, Gone quiet, Needs a decision (Meeting Set tiles
+// pipeline.scope), Search, Gone quiet, Needs a decision (Meeting Set tiles
 // whose meeting has passed with none ahead), Lead label. Show archived,
 // Contract Coordinator and New quote sit under the header's ⋯.
 
 type Scope = "mine" | "all";
+const SCOPES = ["mine", "all"] as const;
 
-function scopeFrom(param: string | undefined, prefs: unknown, role: string): Scope {
+// The address bar first, then the person's last pick (uiPrefs
+// pipeline.scope, saved with saveUiPref like every other screen's), then
+// their role's default. The Pipeline's first build saved the pick at the
+// top level as pipelineScope; that is read while pipeline.scope isn't
+// set, so nobody loses it, and the next pick writes the namespaced one,
+// which wins from then on.
+function scopeFrom(param: string | undefined, saved: { prefs: UiPrefs; legacy: Record<string, unknown> }, role: string): Scope {
   if (param === "mine" || param === "all") return param;
-  const saved = prefs && typeof prefs === "object" && !Array.isArray(prefs) ? (prefs as Record<string, unknown>).pipelineScope : null;
-  if (saved === "mine" || saved === "all") return saved;
-  return role === "MEMBER" ? "mine" : "all";
+  const legacy = saved.legacy.pipelineScope;
+  const remembered = prefChoice(saved.prefs, "pipeline", "scope", SCOPES) ?? (legacy === "mine" || legacy === "all" ? legacy : null);
+  return remembered ?? (role === "MEMBER" ? "mine" : "all");
 }
 
 // Meeting Set tiles whose meeting has passed with nothing ahead: the
@@ -136,11 +144,8 @@ export default async function DealsPage({
   const decideOnly = params.decide === "1";
   const q = cleanSearch(params.q ?? "").slice(0, 80);
   const labels = (Array.isArray(params.label) ? params.label : params.label ? [params.label] : []).map((label) => label.slice(0, 60));
-  const [settings, me] = await Promise.all([
-    healthSettings(organizationId),
-    prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } }),
-  ]);
-  const scope = scopeFrom(params.scope, me?.uiPrefs, role);
+  const [settings, saved] = await Promise.all([healthSettings(organizationId), readUiPrefsWithLegacy(userId)]);
+  const scope = scopeFrom(params.scope, saved, role);
   const timeZone = settings.timeZone;
   const today = todayIso(timeZone);
 

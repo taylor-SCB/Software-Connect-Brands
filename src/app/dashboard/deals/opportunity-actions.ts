@@ -15,7 +15,8 @@ import { cleanTime, isRealDay } from "@/lib/calendar";
 import { meetingHeldAnswer, meetingNoShowAnswer, meetingRescheduleAnswer } from "@/lib/meetings";
 import { healthSettings, opportunityHealth } from "@/lib/health-load";
 import { zoneDay, type LeadHealth } from "@/lib/health";
-import { Prisma } from "@/generated/prisma/client";
+import { loadDealJourney, type JourneyRefs } from "@/lib/deal-journey-load";
+import type { JourneyState } from "@/lib/health-journey";
 import { updateDealStage } from "./actions";
 
 // The Pipeline's tiles (Oct 27, 2026): open one, move it, convert it to a
@@ -80,6 +81,11 @@ export type OpportunityDetail = {
   // The full meter and its reason (src/lib/health.ts); null if it could
   // not be read.
   health: LeadHealth | null;
+  // The DealJourney strip (Meeting · Quote · Contract · Signed · Deposit)
+  // and what its Next acts on, read the way the Contract Coordinator reads
+  // it: the deal's main quote and every money-in contract on the deal.
+  // Only for a tile with a deal, and only for the panel that is open.
+  journey: { journey: JourneyState; refs: JourneyRefs } | null;
   today: string;
   timeZone: string;
 };
@@ -153,7 +159,7 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
   // note and outcome from the history line it was logged as.
   const eventIds = opportunity.meetings.map((row) => row.eventId).filter((value): value is string => Boolean(value));
   const activityIds = opportunity.meetings.map((row) => row.activityId).filter((value): value is string => Boolean(value));
-  const [events, activities, health] = await Promise.all([
+  const [events, activities, health, journey] = await Promise.all([
     eventIds.length
       ? prisma.calendarEvent.findMany({
           where: { organizationId, id: { in: eventIds } },
@@ -164,6 +170,11 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
       ? prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, body: true, outcome: true } })
       : [],
     opportunityHealth(organizationId, opportunity.id, { settings, now }).catch(() => null),
+    deal
+      ? loadDealJourney(organizationId, timeZone, { dealId: deal.id, page: "coordinator" })
+          .then((loaded) => (loaded ? { journey: loaded.journey, refs: loaded.refs } : null))
+          .catch(() => null)
+      : null,
   ]);
   const eventById = new Map(events.map((row) => [row.id, row]));
   const activityById = new Map(activities.map((row) => [row.id, row]));
@@ -216,6 +227,7 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
     users: users.map((user) => ({ id: user.id, name: user.name })),
     customLabels: labels.map((row) => row.name),
     health,
+    journey,
     today: todayIso(timeZone),
     timeZone,
   };
@@ -416,20 +428,6 @@ export async function convertOpportunity(
     ...(batchId ? { batchId } : {}),
     ...(mode === "quote" ? { quoteUrl: `/dashboard/quotes/new?contactId=${primary.contactId}&dealId=${dealId}` } : {}),
   };
-}
-
-// Mine | Everyone, remembered for this person (User.uiPrefs, merged key by
-// key so it never overwrites another screen's choices).
-export async function setPipelineScope(scope: string): Promise<Result> {
-  const { userId } = await requireSession();
-  const parsed = z.enum(["mine", "all"]).safeParse(scope);
-  if (!parsed.success) return { error: "That view isn't valid" };
-  await prisma.$executeRaw(Prisma.sql`
-    UPDATE "User"
-       SET "uiPrefs" = (CASE WHEN jsonb_typeof("uiPrefs") = 'object' THEN "uiPrefs" ELSE '{}'::jsonb END)
-                       || jsonb_build_object('pipelineScope', ${parsed.data}::text)
-     WHERE id = ${userId}`);
-  return { success: "Saved" };
 }
 
 const saveSchema = z.object({

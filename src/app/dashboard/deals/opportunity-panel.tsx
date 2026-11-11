@@ -1,15 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import type { PipelineColumn } from "@/lib/constants";
 import { dollarsToCents, formatCents } from "@/lib/format";
 import { shortDay, time12 } from "@/lib/health";
 import { LifecycleMeter } from "@/components/lifecycle-meter";
+import { DealJourney } from "@/components/deal-journey";
 import { LeadLabelPicker } from "@/components/lead-label-chip";
-import { IconCalendar, IconClock, IconFileText, IconMail, IconMessage, IconNote, IconPhone, IconPlus, IconX } from "@/components/icons";
+import {
+  IconCalendar,
+  IconCheck,
+  IconClock,
+  IconFileText,
+  IconMail,
+  IconMessage,
+  IconNote,
+  IconPhone,
+  IconPlus,
+  IconSignature,
+  IconX,
+} from "@/components/icons";
+import { JourneyNext, NEXT } from "@/app/dashboard/contracts/journey-next";
+import { setQuoteStatus } from "@/app/dashboard/quotes/actions";
 import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
 import { useBookMeeting } from "@/components/book-meeting/book-meeting";
 import {
@@ -33,8 +48,33 @@ const ROLES: { role: Role; label: string }[] = [
   { role: "HIDDEN", label: "Do Not List" },
 ];
 
+// The meter's own next steps that are paperwork. Once the DealJourney strip
+// has a Next, it does these where the panel is (or opens the page that
+// does), so the meter's button would only say the same thing twice.
+const PAPERWORK_ACTIONS = new Set(["start-quote", "quote-yes", "signing-link", "deposit"]);
+
+// Where the DealJourney strip pins its Next on every other page (its
+// sticky rule in globals.css). In the panel, full screen there, the Next
+// sits in the panel's own footer instead: that is already the foot of the
+// screen, and nothing is position:fixed inside the panel.
+const PHONE_QUERY = "(max-width: 639px)";
+function usePhone() {
+  return useSyncExternalStore(
+    (notify) => {
+      const query = window.matchMedia(PHONE_QUERY);
+      query.addEventListener("change", notify);
+      return () => query.removeEventListener("change", notify);
+    },
+    () => window.matchMedia(PHONE_QUERY).matches,
+    () => false,
+  );
+}
+
 // A tile opened (Oct 27, 2026; BDR redesign, Nov 11, 2026). On top: the
-// full lifecycle meter with its reason and the one next step. Then its
+// full lifecycle meter with its reason and the one next step, and for a
+// tile with a deal the DealJourney strip (Meeting · Quote · Contract ·
+// Signed · Deposit) with its one Next, as on the quote, the Contract
+// Coordinator and the contract (Release 8). Then its
 // name, stage, lead label and rep; the People, each with Call / Text /
 // Email / Log and the Primary POC / Associated POC / Do Not List switch
 // (one each, the other two grey out, one Primary); the meetings with their
@@ -203,7 +243,13 @@ export function OpportunityPanel({
   const primary = people.find((row) => row.role === "PRIMARY");
   const dirty = unsaved();
   const health = detail?.health ?? null;
-  const action = health?.meter.action ?? null;
+  // The DealJourney strip, for a tile with a deal. A lost deal keeps the
+  // strip (how far it got) but offers no next step.
+  const journey = detail?.journey ?? null;
+  const journeyNext = journey && detail?.deal?.stage !== "LOST" ? journey.journey.next : null;
+  const meterAction = health?.meter.action ?? null;
+  const action = meterAction && !(journeyNext && PAPERWORK_ACTIONS.has(meterAction.key)) ? meterAction : null;
+  const phone = usePhone();
   // The meeting "Mark held" means: the latest one gone by with no answer,
   // else the soonest still ahead.
   const toHold =
@@ -238,6 +284,56 @@ export function OpportunityPanel({
     });
   }
 
+  // "Customer said yes" marks the quote Accepted from here and reloads the
+  // panel, so the strip moves on to Make contract. "Make contract" opens
+  // the Contract Coordinator under the Pipeline, the way the panel's own
+  // link does (how I got there is how I go back).
+  function quoteYes(quote: { id: string; number: number }) {
+    start(async () => {
+      const form = new FormData();
+      form.set("quoteId", quote.id);
+      form.set("status", "ACCEPTED");
+      await setQuoteStatus(form);
+      saved(`QUO-${quote.number} accepted`);
+    });
+  }
+  const journeyButton =
+    journey && journeyNext ? (
+      <JourneyNext
+        next={journeyNext}
+        refs={journey.refs}
+        page="coordinator"
+        here={{
+          ...(journey.refs.quote
+            ? {
+                "quote-yes": (
+                  <button
+                    type="button"
+                    onClick={() => quoteYes(journey.refs.quote!)}
+                    disabled={pending}
+                    className={NEXT}
+                    data-testid="journey-next"
+                  >
+                    <IconCheck size={13} />
+                    {journeyNext.label}
+                  </button>
+                ),
+              }
+            : {}),
+          "make-contract": (
+            <Link
+              href={`/dashboard/deals/tracker?dealId=${journey.refs.dealId}${journey.refs.quote ? `&quoteId=${journey.refs.quote.id}` : ""}`}
+              className={NEXT}
+              data-testid="journey-next"
+            >
+              <IconSignature size={13} />
+              {journeyNext.label}
+            </Link>
+          ),
+        }}
+      />
+    ) : null;
+
   return (
     <>
       {createPortal(
@@ -247,11 +343,14 @@ export function OpportunityPanel({
         if (event.target === event.currentTarget) onClose();
       }}
     >
+      {/* .popover alone (it overrode everything .card gave): a glass card's
+          blur is the box a pinned button is placed against, and the
+          DealJourney's Next lives in here. */}
       <aside
         role="dialog"
         aria-modal="true"
         aria-label="Opportunity"
-        className="card popover flex h-full w-full max-w-xl flex-col rounded-none"
+        className="popover flex h-full w-full max-w-xl flex-col rounded-none"
         data-testid="opportunity-panel"
       >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--hairline-3)] px-5 py-4">
@@ -303,6 +402,16 @@ export function OpportunityPanel({
                   </div>
                 )}
               </section>
+            )}
+
+            {journey && (
+              <div data-testid="panel-journey">
+                <DealJourney
+                  journey={journey.journey}
+                  tone={health?.tone ?? "good"}
+                  next={phone ? undefined : journeyButton}
+                />
+              </div>
             )}
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
@@ -504,7 +613,7 @@ export function OpportunityPanel({
           </div>
         )}
 
-        <div className="border-t border-[var(--hairline-3)] px-5 py-3">
+        <div className="border-t border-[var(--hairline-3)] px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3">
           {error && (
             <p className="mb-2 text-xs text-[var(--danger)]" data-testid="panel-error">
               {error}
@@ -520,6 +629,13 @@ export function OpportunityPanel({
               </button>
             )}
           </div>
+          {/* On a phone the strip's Next is here, full width at the foot
+              of the full-screen panel, as it is pinned on every other page. */}
+          {phone && journeyButton && (
+            <div className="mt-2.5 flex flex-col" data-testid="panel-journey-next">
+              {journeyButton}
+            </div>
+          )}
         </div>
       </aside>
     </div>,

@@ -38,7 +38,12 @@
  * people rows and meetings; the reworded convert prompt; ?open=<id>
  * opening a tile's panel (from the company page's Opportunity card, past
  * Mine, a search, a label and hidden archived deals, other workspaces'
- * ids ignored); the phone tabs.
+ * ids ignored); the phone tabs. Mine | Everyone is kept at uiPrefs
+ * pipeline.scope (saveUiPref), an older top-level pipelineScope read until
+ * the next pick; the DealJourney strip in the panel of a tile with a deal
+ * (Customer said yes accepting the quote there, Make contract opening the
+ * Coordinator, the meter not repeating it, a lost deal with no Next, and
+ * on a phone the Next full width at the foot of the full-screen panel).
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -923,13 +928,14 @@ async function openAddDeal(p) {
   await until(async () => (await tileOf("op_s_opp_mina").count()) === 0, "Nic's tile off Mine");
   const mineOwners = await page.locator("[data-testid=pipeline-tile] [data-testid=tile-rep]").evaluateAll((els) => [...new Set(els.map((el) => el.dataset.ownerId))]);
   assert.deepEqual(mineOwners, [taylorId], "Mine is the tiles whose rep is me");
-  await until(async () => (await one(`SELECT "uiPrefs"->>'pipelineScope' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "mine", "remembered");
+  await until(async () => (await one(`SELECT "uiPrefs"#>>'{pipeline,scope}' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "mine", "remembered");
   await page.goto(`${BASE}/dashboard/deals`);
   assert.equal(await page.getByTestId("pipeline-scope-mine").getAttribute("aria-pressed"), "true", "Mine remembered for next time");
   assert.equal(await tileOf("op_s_opp_mina").count(), 0);
   await page.getByTestId("pipeline-scope-all").click();
   await tileOf("op_s_opp_mina").waitFor();
-  await until(async () => (await one(`SELECT "uiPrefs"->>'pipelineScope' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "all", "Everyone remembered");
+  await until(async () => (await one(`SELECT "uiPrefs"#>>'{pipeline,scope}' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "all", "Everyone remembered");
+  assert.equal((await one(`SELECT COALESCE("uiPrefs" ? 'pipelineScope', false) AS old FROM "User" WHERE id=$1`, [taylorId])).old, false, "nothing written at the top level any more");
   const nicContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const nicPage = await nicContext.newPage();
   nicPage.on("pageerror", (err) => console.error("PAGE ERROR (Nic):", err.message));
@@ -945,6 +951,32 @@ async function openAddDeal(p) {
   await nicPage.getByTestId("pipeline-scope-all").click();
   await tileOf("op_s_opp_hana", nicPage).waitFor();
   await nicContext.close();
+
+  log("Sprint: Mine | Everyone is uiPrefs pipeline.scope, saved with saveUiPref beside other screens' picks; a pick the first build saved at the top level (pipelineScope) is still read until the next pick, which wins from then on");
+  // What the Pipeline's first build left behind: the pick at the top
+  // level and nothing under pipeline; beside it whatever else Taylor has
+  // saved, and a probe namespace standing in for another screen's.
+  const otherPrefs = (await one(`SELECT COALESCE("uiPrefs", '{}'::jsonb) #- '{pipeline}' AS p FROM "User" WHERE id=$1`, [taylorId])).p;
+  await sql(
+    `UPDATE "User" SET "uiPrefs" = (COALESCE("uiPrefs", '{}'::jsonb) #- '{pipeline}') || '{"pipelineScope":"mine","suiteProbe":{"kept":true}}'::jsonb WHERE id=$1`,
+    [taylorId],
+  );
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tileOf("op_s_opp_hana").waitFor();
+  assert.equal(await page.getByTestId("pipeline-scope-mine").getAttribute("aria-pressed"), "true", "the old top-level pick is still read");
+  assert.equal(await tileOf("op_s_opp_mina").count(), 0, "and narrows the board to Mine");
+  await page.getByTestId("pipeline-scope-all").click();
+  await tileOf("op_s_opp_mina").waitFor();
+  await until(async () => (await one(`SELECT "uiPrefs"#>>'{pipeline,scope}' AS s FROM "User" WHERE id=$1`, [taylorId])).s === "all", "Everyone saved under pipeline");
+  const savedPrefs = (await one(`SELECT "uiPrefs" AS p FROM "User" WHERE id=$1`, [taylorId])).p;
+  assert.deepEqual(savedPrefs.suiteProbe, { kept: true }, "another screen's namespace is left alone");
+  for (const [key, value] of Object.entries(otherPrefs)) assert.deepEqual(savedPrefs[key], value, `uiPrefs.${key} is left alone`);
+  assert.equal(savedPrefs.pipelineScope, "mine", "the old key isn't written to");
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tileOf("op_s_opp_mina").waitFor();
+  assert.equal(await page.getByTestId("pipeline-scope-all").getAttribute("aria-pressed"), "true", "pipeline.scope wins over the old key");
+  assert.equal(new URL(page.url()).searchParams.has("scope"), false, "read from the saved pick, not the address");
+  await sql(`UPDATE "User" SET "uiPrefs" = "uiPrefs" - 'suiteProbe' - 'pipelineScope' WHERE id=$1`, [taylorId]);
 
   log("Sprint: Meeting Set splits into Happened — how did it go? and Coming up; Needs a decision counts and filters the Happened tiles");
   await page.goto(`${BASE}/dashboard/deals`);
@@ -1147,7 +1179,7 @@ async function openAddDeal(p) {
   log("Sprint: ?open= opens the panel — from the company page's Opportunity card, past Mine, a search, a label and hidden archived deals; closing takes it off the address; an unknown or another workspace's id is ignored");
   // A Member with no saved choice opens on Mine (decision 17), and Hana's
   // tile is Taylor's: the company page's link still opens it.
-  await sql(`UPDATE "User" SET "uiPrefs" = "uiPrefs" - 'pipelineScope' WHERE id=$1`, [nicId]);
+  await sql(`UPDATE "User" SET "uiPrefs" = ("uiPrefs" - 'pipelineScope') #- '{pipeline,scope}' WHERE id=$1`, [nicId]);
   const nicOpenContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const nicOpen = await nicOpenContext.newPage();
   nicOpen.on("pageerror", (err) => console.error("PAGE ERROR (Nic, ?open=):", err.message));
@@ -1222,6 +1254,140 @@ async function openAddDeal(p) {
   assert.equal(await phoneOpen.getByRole("tab", { selected: true }).getAttribute("data-testid"), "pipeline-tab-CLOSED", "Walt's Lost tile's tab");
   await phoneOpen.locator("[data-testid=pipeline-column-CLOSED] [data-testid=pipeline-tile][data-id='op_s_opp_walt']").waitFor();
   await phoneOpenContext.close();
+
+  log("Sprint: the DealJourney strip in the panel — a tile with a deal reads Meeting · Quote · Contract · Signed · Deposit with one Next; Customer said yes accepts the quote right there and Make contract opens the Coordinator; the meter doesn't repeat it; no strip without a deal; a lost deal's strip has no Next; on a phone five dots and the Next full width at the foot of the full-screen panel, in no glass card");
+  {
+    const quoteNo = (await one(`UPDATE "Organization" SET "nextQuoteNumber" = "nextQuoteNumber" + 1 WHERE id=$1 RETURNING "nextQuoteNumber" - 1 AS n`, [org])).n;
+    await sql(
+      `INSERT INTO "Contact" (id,"organizationId",name,email,status,"ownerId","updatedAt") VALUES ('op_s_jo',$1,'Jo Journey','jo@journey.test','QUOTE_SENT',$2,now())`,
+      [org, taylorId],
+    );
+    await sql(
+      `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"stageChangedAt","ownerId","updatedAt")
+       VALUES ('deal_s_jo',$1,'op_s_jo','Journey install','QUOTE_SENT',now() - interval '2 days',$2,now())`,
+      [org, taylorId],
+    );
+    await sql(
+      `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","dealId","createdAt","updatedAt")
+       VALUES ('op_s_opp_jo',$1,'Journey Co','MEETING_COMPLETED',$2,'deal_s_jo',now() - interval '8 days',now())`,
+      [org, taylorId],
+    );
+    await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_s_oc_jo','op_s_opp_jo','op_s_jo','PRIMARY',true)`);
+    await sql(
+      `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","bookedById",outcome) VALUES ('op_s_m_jo','op_s_opp_jo',now() - interval '6 days',$1,'HELD')`,
+      [taylorId],
+    );
+    await sql(
+      `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","sentAt","updatedAt")
+       VALUES ('quo_s_jo',$1,'op_s_jo','deal_s_jo',$2,'Journey install','SENT','tok_quo_s_jo_0123456789',now() - interval '2 days',now())`,
+      [org, quoteNo],
+    );
+    await sql(`INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position) VALUES ('qli_s_jo','quo_s_jo','Install',1,250000,'MATERIALS',0)`);
+
+    await page.goto(`${BASE}/dashboard/deals`);
+    const jo = page.locator("[data-testid=pipeline-column-QUOTE_SENT] [data-testid=pipeline-tile][data-id='op_s_opp_jo']");
+    await jo.waitFor();
+    await jo.getByTestId("tile-open").click();
+    const strip = panel.getByTestId("panel-journey").getByTestId("deal-journey");
+    await strip.waitFor();
+    assert.equal(await strip.getAttribute("data-current"), "2", "Meeting and Quote done, Contract next");
+    assert.match(await strip.locator(".dj-steps").getAttribute("aria-label"), /Meeting done.*Quote done \(sent [A-Z][a-z]{2} \d+\).*Contract next.*Signed to come.*Deposit to come/);
+    assert.equal(await strip.locator(".dj-steps").isVisible(), true, "all five steps at desktop width");
+    const stripNext = strip.getByTestId("journey-next");
+    assert.equal((await stripNext.textContent()).trim(), "Customer said yes", "the Next sits in the strip on a desktop");
+    assert.equal(await panel.getByTestId("journey-next").count(), 1, "one Next");
+    assert.equal(await panel.getByTestId("panel-next").count(), 0, "the meter's own Customer said yes isn't repeated");
+    // Customer said yes: the quote is Accepted from the panel, which stays
+    // open and moves the strip on.
+    await stripNext.click();
+    await page.getByTestId("pipeline-notice").getByText(`QUO-${quoteNo} accepted`).waitFor();
+    await until(async () => ((await strip.getByTestId("journey-next").textContent().catch(() => "")) || "").trim() === "Make contract", "Make contract next");
+    assert.equal((await one(`SELECT status FROM "Quote" WHERE id='quo_s_jo'`)).status, "ACCEPTED");
+    assert.ok((await one(`SELECT "respondedAt" FROM "Quote" WHERE id='quo_s_jo'`)).respondedAt, "the answer is dated");
+    assert.match(await strip.locator(".dj-steps").getAttribute("aria-label"), /Quote done \(yes, sent [A-Z][a-z]{2} \d+\)/);
+    assert.equal(await panel.getByTestId("panel-next").count(), 0, "the meter (deal still at Quote Sent) doesn't offer Customer said yes again");
+    assert.equal(await panel.count(), 1, "the panel stays open");
+    // Make contract opens the Contract Coordinator under the Pipeline, on
+    // this deal and its quote, where the strip reads the same.
+    assert.equal(await strip.getByTestId("journey-next").getAttribute("href"), "/dashboard/deals/tracker?dealId=deal_s_jo&quoteId=quo_s_jo");
+    await shot(page, "12-sprint-panel-journey");
+    await strip.getByTestId("journey-next").click();
+    await page.waitForURL(/\/dashboard\/deals\/tracker\?dealId=deal_s_jo&quoteId=quo_s_jo$/);
+    assert.equal((await page.getByTestId("deal-journey").getByTestId("journey-next").textContent()).trim(), "Make contract", "the Coordinator's strip agrees");
+
+    // No deal, no strip.
+    await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_hana`);
+    await panel.locator("[data-testid=panel-person][data-name='Hana Happened']").waitFor();
+    assert.equal(await panel.getByTestId("panel-journey").count(), 0, "an opportunity with no deal has no strip");
+    await panel.getByTestId("panel-close").click();
+    await panel.waitFor({ state: "detached" });
+    // A lost deal: the strip shows how far it got, with nothing to do next.
+    await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_lou`);
+    await panel.locator("[data-testid=panel-person][data-name='Lou Loser']").waitFor();
+    await panel.getByTestId("panel-journey").getByTestId("deal-journey").waitFor();
+    assert.equal(await panel.getByTestId("journey-next").count(), 0, "a lost deal offers no next step");
+    await panel.getByTestId("panel-close").click();
+    await panel.waitFor({ state: "detached" });
+
+    // On a phone: five dots and "Step 3 of 5 · …" in the strip, and the
+    // Next full width at the foot of the full-screen panel, under Close,
+    // covered by nothing and inside no glass card (a blur would trap a
+    // pinned button).
+    const journeyPhoneContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      storageState: await context.storageState(),
+    });
+    const journeyPhone = await journeyPhoneContext.newPage();
+    journeyPhone.on("pageerror", (err) => console.error("PAGE ERROR (phone, journey):", err.message));
+    await journeyPhone.goto(`${BASE}/dashboard/deals?open=op_s_opp_jo`);
+    const phonePanel = journeyPhone.getByTestId("opportunity-panel");
+    const summary = phonePanel.getByTestId("deal-journey-summary");
+    await summary.waitFor();
+    await journeyPhone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    assert.match(await summary.textContent(), /^Step 3 of 5 · Quote/);
+    assert.equal(await summary.locator(".health-dot").count(), 5);
+    assert.equal(await phonePanel.getByTestId("deal-journey").locator(".dj-steps").isVisible(), false, "the five labelled steps fold to dots");
+    assert.equal(await phonePanel.getByTestId("deal-journey").getByTestId("journey-next").count(), 0, "the Next isn't in the strip on a phone");
+    const phoneNext = phonePanel.getByTestId("panel-journey-next").getByTestId("journey-next");
+    assert.equal((await phoneNext.textContent()).trim(), "Make contract");
+    const placed = await phoneNext.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const close = document.querySelector("[data-testid=panel-cancel]").getBoundingClientRect();
+      const panelBox = el.closest("[data-testid=opportunity-panel]").getBoundingClientRect();
+      const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      let fixed = false;
+      for (let node = el; node; node = node.parentElement) {
+        if (node.matches("[data-testid=opportunity-panel]")) break;
+        if (getComputedStyle(node).position === "fixed") fixed = true;
+      }
+      return {
+        width: box.width,
+        height: box.height,
+        bottom: box.bottom,
+        closeBottom: close.bottom,
+        top: box.top,
+        panelWidth: panelBox.width,
+        panelX: panelBox.x,
+        covered: !(top === el || el.contains(top)),
+        inCard: Boolean(el.closest(".card")),
+        fixed,
+        scroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    assert.ok(placed.panelWidth >= 389 && placed.panelX <= 1, `the panel is ${placed.panelWidth}px wide at x=${placed.panelX}`);
+    assert.ok(placed.width >= placed.panelWidth - 48, `the phone's Next is ${placed.width}px in a ${placed.panelWidth}px panel`);
+    assert.ok(placed.height >= 44, `the phone's Next is ${placed.height}px tall`);
+    assert.ok(placed.bottom <= 844 + 1 && placed.bottom >= 844 - 24, `the phone's Next ends at ${placed.bottom}px, not the foot of the screen`);
+    assert.ok(placed.closeBottom <= placed.top, "Close sits above the Next, not under it");
+    assert.equal(placed.covered, false, "nothing covers the Next");
+    assert.equal(placed.inCard, false, "the Next sits in no glass card");
+    assert.equal(placed.fixed, false, "pinned by the panel's own footer, not position:fixed");
+    assert.ok(placed.scroll <= 1, `the phone page scrolls sideways by ${placed.scroll}px`);
+    await journeyPhone.screenshot({ path: path.join(OUT, "12b-sprint-panel-journey-phone.png") });
+    await journeyPhoneContext.close();
+  }
 
   log("Sprint: the phone — sticky stage tabs with counts over one stage's cards, a full-width 44px next-step button on each, nothing sideways, the panel full screen");
   const phoneContext = await browser.newContext({

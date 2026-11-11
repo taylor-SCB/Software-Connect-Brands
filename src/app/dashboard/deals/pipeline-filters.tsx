@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { MultiSelect } from "@/components/list-filters";
 import { IconSearch } from "@/components/icons";
-import { setPipelineScope } from "./opportunity-actions";
+import { saveUiPref } from "@/app/dashboard/prefs-actions";
 
 // The Pipeline's bar (Oct 27, 2026; reordered for the BDR redesign, Nov
 // 11, 2026): Mine | Everyone first (Members open on Mine, approved
@@ -77,8 +77,9 @@ export function PipelineFilters({
   function pickScope(next: "mine" | "all") {
     if (next === scope) return;
     go({ scope: next });
-    // Remembered for next time; the address bar already says it.
-    void setPipelineScope(next).catch(() => {});
+    // Remembered for next time as uiPrefs pipeline.scope; the address bar
+    // already says it.
+    void saveUiPref("pipeline", "scope", next).catch(() => {});
   }
 
   const filtered = Boolean(q) || labels.length > 0 || quiet || decide;
