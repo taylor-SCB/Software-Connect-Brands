@@ -66,6 +66,13 @@ const DEAL_COLUMNS: readonly string[] = ["QUOTE_SENT", "CONTRACT_SENT", "WON", "
 const isDeal = (tile: BoardTile) => Boolean(tile.deal && (DEAL_COLUMNS.includes(tile.deal.stage) || tile.deal.stage === "ARCHIVED"));
 const shownIn = (tile: BoardTile): PipelineColumn => (tile.column === "ARCHIVED" ? "CONTRACT_SENT" : tile.column);
 
+// The board's three groups, in column order (Taylor, Nov 11, 2026).
+const PIPELINE_GROUPS: { key: string; label: string; columns: PipelineColumn[] }[] = [
+  { key: "bdr", label: "BDR", columns: ["MEETING_SET", "MEETING_COMPLETED"] },
+  { key: "closer", label: "Closer", columns: ["QUOTE_SENT", "CONTRACT_SENT"] },
+  { key: "closed", label: "Closed", columns: ["WON", "LOST"] },
+];
+
 // The phone's stage tabs: Set · Met · Quote · Contract · Closed.
 const PHONE_TABS: { key: string; label: string; columns: PipelineColumn[] }[] = [
   { key: "MEETING_SET", label: "Set", columns: ["MEETING_SET"] },
@@ -74,6 +81,13 @@ const PHONE_TABS: { key: string; label: string; columns: PipelineColumn[] }[] = 
   { key: "CONTRACT_SENT", label: "Contract", columns: ["CONTRACT_SENT"] },
   { key: "CLOSED", label: "Closed", columns: ["WON", "LOST"] },
 ];
+
+// The groups over the phone tabs: how many tabs each spans.
+const PHONE_GROUP_SPANS = PIPELINE_GROUPS.map((group) => ({
+  key: group.key,
+  label: group.label,
+  span: new Set(PHONE_TABS.filter((tab) => tab.columns.some((column) => group.columns.includes(column))).map((tab) => tab.key)).size,
+}));
 
 // The phone tab a tile sits under (Set when there's none).
 function tabOf(tile: BoardTile | undefined) {
@@ -369,67 +383,89 @@ export function PipelineBoard({
         <PhoneBoard tiles={tiles} columnOf={columnOf} tab={tab} onTab={setTab} render={(tile) => <Tile key={tile.id} {...tileProps(tile)} />} />
       ) : (
         <TopScroll>
-          <div className="grid min-w-[1096px] gap-2" style={{ gridTemplateColumns: "repeat(6, minmax(176px, 1fr))" }}>
-            {PIPELINE_COLUMNS.map((column) => {
-              const inColumn = tiles.filter((tile) => columnOf(tile) === column);
-              const value = inColumn.reduce((sum, tile) => sum + (tile.deal?.valueCents ?? 0), 0);
-              const meeting = isMeetingColumn(column);
-              const dropOk = dragging
-                ? canDrop(
-                    tiles.find((tile) => tile.id === dragging),
-                    column,
-                  )
-                : false;
-              return (
-                <section
-                  key={column}
-                  aria-label={PIPELINE_COLUMN_LABELS[column]}
-                  className={`card card-lit flex min-w-0 flex-col transition-shadow ${over === column && dropOk ? "ring-2 ring-[var(--brand)]" : ""}`}
-                  data-testid={`pipeline-column-${column}`}
-                  onDragOver={(event) => {
-                    if (!dropOk) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    setOver(column);
-                  }}
-                  onDragLeave={() => setOver((now) => (now === column ? null : now))}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const tile = tiles.find((row) => row.id === event.dataTransfer.getData("text/plain"));
-                    setOver(null);
-                    setDragging(null);
-                    if (tile) move(tile, column);
-                  }}
+          {/* Three groups over the six columns (Taylor, Nov 11, 2026: Won
+              and Lost stay two columns, with Closed over both). Each group is
+              its own subgrid, so the heading spans its two columns and
+              scrolls with them inside the same box as the top scrollbar. */}
+          <div className="grid min-w-[1096px] gap-x-2" style={{ gridTemplateColumns: "repeat(6, minmax(176px, 1fr))" }}>
+            {PIPELINE_GROUPS.map((group) => (
+              <div
+                key={group.key}
+                role="group"
+                aria-labelledby={`pipeline-group-${group.key}-label`}
+                className="col-span-2 grid gap-y-2"
+                style={{ gridTemplateColumns: "subgrid", gridTemplateRows: "auto 1fr" }}
+                data-testid={`pipeline-group-${group.key}`}
+              >
+                <div
+                  id={`pipeline-group-${group.key}-label`}
+                  className="col-span-2 border-b border-[var(--hairline-3)] px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-dim)]"
+                  data-testid="pipeline-group-heading"
                 >
-                  <div className="border-b border-[var(--hairline-3)] px-3 py-2.5">
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="truncate text-sm font-semibold">{PIPELINE_COLUMN_LABELS[column]}</h2>
-                      <span className="num text-xs text-[var(--text-dim)]" data-testid="pipeline-column-count">
-                        {inColumn.length}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <HealthMix tiles={inColumn} />
-                      {!meeting && value > 0 && (
-                        <span className="num shrink-0 text-xs text-[var(--text-dim)]" data-testid="pipeline-column-value">
-                          {formatCents(value)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="min-h-24 flex-1 space-y-2 p-2">
-                    {inColumn.length === 0 && (
-                      <p className="py-4 text-center text-xs text-[var(--text-dim)]">{meeting ? "Nobody here" : "No deals"}</p>
-                    )}
-                    {column === "MEETING_SET" ? (
-                      <MeetingGroups tiles={inColumn} render={(tile) => <Tile key={tile.id} {...tileProps(tile)} />} />
-                    ) : (
-                      inColumn.map((tile) => <Tile key={tile.id} {...tileProps(tile)} />)
-                    )}
-                  </div>
-                </section>
-              );
-            })}
+                  {group.label}
+                </div>
+                {group.columns.map((column) => {
+                  const inColumn = tiles.filter((tile) => columnOf(tile) === column);
+                  const value = inColumn.reduce((sum, tile) => sum + (tile.deal?.valueCents ?? 0), 0);
+                  const meeting = isMeetingColumn(column);
+                  const dropOk = dragging
+                    ? canDrop(
+                        tiles.find((tile) => tile.id === dragging),
+                        column,
+                      )
+                    : false;
+                  return (
+                    <section
+                      key={column}
+                      aria-label={PIPELINE_COLUMN_LABELS[column]}
+                      className={`card card-lit flex min-w-0 flex-col transition-shadow ${over === column && dropOk ? "ring-2 ring-[var(--brand)]" : ""}`}
+                      data-testid={`pipeline-column-${column}`}
+                      onDragOver={(event) => {
+                        if (!dropOk) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setOver(column);
+                      }}
+                      onDragLeave={() => setOver((now) => (now === column ? null : now))}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const tile = tiles.find((row) => row.id === event.dataTransfer.getData("text/plain"));
+                        setOver(null);
+                        setDragging(null);
+                        if (tile) move(tile, column);
+                      }}
+                    >
+                      <div className="border-b border-[var(--hairline-3)] px-3 py-2.5">
+                        <div className="flex items-baseline gap-2">
+                          <h2 className="truncate text-sm font-semibold">{PIPELINE_COLUMN_LABELS[column]}</h2>
+                          <span className="num text-xs text-[var(--text-dim)]" data-testid="pipeline-column-count">
+                            {inColumn.length}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <HealthMix tiles={inColumn} />
+                          {!meeting && value > 0 && (
+                            <span className="num shrink-0 text-xs text-[var(--text-dim)]" data-testid="pipeline-column-value">
+                              {formatCents(value)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="min-h-24 flex-1 space-y-2 p-2">
+                        {inColumn.length === 0 && (
+                          <p className="py-4 text-center text-xs text-[var(--text-dim)]">{meeting ? "Nobody here" : "No deals"}</p>
+                        )}
+                        {column === "MEETING_SET" ? (
+                          <MeetingGroups tiles={inColumn} render={(tile) => <Tile key={tile.id} {...tileProps(tile)} />} />
+                        ) : (
+                          inColumn.map((tile) => <Tile key={tile.id} {...tileProps(tile)} />)
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </TopScroll>
       )}
@@ -672,6 +708,19 @@ function PhoneBoard({
         className="sticky top-0 z-20 -mx-5 mb-3 grid grid-cols-5 gap-1 border-b border-[var(--hairline-3)] bg-[var(--bg)] px-5 py-2"
         data-testid="pipeline-tabs"
       >
+        {/* The group names over the tabs, in the same five-column grid:
+            BDR over Set and Met, Closer over Quote and Contract, Closed over
+            Closed. Words only, so screen readers hear the tabs alone. */}
+        {PHONE_GROUP_SPANS.map((group) => (
+          <span
+            key={group.key}
+            aria-hidden="true"
+            className={`${group.span === 2 ? "col-span-2" : ""} truncate border-b border-[var(--hairline-3)] px-1 text-center text-[11px] font-semibold uppercase leading-4 tracking-wide text-[var(--text-dim)]`}
+            data-testid="pipeline-phone-group"
+          >
+            {group.label}
+          </span>
+        ))}
         {PHONE_TABS.map((row) => (
           <button
             key={row.key}
