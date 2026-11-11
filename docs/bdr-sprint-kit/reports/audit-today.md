@@ -199,7 +199,29 @@ Every proving step is in `scripts/browser-tests/myday.cjs` unless it says otherw
 
 Production build (`npx next build`) against `scb_audit_today`; `npx tsc --noEmit -p .` is clean.
 
-SUITE_RESULTS
+Every suite passes.
+
+| Suite | Result |
+|---|---|
+| myday | 39 / 39, nine of them new audit steps |
+| calendar | 46 / 46 |
+| calendar-v2 | 42 / 42 (failed at step 10 on the base branch; see above) |
+| crews-time | 34 / 34 |
+| looks | 31 / 31 |
+| login-case | all steps pass |
+| overlay-readability | 16 / 16 |
+| companies-contacts | 29 / 29 |
+| pipeline-opportunities | 43 / 43 |
+| reports | 48 / 48 |
+| ai-assist | 28 / 28, one of them a new audit step |
+| load-test | 12 / 12. Slowest page: Contacts "Warmest first", page 2,000, at 1.21 s (budget 2 s) |
+
+The new checks were run against the unfixed code, and every one failed there:
+
+- **The nine `myday` audit steps:** a soft-assert copy of the suite ran against a build of the stashed, unfixed `src`. Every check failed. The failure messages included "5 tabs are covered on a contact's page", "the active tab's words read 3.98:1", "cal-prev is 28px wide", "a long company chip widens the page to 536px", "the Who? list scrolls sideways (836 > 356)" and "only what was on screen was copied: Copy me (Marcus), Not mine (Taylor)".
+- **The `ai-assist` audit step:** built twice against the unfixed `actions.ts`, once without each fix:
+  - without the number check, the "54" sentence was accepted;
+  - without the early allowance check, "My day was read 14 times for a refused rewrite".
 
 ## Notes for CLAUDE.md
 
