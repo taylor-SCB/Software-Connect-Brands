@@ -74,6 +74,14 @@ async function until(fn, what) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+
+// New quote, Additional Account, the status picker and Delete sit under
+// ⋯ More on the contact page (BDR redesign, Release 4).
+async function openMore(p) {
+  const more = p.locator("[data-testid=record-more]");
+  if ((await more.count()) && !(await p.locator("[data-testid=record-more-menu]").count())) await more.click();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE 'test-crm-accounts-co%'`);
 
@@ -119,6 +127,7 @@ async function until(fn, what) {
 
   log("+ Additional Account searches companies with City, State and links several at once");
   await page.goto(`${BASE}/dashboard/contacts/ctc_acc_jordan`);
+  await openMore(page);
   await page.locator("[data-testid=additional-account]").click();
   const dialog = page.locator("[data-testid=additional-account-dialog]");
   await dialog.locator("[data-testid=account-search]").fill("Acme");
@@ -146,6 +155,7 @@ async function until(fn, what) {
   assert.equal((await sql(`SELECT "companyId" FROM "Contact" WHERE id='ctc_acc_jordan'`)).rows[0].companyId, "cmp_acc_main", "main company unchanged");
 
   log("the main company and linked ones show as already linked next time");
+  await openMore(page);
   await page.locator("[data-testid=additional-account]").click();
   await dialog.locator("[data-testid=account-search]").fill("Acme");
   await dialog.locator("[data-testid=account-row]", { hasText: "Dallas" }).getByText("already linked").waitFor();

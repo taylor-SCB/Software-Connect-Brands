@@ -117,6 +117,17 @@ const readableDay = (iso) =>
     timeZone: "UTC",
   }).format(new Date(`${iso}T12:00:00Z`))}`;
 
+
+// The contact page folds its log form into "What happened with …?" (BDR
+// redesign, Nov 11, 2026): open it when the bar is there. A company page
+// shows the form as it is.
+async function openLog(p) {
+  await p.locator("[data-testid=log-bar], [data-testid=log-activity-form]").first().waitFor();
+  const bar = p.locator("[data-testid=log-bar]");
+  if (await bar.count()) await bar.click();
+  await p.locator("[data-testid=log-activity-form]").waitFor();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -180,6 +191,7 @@ const readableDay = (iso) =>
 
   log("a call logged five days ago, with a time, lands on the calendar that day, done");
   await page.goto(`${BASE}/dashboard/contacts/ctc_calv2`);
+  await openLog(page);
   const logForm = page.locator("[data-testid=log-activity-form]");
   await logForm.waitFor();
   assert.equal(await logForm.locator("[data-testid=activity-when]").inputValue(), TODAY, "When defaults to today");

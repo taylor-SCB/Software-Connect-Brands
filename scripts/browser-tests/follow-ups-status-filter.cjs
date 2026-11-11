@@ -119,6 +119,17 @@ async function followUps(org) {
   ).rows;
 }
 
+
+// The contact page folds its log form into "What happened with …?" (BDR
+// redesign, Nov 11, 2026): open it when the bar is there. A company page
+// shows the form as it is.
+async function openLog(p) {
+  await p.locator("[data-testid=log-bar], [data-testid=log-activity-form]").first().waitFor();
+  const bar = p.locator("[data-testid=log-bar]");
+  if (await bar.count()) await bar.click();
+  await p.locator("[data-testid=log-activity-form]").waitFor();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -233,6 +244,7 @@ async function followUps(org) {
 
   log("logging a call opens 'Want to set a follow-up?' with nothing ticked and nothing to add yet");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Left a voicemail about the kitchen quote");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();
@@ -290,6 +302,7 @@ async function followUps(org) {
 
   log("the box opens again for the next touch; No thanks writes nothing");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog(page);
   await form.getByRole("button", { name: "Text", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Texted the revised numbers");
   await form.locator("[data-testid=activity-submit]").click();
@@ -303,6 +316,7 @@ async function followUps(org) {
 
   log("Sprint: a Meeting follow-up is “Try to book a meeting” — a reminder call that moves no status (decision 5)");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_eli`);
+  await openLog(page);
   await form.getByRole("button", { name: "Email", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Sent the brochure");
   await form.locator("[data-testid=activity-submit]").click();
@@ -323,6 +337,7 @@ async function followUps(org) {
 
   log("a day before today is refused, and the box stays open to fix it");
   await page.goto(`${BASE}/dashboard/contacts/ctc_fu_dana`);
+  await openLog(page);
   await form.locator("textarea[name=body]").fill("Quick check-in");
   await form.locator("[data-testid=activity-submit]").click();
   await box.waitFor();

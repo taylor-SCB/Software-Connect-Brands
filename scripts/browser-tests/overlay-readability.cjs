@@ -563,10 +563,26 @@ async function withOldGlass(page, selector, body) {
     ["Merge Contacts", "/dashboard/contacts", (p) => p.getByTestId("merge-open").first()],
     ["Email (Contacts list)", "/dashboard/contacts", (p) => p.getByRole("button", { name: /^Email$/ }).first()],
     ["Email (a contact)", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /^Email$/ }).first()],
-    ["Additional Account", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByTestId("additional-account")],
+    // Under ⋯ More since the BDR redesign (Nov 11, 2026).
+    [
+      "Additional Account",
+      `/dashboard/contacts/${contactIds[0]}`,
+      async (p) => {
+        await p.getByTestId("record-more").click();
+        return p.getByTestId("additional-account");
+      },
+    ],
     // Drawn inside the Log activity card: in Dark that card's glass blur
     // pinned the window to the card.
-    ["+ Include multiple contacts", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /Include multiple contacts/ }).first()],
+    // The log form is folded into "What happened with …?" on a contact page.
+    [
+      "+ Include multiple contacts",
+      `/dashboard/contacts/${contactIds[0]}`,
+      async (p) => {
+        await p.getByTestId("log-bar").click();
+        return p.getByRole("button", { name: /Include multiple contacts/ }).first();
+      },
+    ],
     ["Import CSV (Companies)", "/dashboard/companies", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
   ];
   const openFromTop = async (p, url, button) => {
@@ -576,9 +592,16 @@ async function withOldGlass(page, selector, body) {
       document.getAnimations().every((animation) => animation.playState !== "running" || animation.effect?.getTiming().iterations === Infinity),
     );
     await p.evaluate(() => window.scrollTo(0, 0));
-    await button(p).click();
+    // A button reached by first opening something (⋯ More, the contact
+    // page's folded log form) may sit lower; what is checked is that the
+    // click itself never scrolls the page to find its window.
+    const target = await button(p);
+    await target.scrollIntoViewIfNeeded();
+    const before = await p.evaluate(() => Math.round(scrollY));
+    await target.click();
     await p.locator(".modal-backdrop").last().waitFor();
     await p.waitForTimeout(150);
+    return before;
   };
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const phone = await phoneContext.newPage();
@@ -587,11 +610,13 @@ async function withOldGlass(page, selector, body) {
     await sql(`UPDATE "User" SET theme = $2 WHERE email = $1 AND "organizationId" = $3`, [EMAIL, look, org]);
     for (const [device, p] of [["desktop", page], ["phone", phone]]) {
       for (const [what, url, button] of DIALOGS) {
-        await openFromTop(p, url, button);
+        const before = await openFromTop(p, url, button);
         assert.equal(await p.locator("[data-theme]").first().getAttribute("data-theme"), look);
         // Nothing of the page's fade-in may stay on the column once it ends.
         assert.equal(await p.locator(".fade-up").evaluate((el) => getComputedStyle(el).transform), "none", `${look} ${device}: the page column keeps a transform after fading in`);
-        assertOnScreen(await dialogPlacement(p), `${look} ${device} ${what}`);
+        const at = await dialogPlacement(p);
+        if (at) at.scrollY -= before;
+        assertOnScreen(at, `${look} ${device} ${what}`);
         if (what === "Import CSV") await p.screenshot({ path: path.join(OUT, `ux-${look}-${device}-import-csv.png`) });
       }
     }
@@ -616,6 +641,7 @@ async function withOldGlass(page, selector, body) {
     await sql(`UPDATE "User" SET theme = 'dark' WHERE email = $1 AND "organizationId" = $2`, [EMAIL, org]);
     await page.goto(`${BASE}/dashboard/contacts/${contactIds[0]}`);
     await page.addStyleTag({ content: ".card:has(.modal-backdrop) { backdrop-filter: blur(14px) !important; }" });
+    await page.getByTestId("log-bar").click();
     await page.getByRole("button", { name: /Include multiple contacts/ }).first().click();
     await page.locator(".modal-backdrop").waitFor();
     const trapped = await dialogPlacement(page);

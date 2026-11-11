@@ -8,9 +8,20 @@ import {
   IconPhone,
   IconCalendar,
   IconTrending,
+  IconFileText,
+  IconSignature,
 } from "@/components/icons";
 import { MarketingBadge } from "@/components/crm-cells";
-import { ACTIVITY_LABELS, DEAL_STAGE_COLORS, DEAL_STAGE_LABELS, type ActivityTypeValue, type DealStageValue } from "@/lib/constants";
+import { ActivityDelete } from "@/components/activity-delete";
+import {
+  ACTIVITY_LABELS,
+  ACTIVITY_OUTCOME_LABELS,
+  DEAL_STAGE_COLORS,
+  DEAL_STAGE_LABELS,
+  type ActivityOutcomeValue,
+  type ActivityTypeValue,
+  type DealStageValue,
+} from "@/lib/constants";
 
 const ACTIVITY_ICONS = {
   TEXT: IconMessage,
@@ -19,6 +30,9 @@ const ACTIVITY_ICONS = {
   MEETING: IconCalendar,
   OPPORTUNITY_CREATED: IconTrending,
   DEAL_CREATED: IconTrending,
+  QUOTE_SENT: IconFileText,
+  CONTRACT_SENT: IconSignature,
+  SIGNED: IconSignature,
 } as const;
 
 // The two special lines an opportunity writes (Oct 27, 2026).
@@ -48,7 +62,32 @@ export type ActivityItem = {
   special?: { role: "PRIMARY" | "ASSOCIATED"; stage: string | null } | null;
   // An email marketing send (Nov 10, 2026): on the log, never a touch.
   marketing?: boolean;
+  // How it went (BDR redesign, Nov 11, 2026). A connect (Talked, They
+  // replied, Held — or an old meeting, which counts as met) gets a tag in
+  // the health colour; an attempt reads muted with its outcome in words.
+  // Both optional: a feed that passes neither looks as it did.
+  outcome?: string | null;
+  connect?: boolean;
+  // Quote sent / Contract sent / Signed, read from the paperwork's own
+  // dates: on the history, never a touch.
+  paper?: { href: string; doc: string } | null;
+  // Your own line (or any, for an Owner or Admin): Delete takes back the
+  // save it came from.
+  undoBatchId?: string | null;
 };
+
+// "● Talked" in the health colour, the word in text colour.
+function ConnectTag({ outcome }: { outcome: string | null | undefined }) {
+  const words = outcome ? (ACTIVITY_OUTCOME_LABELS[outcome as ActivityOutcomeValue] ?? outcome) : "Met";
+  return (
+    <span className="health-word mr-1.5 align-middle" data-health="good" data-testid="activity-connect">
+      <span className="health-word-mark" aria-hidden="true">
+        ●
+      </span>
+      {words}
+    </span>
+  );
+}
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {
   if (items.length === 0) {
@@ -101,9 +140,47 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             </li>
           );
         }
+        if (activity.paper) {
+          return (
+            <li key={activity.id} className="flex gap-3 px-5 py-3" data-testid="activity-paper" data-kind={activity.type}>
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--tint-2)] text-[var(--text-dim)]">
+                <Icon size={14} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm leading-relaxed">
+                  <span className="font-semibold">{activity.type === "QUOTE_SENT" ? "Quote sent" : activity.type === "CONTRACT_SENT" ? "Contract sent" : "Signed"}</span>
+                  {" · "}
+                  <Link href={activity.paper.href} className="link">
+                    <span className="docnum">{activity.paper.doc}</span> {activity.body}
+                  </Link>
+                </p>
+                <p className="faint mt-1 text-[0.7rem]">
+                  {activity.userName ? `${activity.userName} · ` : ""}
+                  {activity.when}
+                </p>
+              </div>
+            </li>
+          );
+        }
         const via = activity.via ? [activity.via].flat() : [];
+        // An attempt (no answer, voicemail, sent with no reply, a no-show,
+        // or an old call with nothing recorded) reads muted once outcomes
+        // are being shown; a connect gets its tag.
+        const attempt = activity.connect === false;
+        const outcomeWords = activity.outcome ? (ACTIVITY_OUTCOME_LABELS[activity.outcome as ActivityOutcomeValue] ?? activity.outcome) : null;
+        // The chip's words become the note when none is typed: say them once.
+        const sameWords = Boolean(outcomeWords) && activity.body.trim().toLowerCase().startsWith(outcomeWords!.toLowerCase());
+        const attemptWords = attempt && !sameWords ? outcomeWords : null;
+        const body = activity.connect && sameWords && activity.body.trim().length === outcomeWords!.length ? "" : activity.body;
         return (
-          <li key={activity.id} className="flex gap-3 px-5 py-3" data-testid="activity-line" data-marketing={activity.marketing ? "1" : undefined}>
+          <li
+            key={activity.id}
+            className="flex gap-3 px-5 py-3"
+            data-testid="activity-line"
+            data-marketing={activity.marketing ? "1" : undefined}
+            data-connect={activity.connect === undefined ? undefined : activity.connect ? "1" : "0"}
+            data-outcome={activity.outcome ?? undefined}
+          >
             <div
               className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
               style={{
@@ -114,7 +191,11 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
               <Icon size={14} />
             </div>
             <div className="min-w-0">
-              <p className="text-sm leading-relaxed">{activity.body}</p>
+              <p className={`text-sm leading-relaxed ${attempt ? "muted" : ""}`}>
+                {activity.connect && <ConnectTag outcome={activity.outcome} />}
+                {attemptWords && <span className="muted mr-1.5 text-xs font-medium" data-testid="activity-attempt">{attemptWords} ·</span>}
+                {body}
+              </p>
               <p className="faint mt-1 text-[0.7rem]">
                 {ACTIVITY_LABELS[activity.type as ActivityTypeValue]}
                 {activity.marketing && <MarketingBadge />} · {activity.userName} ·{" "}
@@ -138,6 +219,11 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
                 {activity.others > 0 &&
                   ` · also on ${activity.others} ${activity.others === 1 ? "other" : "others"}`}
               </p>
+              {activity.undoBatchId && (
+                <div className="mt-1">
+                  <ActivityDelete batchId={activity.undoBatchId} others={activity.others} />
+                </div>
+              )}
             </div>
           </li>
         );

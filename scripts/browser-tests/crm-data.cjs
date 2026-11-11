@@ -220,6 +220,8 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.click("button:has-text('Save contact')");
   await page.waitForURL(/\/dashboard\/contacts\/(?!new)[^/]+$/);
   const annId = page.url().split("/").pop();
+  // Added by sits under Reach's "More details" since the BDR redesign.
+  await page.locator("[data-testid=more-details]").click();
   await page.locator("[data-testid=added-by]").waitFor();
   assert.match(await page.locator("[data-testid=added-by]").textContent(), /^Added by Taylor Test · /);
   assert.equal(await page.locator("[data-testid=rep-picker]").inputValue(), "");
@@ -307,7 +309,13 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await line.waitFor();
   assert.match(await line.textContent(), /Emailed “Fall offer”/);
   assert.equal(await line.locator("[data-testid=marketing-badge]").count(), 1, "the feed line wears a Marketing badge");
-  await page.locator("text=No touches yet").waitFor();
+  // A marketing send is no touch: the contact page's meter still reads "Not
+  // tried yet" and the history's chips count nothing (BDR redesign, Nov 11,
+  // 2026; the Activity overview's "No touches yet" sits behind Show counts).
+  await page.locator("[data-testid=lifecycle-reason]").getByText("Not tried yet").waitFor();
+  assert.equal(await page.locator("[data-testid=history-count-all]").count(), 0);
+  await page.locator("[data-testid=show-counts]").click();
+  assert.equal(await page.locator("[data-testid=activity-tile][data-label=Emails]").getAttribute("data-value"), "0");
   assert.deepEqual(await contactsAt(page, "q=Mark%20Mailer&act=never"), ["Mark Mailer"], "a marketing send leaves them Never touched");
   assert.deepEqual(await contactsAt(page, "q=Mark%20Mailer&act=t7"), [], "and not Touched in the last 7 days");
   await shot(page, "01-marketing");
@@ -494,7 +502,9 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
 
   log("a call logged from the page counts at once for the person and their company");
   await page.goto(`${BASE}/dashboard/contacts/${month}`);
-  await page.locator("textarea[name=body]").first().fill("Called about the renewal");
+  // The log form is folded into "What happened with …?" (Nov 11, 2026).
+  await page.locator("[data-testid=log-bar]").click();
+  await page.locator("[data-testid=log-activity-form] textarea[name=body]").fill("Called about the renewal");
   await page.click("button:has-text('Log phone call')");
   for (let i = 0; i < 40; i++) {
     if ((await sql(`SELECT "lastTouchAt" > now() - interval '1 hour' AS t FROM "Company" WHERE id=$1`, [quietCo])).rows[0].t) break;

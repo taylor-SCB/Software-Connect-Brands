@@ -90,6 +90,23 @@ function isoDaysAgo(n) {
   );
 }
 
+
+// The contact page folds its log form into "What happened with …?" (BDR
+// redesign, Nov 11, 2026): open it when the bar is there. A company page
+// shows the form as it is.
+async function openLog(p) {
+  await p.locator("[data-testid=log-bar], [data-testid=log-activity-form]").first().waitFor();
+  const bar = p.locator("[data-testid=log-bar]");
+  if (await bar.count()) await bar.click();
+  await p.locator("[data-testid=log-activity-form]").waitFor();
+}
+// New quote, Additional Account, the status picker and Delete sit under
+// ⋯ More on the contact page (BDR redesign, Release 4).
+async function openMore(p) {
+  const more = p.locator("[data-testid=record-more]");
+  if ((await more.count()) && !(await p.locator("[data-testid=record-more-menu]").count())) await more.click();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE 'test-pipeline-stats-co%'`);
   await sql(`DELETE FROM "User" WHERE email = $1`, [NIC_EMAIL]);
@@ -137,13 +154,16 @@ function isoDaysAgo(n) {
   const ava = page.url().split("/").pop();
   const aster = (await sql(`SELECT "companyId" FROM "Contact" WHERE id=$1`, [ava])).rows[0].companyId;
   assert.equal(await status("Contact", ava), "NOT_ACTIONED");
+  await openMore(page);
   await page.locator("[data-testid=status-picker]").getByText("Not Actioned").waitFor();
+  await page.keyboard.press("Escape");
   log("the edit form no longer carries a Status box — it's the button on the page");
   await page.goto(`${BASE}/dashboard/contacts/${ava}/edit`);
   assert.equal(await page.locator("select[name=status]").count(), 0);
 
   log("the first logged touch makes Ava — and Aster Homes — Contacted");
   await page.goto(`${BASE}/dashboard/contacts/${ava}`);
+  await openLog(page);
   const form = page.locator("[data-testid=log-activity-form]");
   await form.locator("textarea[name=body]").fill("Intro call");
   await form.locator("[data-testid=activity-submit]").click();
@@ -154,6 +174,7 @@ function isoDaysAgo(n) {
 
   log("Interested, set by hand, lands on Interested Contacts and Interested Companies");
   await page.reload();
+  await openMore(page);
   await page.locator("[data-testid=status-picker]").click();
   await page.locator("[data-testid=status-option-INTERESTED]").click();
   await until(async () => (await status("Contact", ava)) === "INTERESTED", "Ava interested");
@@ -181,6 +202,7 @@ function isoDaysAgo(n) {
 
   log("Nic books a meeting with Ava for next week: Meeting Set, credited to Nic, and no deal made");
   await nic.goto(`${BASE}/dashboard/contacts/${ava}`);
+  await openLog(nic);
   const nicForm = nic.locator("[data-testid=log-activity-form]");
   await nicForm.getByRole("button", { name: "Meeting", exact: true }).click();
   await nicForm.locator("textarea[name=body]").fill("Walkthrough at their office");
@@ -205,6 +227,7 @@ function isoDaysAgo(n) {
   log("a meeting logged as held also sets it (Ben)");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('ctc_ps_ben',$1,'Ben Ortiz',now())`, [org]);
   await page.goto(`${BASE}/dashboard/contacts/ctc_ps_ben`);
+  await openLog(page);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Coffee meeting");
   await form.locator("[data-testid=activity-submit]").click();
@@ -231,6 +254,7 @@ function isoDaysAgo(n) {
   log("skipping Ava from Meeting Set to Quote Sent asks both dates, prefilled with the meeting day");
   await sql(`UPDATE "StatusChange" SET "on" = now() - interval '6 days' WHERE "contactId"=$1 AND "toStatus"='MEETING_SET'`, [ava]);
   await page.goto(`${BASE}/dashboard/contacts/${ava}`);
+  await openMore(page);
   await page.locator("[data-testid=status-picker]").click();
   await page.locator("[data-testid=status-option-QUOTE_SENT]").click();
   const dates = page.locator("[data-testid=status-dates]");

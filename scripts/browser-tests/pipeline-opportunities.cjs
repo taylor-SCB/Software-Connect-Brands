@@ -162,6 +162,38 @@ async function pixelContrast(page, png) {
   }, png.toString("base64"));
 }
 
+
+// The contact page folds its log form into "What happened with …?" (BDR
+// redesign, Nov 11, 2026): open it when the bar is there. A company page
+// shows the form as it is.
+async function openLog(p) {
+  await p.locator("[data-testid=log-bar], [data-testid=log-activity-form]").first().waitFor();
+  const bar = p.locator("[data-testid=log-bar]");
+  if (await bar.count()) await bar.click();
+  await p.locator("[data-testid=log-activity-form]").waitFor();
+}
+// New quote, Additional Account, the status picker and Delete sit under
+// ⋯ More on the contact page (BDR redesign, Release 4).
+async function openMore(p) {
+  const more = p.locator("[data-testid=record-more]");
+  if ((await more.count()) && !(await p.locator("[data-testid=record-more-menu]").count())) await more.click();
+}
+
+
+// Add deal: in the Paperwork card's ⋯ from Meeting Completed on, else under
+// the header's ⋯ More (BDR redesign, Nov 11, 2026).
+async function openAddDeal(p) {
+  await p.locator("[data-testid=contact-header]").waitFor();
+  if (await p.locator("[data-testid=paperwork-more]").count()) {
+    await p.locator("[data-testid=paperwork-more]").click();
+    await p.locator("[data-testid=paperwork-add-deal-open]").click();
+  } else {
+    await p.locator("[data-testid=record-more]").click();
+    await p.locator("[data-testid=more-add-deal]").click();
+  }
+  await p.locator("#deal-title").waitFor();
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE '${SLUG}%'`);
 
@@ -210,6 +242,7 @@ async function pixelContrast(page, png) {
 
   log("a meeting logged with Pat and Nic is one opportunity: Pat Primary, Nic Associated, one meeting");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
+  await openLog(page);
   const form = page.locator("[data-testid=log-activity-form]");
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Kickoff at Murphy");
@@ -238,6 +271,7 @@ async function pixelContrast(page, png) {
 
   log("Abby's meeting is her own tile; the board shows both names on Pat's tile and the meeting count");
   await page.goto(`${BASE}/dashboard/contacts/op_abby`);
+  await openLog(page);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Kitchen walk");
   await form.locator("[data-testid=activity-submit]").click();
@@ -420,6 +454,7 @@ async function pixelContrast(page, png) {
 
   log("a deal added on a contact's page with no opportunity gets one (no deal without an opportunity)");
   await page.goto(`${BASE}/dashboard/contacts/op_lone`);
+  await openAddDeal(page);
   await page.fill("#deal-title", "Fence repair");
   await page.locator("form", { has: page.locator("#deal-title") }).getByRole("button", { name: "Add" }).click();
   await until(
@@ -438,6 +473,7 @@ async function pixelContrast(page, png) {
   await page.locator("[data-testid=pipeline-column-WON] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
   await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "WON", "deal saved as Won");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
+  await openLog(page);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Phase two chat");
   await form.locator("[data-testid=activity-submit]").click();
@@ -450,6 +486,7 @@ async function pixelContrast(page, png) {
   log("a status moved by hand to Quote Sent with no deal stays on the board at Meeting Completed (Pat's old bug); only converting makes it a deal");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_hand',$1,'Hand Moved','MEETING_SET',now())`, [org]);
   await page.goto(`${BASE}/dashboard/contacts/op_hand`);
+  await openMore(page);
   await page.locator("[data-testid=status-picker]").click();
   const statusMenu = page.locator("[data-testid=status-menu]");
   await statusMenu.waitFor();

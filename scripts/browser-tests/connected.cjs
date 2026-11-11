@@ -170,6 +170,7 @@ async function meetingAction(page, actor, name, ...args) {
 // The contact or company log form, with the new "How did it go?" fields
 // added as hidden inputs: today's form posts them to logActivity as is.
 async function logWith(page, fields, { body = "", type } = {}) {
+  if (!(await page.locator("[data-testid=log-activity-form]").count())) await openLog(page);
   const form = page.locator("[data-testid=log-activity-form]");
   if (type) await form.getByRole("button", { name: type, exact: true }).click();
   await form.locator("textarea[name=body]").fill(body);
@@ -185,6 +186,17 @@ async function logWith(page, fields, { body = "", type } = {}) {
     }
   }, Object.entries(fields).flatMap(([name, value]) => (Array.isArray(value) ? value.map((v) => [name, v]) : [[name, value]])));
   await form.locator("[data-testid=activity-submit]").click();
+}
+
+
+// The contact page folds its log form into "What happened with …?" (BDR
+// redesign, Nov 11, 2026): open it when the bar is there. A company page
+// shows the form as it is.
+async function openLog(p) {
+  await p.locator("[data-testid=log-bar], [data-testid=log-activity-form]").first().waitFor();
+  const bar = p.locator("[data-testid=log-bar]");
+  if (await bar.count()) await bar.click();
+  await p.locator("[data-testid=log-activity-form]").waitFor();
 }
 
 (async () => {
@@ -481,6 +493,7 @@ async function logWith(page, fields, { body = "", type } = {}) {
 
   log("Sprint: the Done box takes an outcome and the next follow-up, in one save");
   await page.goto(`${BASE}/dashboard/contacts/ctc_cn_moe`);
+  await openLog(page);
   const moeForm = page.locator("[data-testid=log-activity-form]");
   await moeForm.locator("textarea[name=body]").fill("Call Moe about the bid");
   await moeForm.locator("[data-testid=activity-when]").fill(shift(TODAY, 1));
