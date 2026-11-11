@@ -231,8 +231,8 @@ function DailyView({ report }: { report: DailyReport }) {
               <ul className="mt-1 divide-y divide-[var(--hairline-3)] text-sm">
                 {done.map((item) => (
                   <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-done="true">
-                    <span className="min-w-0 truncate">
-                      <span className="line-through">{item.title}</span>
+                    <span className="min-w-0 truncate line-through">
+                      {item.title}
                       <span className="faint block text-[0.7rem]">
                         {item.type} · {item.owner}
                         {item.who ? " · " : ""}
