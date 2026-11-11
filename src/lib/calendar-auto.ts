@@ -760,11 +760,14 @@ export async function logEventDone(input: {
   if (outcome && !OUTCOMES_BY_TYPE[input.activityType].includes(outcome)) {
     return { error: "That outcome doesn't fit that kind of touch" };
   }
+  // A meeting ticked done was held (decision 4), with or without the chip;
+  // one whose day is still ahead asks first (final audit, Nov 11, 2026:
+  // with no chip it used to write a line dated ahead that never completed
+  // the tile and was counted held anyway once its time came).
+  if (meeting && !outcome) outcome = "HELD";
   if (meeting && outcome === "HELD" && day > today && !input.early) {
     return { error: `This meeting is ${formatDay(`${day}T12:00:00Z`)}. Did it happen early?`, confirmEarly: day };
   }
-  // A meeting ticked done that has happened was held.
-  if (meeting && !outcome && occurredAt <= now) outcome = "HELD";
   // Saying how it went means it happened: an entry for later is now.
   if (outcome && occurredAt > now) occurredAt = now;
   const plan = planNextStep(input.next, today);
@@ -782,6 +785,10 @@ export async function logEventDone(input: {
     ? contactIds.map((contactId) => ({ contactId, companyId: null as string | null }))
     : [{ contactId: null as string | null, companyId: event.companyId }];
   const batchId = newBatchId();
+  // The meeting this entry was booked as, with what it was before this
+  // save, for Undo (read before anything below changes it).
+  const { stashMeetingForEvent } = await import("@/lib/undo-log");
+  const booked = meeting ? await stashMeetingForEvent(input.organizationId, event.id, { batchId, userId: input.userId }) : null;
 
   const written = await prisma.$transaction(
     rows.map((row) =>
@@ -817,7 +824,13 @@ export async function logEventDone(input: {
   }
   const { meetingFor, recordMeetingHeld, recordMeetingNoShow, bookMeetingCore } = await import("@/lib/meetings");
   if (meeting && outcome !== "NO_SHOW") {
-    opportunityId = await markMeetingSet(who, contactIds, occurredAt, { activityId: written[0].id, eventId: event.id });
+    // On the tile the entry was booked on, not whichever of theirs was
+    // touched last.
+    opportunityId = await markMeetingSet(who, contactIds, occurredAt, {
+      activityId: written[0].id,
+      eventId: event.id,
+      opportunity: booked?.opportunityId ?? null,
+    });
     if (outcome === "HELD" && occurredAt <= now) {
       const meetingId = await meetingFor(input.organizationId, opportunityId, written[0].id);
       if (meetingId) await recordMeetingHeld(who, meetingId, { early: true });

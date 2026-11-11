@@ -8,7 +8,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { requireAdminSession, requireSession } from "@/lib/session";
 import { keepFields, parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
-import { ACTIVITY_EVENT_TYPE, ACTIVITY_LABELS, ACTIVITY_TYPES, CHANNEL_LABELS, CONNECT_OUTCOMES, START_STATUSES } from "@/lib/constants";
+import { ACTIVITY_EVENT_TYPE, ACTIVITY_LABELS, ACTIVITY_TYPES, CHANNEL_LABELS, CONNECT_OUTCOMES, START_STATUSES, type ActivityOutcomeValue } from "@/lib/constants";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
 import { ensureIndustryOptions, mergeTags, readIndustryFields } from "@/lib/industries";
 import { sameTags, withoutAuto } from "@/lib/enrich";
@@ -29,7 +29,7 @@ import {
 import { markByHand, markConnected, markContacted, markMeetingSet } from "@/lib/status";
 import { ensureOpportunityForDeal, OPEN_OPPORTUNITY } from "@/lib/opportunities";
 import { bookMeetingCore, meetingFor, recordMeetingHeld } from "@/lib/meetings";
-import { newBatchId, undoLogCore } from "@/lib/undo-log";
+import { newBatchId, stashMeetingForEvent, undoLogCore } from "@/lib/undo-log";
 import {
   connectOutcomeFor,
   markSchema,
@@ -390,7 +390,7 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   const reason = mark === "NOT_INTERESTED" ? parsed.data.reason || null : null;
   const next = parsed.data.next;
   // Booking the meeting on the call says how the call went.
-  const outcome = parsed.data.outcome || (next?.kind === "meeting" ? connectOutcomeFor(type) : null);
+  let outcome: ActivityOutcomeValue | null = parsed.data.outcome || (next?.kind === "meeting" ? connectOutcomeFor(type) : null);
   const problem = outcomeProblem(type, outcome);
   if (problem) return { error: problem, kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
   const body = parsed.data.body || outcomeNote({ outcome, mark, reason, booked: next?.kind === "meeting" });
@@ -421,9 +421,15 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   const on = parsed.data.occurredOn || today;
   if (!isRealDay(on)) return { error: "That day isn't a real date" };
   const atTime = cleanTime(formData.get("atTime"));
-  if (on > today && (parsed.data.outcome || mark)) {
+  // Final audit (Nov 11, 2026): the outcome a booking implies and any next
+  // step count too — a touch dated ahead used to drop them silently.
+  if (on > today && (outcome || mark || next)) {
     return { error: "A touch dated ahead hasn't happened yet, so it can't say how it went", kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
   }
+  // A meeting logged as having happened was held (decision 4, as a tick
+  // on the calendar is): it completes like one, and nothing later asks
+  // "Did the meeting happen?" about it.
+  if (type === "MEETING" && on <= today && !outcome) outcome = "HELD";
 
   // Who it was with, for the calendar's title: the first contact, or
   // the company.
@@ -474,26 +480,32 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   // The moment it happened: the time typed, or now if it was today, or
   // midday on the day it was. In the workspace's clock, like every
   // other stamp in the app.
-  const occurredAt = atTime ? zonedMoment(on, atTime, timeZone) : on === today ? new Date() : zonedNoon(on, timeZone);
+  let occurredAt = atTime ? zonedMoment(on, atTime, timeZone) : on === today ? new Date() : zonedNoon(on, timeZone);
+  // Saying how it went means it has happened: a time later today is now
+  // (as the calendar's Done box does), so a talk still makes them
+  // Connected rather than a line dated ahead that never does.
+  if ((outcome || mark) && occurredAt > new Date()) occurredAt = new Date();
 
-  const rows = await prisma.$transaction(
-    targets.rows.map((row) =>
-      prisma.activity.create({
-        data: {
-          organizationId,
-          contactId: row.contactId,
-          companyId: row.companyId,
-          userId,
-          type,
-          outcome,
-          body,
-          batchId,
-          occurredAt,
-        },
-        select: { id: true },
-      }),
-    ),
-  );
+  // One statement however many people it is on (an array of creates is
+  // one transaction with Prisma's 5-second limit, and ran the touch
+  // triggers once a row). Rows come back in the order given.
+  const order = new Map(targets.rows.map((row, index) => [`${row.contactId}|${row.companyId}`, index]));
+  const targetIndex = (row: { contactId: string | null; companyId: string | null }) => order.get(`${row.contactId}|${row.companyId}`) ?? 0;
+  const rows = await prisma.activity.createManyAndReturn({
+    data: targets.rows.map((row) => ({
+      organizationId,
+      contactId: row.contactId,
+      companyId: row.companyId,
+      userId,
+      type,
+      outcome,
+      body,
+      batchId,
+      occurredAt,
+    })),
+    select: { id: true, contactId: true, companyId: true },
+  });
+  rows.sort((a, b) => targetIndex(a) - targetIndex(b));
 
   // A meeting logged on the day one was booked with them is that meeting:
   // its calendar entry is ticked done with this line (as the Done box
@@ -514,6 +526,9 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
           select: { id: true, doneAt: true },
         })
       : null;
+  // The meeting the booking is (on its own tile, not whichever of theirs
+  // was touched last), with what it was before this save for Undo.
+  const bookedMeeting = booked ? await stashMeetingForEvent(organizationId, booked.id, who) : null;
   if (booked) {
     await prisma.calendarEvent.updateMany({
       where: { id: booked.id, organizationId, activityId: null },
@@ -546,7 +561,11 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
     await markConnected(who, { contactIds, companyId }, occurredAt);
   }
   if (type === "MEETING" && outcome !== "NO_SHOW") {
-    opportunityId = await markMeetingSet(who, contactIds, occurredAt, { activityId: rows[0].id, eventId: booked?.id ?? null, opportunity: meetingOpportunity });
+    opportunityId = await markMeetingSet(who, contactIds, occurredAt, {
+      activityId: rows[0].id,
+      eventId: booked?.id ?? null,
+      opportunity: meetingOpportunity ?? bookedMeeting?.opportunityId ?? null,
+    });
     if (outcome === "HELD") {
       const meetingId = await meetingFor(organizationId, opportunityId, rows[0].id);
       if (meetingId) await recordMeetingHeld(who, meetingId, { early: true });
@@ -910,11 +929,25 @@ export async function updateActivity(input: ActivityEditValues): Promise<UpdateA
         notes: body,
         doneAt: occurredAt,
         ...(occurredAt !== row.occurredAt
-          ? { startOn: isoToDate(dayInZone(occurredAt, timeZone))!, startTime: time ?? (wasTime && on === wasOn ? wasTime : null) }
+          ? { startOn: isoToDate(dayInZone(occurredAt, timeZone))!, startTime: time }
           : {}),
       },
     }),
   ]);
+
+  // A meeting line edited to Held answers its meeting: the tile and its
+  // people move to Meeting Completed as a Held anywhere else does (final
+  // audit, Nov 11, 2026; it used to read answered and sit at Meeting Set).
+  if (type === "MEETING" && outcome === "HELD" && row.outcome !== "HELD") {
+    const meeting = await prisma.opportunityMeeting.findFirst({
+      where: { activityId: { in: lineIds }, opportunity: { organizationId } },
+      select: { id: true },
+    });
+    if (meeting) {
+      await recordMeetingHeld({ organizationId, userId, batchId: newBatchId() }, meeting.id, { early: true });
+      revalidatePath("/dashboard/deals");
+    }
+  }
 
   for (const line of ids) {
     if (line.contactId) revalidatePath(`/dashboard/contacts/${line.contactId}`);
