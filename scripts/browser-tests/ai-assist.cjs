@@ -710,6 +710,44 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   assert.equal(await greetingLine.textContent(), plainGreeting, "a number not in the facts is thrown out");
   assert.ok((await one(`SELECT count(*)::int n FROM "AiRequest" WHERE "organizationId"=$1 AND kind='MY_DAY_GREETING'`, [org])).n === 2, "counted against its own allowance");
 
+  log("audit fixes: the greeting's numbers come from the counts, not a person's name; a used-up allowance answers before My day is built");
+  // The next person on Up next is called "Studio 54": 54 is in the facts
+  // only as part of a name, so a sentence that uses it as a count is out.
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","createdAt","updatedAt") VALUES ('ctc_ai_studio',$1,'Studio 54','NOT_ACTIONED',$2,now(),now())
+       ON CONFLICT (id) DO NOTHING`,
+    [org, userId],
+  );
+  await page.goto(`${BASE}/dashboard?view=myday`);
+  const firstUp = page.locator("[data-testid=up-next-row]").first();
+  await firstUp.waitFor();
+  const firstId = await firstUp.getAttribute("data-contact-id");
+  await sql(`UPDATE "Contact" SET name='Studio 54' WHERE id=$1`, [firstId]);
+  await page.reload();
+  const plainAgain = await greetingLine.textContent();
+  assert.ok(!/\b54\b/.test(plainAgain), "the plain sentence doesn't use 54");
+  assert.match(lastRequest("GREETING").prompt, /plainSentence/);
+  replies.GREETING = json({ sentence: "You have 54 people to call today." });
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.locator("[data-testid=greeting-error]").waitFor();
+  assert.equal(await greetingLine.textContent(), plainAgain, "54 from a name is no count");
+  // The allowance used up: the answer comes without reading anyone's book
+  // (Postgres's own counters on the Contact table stay where they were).
+  await sql(
+    `INSERT INTO "AiRequest" (id,"organizationId","userId",kind,"createdAt") SELECT 'air_audit_' || g, $1, $2, 'MY_DAY_GREETING', now() - interval '1 hour' FROM generate_series(1, 200) g`,
+    [org, userId],
+  );
+  const contactReads = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 11_000));
+    return Number((await one(`SELECT COALESCE(seq_scan,0) + COALESCE(idx_scan,0) AS n FROM pg_stat_user_tables WHERE relname='Contact'`)).n);
+  };
+  const readsBefore = await contactReads();
+  await page.locator("[data-testid=greeting-rewrite]").click();
+  await page.getByText(/allowance for this is used up/).waitFor();
+  const readsAfter = await contactReads();
+  assert.equal(readsAfter, readsBefore, `My day was read ${readsAfter - readsBefore} times for a refused rewrite`);
+  await sql(`DELETE FROM "AiRequest" WHERE id LIKE 'air_audit_%'`);
+
   await browser.close();
   fakeClaude.close();
   console.log(`\nAll ${step} steps passed.`);

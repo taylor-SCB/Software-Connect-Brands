@@ -34,6 +34,7 @@ type Params = {
   companies?: string;
   contacts?: string;
   projects?: string;
+  scope?: string;
 };
 
 // Everything scheduled and everything that happened, in one place: the
@@ -64,7 +65,10 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   const rememberedView = prefChoice(prefs, "calendar", "view", ["agenda", "week", "month"] as const);
   const wanted = bare ? (rememberedView ?? (member ? "agenda" : "month")) : params.view;
   const view = wanted === "week" ? "week" : wanted === "team" ? "team" : wanted === "agenda" ? "agenda" : "month";
-  const layout = view === "agenda" ? "calendar" : readLayout(params.layout);
+  // The Agenda takes Log and Calendar + Log too (audit, Nov 11, 2026): the
+  // plan's "History is a tab". A Member's default calendar had no way to
+  // the history short of switching to Week first.
+  const layout = readLayout(params.layout);
   // Anything that is not a real day falls back to today rather than
   // taking the page down with it.
   const asked = isRealDay(params.on) ? params.on : today;
@@ -72,7 +76,10 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
   const urlUsers = readIds(params.users);
   const otherFilter = Boolean(params.crew || params.type || params.companies || params.contacts || params.projects);
-  const remembered = prefChoice(prefs, "calendar", "scope", ["mine", "team"] as const) ?? (member ? "mine" : "team");
+  // ?scope=team is the whole team without naming anyone (the Daily
+  // Rundown's whole-team "See all"; audit, Nov 11, 2026); it is not saved.
+  const remembered =
+    params.scope === "team" ? "team" : (prefChoice(prefs, "calendar", "scope", ["mine", "team"] as const) ?? (member ? "mine" : "team"));
   const scope: "mine" | "team" | "custom" = urlUsers.length
     ? urlUsers.length === 1 && urlUsers[0] === userId
       ? "mine"
@@ -108,13 +115,13 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       projectIds: filters.projectIds ?? [],
     }),
     view === "team" && layout !== "log" ? loadCrewRows(organizationId) : [],
-    view === "agenda" ? loadLogs(organizationId, today, filters).then((log) => log.overdue) : Promise.resolve([] as EventView[]),
+    view === "agenda" && layout === "calendar" ? loadLogs(organizationId, today, filters).then((log) => log.overdue) : Promise.resolve([] as EventView[]),
   ]);
 
   // Real tap-to-call: the person's mobile, else their phone, for every
   // entry with someone on it (one statement for the window).
   const events = await withPhones(organizationId, loaded);
-  const overdueRows = await withPhones(organizationId, overdue);
+  const overdueRows = await withPhones(organizationId, logs ? logs.overdue : overdue);
 
   // A crew in two places at once on the same day, with times that
   // actually collide. A note, not a refusal — sending half a crew to a
@@ -150,7 +157,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       0;
 
   const subtitle =
-    view === "agenda"
+    view === "agenda" && layout !== "log"
       ? scope === "mine"
         ? "Your overdue, today and the next 7 days"
         : "Overdue, today and the next 7 days"
@@ -221,7 +228,9 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       )}
 
       {view === "agenda" ? (
-        <AgendaView today={today} days={days} events={events} overdue={overdueRows} choices={choices} />
+        layout !== "log" && (
+          <AgendaView today={today} days={days} events={events} overdue={overdueRows} choices={choices} overdueCap={LOG_ROWS} />
+        )
       ) : layout !== "log" &&
         (view === "month" ? (
           <MonthView

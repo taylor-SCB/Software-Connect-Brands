@@ -13,6 +13,8 @@ import { ensureEventType } from "@/lib/event-types";
 import { ACTIVITY_TYPES, INSTALL_EVENT_TYPE } from "@/lib/constants";
 import { logEventDone, unlogEventDone } from "@/lib/calendar-auto";
 import { markMeetingSet } from "@/lib/status";
+import { UNASSIGNED_USER } from "@/lib/calendar-filters";
+import { zonedMoment } from "@/lib/calendar-auto";
 import { markSchema, nextStepSchema, outcomeProblem, outcomeSchema, reasonSchema } from "@/lib/outcomes";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
@@ -199,7 +201,14 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
   // first one for that person; anyone already past Meeting Set stays put.
   if (type === "Meeting") {
     const people = [data.contactId, ...attendees.map((row) => row.id)].filter((id): id is string => Boolean(id));
-    await markMeetingSet({ organizationId, userId }, Array.from(new Set(people)), new Date(), { on: data.startOn, eventId });
+    // The meeting's moment in the workspace's clock (audit, Nov 11, 2026),
+    // as the Book meeting sheet writes it: the bare day was midnight UTC,
+    // the evening before in the US, so the one meeting rule called a 4pm
+    // meeting "already happened" from 7pm the night before, and an edit
+    // here overwrote the sheet's right moment with it.
+    const timeZone = await getTimeZone();
+    const at = zonedMoment(startOn, startTime ?? "12:00", timeZone);
+    await markMeetingSet({ organizationId, userId }, Array.from(new Set(people)), new Date(), { on: at, eventId });
   }
 
   await startJobOnFirstDatedDay(organizationId, project?.id);
@@ -346,7 +355,7 @@ export async function moveEvent(eventId: string, startOn: string): Promise<Actio
 
   const event = await prisma.calendarEvent.findFirst({
     where: { id: parsed.data.eventId, organizationId },
-    select: { id: true, startOn: true, endOn: true, projectId: true },
+    select: { id: true, startOn: true, endOn: true, startTime: true, projectId: true },
   });
   if (!event) return { error: "That day is no longer on the calendar" };
 
@@ -361,8 +370,19 @@ export async function moveEvent(eventId: string, startOn: string): Promise<Actio
       endOn: length > 0 ? isoToDate(addDays(parsed.data.startOn, length)) : null,
     },
   });
+  // A booked meeting moves with its entry (audit, Nov 11, 2026): its row
+  // kept the old moment, so a meeting moved to next week was "waiting for
+  // Held / No-show" from its old time on Up next, My day and the Pipeline.
+  // Only meetings not yet answered; the entry's id ties them to this one.
+  const timeZone = await getTimeZone();
+  await prisma.opportunityMeeting.updateMany({
+    where: { eventId: event.id, outcome: null, opportunity: { organizationId } },
+    data: { on: zonedMoment(parsed.data.startOn, event.startTime ?? "12:00", timeZone) },
+  });
   await startJobOnFirstDatedDay(organizationId, event.projectId);
   revalidateCalendar(event.projectId);
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/deals");
   return { success: "Moved" };
 }
 
@@ -380,17 +400,33 @@ export async function copyWeek(input: {
   // it. Copying while filtered to Install used to duplicate the hidden
   // site walks and meetings too, and report a count nobody could see.
   type?: string;
+  // Mine (the viewer's own days), and the Users / Companies / Contacts /
+  // Projects filters, as the screen has them.
+  mine?: boolean;
+  userIds?: string[];
+  companyIds?: string[];
+  contactIds?: string[];
+  projectIds?: string[];
 }): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
+  const ids = z.array(z.string().trim().min(1).max(64)).max(50).optional();
   const parsed = z
     .object({
       weekOf: isoDate,
       crewId: z.string().trim().optional(),
       projectId: z.string().trim().optional(),
       type: z.string().trim().max(60).optional(),
+      mine: z.boolean().optional(),
+      userIds: ids,
+      companyIds: ids,
+      contactIds: ids,
+      projectIds: ids,
     })
     .safeParse(input);
   if (!parsed.success) return { error: "Pick the week to copy" };
+  const users = parsed.data.userIds?.length ? parsed.data.userIds : parsed.data.mine ? [userId] : [];
+  const realUsers = users.filter((id) => id !== UNASSIGNED_USER);
+  const contactIds = parsed.data.contactIds ?? [];
 
   const from = parsed.data.weekOf;
   const to = addDays(from, 7);
@@ -405,6 +441,14 @@ export async function copyWeek(input: {
       ...(parsed.data.crewId ? { crewId: parsed.data.crewId } : {}),
       ...(parsed.data.projectId ? { projectId: parsed.data.projectId } : {}),
       ...(parsed.data.type ? { type: parsed.data.type } : {}),
+      ...(parsed.data.companyIds?.length ? { companyId: { in: parsed.data.companyIds } } : {}),
+      ...(parsed.data.projectIds?.length ? { projectId: { in: parsed.data.projectIds } } : {}),
+      AND: [
+        ...(contactIds.length ? [{ OR: [{ contactId: { in: contactIds } }, { attendees: { some: { id: { in: contactIds } } } }] }] : []),
+        ...(users.length
+          ? [{ OR: [...(realUsers.length ? [{ ownerId: { in: realUsers } }] : []), ...(users.includes(UNASSIGNED_USER) ? [{ ownerId: null }] : [])] }]
+          : []),
+      ],
     },
     select: {
       title: true,

@@ -148,7 +148,7 @@ export function UpNextList({
           </button>
         </div>
       )}
-      {!readOnly && unowned.count > 0 && <TakeUnowned count={unowned.count} ids={unowned.ids} />}
+      {!readOnly && <TakeUnowned count={unowned.count} ids={unowned.ids} />}
       {next && (
         <OnBody>
         <div
@@ -193,6 +193,10 @@ function TakeUnowned({ count, ids }: { count: number; ids: string[] }) {
   const [toast, setToast] = useState<{ ids: string[]; at: number } | null>(null);
   const [pending, start] = useTransition();
   const take = Math.min(ids.length, 10);
+  // Kept mounted when a take empties the pool (audit, Nov 11, 2026): the
+  // "Took 7 · Undo" toast used to vanish with the row the moment the
+  // refresh said nobody's leads were left.
+  if (count === 0 && !toast && !error) return null;
 
   function confirm() {
     setError(null);
@@ -212,7 +216,7 @@ function TakeUnowned({ count, ids }: { count: number; ids: string[] }) {
 
   return (
     <div className="border-t border-[var(--hairline-3)] px-4 py-3 sm:px-5" data-testid="unowned">
-      {asking ? (
+      {count === 0 ? null : asking ? (
         <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Take new leads">
           <span className="min-w-0 flex-1">
             Take {take} new {take === 1 ? "lead" : "leads"}? {take === 1 ? "It becomes" : "They become"} yours and{" "}
@@ -237,22 +241,38 @@ function TakeUnowned({ count, ids }: { count: number; ids: string[] }) {
         </div>
       )}
       {error && <p className="mt-1 text-xs text-[var(--danger)]">{error}</p>}
-      <TakeToast toast={toast} onDone={() => setToast(null)} />
+      {toast && <TakeToast key={toast.at} toast={toast} onDone={() => setToast(null)} />}
     </div>
   );
 }
 
 // "Took 10 · Undo": the log sheet's toast, with Undo giving the leads back
 // rather than undoing a logged save.
-function TakeToast({ toast, onDone }: { toast: { ids: string[]; at: number } | null; onDone: () => void }) {
+// Keyed by the take, so a second take starts with its own Undo; it goes
+// after a minute (Undo is for "I didn't mean that", not an hour later, when
+// the leads have been worked — the server keeps worked leads anyway).
+const TAKE_UNDO_MS = 60_000;
+function TakeToast({ toast, onDone }: { toast: { ids: string[]; at: number }; onDone: () => void }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [undone, setUndone] = useState(false);
-  if (!toast) return null;
+  const [undone, setUndone] = useState<number | null>(null);
+  useEffect(() => {
+    if (undone !== null || pending) return;
+    const timer = window.setTimeout(onDone, TAKE_UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [undone, pending, onDone]);
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-sm" role="status" aria-live="polite" data-testid="unowned-toast">
-      <span>{undone ? "Given back" : `Took ${toast.ids.length} · they're on your list`}</span>
-      {!undone && (
+      <span>
+        {undone === null
+          ? `Took ${toast.ids.length} · they're on your list`
+          : undone === toast.ids.length
+            ? "Given back"
+            : undone === 0
+              ? "Kept: you've already worked them"
+              : `Gave back ${undone} · kept ${toast.ids.length - undone} you've worked`}
+      </span>
+      {undone === null && (
         <button
           type="button"
           className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
@@ -260,8 +280,8 @@ function TakeToast({ toast, onDone }: { toast: { ids: string[]; at: number } | n
           data-testid="unowned-undo"
           onClick={() =>
             start(async () => {
-              await giveBackLeads(toast.ids);
-              setUndone(true);
+              const result = await giveBackLeads(toast.ids);
+              setUndone(result.returned ?? 0);
               router.refresh();
               window.setTimeout(onDone, 4000);
             })

@@ -73,7 +73,7 @@ export function MemberJumpIn({ today }: { today: string }) {
         <ul className="mt-3 max-h-80 divide-y divide-[var(--hairline-3)] overflow-y-auto" aria-busy={loading}>
           {results.map((person) => (
             <li key={person.id}>
-              <button type="button" className="flex w-full min-w-0 flex-col items-start rounded-lg px-2 py-2 text-left hover:bg-[var(--hover)] pointer-coarse:min-h-11" onClick={() => pick(person)} data-testid="jump-who-pick">
+              <button type="button" className="flex w-full min-w-0 flex-col items-stretch rounded-lg px-2 py-2 text-left hover:bg-[var(--hover)] pointer-coarse:min-h-11" onClick={() => pick(person)} data-testid="jump-who-pick">
                 <span className="truncate text-sm font-medium">{person.name}</span>
                 <span className="faint truncate text-xs">{[person.company, person.phone ?? person.email].filter(Boolean).join(" · ") || "No company"}</span>
               </button>

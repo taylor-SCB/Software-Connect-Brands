@@ -243,6 +243,13 @@ function DailyView({ report }: { report: DailyReport }) {
                   </li>
                 ))}
               </ul>
+              {/* The fold lists the first few (audit, Nov 11, 2026): "Done
+                  today (14)" opened on 8 with no word of the rest. */}
+              {report.calendar.count - report.calendar.open > done.length && (
+                <p className="faint pt-1 text-xs" data-testid="rundown-done-more">
+                  and {report.calendar.count - report.calendar.open - done.length} more on the calendar
+                </p>
+              )}
             </details>
           )
         }
@@ -270,7 +277,7 @@ function DailyView({ report }: { report: DailyReport }) {
         count={report.overdue.count}
         empty="Nothing overdue. Nice."
         testId="rundown-overdue"
-        href="/dashboard/calendar?view=agenda"
+        href={`/dashboard/calendar?view=agenda&${report.repId ? `users=${encodeURIComponent(report.repId)}` : "scope=team"}`}
         hrefLabel={report.overdue.count > report.overdue.items.length ? `See all ${report.overdue.count}` : "See all"}
         className="max-md:-order-1"
       >

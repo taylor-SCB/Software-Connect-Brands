@@ -532,7 +532,7 @@ export function EventCard({
         {wantsCall(event) ? (
           <a
             href={`tel:${dialable(event.contactPhone!)}`}
-            className="inline-flex"
+            className="inline-flex items-center pointer-coarse:min-h-11"
             aria-label={`Call ${event.contactName ?? event.title}`}
             data-contact-id={event.contactId ?? undefined}
             data-testid="event-call"
@@ -725,6 +725,7 @@ export function AgendaView({
   events,
   overdue,
   choices,
+  overdueCap,
 }: {
   today: string;
   // Today and the next 7 days.
@@ -732,7 +733,10 @@ export function AgendaView({
   events: EventView[];
   overdue: EventView[];
   choices: EventChoices;
+  // How many overdue entries are read at most; a full list says so.
+  overdueCap?: number;
 }) {
+  const overdueFull = Boolean(overdueCap && overdue.length >= overdueCap);
   const byDay = new Map<string, EventView[]>();
   for (const event of events) {
     for (const day of eventDays(event)) {
@@ -789,6 +793,14 @@ export function AgendaView({
           {overdue.map((event) => (
             <AgendaRow key={event.id} event={event} choices={choices} today={today} showDay />
           ))}
+          {/* The list is the oldest ones (audit, Nov 11, 2026): the
+              Rundown's "See all 85" landed on "Overdue 60" with no word
+              that more were waiting. */}
+          {overdueFull && (
+            <p className="faint px-4 py-3 text-xs" data-testid="agenda-overdue-more">
+              Showing the {overdue.length} oldest. Tick some off to see the rest.
+            </p>
+          )}
         </AgendaSection>
       )}
       <AgendaSection title="Today" count={todays.length} testId="agenda-today" day={today}>

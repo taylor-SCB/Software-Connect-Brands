@@ -118,7 +118,7 @@ export function MyDayView({
           </summary>
         }
       >
-        <div className="border-t border-[var(--hairline-3)] p-4 sm:p-5">{teamMoney}</div>
+        {teamMoney ? <div className="border-t border-[var(--hairline-3)] p-4 sm:p-5">{teamMoney}</div> : null}
       </RememberedDetails>
 
       <details className="card min-w-0" data-testid="reports-fold">
@@ -195,12 +195,15 @@ export function TeamTodayStrip({ team, now }: { team: TeamToday; now: Date }) {
                 <span className="col-span-2 flex min-w-0 flex-wrap gap-x-4 text-xs md:col-span-1" data-testid="team-today-numbers">
                   <span>
                     <span className="faint">Today </span>
-                    <b className="num">{today.tries}</b> {today.tries === 1 ? "try" : "tries"} · <b className="num">{today.talks}</b>{" "}
-                    {today.talks === 1 ? "talk" : "talks"}
-                    {today.rate !== null && <span className="faint"> ({today.rate}%)</span>} · <b className="num">{today.booked}</b> booked
+                    <b className="num max-md:text-base">{today.tries}</b> {today.tries === 1 ? "try" : "tries"} ·{" "}
+                    <b className="num max-md:text-base">{today.talks}</b> {today.talks === 1 ? "talk" : "talks"}
+                    {today.rate !== null && <span className="faint"> ({today.rate}%)</span>} · <b className="num max-md:text-base">{today.booked}</b> booked
                   </span>
                 </span>
-                <span className="col-span-2 flex min-w-0 items-center gap-2 text-xs md:col-span-1" data-testid="team-week-numbers">
+                {/* A phone gets the plan's compact card (audit, Nov 11, 2026):
+                    name, today's three numbers big, the health bar. The
+                    week's rings are one tap away on the rep's My day. */}
+                <span className="col-span-2 hidden min-w-0 items-center gap-2 text-xs md:col-span-1 md:flex" data-testid="team-week-numbers">
                   <span className="faint">Week</span>
                   <MiniRing value={week.tries} goal={team.goals.tries} label="tries" />
                   <MiniRing value={week.talks} goal={team.goals.talks} label="talks" />
@@ -225,7 +228,9 @@ export function TeamTodayStrip({ team, now }: { team: TeamToday; now: Date }) {
       {team.unowned > 0 && (
         <p className="faint border-t border-[var(--hairline-3)] px-5 py-2.5 text-xs" data-testid="team-unowned">
           {team.unowned} new {team.unowned === 1 ? "lead" : "leads"} nobody owns or has touched.{" "}
-          <Link href="/dashboard/contacts?rep=none" className="link">
+          {/* The same people the count is (audit, Nov 11, 2026): rep=none
+              alone listed every unowned contact, worked or not. */}
+          <Link href="/dashboard/contacts?rep=none&status=NOT_ACTIONED&act=never" className="link" data-testid="team-unowned-link">
             See them
           </Link>
         </p>

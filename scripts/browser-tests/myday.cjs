@@ -350,7 +350,7 @@ const ago = (days) => `now() - interval '${days} days'`;
   assert.match(await rundownOverdue.textContent(), /Lou Late/);
   assert.equal(await rundownOverdue.locator("[data-testid=rundown-person]").first().getAttribute("href"), "/dashboard/contacts/ctc_md_lou");
   assert.equal(await rundownOverdue.locator("[data-testid=rundown-call]").first().getAttribute("href"), "tel:5125550102");
-  assert.equal(await rundownOverdue.locator("[data-testid=rundown-overdue-all]").getAttribute("href"), "/dashboard/calendar?view=agenda");
+  assert.equal(await rundownOverdue.locator("[data-testid=rundown-overdue-all]").getAttribute("href"), `/dashboard/calendar?view=agenda&users=${M}`, "the Agenda on the same person (audit)");
   const cal = page.locator("[data-testid=rundown-calendar]");
   assert.match(await cal.locator("[data-testid=rundown-row]").first().textContent(), /Tia Today/);
   assert.equal(await cal.locator("[data-testid=rundown-row][data-done]").count(), 0, "done entries aren't in the open list");
@@ -635,6 +635,287 @@ const ago = (days) => `now() - interval '${days} days'`;
   assert.ok(w2 <= 391, `the Agenda on a phone scrolls sideways (${w2}px)`);
   await shot(p2, "agenda-phone");
   await ownerPhone.close();
+
+  /* ------------------------------ audit fixes ------------------------------ */
+  // The final audit of the BDR sprint (Nov 11, 2026), area "today". Each
+  // step fails on the code before its fix.
+  const atZone = (iso, hhmm) => `(('${iso}'::date + time '${hhmm}') AT TIME ZONE '${ZONE}')`;
+  const setScope = (value) =>
+    sql(
+      `UPDATE "User" SET "uiPrefs" = jsonb_set(COALESCE("uiPrefs"::jsonb,'{}'::jsonb), '{calendar}', COALESCE("uiPrefs"::jsonb->'calendar','{}'::jsonb) || jsonb_build_object('scope', $2::text)) WHERE id=$1`,
+      [M, value],
+    );
+  const prefScope = async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.calendar?.scope;
+  const auditM = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+  const am = await auditM.newPage();
+  am.on("pageerror", (err) => console.error("PAGE ERROR:", err.message));
+  await login(am, MARCUS_EMAIL);
+
+  log("audit fixes: Take 10 keeps its Undo when it empties the pool, and skips a lead touched since the page loaded");
+  const ownerOf = async (id) => (await sql(`SELECT "ownerId" FROM "Contact" WHERE id=$1`, [id])).rows[0].ownerId;
+  const resetPool = () => sql(`UPDATE "Contact" SET "ownerId"=NULL, status='NOT_ACTIONED', "lastTouchAt"=NULL WHERE "organizationId"=$1 AND id LIKE 'ctc_md_un%'`, [org]);
+  await resetPool();
+  await sql(`UPDATE "Contact" SET "ownerId"=$2 WHERE "organizationId"=$1 AND id LIKE 'ctc_md_un%' AND id NOT IN ('ctc_md_un1','ctc_md_un2','ctc_md_un3')`, [org, taylor.id]);
+  await am.goto(`${BASE}/dashboard`);
+  const pool = am.locator("[data-testid=unowned]");
+  assert.equal(await pool.locator("[data-testid=unowned-count]").textContent(), "3 new leads nobody owns");
+  // A teammate calls one after the page loaded; nobody owns it yet.
+  await sql(`UPDATE "Contact" SET "lastTouchAt"=now() WHERE id='ctc_md_un3'`);
+  await pool.locator("[data-testid=unowned-take]").click();
+  await pool.locator("[data-testid=unowned-confirm]").click();
+  await until(async () => (await ownerOf("ctc_md_un1")) === M, "taken");
+  assert.equal(await ownerOf("ctc_md_un3"), null, "a lead touched since the page loaded isn't taken");
+  // The refresh finds nobody left; the toast and its Undo stay.
+  await until(async () => (await am.locator("[data-testid=unowned-count]").count()) === 0, "the pool empty");
+  await am.waitForTimeout(500);
+  assert.equal(await am.locator("[data-testid=unowned-toast] [data-testid=unowned-undo]").count(), 1, "Undo is still there after the pool emptied");
+
+  log("audit fixes: Take 10's Undo keeps the leads she has worked, and a second take has its own Undo");
+  await resetPool();
+  await am.goto(`${BASE}/dashboard`);
+  await pool.locator("[data-testid=unowned-take]").click();
+  await pool.locator("[data-testid=unowned-confirm]").click();
+  const toast = am.locator("[data-testid=unowned-toast]");
+  await toast.locator("[data-testid=unowned-undo]").waitFor();
+  const taken = (await sql(`SELECT id FROM "Contact" WHERE "organizationId"=$1 AND "ownerId"=$2 AND id LIKE 'ctc_md_un%' ORDER BY id`, [org, M])).rows.map((row) => row.id);
+  assert.equal(taken.length, 10);
+  // She works one before thinking better of it.
+  await sql(`UPDATE "Contact" SET status='CONTACTED', "lastTouchAt"=now() WHERE id=$1`, [taken[0]]);
+  await toast.locator("[data-testid=unowned-undo]").click();
+  await until(async () => (await ownerOf(taken[1])) === null, "the untouched ones given back");
+  assert.equal(await ownerOf(taken[0]), M, "a lead she has worked keeps its rep");
+  await until(async () => /^\d+ new leads/.test((await pool.locator("[data-testid=unowned-count]").textContent().catch(() => "")) ?? ""), "the pool back");
+  await pool.locator("[data-testid=unowned-take]").click();
+  await pool.locator("[data-testid=unowned-confirm]").click();
+  await until(async () => (await sql(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1 AND "ownerId"=$2 AND id LIKE 'ctc_md_un%'`, [org, M])).rows[0].n >= 10, "the second take");
+  await am.waitForTimeout(500);
+  assert.equal(await toast.locator("[data-testid=unowned-undo]").count(), 1, "the second take has its own Undo");
+  await resetPool();
+
+  log("audit fixes: Team & money isn't built while it is shut (no write-up asked for), and opening it builds it");
+  await am.goto(`${BASE}/dashboard`);
+  const money = am.locator("[data-testid=team-money]");
+  assert.equal(await money.getAttribute("open"), null);
+  assert.equal(await money.locator("[data-testid=report-narrative]").count(), 0, "nothing inside a shut Team & money");
+  assert.equal(await money.locator("[data-testid=stat-tile]").count(), 0);
+  await money.locator("> summary").click();
+  await money.locator("[data-testid=report-narrative]").waitFor();
+  await money.locator("> summary").click();
+  await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.myday?.teamMoney === false, "shut again");
+
+  log("audit fixes: the Meetings card still lists this week's meeting after a month of answered ones, on its own day when a teammate holds the entry");
+  await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES ('opp_md_busy',$1,'Busy Book','MEETING_COMPLETED',$2,now() - interval '40 days',now())`, [org, M]);
+  for (let i = 1; i <= 65; i += 1) {
+    const d = addDays(TODAY, -1 - (i % 29));
+    await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on",outcome,"bookedById","createdAt") VALUES ($1,'opp_md_busy',${atZone(d, "12:00")},'HELD',$2,now() - interval '30 days')`, [`om_md_busy${i}`, M]);
+  }
+  await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES ('opp_md_up',$1,'Upcoming Tile','MEETING_SET',$2,now(),now())`, [org, M]);
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","contactId","updatedAt") VALUES ('ev_md_up',$1,'Meeting · Busy upcoming','Meeting',$3::date,'15:00',$2,'ctc_md_tom',now())`,
+    [org, taylor.id, addDays(TODAY, 2)],
+  );
+  // Stamped the way the calendar form stamped it before the audit: the
+  // bare day, midnight UTC, which is the evening before in Chicago.
+  await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById") VALUES ('om_md_up','opp_md_up',($1::date)::timestamp,'ev_md_up',$2)`, [addDays(TODAY, 2), taylor.id]);
+  await am.goto(`${BASE}/dashboard`);
+  const upRow = am.locator("[data-testid=meeting-row][data-event-id=ev_md_up]");
+  await upRow.waitFor();
+  assert.equal(await upRow.getAttribute("data-day"), addDays(TODAY, 2), "on the entry's own day");
+  await sql(`DELETE FROM "Opportunity" WHERE id IN ('opp_md_busy','opp_md_up')`);
+  await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_md_up'`);
+
+  log("audit fixes: a meeting saved on the calendar is its time in the workspace's clock, and moving it moves the meeting");
+  await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"ownerId","createdAt","updatedAt") VALUES ('opp_md_c1',$1,'Ty Trying','MEETING_SET',$2,now(),now())`, [org, M]);
+  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role) VALUES ('oc_md_c1','opp_md_c1','ctc_md_ty','PRIMARY')`);
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","contactId","updatedAt") VALUES ('ev_md_c1',$1,'Meeting · Ty Trying','Meeting',$3::date,'09:00',$2,'ctc_md_ty',now())`,
+    [org, M, addDays(TODAY, 1)],
+  );
+  await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","eventId","bookedById") VALUES ('om_md_c1','opp_md_c1',${atZone(addDays(TODAY, 1), "09:00")},'ev_md_c1',$1)`, [M]);
+  const meetingsAt = async (iso, hhmm) =>
+    (await sql(`SELECT bool_and("on" = ${atZone(iso, hhmm)}) AS ok, count(*)::int AS n FROM "OpportunityMeeting" WHERE "eventId"='ev_md_c1'`)).rows[0];
+  await am.goto(`${BASE}/dashboard/calendar?view=week&on=${addDays(TODAY, 1)}`);
+  const c1Card = am.locator("[data-testid=event-card]").filter({ hasText: "Meeting · Ty Trying" }).first();
+  await c1Card.locator("[data-testid=event-edit]").click();
+  await am.locator("[data-testid=event-form] [data-testid=event-start-time]").fill("16:00");
+  await am.locator("[data-testid=event-form] [data-testid=event-save]").click();
+  await until(async () => (await sql(`SELECT "startTime" FROM "CalendarEvent" WHERE id='ev_md_c1'`)).rows[0].startTime === "16:00", "the edit saved");
+  const afterEdit = await meetingsAt(addDays(TODAY, 1), "16:00");
+  assert.ok(afterEdit.n >= 1 && afterEdit.ok, "the meeting is 4pm in Chicago, not midnight UTC");
+  await am.goto(`${BASE}/dashboard/calendar?view=week&on=${addDays(TODAY, 1)}`);
+  const c1Moved = am.locator("[data-testid=event-card]").filter({ hasText: "Meeting · Ty Trying" }).first();
+  await c1Moved.locator("[data-testid=event-move]").click();
+  await c1Moved.locator("[data-testid=event-move-date]").fill(addDays(TODAY, 3));
+  await until(async () => (await sql(`SELECT "startOn" FROM "CalendarEvent" WHERE id='ev_md_c1'`)).rows[0].startOn.toISOString().slice(0, 10) === addDays(TODAY, 3), "moved");
+  await until(async () => (await meetingsAt(addDays(TODAY, 3), "16:00")).ok === true, "the meeting moved with its entry");
+  await sql(`DELETE FROM "Opportunity" WHERE id='opp_md_c1'`);
+  await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_md_c1'`);
+
+  log("audit fixes: Copy this week into next copies only what Mine shows");
+  const far = addDays(TODAY, 70);
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","ownerId","updatedAt") VALUES
+       ('ev_md_cpm',$1,'Copy me (Marcus)','Site walk',$4::date,$2,now()),
+       ('ev_md_cpt',$1,'Not mine (Taylor)','Site walk',$4::date,$3,now())`,
+    [org, M, taylor.id, far],
+  );
+  await setScope("mine");
+  await am.goto(`${BASE}/dashboard/calendar?view=week&on=${far}`);
+  await am.locator("[data-testid=event-card]").filter({ hasText: "Copy me (Marcus)" }).waitFor();
+  assert.equal(await am.locator("[data-testid=event-card]").filter({ hasText: "Not mine (Taylor)" }).count(), 0, "Mine shows only Marcus's");
+  await am.locator("[data-testid=cal-view-menu]").click();
+  await am.locator("[data-testid=cal-copy-week]").click();
+  await am.getByText(/copied into the week of/).waitFor();
+  const copies = (await sql(`SELECT title FROM "CalendarEvent" WHERE "organizationId"=$1 AND "startOn"=$2::date ORDER BY title`, [org, addDays(far, 7)])).rows.map((row) => row.title);
+  assert.deepEqual(copies, ["Copy me (Marcus)"], `only what was on screen was copied: ${copies.join(", ")}`);
+  await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId"=$1 AND "startOn" IN ($2::date, $3::date)`, [org, far, addDays(far, 7)]);
+
+  log("audit fixes: Clear after a company filter keeps a Member's remembered Mine");
+  await setScope("mine");
+  await am.goto(`${BASE}/dashboard/calendar?view=agenda&companies=cmp_md_redbud`);
+  await am.locator("[data-testid=cal-active-filters]").getByRole("button", { name: "Clear", exact: true }).click();
+  await am.waitForURL((url) => !url.search.includes("companies"));
+  await am.locator("[data-testid=agenda]").waitFor();
+  assert.equal(await prefScope(), "mine", "dropping a company filter isn't choosing Team");
+
+  log("audit fixes: the Rundown's Overdue 'See all' opens the Agenda on the same people; a full Overdue says so; Log works on the Agenda; Done today names the rest");
+  const ov = Array.from({ length: 60 }, (_, i) => `('ev_md_ov${i}','${org}','Call · overdue ${i}','Call','${addDays(TODAY, -2)}'::date,'${M}',now())`).join(",");
+  await sql(`INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","ownerId","updatedAt") VALUES ${ov}`);
+  const dn = Array.from({ length: 9 }, (_, i) => `('ev_md_dn${i}','${org}','Call · done ${i}','Call','${TODAY}'::date,'${M}',now(),now())`).join(",");
+  await sql(`INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","ownerId","doneAt","updatedAt") VALUES ${dn}`);
+  const auditO = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+  const ao = await auditO.newPage();
+  await login(ao, EMAIL);
+  await ao.goto(`${BASE}/dashboard?report=daily&rep=${M}`);
+  const seeAll = ao.locator("[data-testid=rundown-overdue] a[href*='view=agenda']");
+  assert.match(await seeAll.getAttribute("href"), new RegExp(`users=${M}`), "narrowed to Marcus, it opens on Marcus");
+  await ao.locator("[data-testid=rundown-done] > summary").click();
+  assert.equal(await ao.locator("[data-testid=rundown-done-more]").count(), 1, "Done today says how many more there are");
+  await ao.goto(`${BASE}/dashboard?report=daily&rep=all`);
+  const teamSeeAll = await ao.locator("[data-testid=rundown-overdue] a[href*='view=agenda']").getAttribute("href");
+  assert.match(teamSeeAll, /scope=team/, "the whole team opens on the whole team");
+  await ao.goto(`${BASE}${teamSeeAll}`);
+  await ao.locator("[data-testid=agenda-overdue]").waitFor();
+  assert.equal(await ao.locator("[data-testid=agenda-overdue-more]").count(), 1, "a full Overdue says more are waiting");
+  await ao.locator("[data-testid=cal-view-menu]").click();
+  assert.equal(await ao.locator("[data-testid=cal-layout-log]").count(), 1, "Log is offered on the Agenda");
+  await ao.locator("[data-testid=cal-layout-log]").click();
+  await ao.locator("[data-testid=log-columns]").waitFor();
+  assert.equal(await ao.locator("[data-testid=agenda]").count(), 0, "the Agenda's Log shows the history");
+  await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_md_ov%' OR id LIKE 'ev_md_dn%'`);
+
+  log("audit fixes: Team today's 'See them' lists the same people its count is");
+  await ao.goto(`${BASE}/dashboard`);
+  const seeThem = await ao.locator("[data-testid=team-unowned] a").getAttribute("href");
+  assert.match(seeThem, /rep=none/);
+  assert.match(seeThem, /status=NOT_ACTIONED/);
+  assert.match(seeThem, /act=never/);
+  await auditO.close();
+
+  log("audit fixes: the phone — the tab bar shows above a contact's own bar, the top bar never covers the Pipeline's stage tabs or the week's day, the active tab's words are readable, the calendar's small targets are 44px and long names shorten");
+  const contrast = (a, b) => {
+    const lum = (rgb) => {
+      const [r, g, bl] = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"updatedAt") VALUES ('cmp_md_long',$1,'Northwest Regional Property Management and Facilities Services Group LLC',now())`, [org]);
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"companyId",email,"ownerId","createdAt","updatedAt") VALUES ('ctc_md_long',$1,'Bartholomew Montgomery-Fairweather','cmp_md_long','bartholomew.montgomery-fairweather@northwest-regional.example.com',$2,now(),now())`, [org, M]);
+  for (let i = 0; i < 25; i += 1) {
+    await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","createdAt","updatedAt") VALUES ($1,$2,$3,'MEETING_SET',$4,now(),now())`, [`ctc_md_ms${i}`, org, `Board Filler ${i}`, M]);
+  }
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","contactId","updatedAt") VALUES ('ev_md_tap',$1,'Call · Tom Talked','Call',$3::date,'11:00',$2,'ctc_md_tom',now())`,
+    [org, M, TODAY],
+  );
+  const phoneM = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const pm = await phoneM.newPage();
+  await login(pm, MARCUS_EMAIL);
+  // A contact's Call / Text / Log bar sits above the tabs, not over them.
+  await pm.goto(`${BASE}/dashboard/contacts/ctc_md_tom`);
+  await pm.locator("[data-testid=phone-tabs]").waitFor();
+  const covered = await pm.locator("[data-testid=phone-tab], [data-testid=phone-more]").evaluateAll((els) =>
+    els.filter((el) => {
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return !hit || !el.contains(hit);
+    }).length,
+  );
+  assert.equal(covered, 0, `${covered} tabs are covered on a contact's page`);
+  // The active tab: words in the text colour, readable on the bar.
+  await pm.goto(`${BASE}/dashboard/contacts`);
+  const active = await pm.locator("[data-testid=phone-tab][aria-current=page]").evaluate((el) => [
+    getComputedStyle(el).color,
+    getComputedStyle(el.closest("nav")).backgroundColor,
+  ]);
+  assert.ok(contrast(active[0], active[1]) >= 4.5, `the active tab's words read ${contrast(active[0], active[1]).toFixed(2)}:1`);
+  // The Pipeline's stage tabs stay in sight when the board scrolls.
+  await pm.goto(`${BASE}/dashboard/deals?scope=all`);
+  await pm.locator("[data-testid=pipeline-tabs]").waitFor();
+  await until(async () => (await pm.evaluate(() => document.documentElement.scrollHeight)) > 2000, "a long board");
+  await pm.evaluate(() => window.scrollTo(0, 900));
+  await pm.waitForTimeout(400);
+  const tabsSeen = await pm.locator("[data-testid=pipeline-tabs]").evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return Boolean(hit && el.contains(hit));
+  });
+  assert.ok(tabsSeen, "the stage tabs aren't under the top bar");
+  // The week opens on today's card with its heading in sight.
+  await pm.goto(`${BASE}/dashboard/calendar?view=week`);
+  const todayCard = pm.locator(`[data-week-card="${TODAY}"]`);
+  await todayCard.waitFor();
+  await pm.waitForTimeout(700);
+  const headingSeen = await todayCard.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + 20, Math.max(box.top, 0) + 8);
+    return Boolean(hit && el.contains(hit));
+  });
+  assert.ok(headingSeen, "today's heading isn't under the top bar");
+  for (const id of ["cal-prev", "cal-next"]) {
+    const box = await pm.locator(`[data-testid=${id}]`).boundingBox();
+    assert.ok(Math.round(box.width) >= 44, `${id} is ${box.width}px wide`);
+  }
+  const tap = await pm.locator(`[data-week-card="${TODAY}"] [data-testid=event-call]`).first().boundingBox();
+  assert.ok(Math.round(tap.height) >= 44, `the tap-to-call badge is ${tap.height}px tall`);
+  // A long company filter shortens instead of widening the page.
+  await pm.goto(`${BASE}/dashboard/calendar?view=agenda&companies=cmp_md_long`);
+  await pm.locator("[data-testid=cal-active-filters] .badge").first().waitFor();
+  const wide = await pm.evaluate(() => document.documentElement.scrollWidth);
+  assert.ok(wide <= 391, `a long company chip widens the page to ${wide}px`);
+  const x = await pm.locator("[data-testid=cal-active-filters] .badge button").first().boundingBox();
+  assert.ok(Math.round(x.height) >= 44 && Math.round(x.width) >= 44, "the chip's × is a 44px target");
+  // Jump in's Who? list shortens long lines instead of scrolling sideways.
+  await pm.goto(`${BASE}/dashboard`);
+  await pm.locator("[data-testid=jump-log-call]").tap();
+  await pm.locator("[data-testid=jump-who]").waitFor();
+  await pm.fill("[data-testid=jump-who-search]", "Bartholomew");
+  await pm.locator("[data-testid=jump-who-pick]").first().waitFor();
+  const list = await pm.locator("[data-testid=jump-who-pick]").first().evaluate((el) => {
+    const ul = el.closest("ul");
+    return [ul.scrollWidth, ul.clientWidth];
+  });
+  assert.ok(list[0] <= list[1], `the Who? list scrolls sideways (${list[0]} > ${list[1]})`);
+  await phoneM.close();
+  // An Owner's Team today on a phone: name, today's numbers, the health bar.
+  const phoneO = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const po = await phoneO.newPage();
+  await login(po, EMAIL);
+  const teamRow = po.locator("[data-testid=team-row]").first();
+  await teamRow.waitFor();
+  assert.equal(await teamRow.locator("[data-testid=team-week-numbers]").isVisible(), false, "the week's rings are on the rep's My day");
+  assert.equal(await teamRow.locator("[data-testid=team-today-numbers]").isVisible(), true);
+  await phoneO.close();
+  await sql(`DELETE FROM "Contact" WHERE id LIKE 'ctc_md_ms%' OR id='ctc_md_long'`);
+  await sql(`DELETE FROM "Company" WHERE id='cmp_md_long'`);
+  await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_md_tap'`);
+  await auditM.close();
+
 
   await browser.close();
   console.log(`\n${step} steps passed`);

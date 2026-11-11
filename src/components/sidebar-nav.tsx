@@ -260,11 +260,16 @@ export function PhoneTabBar({
                 key={href}
                 href={href}
                 aria-current={on ? "page" : undefined}
-                className={`flex min-w-0 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-medium ${on ? "text-[var(--brand)]" : "muted"}`}
+                className={`relative flex min-w-0 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-medium ${on ? "text-[var(--text-strong)]" : "muted"}`}
                 data-testid="phone-tab"
                 data-href={href}
               >
-                <Icon size={18} />
+                {/* The tab that's on is marked in the brand colour by a bar
+                    and its icon, never its words (audit, Nov 11, 2026): the
+                    default indigo as 11px words was 4.0:1 in Dark and 4.5:1
+                    misses in Light, and a pale tenant colour far worse. */}
+                {on && <span aria-hidden className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-[var(--brand)]" />}
+                <Icon size={18} className={on ? "text-[var(--brand)]" : undefined} />
                 <span className="truncate">{label}</span>
               </Link>
             );
@@ -274,10 +279,11 @@ export function PhoneTabBar({
             onClick={() => setMore(true)}
             aria-current={tab ? undefined : "page"}
             aria-haspopup="dialog"
-            className={`flex min-w-0 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-medium ${tab ? "muted" : "text-[var(--brand)]"}`}
+            className={`relative flex min-w-0 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-medium ${tab ? "muted" : "text-[var(--text-strong)]"}`}
             data-testid="phone-more"
           >
-            <IconLayers size={18} />
+            {!tab && <span aria-hidden className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-[var(--brand)]" />}
+            <IconLayers size={18} className={tab ? undefined : "text-[var(--brand)]"} />
             More
           </button>
         </div>
