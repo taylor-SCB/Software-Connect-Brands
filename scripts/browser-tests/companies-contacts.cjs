@@ -184,7 +184,9 @@ function backLink(page) {
 
   log("+ Add person from the company page pre-fills the company; picker says Existing");
   // Since Sept 30, 2026 Add person opens a search of existing people
-  // first; a brand-new person is the link at its foot.
+  // first; a brand-new person is the link at its foot. Since Nov 11, 2026
+  // it sits under the header's ⋯ More.
+  await page.locator("[data-testid=company-more]").click();
   await page.locator("[data-testid=add-person]").click();
   await page.locator("[data-testid=add-person-new]").click();
   await page.waitForURL(/\/dashboard\/contacts\/new\?companyId=/);
@@ -406,7 +408,11 @@ function backLink(page) {
   await companyNotes.locator("textarea[name=body]").fill("Net-30 terms agreed for the whole account");
   await companyNotes.getByRole("button", { name: "Add note" }).click();
   await companyNotes.getByText("Net-30 terms").waitFor();
-  assert.ok(await page.getByText("$1,250.00").first().isVisible(), "company sees its people's pipeline");
+  // The pipeline total sits behind Show counts under the header's meter
+  // (BDR redesign, Nov 11, 2026), and the deal in the Paperwork card.
+  await page.locator("[data-testid=company-show-counts]").click();
+  assert.ok(await page.locator("[data-testid=company-counts]").getByText("$1,250.00").first().isVisible(), "company sees its people's pipeline");
+  assert.ok(await page.locator("[data-testid=company-paperwork]").getByText("$1,250.00").first().isVisible(), "and the deal in Paperwork");
   await shot(page, "10-company-page");
   const spiritId = spiritUrl.split("/").pop();
   const saraId = saraUrl.split("/").pop();
@@ -415,7 +421,8 @@ function backLink(page) {
   const coOverview = page.locator("div.card", { hasText: "Activity overview" });
   const tile = (label) => coOverview.locator("a", { hasText: label }).locator("span.num");
   const callsBefore = Number(await tile("Calls").innerText());
-  await page.locator("[data-testid=log-bar]").click();
+  // Log a touch on the company page opens the How did it go? sheet (Nov 11, 2026).
+  await page.locator("[data-testid=company-log-toggle]").click();
   const coForm = page.locator("[data-testid=log-activity-form]");
   const coPicker = coForm.locator("[data-testid=company-people-picker]");
   await coPicker.locator("[data-testid=company-person-chip]", { hasText: "Danny Ortiz" }).click();
@@ -476,6 +483,8 @@ function backLink(page) {
   }));
   assert.ok(fit.scroll <= fit.client, `the page is ${fit.scroll}px on a ${fit.client}px phone`);
   assert.deepEqual(fit.past, [], "no card runs past the right edge");
+  // The not-linked line opens the list (Nov 11, 2026).
+  await phonePage.locator("[data-testid=not-linked-toggle]").tap();
   const claim = phonePage.locator("[data-testid=claim-one]").first();
   await claim.scrollIntoViewIfNeeded();
   const claimBox = await claim.boundingBox();

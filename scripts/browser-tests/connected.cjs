@@ -432,6 +432,8 @@ async function logWith(page, fields, { body = "", type } = {}) {
   log("Sprint: the company page's Front desk chip logs with nobody ticked, as a try on the company");
   const redBefore = await dates("Company", "cmp_cn_red");
   await page.goto(`${BASE}/dashboard/companies/cmp_cn_red`);
+  // Log a touch is folded on the company page (Nov 11, 2026).
+  await page.locator("[data-testid=company-log-toggle]").click();
   await logWith(page, { outcome: "GATEKEEPER" }, { body: "Front desk took a message" });
   await until(async () => (await one(`SELECT count(*)::int n FROM "Activity" WHERE "companyId"='cmp_cn_red' AND outcome='GATEKEEPER'`)).n === 1, "front desk");
   const desk = await one(`SELECT "contactId", "companyId" FROM "Activity" WHERE outcome='GATEKEEPER' AND "organizationId"=$1`, [org]);

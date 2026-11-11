@@ -362,7 +362,9 @@ async function company(org, name) {
 
   log("company page: Looks right clears the marks; editing the website clears only its mark; an untouched save keeps them");
   await page.goto(`${BASE}/dashboard/companies/${acme.id}`);
-  const details = page.locator("dl").first();
+  // Details is folded on the company page (Nov 11, 2026) and opens on its
+  // own while there are "auto" values to confirm.
+  const details = page.locator("[data-testid=company-details] dl");
   assert.deepEqual(await pills(details), ["industries", "phone", "website"], "Details shows all three marks");
   await shot(page, "05-company-page-marks");
   await page.getByTestId("looks-right").click();

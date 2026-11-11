@@ -175,6 +175,8 @@ async function openMore(p) {
 
   log("Add person on a company page searches everyone first, with email and phone");
   await page.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
+  // Under the header's ⋯ More since Nov 11, 2026; More stays open.
+  await page.locator("[data-testid=company-more]").click();
   await page.locator("[data-testid=add-person]").click();
   await page.locator("[data-testid=add-person-input]").fill("Matt Smith");
   const hits = page.locator("[data-testid=add-person-hit]");
@@ -222,25 +224,31 @@ async function openMore(p) {
     "cmp_acc_dallas",
   );
 
-  log("audit fixes (UX review): the People card shows a mobile-only person's number, each number a tap to call that doesn't open the row");
+  log("audit fixes (UX review): Who to call shows a mobile-only person's number, each number a tap to call that doesn't open the row");
   await sql(`UPDATE "Contact" SET mobile='555-4100' WHERE "organizationId"=$1 AND name='Robin Hale'`, [org]);
   await sql(`UPDATE "Contact" SET mobile='555-2001' WHERE id='ctc_acc_jordan'`);
   await page.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
   const personRow = (name) => people.locator("[data-testid=person-row]", { hasText: name });
-  const calls = (row) => row.locator("a[href^='tel:']").evaluateAll((links) => links.map((a) => `${a.getAttribute("href")} ${a.textContent}`));
+  const calls = (row) => row.locator("[data-testid=person-call]").evaluateAll((links) => links.map((a) => `${a.getAttribute("href")} ${a.textContent}`));
   await personRow("Robin Hale").waitFor();
   assert.deepEqual(await calls(personRow("Robin Hale")), ["tel:555-4100 Mobile 555-4100"], "only a mobile on file, and it shows");
-  assert.deepEqual(await calls(personRow("Jordan Blake")), ["tel:555-2000 555-2000", "tel:555-2001 Mobile 555-2001"], "a phone and a mobile, both");
+  // The mobile first since Nov 11, 2026: it is the one that gets answered.
+  assert.deepEqual(await calls(personRow("Jordan Blake")), ["tel:555-2001 Mobile 555-2001", "tel:555-2000 555-2000"], "a phone and a mobile, both");
+  assert.equal(await personRow("Robin Hale").locator("[data-testid=person-call-button]").getAttribute("href"), "tel:555-4100", "Call dials the mobile");
+  assert.equal(await personRow("Jordan Blake").locator("[data-testid=person-call-button]").getAttribute("href"), "tel:555-2001");
   await personRow("Robin Hale").scrollIntoViewIfNeeded();
   const tapLands = await personRow("Robin Hale")
-    .locator("a[href^='tel:']")
+    .locator("[data-testid=person-call]")
     .evaluate((a) => {
       const box = a.getBoundingClientRect();
       return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)?.closest("a")?.getAttribute("href");
     });
   assert.equal(tapLands, "tel:555-4100", "a tap on the number is the number's, not the row link's");
+  // A tap on the row away from its numbers and buttons opens the person.
   const robinBox = await personRow("Robin Hale").boundingBox();
-  await personRow("Robin Hale").click({ position: { x: robinBox.width - 40, y: robinBox.height / 2 } });
+  const nameBox = await personRow("Robin Hale").locator("[data-testid=person-name]").boundingBox();
+  await page.mouse.click(nameBox.x + nameBox.width + 40, nameBox.y + nameBox.height / 2);
+  assert.ok(nameBox.x + nameBox.width + 40 < robinBox.x + robinBox.width, "inside the row");
   await page.waitForURL(/\/dashboard\/contacts\/[a-z0-9]+$/);
   await page.getByRole("heading", { name: "Robin Hale" }).waitFor();
 
@@ -249,6 +257,9 @@ async function openMore(p) {
   const phonePage = await phoneContext.newPage();
   await phonePage.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
   for (const button of ["add-person", "add-person-compact"]) {
+    if (button === "add-person" && !(await phonePage.locator("[data-testid=add-person]").isVisible())) {
+      await phonePage.locator("[data-testid=company-more]").tap();
+    }
     await phonePage.locator(`[data-testid=${button}]`).scrollIntoViewIfNeeded();
     await phonePage.locator(`[data-testid=${button}]`).tap();
     const panel = phonePage.locator("[data-testid=add-person-panel]");
@@ -327,9 +338,9 @@ async function openMore(p) {
 
   log("an activity on a company page can be put on its people, including one added on the spot");
   await page.goto(`${BASE}/dashboard/companies/cmp_acc_dallas`);
-  // The log is the How did it go? sheet behind the "What happened?" bar
-  // (Nov 11, 2026); after a save it moves on to the next step.
-  await page.locator("[data-testid=log-bar]").click();
+  // The log is the How did it go? sheet behind "Log a touch" on the
+  // company page (Nov 11, 2026); after a save it moves on to the next step.
+  await page.locator("[data-testid=company-log-toggle]").click();
   const form = page.locator("[data-testid=log-activity-form]");
   const picker = form.locator("[data-testid=company-people-picker]");
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Jordan Blake" }).click();
@@ -352,7 +363,7 @@ async function openMore(p) {
   log("nobody ticked: refused until Front desk / main line (the old bypass box) is on, then it lands on the company");
   await page.locator("[data-testid=follow-up-skip]").click();
   await form.waitFor({ state: "detached" });
-  await page.locator("[data-testid=log-bar]").click();
+  await page.locator("[data-testid=company-log-toggle]").click();
   await form.locator("textarea[name=body]").fill("Left a message at the front desk");
   await form.locator("[data-testid=activity-submit]").click();
   await form.getByRole("alert").waitFor();

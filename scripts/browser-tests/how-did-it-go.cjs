@@ -107,8 +107,10 @@ const ladder = async (contactId) =>
   const form = page.locator("[data-testid=log-activity-form]");
   const next = page.locator("[data-testid=follow-up-prompt]");
   const toast = page.locator("[data-testid=log-toast]");
+  // The contact page's "What happened with …?" bar, or the company page's
+  // "Log a touch" (merged with the page redesigns, Nov 11, 2026).
   const openBar = async () => {
-    await page.locator("[data-testid=log-bar]").click();
+    await page.locator("[data-testid=log-bar], [data-testid=company-log-toggle]").first().click();
     await form.waitFor();
   };
 

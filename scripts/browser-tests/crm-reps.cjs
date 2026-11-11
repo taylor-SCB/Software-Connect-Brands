@@ -290,6 +290,8 @@ async function openAddDeal(p) {
   await page.locator("[data-testid=company-row]", { hasText: "Rivera Ventures" }).getByRole("link", { name: "Rivera Ventures" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
   const companyId = page.url().split("/").pop();
+  // At the foot of the header's ⋯ More since Nov 11, 2026.
+  await page.locator("[data-testid=company-more]").click();
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
   await page.waitForURL(/\/dashboard\/companies$/);
