@@ -563,6 +563,10 @@ async function withOldGlass(page, selector, body) {
   // Email window at y=1,421 on 844, the dim stopped at the sidebar, and
   // "+ Include multiple contacts" scrolled the page to find itself. Each
   // window is opened from the top of its page, as a person would.
+  // A contact's own Email is the one-to-one window since Nov 11, 2026
+  // (decision 16); with no address on file it is an "Add one" link, so the
+  // contact it is opened on gets one.
+  await sql(`UPDATE "Contact" SET email = 'sam.rivera1@example.com' WHERE id = $1 AND "organizationId" = $2`, [contactIds[0], org]);
   const DIALOGS = [
     // Import CSV and Merge sit under "Clean up" since Nov 11, 2026; on a
     // phone the list's Email does too.
@@ -576,7 +580,7 @@ async function withOldGlass(page, selector, body) {
         return (await email.isVisible()) ? email : fromCleanUp(p, "email");
       },
     ],
-    ["Email (a contact)", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /^Email$/ }).first()],
+    ["Email (a contact)", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByTestId("contact-actions").getByTestId("contact-email-button")],
     // Under ⋯ More since the BDR redesign (Nov 11, 2026).
     [
       "Additional Account",

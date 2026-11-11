@@ -16,7 +16,9 @@
  * step strip (nothing booked, Set follow-up, Try again in 30 days); the
  * "What happened with …?" bar opening the log form; the history by day
  * with green talk tags, muted attempts, filter chips with counts, Quote
- * sent / Contract sent / Signed lines and Delete on your own line; Reach,
+ * sent / Accepted by <name> / Contract sent / Signed lines (from the
+ * paperwork's own columns, never Activity rows) and Delete on your own
+ * line; Reach,
  * More details, Good to know, the Paperwork card appearing only once
  * there is something; both looks' words at 4.5:1; keyboard focus; reduced
  * motion; and the phone at 390 (no sideways scroll, the 56px bar, the
@@ -527,6 +529,59 @@ async function contrastReport(page, scope) {
   assert.equal(await main(page).getAttribute("href"), "/dashboard/contracts/ctr_hl_won");
   assert.equal(await page.locator("[data-testid=paperwork-balance] [data-testid=balance-owed]").getAttribute("data-cents"), "337700");
   await page.locator("[data-testid=activity-paper][data-kind=SIGNED]").waitFor();
+
+  log("Sprint: the customer accepts on their own copy — the history reads 'Accepted by <the name they typed>' above Quote sent, from the quote's own columns: no Activity row, no touch");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,title,status,"createdAt","updatedAt")
+     VALUES ('hl_paper',$1,'hl_co','Paige Paper','Facilities Director','QUOTE_SENT',now() - interval '40 days',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"ownerId","updatedAt")
+     VALUES ('deal_hl_paper',$1,'hl_paper','Lobby refresh','QUOTE_SENT',$2,now())`,
+    [org, me],
+  );
+  // One out with her now; one she said yes to online that the office then
+  // marked Declined (its respondedAt is the decline's), so no yes is shown.
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","sentAt","respondedAt","acceptedByName","updatedAt")
+     VALUES ('quo_hl_paper',$1,'hl_paper','deal_hl_paper',995101,'Lobby access control','SENT','tok_quo_hl_paper_0123456789',now() - interval '2 days',NULL,NULL,now()),
+            ('quo_hl_back',$1,'hl_paper','deal_hl_paper',995102,'Gate cameras','DECLINED','tok_quo_hl_back_0123456789',now() - interval '6 days',now() - interval '1 day','Paige Paper',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_hl_paper','quo_hl_paper','Door reader',4,45000,'MATERIALS',0),
+            ('qli_hl_back','quo_hl_back','Dome camera',2,25000,'MATERIALS',0)`,
+  );
+  await sql(`UPDATE "Organization" SET "nextQuoteNumber" = GREATEST("nextQuoteNumber", 995103) WHERE id = $1`, [org]);
+  {
+    const customer = await browser.newContext();
+    const tab = await customer.newPage();
+    await tab.goto(`${BASE}/q/tok_quo_hl_paper_0123456789`);
+    await tab.getByTestId("accept-quote-name").fill("Paige R. Paper");
+    await tab.getByTestId("accept-quote-submit").click();
+    await tab.getByTestId("quote-accepted").filter({ hasText: /Accepted by Paige R\. Paper/ }).waitFor();
+    await customer.close();
+  }
+  const acceptedDay = dayInZone(new Date());
+  await open(page, "hl_paper");
+  const acceptedLine = page.locator("[data-testid=activity-paper][data-kind=QUOTE_ACCEPTED]");
+  await acceptedLine.first().waitFor();
+  assert.equal(await acceptedLine.count(), 1, "only the quote that still reads Accepted");
+  assert.match(await acceptedLine.textContent(), /^Accepted by Paige R\. Paper · QUO-995101 Lobby access control/);
+  assert.equal(await acceptedLine.locator("a").getAttribute("href"), "/dashboard/quotes/quo_hl_paper");
+  assert.equal(
+    await page.locator(`[data-testid=history-day][data-day="${acceptedDay}"] [data-testid=activity-paper][data-kind=QUOTE_ACCEPTED]`).count(),
+    1,
+    "dated the moment she pressed it",
+  );
+  const sentLines = page.locator("[data-testid=activity-paper][data-kind=QUOTE_SENT]");
+  assert.equal(await sentLines.count(), 2, "both quotes went out");
+  assert.match(await sentLines.first().textContent(), /^Quote sent · QUO-995101 Lobby access control/);
+  assert.equal(await page.locator("[data-testid=activity-paper]").first().getAttribute("data-kind"), "QUOTE_ACCEPTED", "newest first");
+  assert.equal(await page.locator("[data-testid=history-count-all]").count(), 0, "paperwork lines are not touches");
+  assert.equal((await one(`SELECT count(*)::int AS n FROM "Activity" WHERE "contactId"='hl_paper'`)).n, 0, "nothing was written to Activity");
 
   log("Sprint: Next step — Set follow-up books a call; the strip then names it with Move and Log it");
   await open(page, "hl_try");

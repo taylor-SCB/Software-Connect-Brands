@@ -24,7 +24,6 @@ import { batchOthers } from "@/lib/logging";
 import { BackLink, StatusBadge, DealStageBadge } from "@/components/ui";
 import { IconGlobe, IconPlus, IconBuilding, IconMessage, IconPhone } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
-import { EmailButton } from "@/components/email-composer";
 import { UpcomingCard } from "@/components/upcoming-card";
 import { loadEventChoices, upcomingFor } from "@/lib/calendar-data";
 import { loadBalance } from "@/lib/money";
@@ -50,6 +49,7 @@ import { ContactHistory, type HistoryItem } from "./contact-history";
 import { Collapsible, CopyButton, Disclosure } from "./bits";
 import { PaperworkMenu } from "./paperwork-menu";
 import { PhoneBar } from "./phone-bar";
+import { ContactEmail } from "./contact-email";
 
 const CHANNEL: Record<ActivityTypeValue, HistoryItem["channel"]> = {
   PHONE_CALL: "calls",
@@ -201,7 +201,9 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     : null;
 
   // The history, newest first, with the paperwork's own dates beside the
-  // touches (never counted as one).
+  // touches (never counted as one): Quote sent, Accepted by <name>,
+  // Contract sent and Signed are read from the quotes and contracts loaded
+  // above, never written as Activity rows.
   const dayLabel = (day: string) => {
     if (day === today) return "Today";
     if (day === shiftIso(today, -1)) return "Yesterday";
@@ -264,6 +266,16 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     ...contact.quotes
       .filter((quote) => quote.sentAt)
       .map((quote) => paperRow(quote.sentAt!, "QUOTE_SENT", quote.title, `/dashboard/quotes/${quote.id}`, `QUO-${quote.number}`)),
+    // The customer said yes on their own copy (/q/<token>): "Accepted by
+    // <the name they typed>", dated when they pressed it. Only while the
+    // quote still reads Accepted (a decline from the office afterwards
+    // re-dates respondedAt), and only an online yes: one marked by hand or
+    // by signing a contract carries no name, and signing has its own line.
+    ...contact.quotes
+      .filter((quote) => quote.status === "ACCEPTED" && quote.respondedAt && quote.acceptedByName)
+      .map((quote) =>
+        paperRow(quote.respondedAt!, "QUOTE_ACCEPTED", quote.title, `/dashboard/quotes/${quote.id}`, `QUO-${quote.number}`, `Accepted by ${quote.acceptedByName}`),
+      ),
     ...contact.contracts
       .filter((contract) => contract.sentAt)
       .map((contract) => paperRow(contract.sentAt!, "CONTRACT_SENT", contract.title, `/dashboard/contracts/${contract.id}`, `CON-${contract.number}`)),
@@ -271,11 +283,22 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
       .filter((contract) => contract.signedAt)
       .map((contract) => paperRow(contract.signedAt!, "SIGNED", contract.title, `/dashboard/contracts/${contract.id}`, `CON-${contract.number}`)),
   ];
-  function paperRow(at: Date, type: string, title: string, href: string, doc: string): { at: Date; item: HistoryItem } {
+  function paperRow(at: Date, type: string, title: string, href: string, doc: string, label?: string): { at: Date; item: HistoryItem } {
     const day = zoneDay(at, timeZone);
     return {
       at,
-      item: { id: `${type}-${doc}`, type, body: title, userName: "", when: clock(at), others: 0, paper: { href, doc }, day, dayLabel: dayLabel(day), channel: null },
+      item: {
+        id: `${type}-${doc}`,
+        type,
+        body: title,
+        userName: "",
+        when: clock(at),
+        others: 0,
+        paper: label ? { href, doc, label } : { href, doc },
+        day,
+        dayLabel: dayLabel(day),
+        channel: null,
+      },
     };
   }
   const history = rows.sort((a, b) => b.at.getTime() - a.at.getTime()).map((row) => row.item);
@@ -343,17 +366,14 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             <MainAction data={main} phones={phones} />
             <CallButton phones={phones} />
             <TextButton phones={phones} />
-            <EmailButton
-              className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
-              recipients={[
-                {
-                  id: contact.id,
-                  name: contact.name,
-                  company: contact.company?.name ?? null,
-                  email: contact.email,
-                  optedOut: Boolean(contact.emailOptOutAt),
-                },
-              ]}
+            <ContactEmail
+              contact={{
+                id: contact.id,
+                name: contact.name,
+                email: contact.email,
+                email2: contact.email2,
+                optedOutOn: contact.emailOptOutAt ? formatDate(contact.emailOptOutAt, timeZone) : null,
+              }}
             />
             <MoreMenu {...moreProps} />
           </div>

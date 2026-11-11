@@ -10,6 +10,7 @@ import {
   IconTrending,
   IconFileText,
   IconSignature,
+  IconCheck,
 } from "@/components/icons";
 import { MarketingBadge } from "@/components/crm-cells";
 import { ActivityDelete } from "@/components/activity-delete";
@@ -31,6 +32,7 @@ const ACTIVITY_ICONS = {
   OPPORTUNITY_CREATED: IconTrending,
   DEAL_CREATED: IconTrending,
   QUOTE_SENT: IconFileText,
+  QUOTE_ACCEPTED: IconCheck,
   CONTRACT_SENT: IconSignature,
   SIGNED: IconSignature,
 } as const;
@@ -69,8 +71,9 @@ export type ActivityItem = {
   outcome?: string | null;
   connect?: boolean;
   // Quote sent / Contract sent / Signed, read from the paperwork's own
-  // dates: on the history, never a touch.
-  paper?: { href: string; doc: string } | null;
+  // dates: on the history, never a touch. `label` overrides the words, for
+  // a line that names someone ("Accepted by Dana Ruiz").
+  paper?: { href: string; doc: string; label?: string } | null;
   // Your own line (or any, for an Owner or Admin): Delete takes back the
   // save it came from.
   undoBatchId?: string | null;
@@ -148,7 +151,9 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
               </div>
               <div className="min-w-0">
                 <p className="text-sm leading-relaxed">
-                  <span className="font-semibold">{activity.type === "QUOTE_SENT" ? "Quote sent" : activity.type === "CONTRACT_SENT" ? "Contract sent" : "Signed"}</span>
+                  <span className="font-semibold">
+                    {activity.paper.label ?? (activity.type === "QUOTE_SENT" ? "Quote sent" : activity.type === "CONTRACT_SENT" ? "Contract sent" : "Signed")}
+                  </span>
                   {" · "}
                   <Link href={activity.paper.href} className="link">
                     <span className="docnum">{activity.paper.doc}</span> {activity.body}
