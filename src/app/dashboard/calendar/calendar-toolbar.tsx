@@ -18,6 +18,7 @@ import {
 } from "@/components/icons";
 import { EventForm, type EventChoices } from "./event-form";
 import { copyWeek } from "./actions";
+import { saveUiPref } from "../prefs-actions";
 
 export type CalendarLayout = "calendar" | "log" | "both";
 
@@ -37,6 +38,7 @@ type Named = { id: string; name: string };
 // week you are looking at can be sent to somebody or kept as a bookmark.
 export function CalendarToolbar({
   view,
+  scope,
   layout,
   anchor,
   focus,
@@ -45,7 +47,12 @@ export function CalendarToolbar({
   filters,
   labels,
 }: {
-  view: "month" | "week" | "team";
+  view: "agenda" | "month" | "week" | "team";
+  // Mine / Everyone (BDR redesign, Nov 11, 2026): whose days the page shows
+  // when the address bar names no users — the person's remembered choice
+  // (User.uiPrefs calendar.scope), else Mine for a Member and Team for an
+  // Owner or Admin. "custom" is a pick of users from the Users menu.
+  scope: "mine" | "team" | "custom";
   layout: CalendarLayout;
   // The first of the month, or the Sunday of the week.
   anchor: string;
@@ -90,8 +97,17 @@ export function CalendarToolbar({
 
   const liveView = () => {
     const value = live.current.get("view");
-    return value === "week" || value === "team" ? value : "month";
+    return value === "week" || value === "team" || value === "agenda" ? value : "month";
   };
+
+  // Mine / Everyone is remembered for the person before the page moves, so
+  // the next visit (and the server drawing this one) opens on it.
+  const pickScope = (next: "mine" | "team") =>
+    start(async () => {
+      await saveUiPref("calendar", "scope", next);
+      go({ users: next === "mine" ? [choices.me] : null });
+      router.refresh();
+    });
   const liveFocus = () => {
     const value = live.current.get("on") ?? undefined;
     return isRealDay(value) ? value : today;
@@ -102,7 +118,9 @@ export function CalendarToolbar({
   // month, a week step moves the day itself by seven.
   const step = (direction: -1 | 1) => {
     const day = liveFocus();
-    if (liveView() === "month") {
+    if (liveView() === "agenda") {
+      go({ view: "week", on: addDays(day, direction * 7) });
+    } else if (liveView() === "month") {
       const month = shiftMonth(startOfMonth(day), direction);
       go({ on: month === startOfMonth(today) ? today : month });
     } else {
@@ -120,14 +138,14 @@ export function CalendarToolbar({
     Boolean(filters.crewId || filters.type) ||
     filters.userIds.length + filters.companyIds.length + filters.contactIds.length + filters.projectIds.length > 0;
 
-  const justMe = filters.userIds.length === 1 && filters.userIds[0] === choices.me;
+  const justMe = scope === "mine";
   const userName = (id: string) =>
     id === UNASSIGNED_USER ? "Unassigned" : (choices.users.find((user) => user.id === id)?.name ?? "…");
 
   return (
     <div className="mb-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {layout !== "log" && (
+        {layout !== "log" && view !== "agenda" && (
           <>
             <div className="flex items-center gap-1">
               <button
@@ -158,8 +176,12 @@ export function CalendarToolbar({
               </button>
             </div>
 
-            <div className="flex gap-1" role="tablist" aria-label="How much to show">
-              {(["month", "week", "team"] as const).map((option) => (
+          </>
+        )}
+        {(layout !== "log" || view === "agenda") && (
+          <>
+            <div className="flex flex-wrap gap-1" role="tablist" aria-label="How much to show">
+              {(["agenda", "month", "week", "team"] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -168,17 +190,29 @@ export function CalendarToolbar({
                   // The day stays put; the server snaps it to the month or
                   // week. Snapping here, from the already-snapped anchor,
                   // lost a month every Month -> Week -> Month.
-                  onClick={() => go({ view: option === "month" ? null : option })}
-                  className={`btn btn-sm ${view === option ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() =>
+                    // Month is named in the address only when there is no
+                    // day to imply it, so a bare address can still default
+                    // to the Agenda for a Member or a phone.
+                    go(
+                      option === "month"
+                        ? { view: live.current.get("on") ? null : "month", layout: null }
+                        : option === "agenda"
+                          ? { view: "agenda", layout: null, on: null }
+                          : { view: option },
+                    )
+                  }
+                  className={`btn btn-sm pointer-coarse:min-h-11 ${view === option ? "btn-primary" : "btn-ghost"}`}
                   data-testid={`cal-view-${option}`}
                 >
-                  {option === "month" ? "Month" : option === "week" ? "Week" : "Team"}
+                  {option === "agenda" ? "Agenda" : option === "month" ? "Month" : option === "week" ? "Week" : "Team"}
                 </button>
               ))}
             </div>
           </>
         )}
 
+        {view !== "agenda" && (
         <div className="flex gap-1" role="tablist" aria-label="How to lay it out">
           {(
             [
@@ -200,6 +234,7 @@ export function CalendarToolbar({
             </button>
           ))}
         </div>
+        )}
 
         <div className="ml-auto flex flex-wrap gap-2">
           {view === "week" && layout !== "log" && (
@@ -241,21 +276,21 @@ export function CalendarToolbar({
         <div className="flex gap-1" role="group" aria-label="Whose calendar">
           <button
             type="button"
-            aria-pressed={filters.userIds.length === 0}
-            onClick={() => go({ users: null })}
-            className={`btn btn-sm ${filters.userIds.length === 0 ? "btn-primary" : "btn-ghost"}`}
-            data-testid="cal-everyone"
+            aria-pressed={justMe}
+            onClick={() => pickScope(justMe ? "team" : "mine")}
+            className={`btn btn-sm pointer-coarse:min-h-11 ${justMe ? "btn-primary" : "btn-ghost"}`}
+            data-testid="cal-just-me"
           >
-            Everyone
+            Mine
           </button>
           <button
             type="button"
-            aria-pressed={justMe}
-            onClick={() => go({ users: justMe ? null : [choices.me] })}
-            className={`btn btn-sm ${justMe ? "btn-primary" : "btn-ghost"}`}
-            data-testid="cal-just-me"
+            aria-pressed={scope === "team"}
+            onClick={() => pickScope("team")}
+            className={`btn btn-sm pointer-coarse:min-h-11 ${scope === "team" ? "btn-primary" : "btn-ghost"}`}
+            data-testid="cal-everyone"
           >
-            Just me
+            Everyone
           </button>
         </div>
         <MultiSelect
@@ -333,7 +368,14 @@ export function CalendarToolbar({
         {filtering && (
           <button
             type="button"
-            onClick={() => go({ crew: null, type: null, users: null, companies: null, contacts: null, projects: null })}
+            // Clear shows everything, so it is Everyone from then on too.
+            onClick={() =>
+              start(async () => {
+                await saveUiPref("calendar", "scope", "team");
+                go({ crew: null, type: null, users: null, companies: null, contacts: null, projects: null });
+                router.refresh();
+              })
+            }
             className="btn btn-ghost btn-sm"
           >
             Clear
@@ -373,7 +415,7 @@ export function CalendarToolbar({
         <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4">
           <EventForm
             choices={choices}
-            defaults={{ startOn: view !== "month" && layout !== "log" ? focus : today }}
+            defaults={{ startOn: view !== "month" && view !== "agenda" && layout !== "log" ? focus : today }}
             onDone={() => setAdding(false)}
           />
         </div>
