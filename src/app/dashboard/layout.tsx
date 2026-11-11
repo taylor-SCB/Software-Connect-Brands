@@ -48,6 +48,11 @@ export default async function DashboardLayout({
           tenant's colour. Server-rendered, so there is no flash, and gone
           when the dashboard is left. Only a plain hex colour is written. */}
       {brandOnBody && <style data-brand-on-body>{`body{--brand:${brandOnBody}}`}</style>}
+      {/* The phone tab bar's height, for any bar that sits above it (audit,
+          Nov 11, 2026): the contact page's Call / Text / Log bar reads it
+          and was drawn at the very bottom, over every tab, because nothing
+          set it. 56px plus the home-indicator inset, below lg only. */}
+      <style data-phone-tabbar>{`@media (max-width: 1023.98px){body{--phone-tabbar-h:calc(3.5rem + env(safe-area-inset-bottom, 0px))}}`}</style>
       {/* The nav scrolls inside the sidebar and the account and Log out
           stay pinned at its foot (audit fix, Nov 10, 2026): on a short
           laptop screen the look switch had pushed Log out below the
@@ -123,8 +128,11 @@ export default async function DashboardLayout({
 
       {/* The phone's top bar (BDR redesign, Nov 11, 2026): workspace,
           search, avatar. Its links live in the bottom tab bar and More;
-          Dark / Light and Log out are in More. */}
-      <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-[var(--hairline-3)] bg-[var(--bg)] px-3 py-2 lg:hidden" data-testid="phone-top-bar">
+          Dark / Light and Log out are in More. It scrolls away with the
+          page (audit, Nov 11, 2026): pinned, it covered the Pipeline's own
+          sticky stage tabs and the week view's day headings, which stick to
+          the top of the screen too. The tab bar stays. */}
+      <div className="relative z-30 flex items-center gap-2 border-b border-[var(--hairline-3)] bg-[var(--bg)] px-3 py-2 lg:hidden" data-testid="phone-top-bar">
         <p className="min-w-0 flex-1 truncate text-sm font-semibold">{organization.name}</p>
         <GlobalSearch className="btn btn-ghost btn-sm h-11 w-11 shrink-0 !p-0" testId="phone-search" />
         <Link href="/dashboard/settings/account" className="flex h-11 w-11 shrink-0 items-center justify-center" aria-label="My Account">
@@ -133,8 +141,9 @@ export default async function DashboardLayout({
       </div>
       <PhoneTabBar member={member} theme={theme} workspace={organization.name} operator={session.isSuperAdmin} />
 
-      {/* Room at the foot of a phone for the tab bar. */}
-      <main className="min-w-0 flex-1 p-5 pb-24 sm:p-8 sm:pb-24 lg:pb-8">
+      {/* Room at the foot of a phone for the tab bar, and for a page's own
+          bar (a contact's Call / Text / Log, My day's Next) stacked on it. */}
+      <main className="min-w-0 flex-1 p-5 pb-36 sm:p-8 sm:pb-36 lg:pb-8">
         <PageTrail />
         <div className="fade-up mx-auto max-w-[1400px]">{children}</div>
       </main>

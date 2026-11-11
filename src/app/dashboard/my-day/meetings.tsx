@@ -68,7 +68,7 @@ export function MeetingsCard({ meetings, today, readOnly }: { meetings: MeetingI
           // Waiting for an answer by the one meeting rule (load.ts).
           const waiting = row.waiting;
           return (
-            <li key={row.eventId} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5" data-testid="meeting-row" data-event-id={row.eventId}>
+            <li key={row.eventId} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5" data-testid="meeting-row" data-event-id={row.eventId} data-day={row.on}>
               <div className="w-20 shrink-0 text-xs">
                 <p className="font-medium capitalize">{when}</p>
                 <p className="faint num">{time ?? "No time set"}</p>

@@ -433,9 +433,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   if (params.view === "myday" || (member && !params.report && !params.view)) {
     const target = params.rep && team.some((one) => one.id === params.rep) ? params.rep : userId;
     const repRow = team.find((one) => one.id === target);
-    const day = await loadMyDay(organizationId, { id: target, name: repRow?.name ?? session.name ?? "there" });
+    const [day, prefs] = await Promise.all([
+      loadMyDay(organizationId, { id: target, name: repRow?.name ?? session.name ?? "there" }),
+      readUiPrefs(userId),
+    ]);
     const readOnly = target !== userId;
-    const prefs = await readUiPrefs(userId);
+    // "Team & money" is built only while it is open (audit, Nov 11, 2026):
+    // rendered shut inside a <details>, it still loaded the whole team's
+    // overview and the Rundown on every My day visit, and its write-up
+    // asked Claude on mount, spending the workspace's 60 a day on a
+    // section nobody had opened. Opening it saves the choice and refreshes.
+    const teamMoneyOpen = prefFlag(prefs, "myday", "teamMoney") ?? false;
     return (
       <div>
         <ReportBar choice={readChoice({}, [])} member={member} myDay />
@@ -450,8 +458,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           day={day}
           readOnly={readOnly}
           ai={aiConfigured()}
-          teamMoneyOpen={prefFlag(prefs, "myday", "teamMoney") ?? false}
-          teamMoney={<TeamMoney organizationId={organizationId} timeZone={timeZone} businessName={organization.name} />}
+          teamMoneyOpen={teamMoneyOpen}
+          teamMoney={teamMoneyOpen ? <TeamMoney organizationId={organizationId} timeZone={timeZone} businessName={organization.name} /> : null}
         />
       </div>
     );

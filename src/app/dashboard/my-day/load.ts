@@ -7,6 +7,7 @@ import { healthSettings, loadContactHealth } from "@/lib/health-load";
 import { isoDiff, zoneDay, zoneTime, type LeadHealth } from "@/lib/health";
 import { addDaysIso, periodRange, zonedParts } from "@/lib/reports/period";
 import { repNumbers, type RepNumbers } from "@/lib/reports/daily";
+import { zonedMoment } from "@/lib/calendar-auto";
 import { greeting, rankUpNext, type UpNextCandidate, type UpNextCategory } from "@/lib/up-next";
 import { ACTIVITY_OUTCOME_LABELS, ACTIVITY_LABELS, type ActivityOutcomeValue, type ActivityTypeValue } from "@/lib/constants";
 
@@ -282,40 +283,46 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
   // Meeting entry on their calendar with no booked meeting behind it
   // (Held / No-show then ticks the entry).
   const nowTime = zoneTime(now, timeZone);
-  const booked = await prisma.opportunityMeeting.findMany({
-    where: {
-      opportunity: { organizationId, OR: [{ ownerId: rep.id }] },
-      on: { gte: meetingFrom, lte: new Date(meetingTo.getTime() + 86_400_000) },
-    },
-    orderBy: { on: "asc" },
-    take: 60,
-    select: {
-      id: true,
-      on: true,
-      eventId: true,
-      opportunityId: true,
-      opportunity: { select: { title: true, contacts: { where: { role: "PRIMARY" }, take: 1, select: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } } } } },
-    },
-  });
-  const bookedBy = await prisma.opportunityMeeting.findMany({
-    where: {
-      bookedById: rep.id,
-      opportunity: { organizationId, NOT: { ownerId: rep.id } },
-      on: { gte: meetingFrom, lte: new Date(meetingTo.getTime() + 86_400_000) },
-    },
-    orderBy: { on: "asc" },
-    take: 60,
-    select: {
-      id: true,
-      on: true,
-      eventId: true,
-      opportunityId: true,
-      opportunity: { select: { title: true, contacts: { where: { role: "PRIMARY" }, take: 1, select: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } } } } },
-    },
-  });
+  // Each kind is read in two parts (audit, Nov 11, 2026): what is still to
+  // come (from the start of today's window), and what has gone by with no
+  // answer yet, newest first. One list from 30 days back, oldest first and
+  // capped at 60, filled up with last month's answered meetings for a rep
+  // who books a lot, and this week's never loaded.
+  const bookedSelect = {
+    id: true,
+    on: true,
+    eventId: true,
+    opportunityId: true,
+    opportunity: { select: { title: true, contacts: { where: { role: "PRIMARY" as const }, take: 1, select: { contact: { select: { id: true, name: true, company: { select: { name: true } } } } } } } },
+  };
+  const bookedUntil = new Date(meetingTo.getTime() + 86_400_000);
+  // A day's margin, so a row stamped at midnight UTC (the calendar form,
+  // before the audit) for today still counts as today's.
+  const bookedSplit = new Date(todayWindow.from.getTime() - 86_400_000);
+  const ofTiles = { opportunity: { organizationId, ownerId: rep.id } };
+  const ofBooker = { bookedById: rep.id, opportunity: { organizationId, NOT: { ownerId: rep.id } } };
+  const [bookedAhead, bookedGone, byAhead, byGone] = await Promise.all([
+    prisma.opportunityMeeting.findMany({ where: { ...ofTiles, on: { gte: bookedSplit, lte: bookedUntil } }, orderBy: { on: "asc" }, take: 60, select: bookedSelect }),
+    prisma.opportunityMeeting.findMany({ where: { ...ofTiles, outcome: null, on: { gte: meetingFrom, lt: bookedSplit } }, orderBy: { on: "desc" }, take: 30, select: bookedSelect }),
+    prisma.opportunityMeeting.findMany({ where: { ...ofBooker, on: { gte: bookedSplit, lte: bookedUntil } }, orderBy: { on: "asc" }, take: 60, select: bookedSelect }),
+    prisma.opportunityMeeting.findMany({ where: { ...ofBooker, outcome: null, on: { gte: meetingFrom, lt: bookedSplit } }, orderBy: { on: "desc" }, take: 30, select: bookedSelect }),
+  ]);
+  const booked = [...bookedGone, ...bookedAhead];
+  const bookedBy = [...byGone, ...byAhead];
   const allBooked = [...booked, ...bookedBy];
   const tiles = await waitingMeetings(organizationId, { opportunityIds: [...new Set(allBooked.map((row) => row.opportunityId))] }, { now, timeZone });
-  const eventOf = new Map(meetings.map((event) => [event.id, event]));
+  const eventOf = new Map<string, { id: string; startOn: Date; startTime: string | null; title: string; doneAt: Date | null }>(meetings.map((event) => [event.id, event]));
+  // A booked meeting's own calendar entry when it isn't one of this rep's
+  // (a teammate's calendar, or ticked and gone by): its day and time are
+  // the meeting's, not a day worked out from the row (audit, Nov 11, 2026).
+  const missing = [...new Set(allBooked.map((row) => row.eventId).filter((id): id is string => Boolean(id) && !eventOf.has(id!)))];
+  if (missing.length) {
+    const extra = await prisma.calendarEvent.findMany({
+      where: { organizationId, id: { in: missing } },
+      select: { id: true, startOn: true, startTime: true, title: true, doneAt: true },
+    });
+    for (const event of extra) eventOf.set(event.id, event);
+  }
   const meetingRows: MeetingItem[] = [];
   const seenEvents = new Set<string>();
   for (const row of allBooked) {
@@ -324,9 +331,14 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
     const on = event ? isoOf(event.startOn)! : zoneDay(row.on, timeZone);
     const time = event ? event.startTime : null;
     const tile = tiles.get(row.opportunityId);
-    const isWaiting = tile?.toAnswer?.id === row.id && row.on.getTime() <= now.getTime();
-    const answered = Boolean(tile && !isWaiting && row.on.getTime() <= now.getTime());
-    const past = on < today || (on === today && (time ? time <= nowTime : row.on.getTime() <= now.getTime()));
+    // When it happens: the entry's day and time in the workspace's clock
+    // (noon when it has no time), else the row's moment. A row written by
+    // the calendar form before the audit holds midnight UTC, the evening
+    // before in the US.
+    const at = event ? zonedMoment(on, event.startTime ?? "12:00", timeZone).getTime() : row.on.getTime();
+    const isWaiting = tile?.toAnswer?.id === row.id && at <= now.getTime();
+    const answered = Boolean(tile && !isWaiting && at <= now.getTime());
+    const past = on < today || (on === today && (time ? time <= nowTime : at <= now.getTime()));
     // Gone by and answered (or ticked): it's in the history now, off the card
     // unless it was today.
     if (past && !isWaiting && on < today) continue;

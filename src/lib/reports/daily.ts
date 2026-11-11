@@ -18,6 +18,9 @@ const LIST = 8;
 
 export type DailyReport = {
   kind: "daily";
+  // The teammate it is narrowed to, or null for the whole team, so its
+  // "See all" links open the calendar on the same people.
+  repId: string | null;
   today: string;
   yesterday: string;
   // count is every entry today; open is the ones not yet done. items lists
@@ -169,6 +172,7 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
 
   const report: Omit<DailyReport, "headlines" | "table"> = {
     kind: "daily",
+    repId: repId ?? null,
     today,
     yesterday,
     calendar: {

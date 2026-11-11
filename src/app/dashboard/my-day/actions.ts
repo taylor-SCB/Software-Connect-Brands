@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { askClaude } from "@/lib/ai";
+import { aiConfigured, askClaude } from "@/lib/ai";
 import { AI_DAILY_CAPS } from "@/lib/ai-assist";
 import { loadMyDay } from "./load";
 
@@ -13,7 +13,11 @@ import { loadMyDay } from "./load";
 // like Bulk Assign's "Assign to me" (assignRecords), with two guards that
 // matter here because two reps may tap Take 10 at the same moment: only
 // leads still nobody's are taken, and Undo gives back only the ones this
-// person still holds. One statement each; updatedAt is left alone, like
+// person still holds. Both also re-check that the lead is still new and
+// untouched (audit, Nov 11, 2026): a lead a teammate called between the
+// page loading and the tap isn't taken, and an Undo pressed after the rep
+// has worked a lead keeps it, so it can't fall out of every Up next with
+// no rep. One statement each; updatedAt is left alone, like
 // Bulk Assign, so the lists don't reshuffle.
 
 const idsSchema = z.array(z.string().trim().min(1).max(60)).min(1).max(50);
@@ -25,6 +29,7 @@ export async function takeUnownedLeads(ids: string[]): Promise<{ error: string }
   const rows = await prisma.$queryRaw<{ id: string }[]>`
     UPDATE "Contact" SET "ownerId" = ${userId}
      WHERE "organizationId" = ${organizationId} AND id = ANY(${parsed.data}) AND "ownerId" IS NULL
+       AND status = 'NOT_ACTIONED' AND "lastTouchAt" IS NULL
      RETURNING id`;
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/contacts", "layout");
@@ -38,7 +43,8 @@ export async function giveBackLeads(ids: string[]): Promise<{ error?: string; re
   if (!parsed.success) return { error: "Reload the page and try again." };
   const returned = await prisma.$executeRaw`
     UPDATE "Contact" SET "ownerId" = NULL
-     WHERE "organizationId" = ${organizationId} AND id = ANY(${parsed.data}) AND "ownerId" = ${userId}`;
+     WHERE "organizationId" = ${organizationId} AND id = ANY(${parsed.data}) AND "ownerId" = ${userId}
+       AND status = 'NOT_ACTIONED' AND "lastTouchAt" IS NULL`;
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/contacts", "layout");
   return { returned };
@@ -50,6 +56,15 @@ export async function giveBackLeads(ids: string[]): Promise<{ error?: string; re
 // the facts, or it is thrown out. Nothing is stored.
 export async function rewriteGreeting(): Promise<{ sentence: string } | { error: string }> {
   const { organizationId, userId, name } = await requireSession();
+  // Answer "no" before building the whole day (audit, Nov 11, 2026): with
+  // the allowance used up, every tap still ran My day's fifteen reads.
+  // askClaude still takes the allowance itself, so two taps on the last
+  // one give it to exactly one.
+  if (!aiConfigured()) return { error: "AI isn't switched on for this site yet." };
+  const used = await prisma.aiRequest.count({
+    where: { organizationId, kind: "MY_DAY_GREETING", createdAt: { gt: new Date(Date.now() - 86_400_000) } },
+  });
+  if (used >= AI_DAILY_CAPS.MY_DAY_GREETING) return { error: "Today's AI allowance for this is used up. It resets over the next 24 hours." };
   const day = await loadMyDay(organizationId, { id: userId, name: name ?? "there" });
   const facts = {
     firstName: (name ?? "there").trim().split(/\s+/)[0],
@@ -76,7 +91,16 @@ export async function rewriteGreeting(): Promise<{ sentence: string } | { error:
   });
   if ("error" in answer) return answer;
   const sentence = answer.data.sentence.trim();
-  const allowed = new Set(JSON.stringify(facts).match(/\d+/g) ?? []);
+  // Only the counts are numbers the answer may use (audit, Nov 11, 2026):
+  // a next person called "Studio 54", or "3 tries" in their reason, let a
+  // wrong 54 or 3 through when every digit in the facts counted.
+  // The rule-written sentence's own numbers ("quiet 17 days") stay allowed.
+  const allowed = new Set([
+    ...Object.values(facts)
+      .filter((value): value is number => typeof value === "number")
+      .map(String),
+    ...(facts.plainSentence.match(/\d+/g) ?? []),
+  ]);
   const numbers = sentence.match(/\d+/g) ?? [];
   if (numbers.some((n) => !allowed.has(n))) return { error: "The AI's wording didn't match your numbers, so the plain one stays." };
   return { sentence };

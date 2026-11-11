@@ -173,7 +173,11 @@ export function CalendarToolbar({
   const crewName = choices.crews.find((crew) => crew.id === filters.crewId)?.name ?? "…";
   const clearAll = () =>
     start(async () => {
-      await saveUiPref("calendar", "scope", "team");
+      // Clear means Team only when it is clearing who the days belong to
+      // (audit, Nov 11, 2026): a Member on their remembered Mine who adds a
+      // company filter and clears it meant "drop the company", not "show me
+      // the whole team from now on", which wrote over decision 17's Mine.
+      if (scope !== "team") await saveUiPref("calendar", "scope", "team");
       go({ crew: null, type: null, users: null, companies: null, contacts: null, projects: null });
       router.refresh();
     });
@@ -234,7 +238,7 @@ export function CalendarToolbar({
               type="button"
               onClick={() => step(-1)}
               aria-label={view === "month" ? "The month before" : "The week before"}
-              className="btn btn-ghost btn-sm !px-1.5 pointer-coarse:min-h-11"
+              className="btn btn-ghost btn-sm justify-center !px-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               data-testid="cal-prev"
             >
               <IconChevronLeft size={14} />
@@ -246,7 +250,7 @@ export function CalendarToolbar({
               type="button"
               onClick={() => step(1)}
               aria-label={view === "month" ? "The month after" : "The week after"}
-              className="btn btn-ghost btn-sm !px-1.5 pointer-coarse:min-h-11"
+              className="btn btn-ghost btn-sm justify-center !px-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               data-testid="cal-next"
             >
               <IconChevronRight size={14} />
@@ -320,7 +324,7 @@ export function CalendarToolbar({
               Team week, a row each
             </button>
           </div>
-          {view !== "agenda" && (
+          {(
             <div role="tablist" aria-label="How to lay it out">
               <p className="eyebrow mb-1">Lay it out as</p>
               <div className="grid gap-1">
@@ -360,6 +364,14 @@ export function CalendarToolbar({
                     weekOf: anchor,
                     crewId: filters.crewId || undefined,
                     type: filters.type || undefined,
+                    // Whose days and which people are on screen too (audit,
+                    // Nov 11, 2026): a Member on Mine copied the whole
+                    // team's week, everyone's meetings included.
+                    mine: scope === "mine",
+                    userIds: filters.userIds,
+                    companyIds: filters.companyIds,
+                    contactIds: filters.contactIds,
+                    projectIds: filters.projectIds,
                   });
                   setCopyState(result ?? {});
                   setViewOpen(false);
@@ -522,9 +534,16 @@ export function CalendarToolbar({
 
 function Chip({ children, onRemove }: { children: React.ReactNode; onRemove: () => void }) {
   return (
-    <span className="badge gap-1 border-[var(--border-strong)]">
-      {children}
-      <button type="button" onClick={onRemove} aria-label="Remove filter" className="opacity-70 hover:opacity-100">
+    // A long company or project name shortens instead of widening a phone
+    // page, and × is a real target (audit, Nov 11, 2026).
+    <span className="badge min-w-0 max-w-full gap-1 border-[var(--border-strong)]" data-testid="cal-chip">
+      <span className="min-w-0 truncate">{children}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove filter"
+        className="-my-1 -mr-1 inline-flex shrink-0 items-center justify-center rounded p-1 opacity-70 hover:opacity-100 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+      >
         <IconX size={10} />
       </button>
     </span>
