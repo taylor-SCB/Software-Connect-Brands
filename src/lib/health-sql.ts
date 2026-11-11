@@ -98,11 +98,14 @@ export function pulseRulesSql(source: Prisma.Sql, clock: PulseClock): Prisma.Sql
                ${ago(Prisma.sql`GREATEST(i.last_connect, CASE WHEN i.status_talk <= ${now} THEN i.status_talk END)`)} AS ltalk,
                COALESCE(i.late_n, 0) > 0 AS late,
                (i.next_on IS NOT NULL AND i.next_on >= ${today}) AS has_next,
-               COALESCE((SELECT bool_or(${ago(Prisma.sql`p.v::timestamp`)} <= ${q})
-                           FROM jsonb_array_elements_text(COALESCE(i.paper, '[]'::jsonb)) p(v)), false) AS paper_recent,
-               COALESCE((SELECT bool_or(${ago(Prisma.sql`p.v::timestamp`)} > ${q}
-                                        AND (i.last_touch IS NULL OR i.last_touch < p.v::timestamp))
-                           FROM jsonb_array_elements_text(COALESCE(i.paper, '[]'::jsonb)) p(v)), false) AS paper_drag
+               -- Most people have no paperwork out: skip the look inside.
+               CASE WHEN i.paper IS NULL OR jsonb_array_length(i.paper) = 0 THEN false
+                    ELSE COALESCE((SELECT bool_or(${ago(Prisma.sql`p.v::timestamp`)} <= ${q})
+                                     FROM jsonb_array_elements_text(i.paper) p(v)), false) END AS paper_recent,
+               CASE WHEN i.paper IS NULL OR jsonb_array_length(i.paper) = 0 THEN false
+                    ELSE COALESCE((SELECT bool_or(${ago(Prisma.sql`p.v::timestamp`)} > ${q}
+                                                  AND (i.last_touch IS NULL OR i.last_touch < p.v::timestamp))
+                                     FROM jsonb_array_elements_text(i.paper) p(v)), false) END AS paper_drag
       ) d
       CROSS JOIN LATERAL (SELECT (d.has_next OR d.paper_recent) AS booked) b
       CROSS JOIN LATERAL (
@@ -130,43 +133,43 @@ export function pulseRulesSql(source: Prisma.Sql, clock: PulseClock): Prisma.Sql
 // The inputs for the workspace's people, optionally only one rep's
 // (`owner`: an id, or null for nobody's). Every statement is scoped to
 // the workspace and grouped; nothing is read per person.
-export function contactPulseInputs(organizationId: string, clock: PulseClock, owner?: string | null): Prisma.Sql {
+//
+// `candidatesOnly` (the list's sets): only the people whose colour can be
+// anything but the plain one for their state — won, or touched within Q
+// days, or talked (or moved into a talk status) within 2Q days, or with
+// something booked, late or paperwork out. Everyone else reached scores at
+// most 10 (no recent touch, a talk 10, nothing booked): Cold; everyone else
+// being tried has nothing late or booked. At 200,000 people that is a few
+// thousand rows to score instead of all of them.
+export function contactPulseInputs(
+  organizationId: string,
+  clock: PulseClock,
+  owner?: string | null,
+  options: { candidatesOnly?: boolean } = {},
+): Prisma.Sql {
   const now = nowSql(clock);
+  const q = Math.max(1, Math.round(clock.quietDays || 8));
+  // The first moment of the workspace's day n days back, as a UTC timestamp.
+  const dayStart = (n: number) =>
+    Prisma.sql`(((((${clock.now.toISOString()}::timestamptz) AT TIME ZONE ${clock.timeZone})::date - ${Prisma.raw(String(n))})::timestamp AT TIME ZONE ${clock.timeZone}) AT TIME ZONE 'UTC')`;
+  const candidateClause = options.candidatesOnly
+    ? Prisma.sql`AND (c.status = 'WON' OR c."lastTouchAt" >= ${dayStart(q)} OR c."lastConnectAt" >= ${dayStart(q * 2)}
+                      OR c.id IN (SELECT id FROM booked UNION SELECT id FROM late UNION SELECT id FROM paper
+                                  UNION SELECT id FROM st WHERE st.at >= ${dayStart(q * 2)}))`
+    : Prisma.empty;
   const today = zoneDay(clock.now, clock.timeZone);
   const ownerClause =
     owner === undefined ? Prisma.empty : owner === null ? Prisma.sql`AND c."ownerId" IS NULL` : Prisma.sql`AND c."ownerId" = ${owner}`;
   // A touch and a connect, as the loader and the triggers read them.
   const touch = Prisma.sql`a.marketing = false AND a."occurredAt" <= ${now} AND a.outcome IS DISTINCT FROM 'NO_SHOW'`;
   return Prisma.sql`
-    WITH people AS (
-      SELECT c.id, c.status::text AS status, c."lastTouchAt" AS last_touch, c."lastConnectAt" AS last_connect
-        FROM "Contact" c
-       WHERE c."organizationId" = ${organizationId} ${ownerClause}
-    ),
-    st AS (
+    WITH st AS (
       SELECT s."contactId" AS id, MAX(s."on") AS at
         FROM "StatusChange" s
        WHERE s."organizationId" = ${organizationId} AND s."contactId" IS NOT NULL
          AND s."toStatus" IN (${Prisma.join([...TALK_STATUSES])}) AND s."on" <= ${now}
        GROUP BY 1
     ),
-    talk AS (
-      SELECT p.id, GREATEST(p.last_connect, st.at) AS at
-        FROM people p JOIN st ON st.id = p.id
-      UNION ALL
-      SELECT p.id, p.last_connect FROM people p
-       WHERE p.last_connect IS NOT NULL AND NOT EXISTS (SELECT 1 FROM st WHERE st.id = p.id)
-    ),
-    since AS (
-      SELECT t.id, COUNT(DISTINCT COALESCE(a."batchId", a.id))::int AS n
-        FROM talk t
-        JOIN "Activity" a ON a."contactId" = t.id AND a."organizationId" = ${organizationId}
-       WHERE ${touch} AND a."occurredAt" > t.at
-       GROUP BY 1
-    ),
-    -- Booked today or later: an open calendar entry (theirs or one they
-    -- attend), a touch dated ahead, or a meeting ahead on their
-    -- opportunity nobody has answered yet (the loader's om_next).
     booked AS (
       SELECT e."contactId" AS id FROM "CalendarEvent" e
        WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NOT NULL
@@ -208,6 +211,28 @@ export function contactPulseInputs(organizationId: string, clock: PulseClock, ow
          WHERE k."organizationId" = ${organizationId} AND k.status = 'SENT' AND k.payable = false AND k."sentAt" IS NOT NULL AND k."contactId" IS NOT NULL
       ) x GROUP BY id
     ),
+    people AS (
+      SELECT c.id, c.status::text AS status, c."lastTouchAt" AS last_touch, c."lastConnectAt" AS last_connect
+        FROM "Contact" c
+       WHERE c."organizationId" = ${organizationId} ${ownerClause} ${candidateClause}
+    ),
+    talk AS (
+      SELECT p.id, GREATEST(p.last_connect, st.at) AS at
+        FROM people p JOIN st ON st.id = p.id
+      UNION ALL
+      SELECT p.id, p.last_connect FROM people p
+       WHERE p.last_connect IS NOT NULL AND NOT EXISTS (SELECT 1 FROM st WHERE st.id = p.id)
+    ),
+    since AS (
+      SELECT t.id, COUNT(DISTINCT COALESCE(a."batchId", a.id))::int AS n
+        FROM talk t
+        JOIN "Activity" a ON a."contactId" = t.id AND a."organizationId" = ${organizationId}
+       WHERE ${touch} AND a."occurredAt" > t.at
+       GROUP BY 1
+    ),
+    -- Booked today or later: an open calendar entry (theirs or one they
+    -- attend), a touch dated ahead, or a meeting ahead on their
+    -- opportunity nobody has answered yet (the loader's om_next).
     won AS (SELECT p.id AS key FROM people p WHERE p.status = 'WON'),
     owes AS (
       SELECT k.key
@@ -264,10 +289,19 @@ export async function loadPulseSets(organizationId: string, clock: PulseClock, o
   const tz = clock.timeZone;
   const q = Prisma.raw(String(Math.max(1, Math.round(clock.quietDays || 8))));
   const today = Prisma.sql`((${clock.now.toISOString()}::timestamptz) AT TIME ZONE ${tz})::date`;
-  const rows = await prisma.$queryRaw<{ id: string | null; kind: string; value: string }[]>(Prisma.sql`
-    WITH tw AS MATERIALIZED (${pulseRulesSql(contactPulseInputs(organizationId, clock, owner), clock)}),
-    counts AS (SELECT state, pulse, COUNT(*)::int AS n FROM tw WHERE state IN ('WON', 'REACHED') GROUP BY 1, 2),
-    big AS (SELECT DISTINCT ON (state) state, pulse FROM counts ORDER BY state, n DESC, pulse)
+  // The planner prices the per-person paperwork look as if every row
+  // had some and reaches for JIT compilation, which alone took about two
+  // seconds at 200,000 people; the statement runs in well under one
+  // without it. Off for this statement only.
+  const rows = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL jit = off`;
+    return tx.$queryRaw<{ id: string | null; kind: string; value: string }[]>(Prisma.sql`
+    WITH tw AS MATERIALIZED (${pulseRulesSql(contactPulseInputs(organizationId, clock, owner, { candidatesOnly: true }), clock)}),
+    -- Only candidates are scored, so Reached's biggest is always Cold (the
+    -- rest of Reached); Won's people are all here, so its count is exact.
+    counts AS (SELECT state, pulse, COUNT(*)::int AS n FROM tw WHERE state = 'WON' GROUP BY 1, 2),
+    big AS ((SELECT DISTINCT ON (state) state, pulse FROM counts ORDER BY state, n DESC, pulse)
+            UNION ALL SELECT 'REACHED', 'cold')
     SELECT NULL AS id, 'big' AS kind, state || ':' || pulse AS value FROM big
     UNION ALL
     SELECT NULL, 'stale', to_char(((${today} - ${q})::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
@@ -280,6 +314,7 @@ export async function loadPulseSets(organizationId: string, clock: PulseClock, o
        UNION ALL
        SELECT tw.key, 'booked', '', 150 FROM tw WHERE tw.state = 'TRYING' AND tw.booked
      ) x ORDER BY w DESC, id LIMIT ${PULSE_ID_CAP + 1})`);
+  });
   const sets: PulseSets = { big: {}, ids: {}, late: [], booked: [], staleBefore: new Date(0), capped: false };
   let count = 0;
   for (const row of rows) {
