@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { aheadDay, pastDay, time12, zoneDay } from "@/lib/health";
+import { aheadDay, nextKindOf, pastDay, time12, zoneDay } from "@/lib/health";
+import { answerOf } from "@/lib/meeting-rule";
 import { zonedMoment } from "@/lib/calendar-auto";
 import { waitingMeetings, type WaitingMeeting } from "@/lib/meetings";
 
@@ -111,4 +112,49 @@ function make(
 
 function capital(text: string) {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// Coming up's rows, each with what Held / No-show / Move act on (round 2,
+// Nov 11, 2026): a meeting on the Pipeline through its OpportunityMeeting
+// (found by its calendar entry), anything else through the entry itself.
+// A meeting already answered — its own outcome, else its history line's,
+// by the one rule (answerOf in src/lib/meeting-rule.ts) — offers Move only.
+// Two statements for the whole card, scoped to the workspace.
+export type UpcomingMeeting = ContactMeeting & { meeting: boolean; answered: boolean };
+
+export async function loadUpcomingActions(
+  organizationId: string,
+  events: { id: string; title: string; type: string; startOn: string; startTime: string | null }[],
+  today: string,
+): Promise<Record<string, UpcomingMeeting>> {
+  const meetingIds = events.filter((event) => nextKindOf(event.type) === "meeting").map((event) => event.id);
+  const rows = meetingIds.length
+    ? await prisma.opportunityMeeting.findMany({
+        where: { eventId: { in: meetingIds }, opportunity: { organizationId } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, opportunityId: true, eventId: true, outcome: true, activityId: true },
+      })
+    : [];
+  const lineIds = rows.map((row) => row.activityId).filter((id): id is string => Boolean(id));
+  const lines = lineIds.length
+    ? new Map(
+        (await prisma.activity.findMany({ where: { organizationId, id: { in: lineIds } }, select: { id: true, outcome: true } })).map((line) => [
+          line.id,
+          line.outcome,
+        ]),
+      )
+    : new Map<string, string | null>();
+  const byEvent = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) if (row.eventId && !byEvent.has(row.eventId)) byEvent.set(row.eventId, row);
+  const result: Record<string, UpcomingMeeting> = {};
+  for (const event of events) {
+    const row = byEvent.get(event.id) ?? null;
+    const base = make(row?.id ?? null, row?.opportunityId ?? null, event.id, event.startOn, event.startTime, event.title, false, today);
+    result[event.id] = {
+      ...base,
+      meeting: nextKindOf(event.type) === "meeting",
+      answered: row ? answerOf(row.outcome, row.activityId ? lines.get(row.activityId) : null) !== null : false,
+    };
+  }
+  return result;
 }

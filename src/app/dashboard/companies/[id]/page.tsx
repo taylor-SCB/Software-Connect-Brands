@@ -23,6 +23,7 @@ import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
 import { ProjectsCard } from "@/components/projects-card";
 import { UpcomingCard } from "@/components/upcoming-card";
+import { salesFirst } from "@/lib/event-order";
 import { loadEventChoices, upcomingFor } from "@/lib/calendar-data";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
@@ -677,7 +678,20 @@ export default async function CompanyDetailPage({
               </Card>
             )}
 
-            <UpcomingCard events={upcoming} choices={eventChoices} defaults={{ companyId: company.id, startOn: today }} label={company.name} />
+            <UpcomingCard
+              events={upcoming}
+              choices={eventChoices}
+              // A lead's company books a sales touch: sales types first,
+              // starting on Call while its next step is to reach someone,
+              // Meeting after (round 2).
+              typeOrder={salesFirst(eventChoices.eventTypes)}
+              defaults={{
+                companyId: company.id,
+                startOn: today,
+                type: eventChoices.eventTypes.find((name) => name.toLowerCase() === (health.meter.action?.key === "call" ? "call" : "meeting")),
+              }}
+              label={company.name}
+            />
 
             {hasPaperwork && (
               <FoldCard
