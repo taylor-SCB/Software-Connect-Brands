@@ -13,7 +13,7 @@ import {
   startOfWeek,
   weekDays,
 } from "@/lib/calendar";
-import { LOG_ROWS, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, loadOverdue, type EventFilters } from "@/lib/calendar-data";
+import { LOG_ROWS, countEvents, loadAgenda, loadCrewRows, loadEvents, loadEventChoices, loadFilterLabels, loadLogs, loadOverdue, type AgendaDay, type EventFilters } from "@/lib/calendar-data";
 import { readIds, readLayout } from "@/lib/calendar-filters";
 import { PageHeader, Card } from "@/components/ui";
 import { CalendarToolbar } from "./calendar-toolbar";
@@ -105,8 +105,11 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   const from = isoToDate(days[0])!;
   const to = isoToDate(days[days.length - 1])!;
 
-  const [loaded, choices, logs, labels, crews, overdue] = await Promise.all([
-    layout === "log" ? [] : loadEvents(organizationId, { from, to }, filters),
+  // The Agenda reads its days capped (perf fix, Nov 11, 2026): loadAgenda,
+  // not the whole window, and the window's count on its own for the header.
+  const agendaShown = view === "agenda" && layout !== "log";
+  const [loaded, choices, logs, labels, crews, overdue, agendaRaw, agendaTotal] = await Promise.all([
+    layout === "log" || agendaShown ? [] : loadEvents(organizationId, { from, to }, filters),
     loadEventChoices(organizationId, userId),
     layout === "calendar" ? null : loadLogs(organizationId, today, filters),
     loadFilterLabels(organizationId, {
@@ -117,11 +120,24 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
     view === "team" && layout !== "log" ? loadCrewRows(organizationId) : [],
     // The overdue read alone (final audit, Nov 11, 2026), not the whole log.
     view === "agenda" && layout === "calendar" ? loadOverdue(organizationId, today, filters) : Promise.resolve([] as EventView[]),
+    agendaShown ? loadAgenda(organizationId, days, filters) : Promise.resolve([] as AgendaDay[]),
+    agendaShown ? countEvents(organizationId, { from, to }, filters) : Promise.resolve(0),
   ]);
+
+  // The Agenda's rows, each once (a multi-day entry sits under every day it
+  // runs across), with their numbers put on in one statement.
+  const agendaRows = new Map<string, EventView>();
+  for (const entry of agendaRaw) for (const event of [...entry.open, ...entry.done]) agendaRows.set(event.id, event);
+  const agendaPhoned = new Map((await withPhones(organizationId, [...agendaRows.values()])).map((event) => [event.id, event]));
+  const agenda: AgendaDay[] = agendaRaw.map((entry) => ({
+    ...entry,
+    open: entry.open.map((event) => agendaPhoned.get(event.id) ?? event),
+    done: entry.done.map((event) => agendaPhoned.get(event.id) ?? event),
+  }));
 
   // Real tap-to-call: the person's mobile, else their phone, for every
   // entry with someone on it (one statement for the window).
-  const events = await withPhones(organizationId, loaded);
+  const events = agendaShown ? [...agendaPhoned.values()] : await withPhones(organizationId, loaded);
   const overdueRows = await withPhones(organizationId, logs ? logs.overdue : overdue);
 
   // A crew in two places at once on the same day, with times that
@@ -148,6 +164,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
       if (shown.has(covered)) bookedDays.add(covered);
     }
   }
+  const thingsOn = agendaShown ? agendaTotal : events.length;
 
   const filtering =
     Boolean(params.crew || params.type) ||
@@ -185,7 +202,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
           ) : (
             <p className="faint num text-xs" data-testid="cal-count">
               {bookedDays.size} {bookedDays.size === 1 ? "day booked" : "days booked"} ·{" "}
-              {events.length} {events.length === 1 ? "thing on" : "things on"}
+              {thingsOn} {thingsOn === 1 ? "thing on" : "things on"}
               {filtering && " with the filters on"}
             </p>
           )
@@ -230,7 +247,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
       {view === "agenda" ? (
         layout !== "log" && (
-          <AgendaView today={today} days={days} events={events} overdue={overdueRows} choices={choices} overdueCap={LOG_ROWS} />
+          <AgendaView today={today} agenda={agenda} overdue={overdueRows} choices={choices} overdueCap={LOG_ROWS} />
         )
       ) : layout !== "log" &&
         (view === "month" ? (

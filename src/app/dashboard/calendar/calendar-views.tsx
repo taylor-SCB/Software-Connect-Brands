@@ -3,6 +3,8 @@
 import { ink } from "@/lib/ink";
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
+import type { AgendaDay } from "@/lib/calendar-data";
 import {
   WEEKDAY_NAMES,
   byTimeThenTitle,
@@ -720,31 +722,38 @@ export function EventList({
 // the title opens the full card (Edit, Move, the trash) under the row.
 export function AgendaView({
   today,
-  days,
-  events,
+  agenda,
   overdue,
   choices,
   overdueCap,
 }: {
   today: string;
-  // Today and the next 7 days.
-  days: string[];
-  events: EventView[];
+  // Today and the next 7 days, each capped on the server (loadAgenda).
+  agenda: AgendaDay[];
   overdue: EventView[];
   choices: EventChoices;
   // How many overdue entries are read at most; a full list says so.
   overdueCap?: number;
 }) {
   const overdueFull = Boolean(overdueCap && overdue.length >= overdueCap);
-  const byDay = new Map<string, EventView[]>();
-  for (const event of events) {
-    for (const day of eventDays(event)) {
-      if (days.includes(day)) byDay.set(day, [...(byDay.get(day) ?? []), event]);
-    }
-  }
-  const later = days.slice(1).filter((day) => (byDay.get(day) ?? []).length > 0);
-  const todays = (byDay.get(today) ?? []).sort(byTimeThenTitle);
-  const nothing = overdue.length === 0 && todays.length === 0 && later.length === 0;
+  const days = agenda.map((entry) => entry.day);
+  const byDay = new Map(agenda.map((entry) => [entry.day, entry]));
+  const countOf = (day: string) => {
+    const entry = byDay.get(day);
+    return entry ? entry.openCount + entry.doneCount : 0;
+  };
+  const later = days.slice(1).filter((day) => countOf(day) > 0);
+  const todayEntry = byDay.get(today);
+  const todayCount = countOf(today);
+  const nothing = overdue.length === 0 && todayCount === 0 && later.length === 0;
+  // "Show all" opens the day in the Week view, filters kept.
+  const params = useSearchParams();
+  const weekHref = (day: string) => {
+    const next = new URLSearchParams(params?.toString() ?? "");
+    next.set("view", "week");
+    next.set("on", day);
+    return `/dashboard/calendar?${next.toString()}`;
+  };
   // Back from the dialler: How did it go? opens itself for whoever the
   // tapped Call or Text was for (data-contact-id on the row).
   const how = useHowDidItGo({ dial: true });
@@ -764,7 +773,7 @@ export function AgendaView({
       {how.element}
       <div className="grid grid-cols-7 gap-1 sm:hidden" role="group" aria-label="This week" data-testid="agenda-strip">
         {strip.map((day) => {
-          const count = (byDay.get(day) ?? []).length;
+          const count = countOf(day);
           const date = new Date(`${day}T12:00:00Z`);
           return (
             <button
@@ -802,29 +811,81 @@ export function AgendaView({
           )}
         </AgendaSection>
       )}
-      <AgendaSection title="Today" count={todays.length} testId="agenda-today" day={today}>
-        {todays.length === 0 ? (
+      <AgendaSection title="Today" count={todayCount} testId="agenda-today" day={today}>
+        {todayCount === 0 || !todayEntry ? (
           <p className="faint px-4 py-4 text-sm">Nothing on today.</p>
         ) : (
-          todays.map((event) => <AgendaRow key={event.id} event={event} choices={choices} today={today} />)
+          <AgendaDayRows entry={todayEntry} choices={choices} today={today} weekHref={weekHref(today)} />
         )}
       </AgendaSection>
-      {later.map((day) => {
-        const rows = (byDay.get(day) ?? []).sort(byTimeThenTitle);
-        return (
-          <AgendaSection key={day} title={readableDay(day)} count={rows.length} testId="agenda-day" day={day}>
-            {rows.map((event) => (
-              <AgendaRow key={`${event.id}-${day}`} event={event} choices={choices} today={today} />
-            ))}
-          </AgendaSection>
-        );
-      })}
+      {later.map((day) => (
+        <AgendaSection key={day} title={readableDay(day)} count={countOf(day)} testId="agenda-day" day={day}>
+          <AgendaDayRows entry={byDay.get(day)!} choices={choices} today={today} weekHref={weekHref(day)} />
+        </AgendaSection>
+      ))}
       {nothing && (
         <p className="faint text-sm" data-testid="agenda-empty">
           Nothing overdue and nothing in the next 7 days.
         </p>
       )}
     </div>
+  );
+}
+
+// One day's rows (perf fix, Nov 11, 2026): the open ones, soonest first,
+// up to the cap with "Showing 60 of N · Show all" past it, then the day's
+// done ones folded behind "n done" — a busy day's 1,000 ticked calls were
+// drawn in full and took the page past two seconds.
+function AgendaDayRows({
+  entry,
+  choices,
+  today,
+  weekHref,
+}: {
+  entry: AgendaDay;
+  choices: EventChoices;
+  today: string;
+  weekHref: string;
+}) {
+  const [showDone, setShowDone] = useState(false);
+  const open = [...entry.open].sort(byTimeThenTitle);
+  const done = [...entry.done].sort(byTimeThenTitle);
+  const more = (shown: number, total: number, testId: string, what: string) =>
+    total > shown && (
+      <li className="faint px-4 py-3 text-xs" data-testid={testId} data-shown={shown} data-total={total}>
+        Showing {shown.toLocaleString("en-US")} of {total.toLocaleString("en-US")}
+        {what} ·{" "}
+        <Link href={weekHref} className="underline" data-testid={`${testId}-all`}>
+          Show all
+        </Link>
+      </li>
+    );
+  return (
+    <>
+      {open.map((event) => (
+        <AgendaRow key={`${event.id}-${entry.day}`} event={event} choices={choices} today={today} />
+      ))}
+      {more(open.length, entry.openCount, "agenda-day-more", "")}
+      {entry.doneCount > 0 && (
+        <li>
+          <button
+            type="button"
+            className="faint flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left text-xs"
+            aria-expanded={showDone}
+            onClick={() => setShowDone((value) => !value)}
+            data-testid="agenda-done-fold"
+            data-count={entry.doneCount}
+          >
+            <IconCheck size={12} />
+            {entry.doneCount.toLocaleString("en-US")} done
+            <span className="ml-auto">{showDone ? "Hide" : "Show"}</span>
+          </button>
+        </li>
+      )}
+      {showDone &&
+        done.map((event) => <AgendaRow key={`${event.id}-${entry.day}`} event={event} choices={choices} today={today} />)}
+      {showDone && more(done.length, entry.doneCount, "agenda-done-more", " done")}
+    </>
   );
 }
 

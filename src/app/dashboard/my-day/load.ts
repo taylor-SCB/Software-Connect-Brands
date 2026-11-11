@@ -139,6 +139,11 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
           FROM due_ev
          GROUP BY cid
       ),
+      -- Read with NOT IN / IN, never NOT EXISTS (perf fix, Nov 11, 2026): the
+      -- planner guesses this at one row, and a NOT EXISTS against it became a
+      -- nested-loop anti-join rescanning it per contact (3.8 s at 200,000
+      -- contacts; a hashed subplan is 0.13 s). cid comes off a join to mine,
+      -- so it is never NULL and NOT IN means exactly what NOT EXISTS did.
       ahead AS (
         SELECT DISTINCT e."contactId" AS cid
           FROM "CalendarEvent" e
@@ -151,27 +156,27 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
           ORDER BY COALESCE(meeting_oldest, late_oldest, ${today}::date) LIMIT ${DUE_CAP})
         UNION ALL
         (SELECT m.id, 'meeting' FROM mine m
-          WHERE m.status = 'MEETING_SET' AND NOT EXISTS (SELECT 1 FROM ahead a WHERE a.cid = m.id)
+          WHERE m.status = 'MEETING_SET' AND m.id NOT IN (SELECT cid FROM ahead WHERE cid IS NOT NULL)
           ORDER BY m."lastTouchAt" NULLS FIRST LIMIT ${GROUP_CAP})
         UNION ALL
         (SELECT m.id, 'talked' FROM mine m
-          WHERE m.status IN ('CONNECTED', 'INTERESTED') AND NOT EXISTS (SELECT 1 FROM ahead a WHERE a.cid = m.id)
+          WHERE m.status IN ('CONNECTED', 'INTERESTED') AND m.id NOT IN (SELECT cid FROM ahead WHERE cid IS NOT NULL)
           ORDER BY m."lastConnectAt" NULLS FIRST, m."lastTouchAt" NULLS FIRST LIMIT ${GROUP_CAP})
         UNION ALL
         (SELECT m.id, 'new' FROM mine m
-          WHERE m.status = 'NOT_ACTIONED' AND m."lastTouchAt" IS NULL AND NOT EXISTS (SELECT 1 FROM ahead a WHERE a.cid = m.id)
+          WHERE m.status = 'NOT_ACTIONED' AND m."lastTouchAt" IS NULL AND m.id NOT IN (SELECT cid FROM ahead WHERE cid IS NOT NULL)
           ORDER BY m."createdAt" DESC LIMIT ${GROUP_CAP})
         UNION ALL
         (SELECT m.id, 'trying' FROM mine m
           WHERE (m.status = 'CONTACTED' OR (m.status = 'NOT_ACTIONED' AND m."lastTouchAt" IS NOT NULL))
-            AND NOT EXISTS (SELECT 1 FROM ahead a WHERE a.cid = m.id)
+            AND m.id NOT IN (SELECT cid FROM ahead WHERE cid IS NOT NULL)
           ORDER BY m."lastTouchAt" NULLS FIRST LIMIT ${GROUP_CAP})
       ),
       ids AS (SELECT id, array_agg(why) AS why FROM picked GROUP BY id)
       SELECT c.id, c.name, co.name AS company, c.mobile, c.phone, c."imageUrl" AS image_url,
              c."createdAt" AS created_at, c."lastTouchAt" AS last_touch, c."lastConnectAt" AS last_connect,
              d.late_oldest, d.meeting_oldest, d.today_time, d.today_type,
-             EXISTS (SELECT 1 FROM ahead a WHERE a.cid = c.id) AS ahead, ids.why
+             c.id IN (SELECT cid FROM ahead WHERE cid IS NOT NULL) AS ahead, ids.why
         FROM ids
         JOIN "Contact" c ON c.id = ids.id AND c."organizationId" = ${organizationId}
         LEFT JOIN "Company" co ON co.id = c."companyId"
