@@ -35,7 +35,10 @@
  * decision; the early guard; a drag to Meeting Completed marking the
  * meeting Held with no second line; Build Quote staying at Meeting
  * Completed (decision 19); the column health bars; the panel's meter,
- * people rows and meetings; the reworded convert prompt; the phone tabs.
+ * people rows and meetings; the reworded convert prompt; ?open=<id>
+ * opening a tile's panel (from the company page's Opportunity card, past
+ * Mine, a search, a label and hidden archived deals, other workspaces'
+ * ids ignored); the phone tabs.
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -1132,6 +1135,85 @@ async function openAddDeal(p) {
   await notice.getByText("Lost · Price").waitFor();
   const waltDeal = (await one(`SELECT "dealId" FROM "Opportunity" WHERE id='op_s_opp_walt'`)).dealId;
   assert.equal((await one(`SELECT reason FROM "StatusChange" WHERE "dealId"=$1 AND "contactId" IS NULL AND "toStatus"='LOST' ORDER BY "on" DESC LIMIT 1`, [waltDeal])).reason, "PRICE");
+
+  log("Sprint: ?open= opens the panel — from the company page's Opportunity card, past Mine, a search, a label and hidden archived deals; closing takes it off the address; an unknown or another workspace's id is ignored");
+  // A Member with no saved choice opens on Mine (decision 17), and Hana's
+  // tile is Taylor's: the company page's link still opens it.
+  await sql(`UPDATE "User" SET "uiPrefs" = "uiPrefs" - 'pipelineScope' WHERE id=$1`, [nicId]);
+  const nicOpenContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const nicOpen = await nicOpenContext.newPage();
+  nicOpen.on("pageerror", (err) => console.error("PAGE ERROR (Nic, ?open=):", err.message));
+  await nicOpen.goto(`${BASE}/login`);
+  await nicOpen.fill("#email", "test-opps-nic@example.com");
+  await nicOpen.fill("#password", PASSWORD);
+  await nicOpen.click("button[type=submit]");
+  await nicOpen.waitForURL(/\/dashboard/);
+  await nicOpen.goto(`${BASE}/dashboard/companies/op_s_hco`);
+  const openOnPipeline = nicOpen.locator("[data-testid=company-opportunity] [data-testid=opportunity-open]");
+  assert.equal(await openOnPipeline.getAttribute("href"), "/dashboard/deals?open=op_s_opp_hana");
+  await openOnPipeline.click();
+  await nicOpen.waitForURL(/\/dashboard\/deals\?open=op_s_opp_hana$/);
+  const nicPanel = nicOpen.getByTestId("opportunity-panel");
+  await nicPanel.locator("[data-testid=panel-person][data-name='Hana Happened']").waitFor();
+  assert.equal(await nicPanel.getByTestId("panel-title").inputValue(), "Happy Builders");
+  assert.equal(await nicOpen.getByTestId("pipeline-scope-mine").getAttribute("aria-pressed"), "true", "still on Mine");
+  assert.equal(await tileOf("op_s_opp_hana", nicOpen).count(), 1, "Taylor's tile shows while its panel is open");
+  await nicPanel.getByTestId("panel-close").click();
+  await nicPanel.waitFor({ state: "detached" });
+  await nicOpen.waitForURL((url) => url.pathname === "/dashboard/deals" && !url.searchParams.has("open"));
+  await until(async () => (await tileOf("op_s_opp_hana", nicOpen).count()) === 0, "Hana's tile off Mine once closed");
+  await nicOpenContext.close();
+  // Mine, a search and a label at once leave Nic's Mina out; ?open= shows
+  // her tile and panel, and the matches count leaves her out.
+  await page.goto(`${BASE}/dashboard/deals?scope=mine&q=Cole&label=N%2FA&open=op_s_opp_mina`);
+  await panel.locator("[data-testid=panel-person][data-name='Mina Mine']").waitFor();
+  await tileOf("op_s_opp_mina").waitFor();
+  await tileOf("op_s_opp_cole").waitFor();
+  assert.equal((await page.getByTestId("pipeline-shown").innerText()).trim(), "1 match", "only Cole matches");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  await page.waitForURL((url) => !url.searchParams.has("open") && url.searchParams.get("q") === "Cole" && url.searchParams.get("scope") === "mine");
+  await until(async () => (await tileOf("op_s_opp_mina").count()) === 0, "Mina's tile gone with the panel");
+  assert.equal(await tileOf("op_s_opp_cole").count(), 1, "the filtered board stays");
+  // An archived deal's tile, with archived deals hidden.
+  await sql(`UPDATE "Deal" SET stage='ARCHIVED' WHERE id=$1`, [louDeal]);
+  await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_lou`);
+  await panel.locator("[data-testid=panel-person][data-name='Lou Loser']").waitFor();
+  assert.equal(await tileOf("op_s_opp_lou").count(), 1, "shown while open");
+  await panel.getByTestId("panel-close").click();
+  await panel.waitFor({ state: "detached" });
+  await until(async () => (await tileOf("op_s_opp_lou").count()) === 0, "hidden again once closed");
+  await sql(`UPDATE "Deal" SET stage='LOST' WHERE id=$1`, [louDeal]);
+  // Another workspace's tile and a made-up id: the board, no panel, no error.
+  await sql(`INSERT INTO "Organization" (id,name,slug,status,"updatedAt") VALUES ('op_s_org_other','Someone Else','${SLUG}-other','ACTIVE',now())`);
+  await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"updatedAt") VALUES ('op_s_opp_other','op_s_org_other','Not Yours','MEETING_SET',now())`);
+  for (const id of ["op_s_opp_other", "no-such-tile"]) {
+    await page.goto(`${BASE}/dashboard/deals?open=${id}`);
+    await tileOf("op_s_opp_cole").waitFor();
+    await settle(page);
+    await page.waitForTimeout(400);
+    assert.equal(await panel.count(), 0, `${id}: no panel`);
+    assert.equal(await tileOf(id).count(), 0, `${id}: no tile`);
+    assert.equal(await page.getByText("Not Yours").count(), 0);
+  }
+  await sql(`DELETE FROM "Organization" WHERE id='op_s_org_other'`);
+  // On a phone the opened tile's stage is the tab under its panel.
+  const phoneOpenContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    storageState: await context.storageState(),
+  });
+  const phoneOpen = await phoneOpenContext.newPage();
+  phoneOpen.on("pageerror", (err) => console.error("PAGE ERROR (phone, ?open=):", err.message));
+  await phoneOpen.goto(`${BASE}/dashboard/deals?open=op_s_opp_walt`);
+  const phoneOpenPanel = phoneOpen.getByTestId("opportunity-panel");
+  await phoneOpenPanel.locator("[data-testid=panel-person][data-name='Walt Winner']").waitFor();
+  await phoneOpenPanel.getByTestId("panel-close").click();
+  await phoneOpenPanel.waitFor({ state: "detached" });
+  assert.equal(await phoneOpen.getByRole("tab", { selected: true }).getAttribute("data-testid"), "pipeline-tab-CLOSED", "Walt's Lost tile's tab");
+  await phoneOpen.locator("[data-testid=pipeline-column-CLOSED] [data-testid=pipeline-tile][data-id='op_s_opp_walt']").waitFor();
+  await phoneOpenContext.close();
 
   log("Sprint: the phone — sticky stage tabs with counts over one stage's cards, a full-width 44px next-step button on each, nothing sideways, the panel full screen");
   const phoneContext = await browser.newContext({

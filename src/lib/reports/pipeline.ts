@@ -255,7 +255,9 @@ export async function loadPipeline(params: ReportParams): Promise<PipelineReport
     title: row.title,
     days: Math.max(0, Math.floor((now.getTime() - row.since.getTime()) / 86_400_000)),
     valueCents: num(row.value),
-    href: `/dashboard/deals?q=${encodeURIComponent(row.title.slice(0, 80))}`,
+    // Its tile's panel on the board; a deal with no opportunity (the board
+    // gives every deal one on its next open) is found by name.
+    href: row.opp_id ? `/dashboard/deals?open=${encodeURIComponent(row.opp_id)}` : `/dashboard/deals?q=${encodeURIComponent(row.title.slice(0, 80))}`,
   }));
 
   const headlines: Headline[] = [

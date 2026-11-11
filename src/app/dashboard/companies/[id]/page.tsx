@@ -639,7 +639,7 @@ export default async function CompanyDetailPage({
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                         {opportunity.label ? <LeadLabelChip label={opportunity.label} size="xs" /> : <span />}
                         <Link
-                          href={`/dashboard/deals?q=${encodeURIComponent(opportunity.primary?.name ?? company.name)}`}
+                          href={`/dashboard/deals?open=${encodeURIComponent(opportunity.id)}`}
                           className="link text-xs pointer-coarse:min-h-11 pointer-coarse:inline-flex pointer-coarse:items-center"
                           data-testid="opportunity-open"
                         >

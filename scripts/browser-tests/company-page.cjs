@@ -503,7 +503,8 @@ async function contrastOf(locator) {
   assert.equal((await opp.locator("[data-testid=opportunity-stage]").innerText()).trim(), "Meeting Set");
   assert.equal((await opp.locator("[data-testid=opportunity-primary]").innerText()).trim(), "Kristen Vaughn");
   assert.match(await opp.innerText(), /Client/);
-  assert.equal(await opp.locator("[data-testid=opportunity-open]").getAttribute("href"), "/dashboard/deals?q=Kristen%20Vaughn");
+  // Straight to its tile's panel (pipeline-opportunities.cjs follows the link).
+  assert.equal(await opp.locator("[data-testid=opportunity-open]").getAttribute("href"), "/dashboard/deals?open=opp_cp_iron");
   for (const title of ["Deals", "Quotes", "Contracts", "Balance"]) {
     assert.equal(await page.locator(".card h2", { hasText: new RegExp(`^${title}$`) }).count(), 0, `no empty ${title} card`);
   }

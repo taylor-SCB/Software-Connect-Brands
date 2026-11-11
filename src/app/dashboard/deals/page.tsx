@@ -73,14 +73,63 @@ function initialsOf(name: string | null) {
   return ((words[0]?.[0] ?? "") + (words.length > 1 ? (words.at(-1)?.[0] ?? "") : "")).toUpperCase();
 }
 
+// What a tile reads: the board's list and the one tile ?open= names.
+const TILE_SELECT = {
+  id: true,
+  title: true,
+  stage: true,
+  leadLabel: true,
+  ownerId: true,
+  owner: { select: { name: true } },
+  deal: {
+    select: {
+      id: true,
+      stage: true,
+      stageChangedAt: true,
+      ownerId: true,
+      valueCents: true,
+      quotes: {
+        select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true, sentAt: true },
+        orderBy: { createdAt: "desc" },
+      },
+      contracts: { where: { status: "SENT", payable: false }, select: { sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
+    },
+  },
+  contacts: {
+    where: { role: { not: "HIDDEN" } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      role: true,
+      contact: { select: { id: true, name: true, phone: true, mobile: true, company: { select: { name: true } } } },
+    },
+  },
+  meetings: { orderBy: { on: "desc" }, select: { id: true, on: true, outcome: true, activityId: true, eventId: true } },
+} satisfies Prisma.OpportunitySelect;
+
 export default async function DealsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string; q?: string; label?: string | string[]; quiet?: string; decide?: string; scope?: string }>;
+  searchParams: Promise<{
+    archived?: string;
+    q?: string;
+    label?: string | string[];
+    quiet?: string;
+    decide?: string;
+    scope?: string;
+    open?: string | string[];
+  }>;
 }) {
   const { organizationId, userId, role } = await requireSession();
   const params = await searchParams;
   const showArchived = params.archived === "1";
+  // ?open=<opportunity id> (the company page's Opportunity card and the
+  // Pipeline report's Waiting longest list link to one tile this way): the
+  // board opens that tile's panel. Only this workspace's are read (anything
+  // else is quietly ignored), and the tile is shown for this load even when
+  // Mine, Gone quiet, Needs a decision, a label, the search or hidden
+  // archived deals would leave it out. Closing the panel takes ?open= off
+  // the address.
+  const openParam = (Array.isArray(params.open) ? params.open[0] : params.open)?.slice(0, 64) ?? "";
   // "Gone quiet" (Nov 10, 2026): only the open opportunities nobody has
   // touched in the workspace's quietDays.
   const quietOnly = params.quiet === "1";
@@ -153,48 +202,18 @@ export default async function DealsPage({
     });
   }
 
-  const [opportunities, users, customLabels, archivedCount, anyAtAll] = await Promise.all([
-    prisma.opportunity.findMany({
-      where: { AND: and },
-      orderBy: { updatedAt: "desc" },
-      take: 1000,
-      select: {
-        id: true,
-        title: true,
-        stage: true,
-        leadLabel: true,
-        ownerId: true,
-        owner: { select: { name: true } },
-        deal: {
-          select: {
-            id: true,
-            stage: true,
-            stageChangedAt: true,
-            ownerId: true,
-            valueCents: true,
-            quotes: {
-              select: { ...QUOTES_FOR_VALUE.select, id: true, number: true, title: true, sentAt: true },
-              orderBy: { createdAt: "desc" },
-            },
-            contracts: { where: { status: "SENT", payable: false }, select: { sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 },
-          },
-        },
-        contacts: {
-          where: { role: { not: "HIDDEN" } },
-          orderBy: { createdAt: "asc" },
-          select: {
-            role: true,
-            contact: { select: { id: true, name: true, phone: true, mobile: true, company: { select: { name: true } } } },
-          },
-        },
-        meetings: { orderBy: { on: "desc" }, select: { id: true, on: true, outcome: true, activityId: true, eventId: true } },
-      },
-    }),
+  const [matching, users, customLabels, archivedCount, anyAtAll, opened] = await Promise.all([
+    prisma.opportunity.findMany({ where: { AND: and }, orderBy: { updatedAt: "desc" }, take: 1000, select: TILE_SELECT }),
     loadWorkspaceUsers(organizationId),
     prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, orderBy: { name: "asc" }, select: { name: true } }),
     showArchived ? 0 : prisma.deal.count({ where: { organizationId, stage: "ARCHIVED" } }),
     prisma.opportunity.count({ where: { organizationId }, take: 1 }),
+    openParam ? prisma.opportunity.findFirst({ where: { id: openParam, organizationId }, select: TILE_SELECT }) : null,
   ]);
+  // The tile ?open= names joins the board for this load when the filters
+  // left it out, and isn't counted in the header or the filter's matches.
+  const forced = opened && !matching.some((row) => row.id === opened.id) ? opened : null;
+  const opportunities = forced ? [...matching, forced] : matching;
 
   // Each meeting's day and time come from its calendar entry when it has
   // one (a booked meeting with no time stays untimed), and how it went
@@ -304,8 +323,9 @@ export default async function DealsPage({
     };
   });
 
-  const inMeetings = tiles.filter((tile) => tile.column === "MEETING_SET" || tile.column === "MEETING_COMPLETED").length;
-  const openValue = tiles.filter((tile) => tile.deal && isOpenStage(tile.deal.stage)).reduce((sum, tile) => sum + (tile.deal?.valueCents ?? 0), 0);
+  const counted = forced ? tiles.filter((tile) => tile.id !== forced.id) : tiles;
+  const inMeetings = counted.filter((tile) => tile.column === "MEETING_SET" || tile.column === "MEETING_COMPLETED").length;
+  const openValue = counted.filter((tile) => tile.deal && isOpenStage(tile.deal.stage)).reduce((sum, tile) => sum + (tile.deal?.valueCents ?? 0), 0);
   const labelChoices = [NO_LEAD_LABEL, ...BUILT_IN_LEAD_LABELS, ...customLabels.map((row) => row.name)];
 
   return (
@@ -336,7 +356,7 @@ export default async function DealsPage({
             q={q}
             labels={labels}
             labelChoices={labelChoices}
-            shown={tiles.length}
+            shown={counted.length}
             scope={scope}
             quiet={quietOnly}
             quietCount={quietInScope.size}
@@ -350,6 +370,7 @@ export default async function DealsPage({
             timeZone={timeZone}
             today={today}
             ai={aiConfigured()}
+            openId={opened?.id ?? null}
           />
         </>
       )}

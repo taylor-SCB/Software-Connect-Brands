@@ -498,6 +498,8 @@ async function narrativeText(page) {
     const aging = await page.locator("[data-testid=pipeline-aging]").textContent();
     assert.match(aging, /Under a week.*2.*8–30 days.*1.*31–60 days.*1.*Over 90 days.*1/s);
     assert.match(await page.locator("[data-testid=pipeline-stuck] li").first().textContent(), /Bolt rooftop units.*100 days.*\$3,000/s);
+    // Straight to its tile's panel on the board.
+    assert.equal(await page.locator("[data-testid=pipeline-stuck] li a").first().getAttribute("href"), "/dashboard/deals?open=opp_rpt_q2");
     assert.deepEqual(
       (await groupRows(page)).map((row) => [row[0], row[1], row[5]]),
       [

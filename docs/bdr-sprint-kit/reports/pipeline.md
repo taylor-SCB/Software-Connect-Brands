@@ -40,6 +40,7 @@ Branch `claude/sprint-pipeline`. The first coder's WIP (81fb5dd) built the loade
   - `convertOpportunity({ id, stage, mode, title, valueCents, on, reason?, early? })`.
 - `tile-line.ts` (pure): `meetingFocus`, `groupOf`, `tileLine`, `tileAction`, `meetingSortKey`, `compactDollars`.
 - `/dashboard/deals?scope=mine|all&decide=1&quiet=1&q=&label=` addresses a filtered board.
+- `/dashboard/deals?open=<opportunityId>` (added at integration) opens that tile's panel. An id from another workspace, or none at all, is ignored. The tile shows even when Mine or a filter would hide it, and closing the panel takes `open` off the address. Link to one opportunity this way, never `?q=<name>`.
 
 ## Suite results
 

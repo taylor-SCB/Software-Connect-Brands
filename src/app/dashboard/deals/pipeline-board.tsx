@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PIPELINE_COLUMNS, PIPELINE_COLUMN_LABELS, STATUS_REASONS, STATUS_REASON_LABELS, type PipelineColumn } from "@/lib/constants";
 import { formatCents, formatDay } from "@/lib/format";
 import type { LeadHealth } from "@/lib/health";
@@ -72,6 +72,15 @@ const PHONE_TABS: { key: string; label: string; columns: PipelineColumn[] }[] = 
   { key: "CLOSED", label: "Closed", columns: ["WON", "LOST"] },
 ];
 
+// The phone tab a tile sits under (Set when there's none).
+function tabOf(tile: BoardTile | undefined) {
+  if (!tile) return "MEETING_SET";
+  const column = shownIn(tile);
+  return PHONE_TABS.find((tab) => tab.columns.includes(column))?.key ?? "MEETING_SET";
+}
+
+const subscribeNothing = () => () => {};
+
 const PHONE_QUERY = "(max-width: 767px)";
 function usePhone() {
   return useSyncExternalStore(
@@ -103,13 +112,14 @@ type Notice = {
 // or further with no deal asks "What happened after the meeting?"; a deal
 // never goes back to a meeting. Click a tile to work it in the panel. On a
 // phone: stage tabs with counts above one stage's cards, each ending with
-// its one next-step button.
+// its one next-step button. ?open=<id> opens that tile's panel.
 export function PipelineBoard({
   tiles,
   customLabels,
   timeZone,
   today,
   ai = false,
+  openId = null,
 }: {
   tiles: BoardTile[];
   customLabels: string[];
@@ -117,8 +127,13 @@ export function PipelineBoard({
   today: string;
   // ANTHROPIC_API_KEY is set: the AI helpers show.
   ai?: boolean;
+  // The tile ?open= names, checked by the page as this workspace's (and
+  // on the board even when the filters would leave it out).
+  openId?: string | null;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
   const phone = usePhone();
   const [, startTransition] = useTransition();
   // Columns moved to and labels picked in this tab, until fresh tiles
@@ -157,9 +172,35 @@ export function PipelineBoard({
     column: PipelineColumn;
     day: string;
   } | null>(null);
-  const [panelId, setPanelId] = useState<string | null>(null);
+  const [panelId, setPanelId] = useState<string | null>(openId);
   const [followUp, setFollowUp] = useState<string | null>(null);
-  const [tab, setTab] = useState("MEETING_SET");
+  // On a phone the opened tile's stage is the tab under its panel.
+  const [tab, setTab] = useState(() => tabOf(tiles.find((tile) => tile.id === openId)));
+  // ?open= opens its panel on load, and again if a link on this page names
+  // another tile.
+  const [openedFor, setOpenedFor] = useState(openId);
+  if (openId !== openedFor) {
+    setOpenedFor(openId);
+    if (openId) {
+      setPanelId(openId);
+      setTab(tabOf(tiles.find((tile) => tile.id === openId)));
+    }
+  }
+
+  // The panel is drawn on document.body, which the server doesn't have: one
+  // ?open= asks for shows once the page is live in the browser.
+  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+
+  // Closing a panel ?open= opened takes it off the address, so a reload
+  // doesn't open it again and a tile shown past the filters goes.
+  function closePanel() {
+    setPanelId(null);
+    if (!params.has("open")) return;
+    const query = new URLSearchParams(params.toString());
+    query.delete("open");
+    const search = query.toString();
+    router.replace(search ? `${pathname}?${search}` : pathname, { scroll: false });
+  }
 
   useEffect(() => {
     if (!notice || notice.lostFor) return;
@@ -449,14 +490,14 @@ export function PipelineBoard({
 
       {followUp && <FollowUpDialog opportunityId={followUp} onClose={() => setFollowUp(null)} />}
 
-      {panelId && (
+      {panelId && hydrated && (
         <OpportunityPanel
           id={panelId}
           ai={ai}
           quietDays={tiles.find((row) => row.id === panelId)?.quietDays ?? null}
           suggestedLabel={tiles.find((row) => row.id === panelId)?.suggestedLabel ?? null}
           timeZone={timeZone}
-          onClose={() => setPanelId(null)}
+          onClose={closePanel}
           onSaved={(text, batchId) => {
             say(text, batchId ? { batchId } : {});
             router.refresh();
