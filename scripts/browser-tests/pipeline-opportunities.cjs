@@ -271,6 +271,27 @@ async function openAddDeal(p) {
       (row) => `${row.contactId}:${row.kind}`,
     ).sort();
 
+  // A meeting logged as having happened is Held and completes its tile
+  // (decision 4, final data audit, Nov 11, 2026). The steps after these
+  // are about meetings nobody has answered yet (as every meeting logged
+  // before decision 4 was), so once the rule is checked the meetings are
+  // put back to "not recorded" at Meeting Set, as the old code left them.
+  // `only` narrows it to one opportunity and its people.
+  const unanswer = async (only = null) => {
+    const opp = `o."organizationId"=$1 AND ($2::text IS NULL OR o.id=$2) AND o."dealId" IS NULL`;
+    const people = `SELECT oc."contactId" FROM "OpportunityContact" oc JOIN "Opportunity" o ON o.id=oc."opportunityId" WHERE ${opp}`;
+    await sql(`UPDATE "Activity" SET outcome=NULL WHERE "organizationId"=$1 AND type='MEETING' AND "contactId" IN (${people})`, [org, only]);
+    await sql(`UPDATE "OpportunityMeeting" m SET outcome=NULL, "outcomeUndo"=NULL FROM "Opportunity" o WHERE o.id=m."opportunityId" AND ${opp}`, [org, only]);
+    await sql(`DELETE FROM "OpportunityLog" l USING "Opportunity" o WHERE o.id=l."opportunityId" AND ${opp}`, [org, only]);
+    await sql(`UPDATE "Opportunity" o SET stage='MEETING_SET', "completedAt"=NULL WHERE ${opp}`, [org, only]);
+    await sql(`UPDATE "Contact" SET status='MEETING_SET' WHERE "organizationId"=$1 AND status IN ('CONNECTED','MEETING_COMPLETED') AND id IN (${people})`, [org, only]);
+    await sql(
+      `UPDATE "Company" SET status='MEETING_SET' WHERE "organizationId"=$1 AND status IN ('CONNECTED','MEETING_COMPLETED') AND id IN (SELECT "companyId" FROM "Contact" WHERE id IN (${people}))`,
+      [org, only],
+    );
+    await sql(`DELETE FROM "StatusChange" WHERE "organizationId"=$1 AND "toStatus" IN ('CONNECTED','MEETING_COMPLETED') AND "contactId" IN (${people})`, [org, only]);
+  };
+
   log("a meeting logged with Pat and Nic is one opportunity: Pat Primary, Nic Associated, one meeting");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
   const form = await openLog(page);
@@ -289,7 +310,12 @@ async function openAddDeal(p) {
     { contactId: "op_pat", role: "PRIMARY", fromMeeting: true },
   ]);
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [patOpp])).n, 1);
-  assert.deepEqual(await logs(patOpp), [], "Meeting Set writes no special lines yet");
+  // Logged as having happened, it was held: the tile is at Meeting
+  // Completed and Opportunity Created is on both of them.
+  assert.equal((await opps())[0].stage, "MEETING_COMPLETED", "a meeting logged today is held");
+  assert.deepEqual(await logs(patOpp), ["op_nic:OPPORTUNITY_CREATED", "op_pat:OPPORTUNITY_CREATED"]);
+  await unanswer();
+  assert.deepEqual(await logs(patOpp), [], "Meeting Set writes no special lines");
 
   log("a second meeting with Pat joins it: still one tile, two meeting dates");
   await openLog(page);
@@ -299,6 +325,7 @@ async function openAddDeal(p) {
   await page.locator("#activity").getByText("Second sit-down").waitFor();
   await until(async () => (await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [patOpp])).n === 2, "two meetings");
   assert.equal((await opps()).length, 1);
+  await unanswer();
 
   log("Abby's meeting is her own tile; the board shows both names on Pat's tile and the meeting count");
   await page.goto(`${BASE}/dashboard/contacts/op_abby`);
@@ -307,6 +334,8 @@ async function openAddDeal(p) {
   await form.locator("textarea[name=body]").fill("Kitchen walk");
   await form.locator("[data-testid=activity-submit]").click();
   await page.locator("#activity").getByText("Kitchen walk").waitFor();
+  await until(async () => (await opps()).length === 2, "Abby's own tile");
+  await unanswer();
   await page.goto(`${BASE}/dashboard/deals`);
   const meetingSet = page.locator("[data-testid=pipeline-column-MEETING_SET]");
   const patTile = page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" });
@@ -542,6 +571,11 @@ async function openAddDeal(p) {
   await until(
     async () => (await one(`SELECT count(*)::int n FROM "OpportunityContact" WHERE "contactId"='op_pat'`)).n === 2,
     "Pat on a second opportunity",
+  );
+  // Logged today, so held (decision 4); the audit step below books one
+  // ahead on it and needs it still at Meeting Set, as before that rule.
+  await unanswer(
+    (await one(`SELECT o.id FROM "Opportunity" o JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE oc."contactId"='op_pat' AND o."dealId" IS NULL AND o."organizationId"=$1`, [org])).id,
   );
 
   log("a status moved by hand to Quote Sent with no deal stays on the board at Meeting Completed (Pat's old bug); only converting makes it a deal");
@@ -1521,9 +1555,10 @@ async function openAddDeal(p) {
   await panel.waitFor({ state: "detached" });
   await notice.getByText(/^Held · Meeting Completed · Ironwood Frisco moved to Lost$/).waitFor();
   assert.equal(await page.getByTestId("log-toast").count(), 0, "one toast slot");
-  await notice.getByTestId("pipeline-undo").click();
-  await notice.getByText("Undone").waitFor();
-  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_frisco'`)).outcome, null, "Undo took the Held back");
+  // Not moving forward moves a deal to Lost, which Undo can't take back,
+  // so that toast carries no Undo (final pages audit, Nov 11, 2026).
+  assert.equal(await notice.getByTestId("pipeline-undo").count(), 0, "no Undo on a Lost move");
+  assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_frisco'`)).outcome, "HELD", "the Held stays");
 
   log("Sprint: Mark held never sits dead — after a no-show the next step is Reschedule, on that tile; a Meeting Set tile with no meeting opens How did it go? on Meeting and Held logs one meeting on it");
   await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_nora`);
@@ -1627,6 +1662,139 @@ async function openAddDeal(p) {
   const panelBox = await phonePanel.boundingBox();
   assert.ok(panelBox.width >= 389 && panelBox.x <= 1, `the panel is ${panelBox.width}px wide at x=${panelBox.x}`);
   await phoneContext.close();
+
+  log("Sprint: the BDR / Closer / Closed headings — in that order over Meeting Set + Meeting Completed, Quote Sent + Contract Sent, Won + Lost, each spanning its two columns, read at 4.5:1 in Dark and Light, scrolling with the board; at 1440 Lost's right edge is on screen with nothing to scroll, and at 1280 the top scrollbar brings it fully on screen; on a phone the group names sit in the tab strip and nothing scrolls sideways");
+  {
+    const groups = [
+      ["bdr", "BDR", "MEETING_SET", "MEETING_COMPLETED"],
+      ["closer", "Closer", "QUOTE_SENT", "CONTRACT_SENT"],
+      ["closed", "Closed", "WON", "LOST"],
+    ];
+    for (const look of ["dark", "light"]) {
+      await sql(`UPDATE "User" SET theme=$2 WHERE email=$1`, [EMAIL, look]);
+      for (const width of [1440, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`${BASE}/dashboard/deals?scope=all`);
+        await page.getByTestId("pipeline-column-LOST").waitFor();
+        await settle(page);
+        const headings = page.getByTestId("pipeline-group-heading");
+        assert.deepEqual((await headings.allInnerTexts()).map((t) => t.trim().toLowerCase()), ["bdr", "closer", "closed"], "the headings in order");
+        let lastRight = -Infinity;
+        for (const [key, label, first, second] of groups) {
+          const group = page.getByTestId(`pipeline-group-${key}`);
+          assert.equal(await group.getAttribute("role"), "group");
+          assert.equal(await page.getByRole("group", { name: label, exact: true }).count(), 1, `${label} is a named group`);
+          const head = await group.getByTestId("pipeline-group-heading").boundingBox();
+          const a = await page.getByTestId(`pipeline-column-${first}`).boundingBox();
+          const b = await page.getByTestId(`pipeline-column-${second}`).boundingBox();
+          assert.ok(Math.abs(head.x - a.x) <= 1, `${label} starts at ${first} (${head.x} vs ${a.x})`);
+          assert.ok(Math.abs(head.x + head.width - (b.x + b.width)) <= 1, `${label} ends at ${second} (${head.x + head.width} vs ${b.x + b.width})`);
+          assert.ok(head.y + head.height <= a.y && head.y + head.height <= b.y, `${label} sits above its columns`);
+          assert.ok(head.x >= lastRight - 1, `${label} comes after the group before it`);
+          lastRight = head.x + head.width;
+          const border = await group.getByTestId("pipeline-group-heading").evaluate((el) => getComputedStyle(el).borderBottomWidth);
+          assert.equal(border, "1px", `${label} has a thin rule under it`);
+          const read = await textContrast(group.getByTestId("pipeline-group-heading"));
+          assert.ok(read.ratio >= 4.5 && read.opacity === 1, `${label} reads ${read.ratio}:1 in ${look}`);
+        }
+        const viewport = await page.evaluate(() => document.documentElement.clientWidth);
+        const lost = await page.getByTestId("pipeline-column-LOST").boundingBox();
+        console.log(`   ${look} at ${width}: Lost ends at ${Math.round(lost.x + lost.width)} of ${viewport}`);
+        if (width >= 1440) {
+          // From 1440 up all six fit with nothing to scroll.
+          assert.ok(lost.x + lost.width <= viewport, `at ${width} Lost's right edge (${lost.x + lost.width}) is inside the ${viewport}px window`);
+          const sideways = await page.getByTestId("pipeline-scroll").evaluate((el) => el.scrollWidth - el.clientWidth);
+          assert.ok(sideways <= 1, `at ${width} the board scrolls sideways by ${sideways}px`);
+        } else {
+          // Narrower, the columns keep the width a tile needs (152px clipped
+          // a Happened tile's two buttons at 1280) and the board scrolls
+          // inside its box: the top bar brings Lost fully on screen.
+          const top = page.getByTestId("pipeline-top-scroll");
+          await until(async () => (await top.evaluate((el) => el.scrollWidth - el.clientWidth)) > 0, "the top bar is sized");
+          await top.evaluate((el) => {
+            el.scrollLeft = el.scrollWidth;
+            el.dispatchEvent(new Event("scroll"));
+          });
+          await until(async () => {
+            const box = await page.getByTestId("pipeline-column-LOST").boundingBox();
+            return box.x + box.width <= viewport;
+          }, `Lost scrolled fully on screen at ${width}`);
+          const head = await page.getByTestId("pipeline-group-closed").getByTestId("pipeline-group-heading").boundingBox();
+          const after = await page.getByTestId("pipeline-column-LOST").boundingBox();
+          assert.ok(Math.abs(head.x + head.width - (after.x + after.width)) <= 1, "Closed scrolled with Lost");
+          const pageSideways = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+          assert.ok(pageSideways <= 1, `at ${width} the page itself scrolls sideways by ${pageSideways}px`);
+        }
+      }
+    }
+    await sql(`UPDATE "User" SET theme='dark' WHERE email=$1`, [EMAIL]);
+    await shot(page, "pipeline-groups-1280");
+
+    // Narrower than the board: the headings move with the columns under both scrollbars.
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await page.goto(`${BASE}/dashboard/deals?scope=all`);
+    await page.getByTestId("pipeline-column-LOST").waitFor();
+    const top = page.getByTestId("pipeline-top-scroll");
+    await until(async () => (await top.evaluate((el) => el.scrollWidth - el.clientWidth)) > 50, "the top bar is sized");
+    await settle(page);
+    const before = await page.getByTestId("pipeline-group-closed").getByTestId("pipeline-group-heading").boundingBox();
+    await top.evaluate((el) => {
+      el.scrollLeft = el.scrollWidth;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await until(async () => (await page.getByTestId("pipeline-scroll").evaluate((el) => el.scrollLeft)) > 50, "the board follows the top bar");
+    await settle(page);
+    const after = await page.getByTestId("pipeline-group-closed").getByTestId("pipeline-group-heading").boundingBox();
+    const lostAfter = await page.getByTestId("pipeline-column-LOST").boundingBox();
+    assert.ok(after.x < before.x - 50, `Closed moved with the scroll (${before.x} → ${after.x})`);
+    assert.ok(Math.abs(after.x + after.width - (lostAfter.x + lostAfter.width)) <= 1, "Closed still ends over Lost after scrolling");
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const groupPhoneContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      storageState: await context.storageState(),
+    });
+    try {
+      const gp = await groupPhoneContext.newPage();
+      gp.on("pageerror", (err) => console.error("PAGE ERROR (phone):", err.message));
+      await gp.goto(`${BASE}/dashboard/deals?scope=all`);
+      const tabs = gp.getByTestId("pipeline-tabs");
+      await tabs.waitFor();
+      await settle(gp);
+      const labels = gp.getByTestId("pipeline-phone-group");
+      assert.deepEqual((await labels.allInnerTexts()).map((t) => t.trim().toLowerCase()), ["bdr", "closer", "closed"]);
+      const spans = [
+        [0, "pipeline-tab-MEETING_SET", "pipeline-tab-MEETING_COMPLETED"],
+        [1, "pipeline-tab-QUOTE_SENT", "pipeline-tab-CONTRACT_SENT"],
+        [2, "pipeline-tab-CLOSED", "pipeline-tab-CLOSED"],
+      ];
+      for (const [i, first, last] of spans) {
+        const label = await labels.nth(i).boundingBox();
+        const a = await gp.getByTestId(first).boundingBox();
+        const b = await gp.getByTestId(last).boundingBox();
+        assert.ok(Math.abs(label.x - a.x) <= 1 && Math.abs(label.x + label.width - (b.x + b.width)) <= 1, `phone group ${i} spans its tabs`);
+        assert.ok(label.y + label.height <= a.y, `phone group ${i} sits above its tabs`);
+      }
+      for (const tab of await tabs.getByRole("tab").all()) {
+        const h = (await tab.boundingBox()).height;
+        assert.ok(h >= 44, `a tab is ${h}px tall`);
+      }
+      assert.deepEqual(
+        (await tabs.getByRole("tab").allInnerTexts()).map((text) => text.replace(/\s+\d+$/, "").trim()),
+        ["Set", "Met", "Quote", "Contract", "Closed"],
+        "the tabs read as before",
+      );
+      const read = await textContrast(labels.first());
+      assert.ok(read.ratio >= 4.5, `the phone group names read ${read.ratio}:1`);
+      const overflow = await gp.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.ok(overflow <= 1, `the phone page scrolls sideways by ${overflow}px`);
+      await shot(gp, "pipeline-groups-phone");
+    } finally {
+      await groupPhoneContext.close();
+    }
+  }
 
   /* ---------------- audit fixes (final BDR audit, Nov 11, 2026) ----------------
    * Each step stands on its own data (op_a_…) and opens a fresh page, and a

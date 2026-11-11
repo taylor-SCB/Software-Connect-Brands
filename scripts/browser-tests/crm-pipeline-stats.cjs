@@ -229,14 +229,33 @@ async function openMore(p) {
   await nic.getByText(/Scheduled for/).waitFor();
   assert.equal((await sql(`SELECT count(*)::int n FROM "StatusChange" WHERE "contactId"=$1 AND "toStatus"='MEETING_SET'`, [ava])).rows[0].n, 1);
 
-  log("a meeting logged as held also sets it (Ben)");
+  log("a meeting logged as held also sets it (Ben), and being held completes it (decision 4)");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('ctc_ps_ben',$1,'Ben Ortiz',now())`, [org]);
   await page.goto(`${BASE}/dashboard/contacts/ctc_ps_ben`);
   await openLog(page);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Coffee meeting");
   await form.locator("[data-testid=activity-submit]").click();
-  await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_SET", "Ben meeting set");
+  // A meeting logged as having happened is Held (final data audit, Nov 11,
+  // 2026): Ben passes Meeting Set on his way to Meeting Completed.
+  await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_COMPLETED", "Ben meeting completed by the held meeting");
+  assert.deepEqual(
+    (await sql(`SELECT "toStatus" FROM "StatusChange" WHERE "contactId"='ctc_ps_ben' AND "toStatus" IN ('MEETING_SET','MEETING_COMPLETED') ORDER BY "on", "createdAt"`)).rows.map((r) => r.toStatus),
+    ["MEETING_SET", "MEETING_COMPLETED"],
+  );
+  // The steps below move Ben from Meeting Set by hand, so his meeting is
+  // put back to "not recorded" at Meeting Set, as the code before
+  // decision 4 left a logged meeting.
+  await sql(`UPDATE "Activity" SET outcome=NULL WHERE "contactId"='ctc_ps_ben' AND type='MEETING'`);
+  await sql(
+    `UPDATE "OpportunityMeeting" m SET outcome=NULL, "outcomeUndo"=NULL FROM "OpportunityContact" oc WHERE oc."opportunityId"=m."opportunityId" AND oc."contactId"='ctc_ps_ben'`,
+  );
+  await sql(`DELETE FROM "OpportunityLog" l USING "OpportunityContact" oc WHERE oc."opportunityId"=l."opportunityId" AND oc."contactId"='ctc_ps_ben'`);
+  await sql(
+    `UPDATE "Opportunity" o SET stage='MEETING_SET', "completedAt"=NULL FROM "OpportunityContact" oc WHERE oc."opportunityId"=o.id AND oc."contactId"='ctc_ps_ben'`,
+  );
+  await sql(`UPDATE "Contact" SET status='MEETING_SET' WHERE id='ctc_ps_ben'`);
+  await sql(`DELETE FROM "StatusChange" WHERE "contactId"='ctc_ps_ben' AND "toStatus" IN ('CONNECTED','MEETING_COMPLETED')`);
 
   log("the Pipeline starts at Meeting Set, with Ava and Ben as opportunity tiles and Nic as Ava's rep");
   await page.goto(`${BASE}/dashboard/deals`);
