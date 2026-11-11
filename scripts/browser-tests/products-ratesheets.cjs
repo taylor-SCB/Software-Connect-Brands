@@ -159,7 +159,7 @@ async function login(page) {
   });
   await page.getByRole("button", { name: "Save product" }).click();
   await page.getByText("That unit belongs to the Materials list, not Labor").waitFor();
-  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Product" WHERE name='Bad unit'`)).rows[0].n, 0, "server refused the mismatched unit");
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Product" WHERE name='Bad unit' AND "organizationId" IN (SELECT id FROM "Organization" WHERE slug LIKE 'test-ratesheets-co%')`)).rows[0].n, 0, "server refused the mismatched unit");
   await page.goto(`${BASE}/dashboard/products`);
   await rowA.waitFor();
 
@@ -228,7 +228,7 @@ async function login(page) {
   await page.goto(`${BASE}/dashboard/products`);
   const rowB = page.locator("tr", { hasText: "Monitoring seat" });
   assert.ok(await rowB.getByText("Per Device · Per Month").isVisible());
-  const softwareRow = await sql(`SELECT "softwareRate","softwareTerm","unitOfMeasure" FROM "Product" WHERE name='Monitoring seat'`);
+  const softwareRow = await sql(`SELECT "softwareRate","softwareTerm","unitOfMeasure" FROM "Product" WHERE name='Monitoring seat' AND "organizationId" IN (SELECT id FROM "Organization" WHERE slug LIKE 'test-ratesheets-co%')`);
   assert.deepEqual(softwareRow.rows[0], { softwareRate: "PER_MONTH", softwareTerm: 12, unitOfMeasure: "PER_DEVICE" });
 
   log("clone product");
@@ -504,21 +504,23 @@ async function login(page) {
   assert.ok(await copperRow.getByText("Mueller").isVisible());
   assert.ok(await copperRow.getByText("Per LinearFt").isVisible());
   assert.ok(await copperRow.getByText("$4.03").isVisible(), "30% markup on the $3.10 cost");
-  const imported = await sql(`SELECT name, sku, "unitPriceCents", "costCents", "listPriceCents", "unitOfMeasure", "defaultTag" FROM "Product" WHERE name IN ('Journeyman labor','Permit handling','Copper pipe 3/4in') ORDER BY name`);
+  const imported = await sql(`SELECT name, sku, "unitPriceCents", "costCents", "listPriceCents", "unitOfMeasure", "defaultTag" FROM "Product" WHERE name IN ('Journeyman labor','Permit handling','Copper pipe 3/4in') AND "organizationId" IN (SELECT id FROM "Organization" WHERE slug LIKE 'test-ratesheets-co%') ORDER BY name`);
   assert.deepEqual(imported.rows, [
     { name: "Copper pipe 3/4in", sku: "CU-34", unitPriceCents: 403, costCents: 310, listPriceCents: 425, unitOfMeasure: "PER_LINEAR_FT", defaultTag: "MATERIALS" },
     { name: "Journeyman labor", sku: "LAB-1", unitPriceCents: 13000, costCents: 10000, listPriceCents: null, unitOfMeasure: "PER_HOUR", defaultTag: "LABOR" },
     { name: "Permit handling", sku: "PERMIT", unitPriceCents: 19500, costCents: 15000, listPriceCents: null, unitOfMeasure: null, defaultTag: "PROJECT_SERVICES" },
   ], "the update kept the product's own unit and tag, creates landed, no-unit tag stayed null");
-  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Manufacturer" WHERE name='Mueller'`)).rows[0].n, 1);
-  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Product" WHERE name='Journeyman labor'`)).rows[0].n, 1, "re-import updated, not duplicated");
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Manufacturer" WHERE name='Mueller' AND "organizationId" IN (SELECT id FROM "Organization" WHERE slug LIKE 'test-ratesheets-co%')`)).rows[0].n, 1);
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM "Product" WHERE name='Journeyman labor' AND "organizationId" IN (SELECT id FROM "Organization" WHERE slug LIKE 'test-ratesheets-co%')`)).rows[0].n, 1, "re-import updated, not duplicated");
 
   log("quote builder still pulls products from the catalog");
   await page.goto(`${BASE}/dashboard/contacts/new`);
   await page.fill("#name", "Quote Customer");
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new)[^/]+$/);
-  await page.getByRole("link", { name: "New quote" }).click();
+  // New quote is under the contact page's ⋯ More (contact page redesign).
+  await page.getByTestId("record-more").click();
+  await page.getByTestId("more-new-quote").click();
   await page.waitForURL(/\/dashboard\/quotes\/new/);
   // Every quote lives on a deal now; type a new one.
   await page.fill("#dealTitle", "Regression deal");

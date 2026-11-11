@@ -630,6 +630,14 @@
   .table tbody tr {
     transition: background 0.14s ease;
   }
+  /* The quote editor's pinned Save bar (Nov 11, 2026): anything scrolled
+     into view — a catalog row reached with the arrow keys, a field with an
+     error — stops above it rather than under it. */
+  @media (min-width: 640px) {
+    html:has([data-testid="quote-save-bar"]) {
+      scroll-padding-bottom: 5rem;
+    }
+  }
   /* A numbers table on a phone (Nov 11, 2026): each row becomes a small
      two-column list — the row's name across the top, then label · value
      pairs two to a line — so nothing scrolls sideways at 390px. Each cell

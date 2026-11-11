@@ -364,6 +364,7 @@ let context;
   assert.equal(await rowTerms[0].inputValue(), "Net 30", "the baseline carries Net 30");
 
   log("save it; the two rows add up to the quote total exactly");
+  await page.getByTestId("payment-table-keep").click();
   await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
 
@@ -806,7 +807,9 @@ let context;
   log("audit fix: a refused Quote details save keeps a field the user cleared");
   await page.locator("#terms").fill("Quote valid 30 days.");
   await page.getByTestId("quote-save").click();
-  await page.getByText("Quote details saved", { exact: true }).waitFor();
+  // The one Save writes only what changed: Terms may already read this, so
+  // wait for the page to say everything is saved rather than for Details.
+  await page.waitForFunction(() => /All changes saved/.test(document.querySelector("[data-testid=quote-save-status]")?.textContent ?? ""));
   await page.locator("#terms").fill("");
   await page.getByLabel("Quote title").fill("y".repeat(200));
   await page.getByTestId("quote-save").click();
@@ -1368,7 +1371,8 @@ let context;
     throw new Error(`timed out waiting for ${what}`);
   };
   await sql(`UPDATE "Quote" SET status='DRAFT' WHERE id=$1`, [oneId]);
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // A short window, so the page is taller than it and the bar has to pin.
+  await page.setViewportSize({ width: 1440, height: 600 });
   await page.goto(`${BASE}/dashboard/quotes/${oneId}`);
   const saveBar = page.getByTestId("quote-save-bar");
   await saveBar.waitFor();
@@ -1378,7 +1382,8 @@ let context;
   assert.equal(await page.getByTestId("save-schedule").count(), 0, "the payment table's own button is gone");
   const pinned = async () => {
     const box = await saveBar.boundingBox();
-    return box && box.y + box.height <= 900 + 1 && box.y >= 900 - 120;
+    // Sub-pixel layout can put its edge a pixel or two past the window.
+    return box && box.y + box.height <= 600 + 2 && box.y >= 600 - 120;
   };
   await page.evaluate(() => window.scrollTo(0, 0));
   assert.ok(await pinned(), "the Save bar is at the foot of the window at the top of the page");
@@ -1409,6 +1414,8 @@ let context;
   assert.equal((await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title, "Not this title");
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
   assert.ok(await pinned(), "still pinned halfway down");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 200), "the page is taller than the window");
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   console.log("\nAll steps passed.");
   await context.close();

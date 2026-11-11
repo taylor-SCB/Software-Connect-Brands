@@ -160,7 +160,9 @@ async function assertMenuInside(page, menu, what) {
   await page.getByRole("button", { name: "Save company" }).click();
   await page.waitForURL(/\/dashboard\/companies\/(?!new$)[a-z0-9]+$/);
   const acmeUrl = page.url();
-  const acmeDetails = page.locator("dl").first();
+  // The company page's Details card opens closed (company page redesign).
+  await page.getByTestId("company-details-toggle").click();
+  const acmeDetails = page.getByTestId("company-details").locator("dl").first();
   for (const tag of ["MDU", "Hospitality", "Owner", "REIT"]) assert.ok(await acmeDetails.getByText(tag, { exact: true }).isVisible(), `${tag} on company page`);
   assert.ok(await acmeDetails.getByText("TX", { exact: true }).isVisible(), "'texas' saved as TX");
   const opts = await sql(
@@ -198,7 +200,9 @@ async function assertMenuInside(page, menu, what) {
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
   const danaUrl = page.url();
-  const danaDetails = page.locator("dl").first();
+  // Industry · Type sits under More details on the contact page now.
+  await page.getByTestId("more-details").click();
+  const danaDetails = page.getByTestId("more-details-list");
   assert.ok(await danaDetails.getByText("Developer", { exact: true }).isVisible(), "tag added from the contact form shows on the contact");
   const acmeTypes = (await sql(`SELECT "companyTypes" FROM "Company" WHERE name='Acme Towers' AND "organizationId"=$1`, [org])).rows[0].companyTypes;
   assert.ok(acmeTypes.includes("Developer"), "saving the contact tagged the company");
@@ -209,7 +213,8 @@ async function assertMenuInside(page, menu, what) {
   await page.fill("#phone", "512-555-0199");
   await page.getByRole("button", { name: "Save contact" }).click();
   await page.waitForURL(/\/dashboard\/contacts\/(?!new$)[a-z0-9]+$/);
-  assert.ok(await page.locator("dl").first().getByText("Individual / Personal").isVisible());
+  await page.getByTestId("more-details").click();
+  assert.ok(await page.getByTestId("more-details-list").getByText("Individual / Personal").isVisible());
 
   log("template download has the system's field names, contact first then company");
   const template = await page.request.get(`${BASE}/dashboard/contacts/import-template`);
@@ -352,7 +357,17 @@ async function assertMenuInside(page, menu, what) {
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 contacts", "needs attention: Ivy has no email and no phone");
   // Give Dana a deal, then the deal views light up.
   await page.goto(danaUrl);
-  await page.fill("[name=title]", "Lobby access control");
+  // Add deal sits under the header's ⋯ More (or the Paperwork card's ⋯
+  // from Meeting Completed on) since the contact page redesign.
+  await page.locator("[data-testid=contact-header]").waitFor();
+  if (await page.locator("[data-testid=paperwork-more]").count()) {
+    await page.locator("[data-testid=paperwork-more]").click();
+    await page.locator("[data-testid=paperwork-add-deal-open]").click();
+  } else {
+    await page.locator("[data-testid=record-more]").click();
+    await page.locator("[data-testid=more-add-deal]").click();
+  }
+  await page.fill("#deal-title", "Lobby access control");
   await page.fill("[name=value]", "2500");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByText("Lobby access control").first().waitFor();
@@ -388,12 +403,15 @@ async function assertMenuInside(page, menu, what) {
   await page.goto(`${BASE}/dashboard/companies`);
   await page.locator("tr", { hasText: "Big Co" }).getByRole("link", { name: "Big Co" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
-  await page.getByText("60 at this company").waitFor();
+  // The People card (Who to call, company page redesign) shows the first
+  // few and "Show all 60", which opens the paged list.
+  assert.equal((await page.getByTestId("who-show-all").textContent()).trim(), "Show all 60");
+  await page.getByTestId("who-show-all").click();
   await page.getByText("Page 1 of 2").waitFor();
   await page.getByRole("link", { name: "Next people" }).click();
   await page.waitForURL(/people=2/);
   await page.getByText("Page 2 of 2").waitFor();
-  assert.equal(await page.locator("#people li").count(), 10);
+  assert.equal(await page.locator("#people [data-testid=person-row]").count(), 10);
   await shot(page, "08-company-people-paged");
 
   log("audit fixes: Enter-key save with a typed company name keeps the company's tags; an untouched edit keeps them too");

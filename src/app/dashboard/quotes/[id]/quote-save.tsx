@@ -48,20 +48,24 @@ export function QuoteSaveProvider({ children }: { children: React.ReactNode }) {
 export function useQuoteSaveSection(key: string, section: Meta & { save: SaveFn }) {
   const registry = useContext(QuoteSave);
   const { label, order, dirty, pending, save } = section;
-  useEffect(() => {
-    registry?.saves.current.set(key, save);
-  });
+  // Only the stable parts of the registry: the registry object itself
+  // changes with every card's state, and depending on it would take this
+  // card off the list each time another card changed.
+  const saves = registry?.saves;
   const setMeta = registry?.setMeta;
+  useEffect(() => {
+    saves?.current.set(key, save);
+  });
   useEffect(() => {
     setMeta?.(key, { label, order, dirty, pending });
   }, [setMeta, key, label, order, dirty, pending]);
   useEffect(() => {
-    const saves = registry?.saves.current;
+    const map = saves?.current;
     return () => {
       setMeta?.(key, null);
-      saves?.delete(key);
+      map?.delete(key);
     };
-  }, [registry, setMeta, key]);
+  }, [saves, setMeta, key]);
   return Boolean(registry);
 }
 
