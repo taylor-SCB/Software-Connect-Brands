@@ -419,12 +419,15 @@ export async function sendOneToOneEmail(
   const [contact, sender, org] = await Promise.all([
     prisma.contact.findFirst({
       where: { id: request.contactId, organizationId },
-      select: { id: true, name: true, email: true, email2: true },
+      select: { id: true, name: true, email: true, email2: true, emailOptOutAt: true },
     }),
     prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true, email: true } }),
     prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } }),
   ]);
   if (!contact) return { ok: false, error: "That contact isn't in this workspace." };
+  // A one-to-one sales email is still commercial email: someone who
+  // unsubscribed is never emailed from the app (sprint lead, Nov 11, 2026).
+  if (contact.emailOptOutAt) return { ok: false, error: `${contact.name} unsubscribed from your emails. Call or text instead.` };
 
   // Only an address on the contact's own record, so the window can't be
   // used to email anyone else.

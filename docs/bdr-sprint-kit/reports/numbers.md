@@ -55,6 +55,7 @@ Branch `claude/sprint-numbers`. Stats funnel and leaderboard, the Overview Activ
   ```
   `email-marketing-users.cjs` step "Email from a contact: template, file, one person, the counter" clicks the contact page's Email button and expects the **marketing** window. After the swap, that step should start with `click('[data-testid="contact-email-button"]')` then `click('[data-testid="one-to-one-use-marketing"]')`. Everything after it stays the same. The PhoneBar's Email (if it uses `EmailButton`) wants the same swap.
 - **"A zero baseline reads 'new this period'"** (plan). I kept "▲ up from 0". It's the shipped rule from the Nov 10 UX review (CLAUDE.md lesson), `changeSize` is shared by every report and Stats, and `reports.cjs` asserts it. It's a one-line change in `changeSize` if Taylor wants the plan's words.
+- ~~One-to-one to an unsubscribed contact is allowed with a note~~ — replaced; see Follow-up.
 - **No per-day cap on one-to-one emails.** The spec says they aren't in the 40. Resend's plan limit is still shared by every workspace (a known gap).
 - **Who sees whom is unchanged:** a Member can still pick any teammate or Everyone (decision 17: everyone sees everyone).
 
@@ -109,5 +110,16 @@ Production build, `npx tsc --noEmit -p .` clean (apart from `LayoutProps`, which
 - The leaderboard's columns are per person in `User.uiPrefs.statsColumns`. Write other screens' prefs with jsonb `||` too, never replace the whole object.
 - Stats: a Member opens on Me. `?reps=all` is Everyone picked on purpose.
 - The report tab and email subjects read **"Pipeline report"**.
-- One-to-one email (`ContactEmailButton`) writes **no EmailSend row** (that table is the marketing allowance). It logs through `logActivity` as EMAIL / SENT / marketing false, and sends even to someone unsubscribed from marketing, with a note in the window. Taylor may want that last point decided (the plan didn't say).
+- One-to-one email (`ContactEmailButton`) writes **no EmailSend row** (that table is the marketing allowance). It logs through `logActivity` as EMAIL / SENT / marketing false, and is refused for anyone with `emailOptOutAt` (window and server).
 - The marketing `EmailComposer` now renders through a portal.
+
+## Follow-up (sprint lead, Nov 11, 2026)
+
+A one-to-one sales email is still commercial email, so **a contact who unsubscribed is never emailed from the app**:
+- **In the window:** `ContactEmailButton` / `OneToOneDialog` shows "<Name> unsubscribed from your emails on <date>. Call or text instead." (`one-to-one-opted-out`). Send stays disabled with a subject and message typed, and "Use a marketing template instead" is hidden.
+- **On the server:** `sendOneToOneEmail` reads `emailOptOutAt` and returns "<Name> unsubscribed from your emails. Call or text instead." before anything is sent or logged. So a stale tab or a crafted call can't get through.
+- **Suite:** the `email-marketing-users.cjs` Sprint step proves both.
+  - The disabled Send for Eve, who unsubscribed.
+  - The server refusal: the window is opened for Alice while she can still be emailed, then she is unsubscribed in the database, and Send is refused with nothing caught and nothing logged. (A forced click on a disabled button doesn't work because React ignores clicks on buttons it rendered disabled, so it never reaches the server action.)
+- **Second fix:** the earlier Sprint send went to Ben, who unsubscribed in an earlier step of the same suite. It now goes to Alice.
+- **Results:** reports 47 steps PASS, crm-pipeline-stats 32 PASS, email-marketing-users 29 PASS. tsc and next build are green.

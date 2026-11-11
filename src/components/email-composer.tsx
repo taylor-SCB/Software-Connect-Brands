@@ -604,7 +604,8 @@ export type OneToOneContact = {
   name: string;
   email: string | null;
   email2?: string | null;
-  // When they unsubscribed from marketing email, as words, or null.
+  // When they unsubscribed from the workspace's emails, as words, or null:
+  // the window then says so and won't send.
   optedOutOn?: string | null;
 };
 
@@ -681,6 +682,9 @@ function OneToOneDialog({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ message: string; warning?: string; batchId?: string; followUp?: FollowUpSeed } | null>(null);
   const [marketing, setMarketing] = useState(false);
+  // Unsubscribed: never emailed from the app, one-to-one included (a sales
+  // email is still commercial email); the server refuses too.
+  const optedOut = Boolean(contact.optedOutOn);
   const subjectRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -768,8 +772,8 @@ function OneToOneDialog({
           <>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
               {contact.optedOutOn && (
-                <p className="rounded-md border border-[var(--border)] px-3 py-2 text-xs" data-testid="one-to-one-opted-out">
-                  {contact.name} unsubscribed from marketing emails on {contact.optedOutOn}. This is a one-to-one email, not marketing — keep it personal.
+                <p className="rounded-md border border-[var(--border)] px-3 py-2 text-sm" role="status" data-testid="one-to-one-opted-out">
+                  {contact.name} unsubscribed from your emails on {contact.optedOutOn}. Call or text instead.
                 </p>
               )}
               <div>
@@ -819,19 +823,23 @@ function OneToOneDialog({
               <FormError message={error ?? undefined} />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
-              <button
-                type="button"
-                className="link inline-flex min-h-11 items-center text-xs sm:min-h-0"
-                onClick={() => setMarketing(true)}
-                disabled={sending}
-                data-testid="one-to-one-use-marketing"
-              >
-                Use a marketing template instead
-              </button>
+              {optedOut ? (
+                <span />
+              ) : (
+                <button
+                  type="button"
+                  className="link inline-flex min-h-11 items-center text-xs sm:min-h-0"
+                  onClick={() => setMarketing(true)}
+                  disabled={sending}
+                  data-testid="one-to-one-use-marketing"
+                >
+                  Use a marketing template instead
+                </button>
+              )}
               <button
                 type="button"
                 onClick={send}
-                disabled={sending || !subject.trim() || !body.trim()}
+                disabled={sending || optedOut || !subject.trim() || !body.trim()}
                 className="btn btn-primary btn-sm pointer-coarse:min-h-11"
                 data-testid="one-to-one-send"
               >
