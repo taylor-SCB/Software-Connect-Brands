@@ -130,6 +130,8 @@ export default async function QuoteBuilderPage({
     // Send quote (under the strip) waits while the Line items card has
     // unsaved edits, so the provider holds both.
     <QuoteUnsavedProvider>
+      {/* Room at the foot of a phone for the strip's pinned Next button. */}
+      <div className={journey?.journey.next ? "max-sm:pb-24" : undefined}>
       <BackLink href="/dashboard/quotes" label="Quotes" current={`QUO-${quote.number} ${quote.title}`} />
 
       <PageHeader
@@ -333,6 +335,7 @@ export default async function QuoteBuilderPage({
             }
           />
         </Card>
+      </div>
       </div>
     </QuoteUnsavedProvider>
   );

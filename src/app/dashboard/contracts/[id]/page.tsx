@@ -116,10 +116,10 @@ export default async function ContractDetailPage({
       : null;
   const sendForSignature =
     contract.status === "DRAFT" && canSend ? (
-      <form action={setContractStatus}>
+      <form action={setContractStatus} className="max-sm:w-full">
         <input type="hidden" name="contractId" value={contract.id} />
         <input type="hidden" name="status" value="SENT" />
-        <button type="submit" className="btn btn-primary btn-sm" data-testid="journey-next">
+        <button type="submit" className="btn btn-primary btn-sm max-sm:w-full" data-testid="journey-next">
           <IconSend size={13} />
           Send for signature
         </button>
@@ -142,7 +142,8 @@ export default async function ContractDetailPage({
   );
 
   return (
-    <div>
+    // Room at the foot of a phone for the strip's pinned Next button.
+    <div className={journey?.journey.next ? "max-sm:pb-24" : undefined}>
       <BackLink href="/dashboard/contracts" label="Contracts" current={`CON-${contract.number} ${contract.title}`} />
 
       <PageHeader

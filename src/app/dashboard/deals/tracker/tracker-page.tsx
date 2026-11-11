@@ -73,7 +73,8 @@ export async function DealTrackerPage({
   const firstContract = standing.length === 0;
 
   return (
-    <div>
+    // Room at the foot of a phone for the strip's pinned Next button.
+    <div className={journey?.journey.next ? "max-sm:pb-24" : undefined}>
       <PageHeader
         eyebrow={eyebrow}
         title="Contract Coordinator"
@@ -130,8 +131,11 @@ export async function DealTrackerPage({
                 </div>
               </div>
             </div>
-            {journey && (
-              <div className="border-t border-[var(--hairline-3)] p-5">
+          </Card>
+          {/* Outside the glass card: a card is the box a pinned (fixed)
+              Next button would be placed against on a phone. */}
+          {journey && (
+            <div>
                 <DealJourney
                   journey={journey.journey}
                   stickyNext
@@ -158,9 +162,8 @@ export async function DealTrackerPage({
                     </dl>
                   }
                 />
-              </div>
-            )}
-          </Card>
+            </div>
+          )}
 
           {/* The job this deal is, or the way to make it one. Its own card,
               in plain words, so a handshake win is never hunted for. */}

@@ -18,6 +18,9 @@ import { sendInvoice } from "./payment-actions";
 // Send quote sheet, the contract page's Send for signature).
 export type JourneyPage = "quote" | "coordinator" | "contract";
 
+// Full width on a phone, where the strip pins Next to the foot.
+export const NEXT = "btn btn-primary btn-sm max-sm:w-full";
+
 export function JourneyNext({
   next,
   refs,
@@ -37,24 +40,24 @@ export function JourneyNext({
   switch (next.key) {
     case "start-quote":
       return (
-        <Link href={`/dashboard/quotes/new?contactId=${refs.contactId}&dealId=${refs.dealId}`} className="btn btn-primary btn-sm" data-testid="journey-next">
+        <Link href={`/dashboard/quotes/new?contactId=${refs.contactId}&dealId=${refs.dealId}`} className={NEXT} data-testid="journey-next">
           <IconFileText size={13} />
           {next.label}
         </Link>
       );
     case "send-quote":
       return refs.quote ? (
-        <Link href={`/dashboard/quotes/${refs.quote.id}`} className="btn btn-primary btn-sm" data-testid="journey-next">
+        <Link href={`/dashboard/quotes/${refs.quote.id}`} className={NEXT} data-testid="journey-next">
           <IconSend size={13} />
           {next.label}
         </Link>
       ) : null;
     case "quote-yes":
       return refs.quote ? (
-        <form action={setQuoteStatus}>
+        <form action={setQuoteStatus} className="max-sm:w-full">
           <input type="hidden" name="quoteId" value={refs.quote.id} />
           <input type="hidden" name="status" value="ACCEPTED" />
-          <button type="submit" className="btn btn-primary btn-sm" data-testid="journey-next">
+          <button type="submit" className={NEXT} data-testid="journey-next">
             <IconCheck size={13} />
             {next.label}
           </button>
@@ -62,19 +65,19 @@ export function JourneyNext({
       ) : null;
     case "make-contract":
       return page === "coordinator" ? (
-        <a href="#make-contracts" className="btn btn-primary btn-sm" data-testid="journey-next">
+        <a href="#make-contracts" className={NEXT} data-testid="journey-next">
           <IconSignature size={13} />
           {next.label}
         </a>
       ) : (
-        <Link href={coordinator} className="btn btn-primary btn-sm" data-testid="journey-next">
+        <Link href={coordinator} className={NEXT} data-testid="journey-next">
           <IconSignature size={13} />
           {next.label}
         </Link>
       );
     case "send-contract":
       return refs.draftContract ? (
-        <Link href={`/dashboard/contracts/${refs.draftContract.id}`} className="btn btn-primary btn-sm" data-testid="journey-next">
+        <Link href={`/dashboard/contracts/${refs.draftContract.id}`} className={NEXT} data-testid="journey-next">
           <IconSend size={13} />
           {next.label}
         </Link>
@@ -85,7 +88,7 @@ export function JourneyNext({
       return refs.depositRow ? (
         <DepositInvoiceButton rowId={refs.depositRow.id} token={refs.depositRow.invoiceToken} label={next.label} />
       ) : refs.signedContract ? (
-        <Link href={`/dashboard/contracts/${refs.signedContract.id}`} className="btn btn-primary btn-sm" data-testid="journey-next">
+        <Link href={`/dashboard/contracts/${refs.signedContract.id}`} className={NEXT} data-testid="journey-next">
           {next.label}
         </Link>
       ) : null;
@@ -97,7 +100,7 @@ function CopySigningLink({ path, label }: { path: string; label: string }) {
   return (
     <button
       type="button"
-      className="btn btn-primary btn-sm"
+      className={NEXT}
       data-testid="journey-next"
       onClick={async () => {
         try {
@@ -139,9 +142,9 @@ export function DepositInvoiceButton({ rowId, token, label }: { rowId: string; t
 
   if (link) {
     return (
-      <div className="flex flex-col items-end gap-1" data-testid="deposit-invoice">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button type="button" className="btn btn-primary btn-sm" data-testid="journey-next" onClick={() => copy(link)}>
+      <div className="flex flex-col items-end gap-1 max-sm:items-stretch" data-testid="deposit-invoice">
+        <div className="flex flex-wrap items-center justify-end gap-2 max-sm:justify-center">
+          <button type="button" className={NEXT} data-testid="journey-next" onClick={() => copy(link)}>
             {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
             {copied ? "Copied" : "Copy invoice link"}
           </button>
@@ -155,10 +158,10 @@ export function DepositInvoiceButton({ rowId, token, label }: { rowId: string; t
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-col items-end gap-1 max-sm:items-stretch">
       <button
         type="button"
-        className="btn btn-primary btn-sm"
+        className={NEXT}
         disabled={pending}
         data-testid="journey-next"
         onClick={() =>

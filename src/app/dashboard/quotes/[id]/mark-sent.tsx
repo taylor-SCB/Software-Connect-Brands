@@ -43,7 +43,7 @@ export function SendQuoteButton({
   quoteLabel,
   publicPath,
   contact,
-  className = "btn btn-primary btn-sm",
+  className = "btn btn-primary btn-sm max-sm:w-full",
 }: {
   quoteId: string;
   // "QUO-1001 Kitchen remodel"
@@ -97,7 +97,7 @@ export function SendQuoteButton({
   const shownBlock = blocked && unsaved ? UNSAVED_LINES_MESSAGE : null;
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-col items-end gap-1 max-sm:items-stretch">
       <button
         type="button"
         className={className}

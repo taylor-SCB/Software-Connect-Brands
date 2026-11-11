@@ -609,7 +609,14 @@ async function anonymousStatus(browser, url) {
   await page.goto(`${BASE}/dashboard/quotes`);
   assert.match(await page.locator("main").textContent(), /out with customers/);
 
-  log("the customer's copy prints the Items and Payment schedule tables with the signer; they sign");
+  log("Sprint: the contract page carries the DealJourney strip; with A out for signature its Next is Copy signing link and the badges sit under it");
+  await page.goto(`${BASE}/dashboard/contracts/${a.id}`);
+  const strip = page.getByTestId("deal-journey");
+  assert.match(await strip.locator(".dj-steps").getAttribute("aria-label"), /Contract done.*Signed next/);
+  assert.equal((await strip.getByTestId("journey-next").textContent()).trim(), "Copy signing link");
+  assert.ok(await strip.getByTestId("contract-direction").isVisible(), "the badges moved into the strip's details row");
+
+
   const tokenA = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [a.id])).rows[0].publicToken;
   const customer = await browser.newContext();
   const cpage = await customer.newPage();
@@ -630,6 +637,35 @@ async function anonymousStatus(browser, url) {
   await customer.close();
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [a.id])).rows[0].status, "SIGNED");
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_tr'`)).rows[0].stage, "WON");
+
+  log("Sprint: a signed contract's main button is Send deposit invoice; it stamps the first payment row INV-n and offers the link");
+  await page.goto(`${BASE}/dashboard/contracts/${a.id}`);
+  const signedStrip = page.getByTestId("deal-journey");
+  assert.equal((await signedStrip.getByTestId("journey-next").textContent()).trim(), "Send deposit invoice");
+  await signedStrip.getByTestId("journey-next").click();
+  await signedStrip.getByTestId("deposit-invoice-link").waitFor();
+  const deposit = (await sql(`SELECT "invoiceNumber", "invoiceToken" FROM "ContractPayment" WHERE "contractId"=$1 ORDER BY position LIMIT 1`, [a.id])).rows[0];
+  assert.ok(deposit.invoiceNumber && deposit.invoiceToken, "the deposit row was not stamped as an invoice");
+  assert.equal(await signedStrip.getByTestId("deposit-invoice-link").getAttribute("href"), `/i/${deposit.invoiceToken}`);
+  assert.equal((await signedStrip.getByTestId("journey-next").textContent()).trim(), "Copy invoice link");
+  {
+    // On a phone: five dots, "Step 5 of 5 · …" and a full-width Next
+    // pinned to the foot of the screen; nothing scrolls sideways.
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/contracts/${a.id}`);
+    const summary = phone.getByTestId("deal-journey-summary");
+    await summary.waitFor();
+    assert.match(await summary.textContent(), /Step 5 of 5 · /);
+    assert.equal(await summary.locator(".health-dot").count(), 5);
+    const next = await phone.getByTestId("deal-journey").getByTestId("journey-next").boundingBox();
+    assert.ok(next.width >= 300, `the phone's Next is ${next.width}px wide`);
+    assert.ok(next.height >= 44, `the phone's Next is ${next.height}px tall`);
+    assert.ok(next.y + next.height <= 844 + 1 && next.y > 600, `the phone's Next is not pinned to the foot (${next.y})`);
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the contract page scrolls sideways on a phone");
+    await phone.screenshot({ path: path.join(OUT, "08b-contract-journey-phone.png") });
+    await phoneCtx.close();
+  }
 
   log("audit fixes (UX review): signing accepts the quote it came from — Accepted, its follow-up off Coming up, not out with customers, and the won deal keeps its value beside a newer $0 draft");
   {

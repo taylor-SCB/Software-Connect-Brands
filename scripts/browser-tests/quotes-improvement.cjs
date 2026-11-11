@@ -1065,6 +1065,48 @@ let context;
   assert.equal(await uxCustomer.getByTestId("document-total").textContent(), "$23,200.00", "the customer's link shows the saved line");
   await uxCustomer.close();
 
+  log("Sprint: the quote page's DealJourney strip; Send quote's Copy link copies the customer's link, marks it sent and moves a deal still at Meeting Completed to Quote Sent");
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"updatedAt")
+     VALUES ('deal_qi_sq','${org}','ctc_qi','Lobby cameras','MEETING_COMPLETED',now())`,
+  );
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
+     VALUES ('quo_qi_sq','${org}','ctc_qi','deal_qi_sq',1901,'Lobby cameras','DRAFT','tok_quo_qi_sq_0123456789',now())`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_qi_sq','quo_qi_sq','Dome camera',4,25000,'MATERIALS',0)`,
+  );
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_sq`);
+  const sqStrip = page.getByTestId("deal-journey");
+  assert.match(await sqStrip.locator(".dj-steps").getAttribute("aria-label"), /Quote next \(draft\)/);
+  assert.ok(await sqStrip.locator("span.badge", { hasText: "Draft" }).first().isVisible(), "the quote's badge sits in the strip's details row");
+  // Send quote is the strip's Next, not a second button in the header.
+  assert.equal(await page.getByTestId("send-quote").count(), 1);
+  await sqStrip.getByTestId("send-quote").click();
+  const sheet = page.getByTestId("send-quote-sheet");
+  await sheet.waitFor();
+  assert.equal(await sheet.getByTestId("send-quote-link").inputValue(), `${BASE}/q/tok_quo_qi_sq_0123456789`);
+  await sheet.getByTestId("send-quote-copy").click();
+  await sheet.waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${BASE}/q/tok_quo_qi_sq_0123456789`, "Copy link copied the customer's link");
+  const sqState = (await sql(`SELECT q.status, d.stage FROM "Quote" q JOIN "Deal" d ON d.id=q."dealId" WHERE q.id='quo_qi_sq'`)).rows[0];
+  assert.deepEqual(sqState, { status: "SENT", stage: "QUOTE_SENT" }, "sending the quote moves its deal on (decision 19)");
+  await page.getByRole("button", { name: "Back to draft" }).waitFor();
+  assert.equal((await sqStrip.getByTestId("journey-next").textContent()).trim(), "Customer said yes");
+  await sqStrip.getByTestId("journey-next").click();
+  await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_sq'`)).rows[0].status, "ACCEPTED");
+  assert.equal((await sqStrip.getByTestId("journey-next").textContent()).trim(), "Make contract");
+  assert.match(await sqStrip.getByTestId("journey-next").getAttribute("href"), /\/dashboard\/contracts\/tracker\?dealId=deal_qi_sq&quoteId=quo_qi_sq/);
+  // The Coordinator opens on a first contract: the open row ticked onto
+  // Contract A, one Create button with its total.
+  await sqStrip.getByTestId("journey-next").click();
+  await page.getByTestId("tracker-grid").waitFor();
+  assert.equal((await page.getByTestId("create-contracts").textContent()).trim(), "Create contract for $1,000.00 →");
+
   log("audit fixes (UX review): at 1440 and 1280 the Qty, Value and Tag boxes show their whole value and a pictured catalog line's name shows whole; on a phone each line stacks with its total on screen");
   // A catalog product with a picture, on the sent quote the way Mark as
   // sent leaves it (the line holds the picture it went out with).
