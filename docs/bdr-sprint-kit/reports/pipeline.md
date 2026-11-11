@@ -49,12 +49,16 @@ All against a production build (`npx tsc --noEmit -p .` clean, `npx next build` 
 - crm-pipeline-stats: 25/25
 - deal-tracker: 43/43
 - ai-assist: 26/26
-- Extra runs, for suites that reach the board: see "Extra suites" below.
+- Extra runs, for suites that reach the board:
+  - crm-reps: 16/16
+  - companies-contacts: 26/26 (three locator fixes for the new tile and panel)
+  - quotes-improvement: all passed
+  - crm-data (email group): 39/39
 
 ## Files touched outside yours
 
 - `scripts/browser-tests/pipeline-opportunities.cjs`, `crm-pipeline-stats.cjs`, `crm-reps.cjs` and `ai-assist.cjs`: steps moved to the new controls (WIP plus this session).
-- `scripts/browser-tests/companies-contacts.cjs` (this session): Move to… is reached through the tile's ⋯; QUO-1000 and the person's link are checked in the panel. Nothing it checks was dropped.
+- `scripts/browser-tests/companies-contacts.cjs` (this session): the Quote Sent column is found by its testid; Move to… is reached through the tile's ⋯; QUO-1000 and the person's link are checked in the panel. Nothing it checks was dropped.
 
 No shared components or migrations were changed.
 
