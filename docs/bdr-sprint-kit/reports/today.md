@@ -90,3 +90,37 @@ No migration, and no edits to `globals.css`, `calendar-data.ts` or the log sheet
 - **The calendar's remembered Mine applies only to an address with no filters.** A suite that clicks Mine should click Everyone after it, or later bare visits show only that person's days.
 - **A fixed bar inside a `.card` must be portalled to body.** The card's backdrop blur makes the card the containing block. A body portal loses the tenant's `--brand` (set on the shell), so copy it across, as `OnBody` in `my-day/up-next.tsx` does. The existing Sheet / UndoToast portals show the default indigo, not the tenant's brand. That's worth a shared fix.
 - Two toasts (a log's and a Held) can show at once in the same spot for up to ten seconds.
+
+## Follow-up
+
+The sprint lead asked for the four calendar items from the plan that I had left out (ux-plan.txt, Calendar section). They are now built on `claude/sprint-today`.
+
+1. **Calendar toolbar.** One row: [Mine | Team] [Agenda · Week · Month] [‹ Today ›] [View ▾] [Filters (n)] [+ New]. Nothing was removed.
+   - The scope toggle now reads "Mine | Team" as the plan has it; the first report used Everyone. The Team week view moved into View as "Team week, a row each", so the two no longer share a name on the row.
+   - **View** is a FloatingMenu holding the Team week, Calendar / Log / Calendar + Log, and Copy this week into next (shown in Week).
+   - **Filters** is a sheet (a bottom sheet on a phone) holding Users, Companies, Contacts, Projects, crew and activity, with "Clear all" and "Done". Their pick lists open in place inside the sheet.
+   - Every filter that is on shows as a chip under the row, crew and activity included, with "Clear". "Filters (n)" counts them.
+   - The testids are unchanged (`cal-view-team`, `cal-layout-*`, `cal-copy-week`, `cal-users`…). New ones: `cal-view-menu`, `cal-view-panel`, `cal-filters-open`, `cal-filters-sheet`, `cal-filters-done`, `cal-filters-clear`.
+2. **Phone.** The Agenda is the default (as before). On top of it sits a one-week day strip: today plus six days, each with its count, 56px tall, and a tap scrolls to that day. Month is hidden from the row below sm and sits in View (`cal-view-month-phone`).
+3. **"+ New" opens a sheet** (`cal-new-sheet`; a bottom sheet on a phone, a dialog on a desktop). It starts on Call when the workspace has that type, with Title, Type, Day and Time showing (the time boxes are open). "More: who, where, job, notes" (`event-more`) reveals the rest of the form. The hidden fields still post with their defaults. Elsewhere `EventForm` is unchanged, because the `quick` prop is off by default.
+4. **Load.** `load-test.cjs` has a new step that times three pages at 200,000 contacts, with the owner holding 60,000 of them and 140,000 owned by nobody:
+   - My day (Up next): 0.44s
+   - Daily Rundown with Team today: 0.41s
+   - Calendar Agenda: 0.29s
+
+   The budget is 2s, and the slowest page in the run was still Contacts page 2,000 at 1.03s.
+
+Also fixed: the calendar's count line no longer says "with the filters on" when it is only showing Mine.
+
+**Suite edits that don't weaken anything:**
+- `calendar.cjs` and `calendar-v2.cjs` open View or Filters before reaching a moved control, close the new-entry sheet with its close button, and open More before filling attendees, location, notes or the owner. calendar.cjs's "two forms share no ids" step opens the day panel's form before the "+ New" sheet, because the sheet now covers the page. calendar.cjs also checks the new filter chip.
+- `companies-contacts.cjs`: the calendar's form now opens in a roughly 470px sheet, so it checks the columns the form can hold there (title and type side by side, day and start time side by side, owner and crew side by side) instead of four across.
+- `myday.cjs` (22 steps) gained the toolbar, the + New sheet and the phone strip.
+
+**Results** (production build): calendar 46, calendar-v2 42, crews-time 34, looks 31, overlay-readability 16, login-case, myday 22, companies-contacts 26 and load-test 10 all pass. tsc and next build are clean.
+
+**Files touched outside mine:**
+- `src/app/dashboard/calendar/event-form.tsx` (the optional `quick` prop)
+- `scripts/browser-tests/calendar-v2.cjs`, `companies-contacts.cjs` and `load-test.cjs`
+
+**Note for CLAUDE.md:** a calendar filter other than Users ignores the remembered Mine. Adding a type or company filter shows the whole team's matches, so a link someone sends keeps meaning the same thing.
