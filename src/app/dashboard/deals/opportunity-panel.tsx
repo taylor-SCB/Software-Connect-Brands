@@ -4,19 +4,14 @@ import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import {
-  ACTIVITY_OUTCOME_LABELS,
-  OUTCOMES_BY_TYPE,
-  type ActivityOutcomeValue,
-  type ActivityTypeValue,
-  type PipelineColumn,
-} from "@/lib/constants";
+import type { PipelineColumn } from "@/lib/constants";
 import { dollarsToCents, formatCents } from "@/lib/format";
 import { shortDay, time12 } from "@/lib/health";
 import { LifecycleMeter } from "@/components/lifecycle-meter";
 import { LeadLabelPicker } from "@/components/lead-label-chip";
 import { IconCalendar, IconClock, IconFileText, IconMail, IconMessage, IconNote, IconPhone, IconPlus, IconX } from "@/components/icons";
-import { bookMeeting, logActivity } from "../contacts/actions";
+import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
+import { useBookMeeting } from "@/components/book-meeting/book-meeting";
 import {
   loadOpportunity,
   markMeetingHeld,
@@ -81,8 +76,6 @@ export function OpportunityPanel({
   // Each person's role; null is "nothing ticked yet" for someone just added.
   const [people, setPeople] = useState<(Omit<OpportunityPerson, "role"> & { role: Role | null })[]>([]);
   const [error, setError] = useState<string | undefined>();
-  const [logFor, setLogFor] = useState<{ contactId: string; type: ActivityTypeValue } | null>(null);
-  const [booking, setBooking] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -116,10 +109,25 @@ export function OpportunityPanel({
   }, [onClose]);
 
   // Something saved from inside: tell the board (with Undo), refresh both.
+  // An empty text: the sheet showed its own "Saved · Undo".
   function saved(text: string, batchId?: string) {
-    onSaved?.(text, batchId);
+    if (text) onSaved?.(text, batchId);
     router.refresh();
     setVersion((n) => n + 1);
+  }
+
+  // Log and Book open the shared sheets ("How did it go?" and Book
+  // meeting, docs/bdr-sprint-kit/api-log-sheet.md), drawn above the panel
+  // with their own "Saved · Undo"; a save reloads the panel and the board.
+  // A Call or Text tapped in a person's row opens "How did it go?" on its
+  // own when the tab comes back (dial: true reads data-contact-id).
+  const how = useHowDidItGo({ dial: true });
+  const book = useBookMeeting({ onBooked: () => saved("") });
+  function logWith(contactId: string, name: string) {
+    how.open({ target: { contactId }, type: "PHONE_CALL", name, today: detail?.today, onSaved: () => saved("") });
+  }
+  function bookWith(contactId: string, name: string) {
+    book.open({ contactId, name, today: detail?.today });
   }
 
   // Ticking one of a person's three boxes greys the other two; unticking
@@ -209,8 +217,8 @@ export function OpportunityPanel({
         : undefined;
   function runNext() {
     if (!detail || !action) return;
-    if (action.key === "call" && primary) setLogFor({ contactId: primary.contactId, type: "PHONE_CALL" });
-    else if (action.key === "book") setBooking(true);
+    if (action.key === "call" && primary) logWith(primary.contactId, primary.name);
+    else if (action.key === "book" && primary) bookWith(primary.contactId, primary.name);
     else if (action.key === "mark-held" && toHold) answerHeld(toHold.id);
     else if (action.key === "start-quote") moveFromPanel("QUOTE_SENT");
   }
@@ -230,7 +238,9 @@ export function OpportunityPanel({
     });
   }
 
-  return createPortal(
+  return (
+    <>
+      {createPortal(
     <div
       className="fixed inset-0 z-[70] flex justify-end bg-[var(--scrim)]"
       onClick={(event) => {
@@ -382,10 +392,7 @@ export function OpportunityPanel({
                           {[row.company, row.phone, row.fromMeeting ? "from the meeting" : "added"].filter(Boolean).join(" · ")}
                         </span>
                       </div>
-                      <ReachButtons
-                        person={row}
-                        onLog={() => setLogFor(logFor?.contactId === row.contactId ? null : { contactId: row.contactId, type: "PHONE_CALL" })}
-                      />
+                      <ReachButtons person={row} onLog={() => logWith(row.contactId, row.name)} />
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" role="group" aria-label={`${row.name}: role on this opportunity`}>
                       {ROLES.map((item) => (
@@ -406,18 +413,6 @@ export function OpportunityPanel({
                         </label>
                       ))}
                     </div>
-                    {logFor?.contactId === row.contactId && (
-                      <PanelLog
-                        contactId={row.contactId}
-                        name={row.name}
-                        type={logFor.type}
-                        onDone={(text, batchId) => {
-                          setLogFor(null);
-                          saved(text, batchId);
-                        }}
-                        onCancel={() => setLogFor(null)}
-                      />
-                    )}
                   </li>
                 ))}
               </ul>
@@ -430,26 +425,13 @@ export function OpportunityPanel({
             <section>
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-sm font-semibold">Meetings</h3>
-                {primary && !booking && (
-                  <button type="button" onClick={() => setBooking(true)} className="link inline-flex min-h-9 items-center gap-1 text-xs" data-testid="panel-book">
+                {primary && (
+                  <button type="button" onClick={() => bookWith(primary.contactId, primary.name)} className="link inline-flex min-h-9 items-center gap-1 text-xs" data-testid="panel-book">
                     <IconPlus size={12} />
                     Book a meeting
                   </button>
                 )}
               </div>
-              {booking && primary && (
-                <BookForm
-                  today={detail.today}
-                  primary={primary}
-                  others={people.filter((row) => row.contactId !== primary.contactId && row.role !== "HIDDEN")}
-                  opportunityId={detail.id}
-                  onDone={(text, batchId) => {
-                    setBooking(false);
-                    saved(text, batchId);
-                  }}
-                  onCancel={() => setBooking(false)}
-                />
-              )}
               {detail.meetings.length === 0 ? (
                 <p className="text-xs text-[var(--text-dim)]">No meeting logged on this one.</p>
               ) : (
@@ -542,16 +524,26 @@ export function OpportunityPanel({
       </aside>
     </div>,
     document.body,
+      )}
+      {how.element}
+      {book.element}
+    </>
   );
 }
 
 /* ------------------------------ People rows ------------------------------ */
 
-function ReachButtons({ person, onLog }: { person: { name: string; phone: string | null; email: string | null }; onLog: () => void }) {
+function ReachButtons({
+  person,
+  onLog,
+}: {
+  person: { contactId: string; name: string; phone: string | null; email: string | null };
+  onLog: () => void;
+}) {
   const button = "btn btn-ghost btn-sm min-h-9 min-w-9 justify-center !px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
   const digits = person.phone?.replace(/[^\d+]/g, "") ?? "";
   return (
-    <div className="flex shrink-0 items-center gap-1" data-testid="panel-reach">
+    <div className="flex shrink-0 items-center gap-1" data-testid="panel-reach" data-contact-id={person.contactId}>
       {digits ? (
         <>
           <a href={`tel:${digits}`} className={button} aria-label={`Call ${person.name}`} title={`Call ${person.phone}`} data-testid="panel-call">
@@ -574,121 +566,6 @@ function ReachButtons({ person, onLog }: { person: { name: string; phone: string
         <IconNote size={13} />
         <span className="max-sm:sr-only">Log</span>
       </button>
-    </div>
-  );
-}
-
-const LOG_TYPES: { type: ActivityTypeValue; label: string }[] = [
-  { type: "PHONE_CALL", label: "Call" },
-  { type: "TEXT", label: "Text" },
-  { type: "EMAIL", label: "Email" },
-  { type: "MEETING", label: "Meeting" },
-];
-
-// "How did it go?" in the panel: the kind, one outcome chip, an optional
-// note. logActivity does the rest (Connected on a talk, a reply or a held
-// meeting; Meeting Completed on a held one) and hands back Undo.
-function PanelLog({
-  contactId,
-  name,
-  type: initial,
-  onDone,
-  onCancel,
-}: {
-  contactId: string;
-  name: string;
-  type: ActivityTypeValue;
-  onDone: (text: string, batchId?: string) => void;
-  onCancel: () => void;
-}) {
-  const [type, setType] = useState<ActivityTypeValue>(initial);
-  const [outcome, setOutcome] = useState<ActivityOutcomeValue | null>(null);
-  const [note, setNote] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-  const chip = (active: boolean) =>
-    `min-h-9 rounded-lg border px-2.5 text-xs font-medium [@media(pointer:coarse)]:min-h-11 ${
-      active ? "border-[var(--brand)] bg-[var(--hover)] text-[var(--text)]" : "border-[var(--border)] text-[var(--text-dim)] hover:text-[var(--text)]"
-    }`;
-  return (
-    <div className="mt-2 space-y-2 rounded-lg border border-[var(--border)] p-2.5" data-testid="panel-log-form">
-      <p className="text-xs font-semibold">How did it go with {name}?</p>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="What kind">
-        {LOG_TYPES.map((row) => (
-          <button
-            key={row.type}
-            type="button"
-            role="radio"
-            aria-checked={type === row.type}
-            onClick={() => {
-              setType(row.type);
-              setOutcome(null);
-            }}
-            className={chip(type === row.type)}
-            data-testid={`panel-log-type-${row.type}`}
-          >
-            {row.label}
-          </button>
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="How it went">
-        {OUTCOMES_BY_TYPE[type].map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="radio"
-            aria-checked={outcome === value}
-            onClick={() => setOutcome(outcome === value ? null : value)}
-            className={chip(outcome === value)}
-            data-testid={`panel-log-outcome-${value}`}
-          >
-            {ACTIVITY_OUTCOME_LABELS[value]}
-          </button>
-        ))}
-      </div>
-      <textarea
-        value={note}
-        onChange={(event) => setNote(event.target.value)}
-        rows={2}
-        maxLength={5000}
-        placeholder="What happened? (optional)"
-        aria-label="What happened"
-        className="input text-sm"
-        data-testid="panel-log-note"
-      />
-      {error && (
-        <p className="text-xs text-[var(--danger)]" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm min-h-9">
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={pending || (!outcome && !note.trim())}
-          onClick={() =>
-            start(async () => {
-              const form = new FormData();
-              form.set("contactId", contactId);
-              form.set("type", type);
-              form.set("body", note.trim());
-              if (outcome) form.set("outcome", outcome);
-              const result = await logActivity({}, form);
-              if (result.error) {
-                setError(result.error);
-                return;
-              }
-              onDone(`Logged${outcome ? ` · ${ACTIVITY_OUTCOME_LABELS[outcome]}` : ""}`, result.batchId);
-            })
-          }
-          className="btn btn-primary btn-sm min-h-9"
-          data-testid="panel-log-save"
-        >
-          {pending ? "Saving…" : "Save"}
-        </button>
-      </div>
     </div>
   );
 }
@@ -765,68 +642,6 @@ function MeetingRow({
         />
       )}
     </li>
-  );
-}
-
-// "+ Book a meeting": day and time chips, who else from the people on it,
-// booked on this opportunity (bookMeeting: Meeting · <name> on the
-// calendar, Meeting Set, the booker kept on the meeting).
-function BookForm({
-  today,
-  primary,
-  others,
-  opportunityId,
-  onDone,
-  onCancel,
-}: {
-  today: string;
-  primary: { contactId: string; name: string };
-  others: { contactId: string; name: string }[];
-  opportunityId: string;
-  onDone: (text: string, batchId?: string) => void;
-  onCancel: () => void;
-}) {
-  const [withIds, setWithIds] = useState<string[]>([]);
-  return (
-    <div className="mb-2 space-y-2 rounded-lg border border-[var(--border)] p-2.5" data-testid="panel-book-form">
-      <p className="text-xs font-semibold">Book a meeting with {primary.name}</p>
-      {others.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" aria-label="Who else">
-          {others.map((row) => {
-            const on = withIds.includes(row.contactId);
-            return (
-              <button
-                key={row.contactId}
-                type="button"
-                aria-pressed={on}
-                onClick={() => setWithIds(on ? withIds.filter((id) => id !== row.contactId) : [...withIds, row.contactId])}
-                className={`min-h-9 rounded-lg border px-2.5 text-xs [@media(pointer:coarse)]:min-h-11 ${on ? "border-[var(--brand)] bg-[var(--hover)]" : "border-[var(--border)] text-[var(--text-dim)]"}`}
-              >
-                + {row.name}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <DayTimePicker
-        today={today}
-        initialTime="10:00"
-        saveLabel={(on) => `Book ${shortDay(on)}`}
-        onCancel={onCancel}
-        onSave={async (on, time) => {
-          const result = await bookMeeting({
-            contactId: primary.contactId,
-            on,
-            ...(time ? { time } : {}),
-            withContactIds: withIds,
-            opportunity: opportunityId,
-          });
-          if (result.error) return result.error;
-          onDone(result.success ?? "Booked", result.batchId);
-          return null;
-        }}
-      />
-    </div>
   );
 }
 

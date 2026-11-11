@@ -1034,22 +1034,34 @@ async function pixelContrast(page, png) {
   await panel.getByTestId("panel-save").waitFor();
   await panel.getByTestId("panel-title").fill("Happy Builders");
   await panel.getByTestId("panel-save").waitFor({ state: "detached" });
+  // Log opens the shared "How did it go?" sheet over the panel, set to
+  // Call; Talked saves in one tap, Skip closes it, and its own toast
+  // carries Undo.
   await hanaRow.getByTestId("panel-log").click();
-  await hanaRow.getByTestId("panel-log-outcome-TALKED").click();
-  await hanaRow.getByTestId("panel-log-save").click();
-  await notice.getByText("Logged · Talked").waitFor();
+  const how = page.getByTestId("how-did-it-go");
+  await how.waitFor();
+  assert.equal(await how.locator("[data-testid=log-type-PHONE_CALL]").getAttribute("aria-pressed"), "true", "set to Call");
+  await how.locator("[data-testid=outcome-TALKED]").click();
+  await page.getByTestId("log-saved").waitFor();
   assert.equal((await one(`SELECT outcome FROM "Activity" WHERE "contactId"='op_s_hana' AND type='PHONE_CALL'`)).outcome, "TALKED");
+  await page.getByTestId("follow-up-skip").click();
+  await how.waitFor({ state: "detached" });
   assert.equal(await panel.count(), 1, "the panel stays open");
-  await notice.getByTestId("pipeline-undo").click();
-  await notice.getByText("Undone").waitFor();
+  const toast = page.getByTestId("log-toast");
+  await toast.waitFor();
+  await toast.getByTestId("log-toast-undo").click();
+  await toast.getByText("Undone").waitFor();
   assert.equal((await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='op_s_hana' AND type='PHONE_CALL'`)).n, 0);
-  // + Book a meeting: on this tile, under whoever booked it.
+  // Book a meeting: the shared Book meeting sheet, offering this tile,
+  // under whoever booked it.
   await panel.getByTestId("panel-book").click();
-  const bookForm = panel.getByTestId("panel-book-form");
-  await bookForm.getByTestId("picker-day").last().click();
-  await bookForm.getByTestId("picker-time").nth(3).click();
-  await bookForm.getByTestId("picker-save").click();
-  await notice.getByText(/^Booked .* · Hana Happened is on your Pipeline in Meeting Set/).waitFor();
+  const bookSheet = page.getByTestId("book-meeting");
+  await bookSheet.locator("[data-testid=book-opp-yes]").waitFor();
+  assert.equal(await bookSheet.locator("[data-testid=book-opp-yes]").getAttribute("aria-checked"), "true", "this tile offered first");
+  await bookSheet.locator("[data-testid=book-day-week]").click();
+  await bookSheet.locator("[data-testid=book-time-13\\:00]").click();
+  await page.getByTestId("book-submit").click();
+  await page.getByTestId("log-toast").getByText(/^Booked .* · Hana is on your Pipeline in Meeting Set/).waitFor();
   const booked = await one(
     `SELECT om."bookedById", e."startTime" FROM "OpportunityMeeting" om JOIN "CalendarEvent" e ON e.id = om."eventId" WHERE om."opportunityId"='op_s_opp_hana' ORDER BY om."createdAt" DESC LIMIT 1`,
   );
