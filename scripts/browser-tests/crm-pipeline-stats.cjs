@@ -229,16 +229,51 @@ async function openMore(p) {
   await nic.getByText(/Scheduled for/).waitFor();
   assert.equal((await sql(`SELECT count(*)::int n FROM "StatusChange" WHERE "contactId"=$1 AND "toStatus"='MEETING_SET'`, [ava])).rows[0].n, 1);
 
-  log("a meeting logged as held also sets it (Ben)");
+  log("a meeting logged as held also sets it, and completes it (Ben, decision 4): Meeting Set then Meeting Completed, and his Opportunity Created line");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('ctc_ps_ben',$1,'Ben Ortiz',now())`, [org]);
   await page.goto(`${BASE}/dashboard/contacts/ctc_ps_ben`);
   await openLog(page);
   await form.getByRole("button", { name: "Meeting", exact: true }).click();
   await form.locator("textarea[name=body]").fill("Coffee meeting");
   await form.locator("[data-testid=activity-submit]").click();
-  await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_SET", "Ben meeting set");
+  await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_COMPLETED", "Ben meeting completed");
+  const benMoves = (await sql(`SELECT "fromStatus", "toStatus", auto FROM "StatusChange" WHERE "contactId"='ctc_ps_ben' AND "toStatus" IN ('MEETING_SET','MEETING_COMPLETED')`)).rows;
+  const benSet = benMoves.filter((row) => row.toStatus === "MEETING_SET");
+  const benDone = benMoves.filter((row) => row.toStatus === "MEETING_COMPLETED");
+  assert.equal(benSet.length, 1, `one Meeting Set row: ${JSON.stringify(benMoves)}`);
+  assert.deepEqual(benDone.map((row) => ({ ...row })), [{ fromStatus: "MEETING_SET", toStatus: "MEETING_COMPLETED", auto: true }], "Meeting Completed follows from Meeting Set, set by the app");
+  assert.equal((await sql(`SELECT outcome FROM "Activity" WHERE "contactId"='ctc_ps_ben' AND type='MEETING'`)).rows.map((row) => row.outcome).join(), "HELD");
+  const benOpp = (await sql(`SELECT o.id, o.stage FROM "Opportunity" o JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE oc."contactId"='ctc_ps_ben'`)).rows;
+  assert.deepEqual(benOpp.map((row) => row.stage), ["MEETING_COMPLETED"], "his tile is completed with him");
+  assert.deepEqual(
+    (await sql(`SELECT kind FROM "OpportunityLog" WHERE "contactId"='ctc_ps_ben' AND "opportunityId"=$1`, [benOpp[0].id])).rows.map((row) => row.kind),
+    ["OPPORTUNITY_CREATED"],
+  );
 
-  log("the Pipeline starts at Meeting Set, with Ava and Ben as opportunity tiles and Nic as Ava's rep");
+  log("the Pipeline starts at Meeting Set, with Ava and Bea as opportunity tiles there (Nic as Ava's rep) and Ben's held one at Meeting Completed");
+  // Bea's meeting is booked ahead (a day ahead on the log schedules it:
+  // Meeting Set, nothing held), then its day goes by with nobody saying
+  // how it went.
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('ctc_ps_bea',$1,'Bea Lane',now())`, [org]);
+  await page.goto(`${BASE}/dashboard/contacts/ctc_ps_bea`);
+  await openLog(page);
+  await form.getByRole("button", { name: "Meeting", exact: true }).click();
+  await form.locator("textarea[name=body]").fill("Site visit");
+  await form.locator("[data-testid=activity-when]").fill(isoDaysAgo(-1));
+  await form.locator("[data-testid=activity-submit]").click();
+  await page.getByText(/Scheduled for/).waitFor();
+  assert.equal(await status("Contact", "ctc_ps_bea"), "MEETING_SET");
+  assert.deepEqual(
+    (await sql(`SELECT "toStatus" FROM "StatusChange" WHERE "contactId"='ctc_ps_bea' AND "toStatus" IN ('MEETING_SET','MEETING_COMPLETED')`)).rows.map((row) => row.toStatus),
+    ["MEETING_SET"],
+    "a booking sets it and completes nothing",
+  );
+  const beaMeeting = (await sql(
+    `SELECT m.id, m."eventId" FROM "OpportunityMeeting" m JOIN "OpportunityContact" oc ON oc."opportunityId"=m."opportunityId" WHERE oc."contactId"='ctc_ps_bea'`,
+  )).rows;
+  assert.equal(beaMeeting.length, 1);
+  await sql(`UPDATE "OpportunityMeeting" SET "on" = "on" - interval '3 days' WHERE id=$1`, [beaMeeting[0].id]);
+  await sql(`UPDATE "CalendarEvent" SET "startOn" = "startOn" - 3 WHERE id=$1`, [beaMeeting[0].eventId]);
   await page.goto(`${BASE}/dashboard/deals`);
   const headers = (await page.locator("[data-testid^=pipeline-column-] h2").allTextContents()).map((t) => t.trim());
   assert.deepEqual(headers, ["Meeting Set", "Meeting Completed", "Quote Sent", "Contract Sent", "Signed / Won", "Lost"]);
@@ -248,15 +283,20 @@ async function openMore(p) {
   // The rep shows as initials since the BDR redesign (edited in the panel).
   assert.equal(await avaCard.locator("[data-testid=tile-rep]").getAttribute("title"), "Rep: Nic Rivera");
   assert.equal(await avaCard.locator("[data-testid=tile-rep]").textContent(), "NR");
-  await meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
+  await meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Bea Lane" }).waitFor();
+  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
+  assert.equal(await meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).count(), 0, "Ben's held meeting completed his tile");
   await shot(page, "01-pipeline-meetings");
 
-  log("Meeting Completed from the tile's Move to… moves Ben to the second column, no prompt");
-  const benCard = meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Ben Ortiz" });
-  await benCard.locator("[data-testid=tile-more]").click();
+  log("Meeting Completed from the tile's Move to… moves Bea to the second column, no prompt, and her meeting is marked Held");
+  const beaCard = meetingCol.locator("[data-testid=pipeline-tile]", { hasText: "Bea Lane" });
+  await beaCard.locator("[data-testid=tile-more]").click();
   await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_COMPLETED]").click();
-  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Ben Ortiz" }).waitFor();
-  await until(async () => (await status("Contact", "ctc_ps_ben")) === "MEETING_COMPLETED", "Ben meeting completed");
+  await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Bea Lane" }).waitFor();
+  assert.equal(await page.getByTestId("early-dialog").count(), 0, "her meeting has gone by: nothing asks if it happened early");
+  assert.equal(await page.locator("[data-testid=convert-dialog]").count(), 0);
+  await until(async () => (await status("Contact", "ctc_ps_bea")) === "MEETING_COMPLETED", "Bea meeting completed");
+  assert.equal((await sql(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [beaMeeting[0].id])).rows[0].outcome, "HELD");
 
   log("skipping Ava from Meeting Set to Quote Sent asks both dates, prefilled with the meeting day");
   await sql(`UPDATE "StatusChange" SET "on" = now() - interval '6 days' WHERE "contactId"=$1 AND "toStatus"='MEETING_SET'`, [ava]);
@@ -357,7 +397,7 @@ async function openMore(p) {
     [org],
   )).rows[0].n);
   assert.equal(await tile2("booked"), String(booked), "every meeting booked in the period");
-  assert.ok(booked >= 2, "Ava's and Ben's");
+  assert.ok(booked >= 3, "Ava's, Ben's and Bea's");
   assert.equal(await tile2("won"), "$5,000.00");
   // Won: Cara. Lost: Eli. Close rate 50%.
   assert.match(await page.locator("[data-testid=stats-close-rate]").textContent(), /50%/);
@@ -366,8 +406,8 @@ async function openMore(p) {
   const funnelCounts = await page.locator("[data-testid=funnel-count]").allTextContents();
   // A step counts everyone who reached it or a later one (audit, Nov 11,
   // 2026): Cara, won in the period, reached Meeting Set on her way to Won.
-  assert.equal(funnelCounts[2], "3", "Ava and Ben reached Meeting Set, and Cara on her way to Won");
-  assert.equal(funnelCounts[3], "3", "Ben by hand, Ava by the skipped step, Cara on her way to Won");
+  assert.equal(funnelCounts[2], "4", "Ava, Ben and Bea reached Meeting Set, and Cara on her way to Won");
+  assert.equal(funnelCounts[3], "4", "Ben by his held meeting, Bea by hand, Ava by the skipped step, Cara on her way to Won");
   assert.equal(funnelCounts[6], "1", "Cara is the one Won");
   await shot(page, "04-stats");
 

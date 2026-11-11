@@ -44,6 +44,43 @@ function titleFor(contact: { name: string; company: { name: string } | null }) {
   return contact.company?.name ?? contact.name;
 }
 
+// The meeting this already is — a calendar entry or history line that
+// already has its row, wherever that sits in the workspace — and its tile
+// while that is open (final audit, Nov 11, 2026). Only the tile attachMeeting
+// picks used to be searched, so the calendar form or a claim naming a booked
+// entry without a tile wrote a second meeting on the person's newest tile
+// and left the booked one asking "how did it go?". Looked up on every tile,
+// closed ones too (fix review): a booked entry whose tile has since been Won
+// or Lost, re-saved from the calendar form (it books on every Meeting save,
+// a typo fix included) or ticked done, found nothing open and started a new
+// Meeting Set tile with a second row for the same entry, asking "how did it
+// go?" about a meeting long past. `known` with no `ownTile` is a meeting
+// that is history on a closed tile.
+export type MeetingRow = {
+  known: { id: string; opportunityId: string } | null;
+  ownTile: { id: string; contacts: { contactId: string }[] } | null;
+};
+export async function meetingRowOf(organizationId: string, meeting: { activityId?: string | null; eventId?: string | null }): Promise<MeetingRow> {
+  const known =
+    meeting.eventId || meeting.activityId
+      ? await prisma.opportunityMeeting.findFirst({
+          where: {
+            ...(meeting.eventId ? { eventId: meeting.eventId } : { activityId: meeting.activityId }),
+            opportunity: { organizationId },
+          },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, opportunityId: true },
+        })
+      : null;
+  const ownTile = known
+    ? await prisma.opportunity.findFirst({
+        where: { id: known.opportunityId, organizationId, ...OPEN_OPPORTUNITY },
+        select: { id: true, contacts: { select: { contactId: true } } },
+      })
+    : null;
+  return { known, ownTile };
+}
+
 // A meeting logged, booked or ticked done with these people. If any of
 // them is already on an open opportunity (as Primary or Associated; Do
 // Not List is not on it) the meeting joins it and anyone
@@ -62,6 +99,8 @@ export async function attachMeeting(
   who: Who,
   contactIds: string[],
   meeting: { on: Date; activityId?: string | null; eventId?: string | null; opportunity?: string | null },
+  // meetingRowOf for this meeting, when the caller has already read it.
+  found?: MeetingRow,
 ) {
   const ids = Array.from(new Set(contactIds));
   if (ids.length === 0) return null;
@@ -73,34 +112,7 @@ export async function attachMeeting(
   const ordered = ids.map((id) => people.find((person) => person.id === id)).filter((person) => person !== undefined);
   if (ordered.length === 0) return null;
 
-  // The meeting this already is — a calendar entry or history line that
-  // already has its row, wherever that sits in the workspace — stays on its
-  // own tile (final audit, Nov 11, 2026). Only the tile picked below used to
-  // be searched, so the calendar form or a claim naming a booked entry
-  // without a tile wrote a second meeting on the person's newest tile and
-  // left the booked one asking "how did it go?". Looked up on every tile,
-  // closed ones too (fix review): a booked entry whose tile has since been
-  // Won or Lost, re-saved from the calendar form (it books on every Meeting
-  // save, a typo fix included) or ticked done, found nothing open and
-  // started a new Meeting Set tile with a second row for the same entry,
-  // asking "how did it go?" about a meeting long past.
-  const known =
-    meeting.eventId || meeting.activityId
-      ? await prisma.opportunityMeeting.findFirst({
-          where: {
-            ...(meeting.eventId ? { eventId: meeting.eventId } : { activityId: meeting.activityId }),
-            opportunity: { organizationId },
-          },
-          orderBy: { createdAt: "asc" },
-          select: { id: true, opportunityId: true },
-        })
-      : null;
-  const ownTile = known
-    ? await prisma.opportunity.findFirst({
-        where: { id: known.opportunityId, organizationId, ...OPEN_OPPORTUNITY },
-        select: { id: true, contacts: { select: { contactId: true } } },
-      })
-    : null;
+  const { known, ownTile } = found ?? (await meetingRowOf(organizationId, meeting));
   if (known && !ownTile) {
     // On a closed tile the meeting is history there: its row takes the
     // new moment (and the history line it was logged as), and nobody is

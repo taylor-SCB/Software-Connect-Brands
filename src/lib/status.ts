@@ -222,15 +222,26 @@ export async function markMeetingSet(
   on: Date,
   meeting: { on?: Date; activityId?: string | null; eventId?: string | null; opportunity?: string | null } = {},
 ) {
-  await advanceContacts(who, contactIds, "MEETING_SET", { on });
   // Imported when called: opportunities.ts builds on this file.
-  const { attachMeeting } = await import("@/lib/opportunities");
-  return attachMeeting(who, contactIds, {
-    on: meeting.on ?? on,
-    activityId: meeting.activityId,
-    eventId: meeting.eventId,
-    opportunity: meeting.opportunity,
-  });
+  const { attachMeeting, meetingRowOf } = await import("@/lib/opportunities");
+  // A meeting whose row is on a Won or Lost tile is history there
+  // (attachMeeting adds nobody to it and starts no tile): saved again — the
+  // calendar form re-saving the booked entry, a tick on it — it is not a new
+  // meeting, so nobody moves, and someone Lost stays Lost (fix review, Nov
+  // 11, 2026; it used to lift them back to Meeting Set).
+  const found = await meetingRowOf(who.organizationId, meeting);
+  if (!found.known || found.ownTile) await advanceContacts(who, contactIds, "MEETING_SET", { on });
+  return attachMeeting(
+    who,
+    contactIds,
+    {
+      on: meeting.on ?? on,
+      activityId: meeting.activityId,
+      eventId: meeting.eventId,
+      opportunity: meeting.opportunity,
+    },
+    found,
+  );
 }
 
 export type SkippedDates = Partial<Record<(typeof PIPELINE_STEPS)[number], string>>;

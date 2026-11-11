@@ -341,18 +341,46 @@ async function openAddDeal(p) {
     (await sql(`SELECT "contactId", kind FROM "OpportunityLog" WHERE "opportunityId"=$1 ORDER BY "contactId", kind`, [opp])).rows.map(
       (row) => `${row.contactId}:${row.kind}`,
     ).sort();
+  // A meeting logged as having happened is Held and completes its tile
+  // (decision 4; final audit D5), so a tile that sits at Meeting Set is a
+  // booked one: How did it go? → Meeting with "Just now ▾" moved to a day
+  // ahead ("Schedule meeting"), which writes nothing to anyone's history
+  // until the meeting is answered.
+  const workspaceZone = (await one(`SELECT "timeZone" FROM "Organization" WHERE id=$1`, [org])).timeZone || "America/Chicago";
+  const dayAhead = (days) =>
+    new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: workspaceZone }).format(new Date(Date.now() + days * 86_400_000));
+  async function bookAhead(p, body, days, others = []) {
+    const sheet = await openLog(p);
+    await sheet.getByRole("button", { name: "Meeting", exact: true }).click();
+    await sheet.locator("textarea[name=body]").fill(body);
+    await sheet.locator("[data-testid=activity-when-toggle]").click();
+    await sheet.locator("[data-testid=activity-when]").fill(dayAhead(days));
+    for (const name of others) {
+      await sheet.getByRole("button", { name: "+ others" }).click();
+      await p.getByRole("dialog").getByPlaceholder("Search contacts…").fill(name);
+      await p.getByRole("dialog").locator("input[type=checkbox]").first().check();
+      await p.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+    }
+    assert.match(await sheet.locator("[data-testid=activity-submit]").innerText(), /Schedule meeting/, "a day ahead schedules it");
+    await sheet.locator("[data-testid=activity-submit]").click();
+    await sheet.waitFor({ state: "detached" });
+  }
+  // Days go by: every meeting on these tiles (its moment and its calendar
+  // entry) moves `days` back, so it has passed with nobody saying how it went.
+  async function daysPass(opportunityIds, days) {
+    await sql(`UPDATE "CalendarEvent" SET "startOn" = "startOn" - $2::int WHERE id IN (SELECT "eventId" FROM "OpportunityMeeting" WHERE "opportunityId" = ANY($1::text[]))`, [
+      opportunityIds,
+      days,
+    ]);
+    await sql(`UPDATE "OpportunityMeeting" SET "on" = "on" - make_interval(days => $2::int) WHERE "opportunityId" = ANY($1::text[])`, [opportunityIds, days]);
+  }
+  const historyOf = async (ids) => (await one(`SELECT count(*)::int n FROM "Activity" WHERE "contactId" = ANY($1::text[])`, [ids])).n;
+  const statusOf = async (id) => (await one(`SELECT status FROM "Contact" WHERE id=$1`, [id])).status;
 
-  log("a meeting logged with Pat and Nic is one opportunity: Pat Primary, Nic Associated, one meeting");
+  log("a meeting booked with Pat and Nic is one opportunity: Pat Primary, Nic Associated, one meeting");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
-  const form = await openLog(page);
-  await form.getByRole("button", { name: "Meeting", exact: true }).click();
-  await form.locator("textarea[name=body]").fill("Kickoff at Murphy");
-  await form.getByRole("button", { name: "+ others" }).click();
-  await page.getByRole("dialog").getByPlaceholder("Search contacts…").fill("Nic Partner");
-  await page.getByRole("dialog").locator("input[type=checkbox]").first().check();
-  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
-  await form.locator("[data-testid=activity-submit]").click();
-  await page.locator("#activity").getByText("Kickoff at Murphy").waitFor();
+  const form = page.locator("[data-testid=log-activity-form]");
+  await bookAhead(page, "Kickoff at Murphy", 2, ["Nic Partner"]);
   await until(async () => (await opps()).length === 1, "one opportunity");
   const patOpp = (await opps())[0].id;
   assert.deepEqual(await people(patOpp), [
@@ -360,24 +388,24 @@ async function openAddDeal(p) {
     { contactId: "op_pat", role: "PRIMARY", fromMeeting: true },
   ]);
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [patOpp])).n, 1);
+  assert.deepEqual([await statusOf("op_pat"), await statusOf("op_nic"), (await opps())[0].stage], ["MEETING_SET", "MEETING_SET", "MEETING_SET"]);
   assert.deepEqual(await logs(patOpp), [], "Meeting Set writes no special lines yet");
+  assert.equal(await historyOf(["op_pat", "op_nic"]), 0, "a booking is not history until it is answered");
 
-  log("a second meeting with Pat joins it: still one tile, two meeting dates");
-  await openLog(page);
-  await form.getByRole("button", { name: "Meeting", exact: true }).click();
-  await form.locator("textarea[name=body]").fill("Second sit-down");
-  await form.locator("[data-testid=activity-submit]").click();
-  await page.locator("#activity").getByText("Second sit-down").waitFor();
+  log("a second meeting booked with Pat (a day before the kickoff) joins it: still one tile, two meeting dates");
+  await bookAhead(page, "Pre-kickoff walk", 1);
   await until(async () => (await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [patOpp])).n === 2, "two meetings");
   assert.equal((await opps()).length, 1);
+  assert.deepEqual(await logs(patOpp), [], "still Meeting Set");
 
   log("Abby's meeting is her own tile; the board shows both names on Pat's tile and the meeting count");
   await page.goto(`${BASE}/dashboard/contacts/op_abby`);
-  await openLog(page);
-  await form.getByRole("button", { name: "Meeting", exact: true }).click();
-  await form.locator("textarea[name=body]").fill("Kitchen walk");
-  await form.locator("[data-testid=activity-submit]").click();
-  await page.locator("#activity").getByText("Kitchen walk").waitFor();
+  await bookAhead(page, "Kitchen walk", 1);
+  await until(async () => (await opps()).length === 2, "Abby's own tile");
+  const abbyOpp = (await opps())[1].id;
+  assert.deepEqual(await people(abbyOpp), [{ contactId: "op_abby", role: "PRIMARY", fromMeeting: true }]);
+  // The days pass: all three meetings have gone by unanswered.
+  await daysPass([patOpp, abbyOpp], 4);
   await page.goto(`${BASE}/dashboard/deals`);
   const meetingSet = page.locator("[data-testid=pipeline-column-MEETING_SET]");
   const patTile = page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" });
@@ -417,18 +445,33 @@ async function openAddDeal(p) {
   await shot(page, "02-menu");
   await page.keyboard.press("Escape");
 
-  log("dragging Pat's tile to Meeting Completed moves it with no prompt; Opportunity Created lands on Pat and Nic; Sprint: the latest meeting is marked Held, no second line");
+  log("dragging Pat's tile to Meeting Completed moves it with no prompt; Opportunity Created lands on Pat and Nic; Sprint: the latest meeting is marked Held, with one line");
   const meetingLines = async () =>
     (await sql(`SELECT body, outcome FROM "Activity" WHERE "organizationId"=$1 AND type='MEETING' AND "contactId"='op_pat' ORDER BY "occurredAt", body`, [org])).rows;
-  assert.equal((await meetingLines()).length, 2);
+  const patMeetings = async () =>
+    (await sql(`SELECT e.notes, m.outcome FROM "OpportunityMeeting" m JOIN "CalendarEvent" e ON e.id=m."eventId" WHERE m."opportunityId"=$1 ORDER BY m."on"`, [patOpp])).rows;
+  assert.deepEqual(await meetingLines(), [], "booked meetings have no history line until they are answered");
   await patTile.dragTo(page.locator("[data-testid=pipeline-column-MEETING_COMPLETED]"));
   await page.locator("[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).waitFor();
   assert.equal(await page.locator("[data-testid=convert-dialog]").count(), 0);
+  assert.equal(await page.getByTestId("early-dialog").count(), 0, "both meetings have gone by: nothing asks if it happened early");
   await until(async () => (await opps())[0].stage === "MEETING_COMPLETED", "meeting completed");
   assert.deepEqual(await logs(patOpp), ["op_nic:OPPORTUNITY_CREATED", "op_pat:OPPORTUNITY_CREATED"]);
   await until(async () => (await one(`SELECT status FROM "Contact" WHERE id='op_nic'`)).status === "MEETING_COMPLETED", "Nic follows");
   await until(async () => (await meetingLines()).some((row) => row.outcome === "HELD"), "the meeting marked held");
-  assert.equal((await meetingLines()).length, 2, "Held marks the meeting's own line; nothing new is written");
+  assert.deepEqual(
+    (await meetingLines()).map((row) => ({ ...row })),
+    [{ body: "Kickoff at Murphy", outcome: "HELD" }],
+    "Held writes one line, for the latest meeting, and no second one beside it",
+  );
+  assert.deepEqual(
+    (await patMeetings()).map((row) => ({ ...row })),
+    [
+      { notes: "Pre-kickoff walk", outcome: null },
+      { notes: "Kickoff at Murphy", outcome: "HELD" },
+    ],
+    "the latest meeting (the kickoff, with Pat and Nic) is the one held",
+  );
 
   log("clicking the tile opens it: three boxes per person, ticking one greys the other two");
   await page.locator("[data-testid=pipeline-tile]", { hasText: "Pat Steffl" }).locator("[data-testid=tile-open]").click();
@@ -605,15 +648,18 @@ async function openAddDeal(p) {
   await page.locator(`[data-testid=pipeline-column-WON] [data-testid=pipeline-tile][data-id='${patOpp}']`).waitFor();
   await until(async () => (await one(`SELECT stage FROM "Deal" WHERE id=$1`, [deal.id])).stage === "WON", "deal saved as Won");
   await page.goto(`${BASE}/dashboard/contacts/op_pat`);
-  await openLog(page);
-  await form.getByRole("button", { name: "Meeting", exact: true }).click();
-  await form.locator("textarea[name=body]").fill("Phase two chat");
-  await form.locator("[data-testid=activity-submit]").click();
-  await page.locator("#activity").getByText("Phase two chat").waitFor();
+  await bookAhead(page, "Phase two chat", 1);
   await until(
     async () => (await one(`SELECT count(*)::int n FROM "OpportunityContact" WHERE "contactId"='op_pat'`)).n === 2,
     "Pat on a second opportunity",
   );
+  const phaseTwo = await one(
+    `SELECT o.id, o.stage FROM "Opportunity" o JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE oc."contactId"='op_pat' AND o.id<>$1`,
+    [patOpp],
+  );
+  assert.equal(phaseTwo.stage, "MEETING_SET", "the new one starts at Meeting Set");
+  // Its day passes unanswered, as Pat's first two did.
+  await daysPass([phaseTwo.id], 3);
 
   log("a status moved by hand to Quote Sent with no deal stays on the board at Meeting Completed (Pat's old bug); only converting makes it a deal");
   await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_hand',$1,'Hand Moved','MEETING_SET',now())`, [org]);
@@ -1595,6 +1641,9 @@ async function openAddDeal(p) {
   await notice.getByTestId("pipeline-undo").click();
   await notice.getByText("Undone").waitFor();
   assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_frisco'`)).outcome, null, "Undo took the Held back");
+  // Not moving forward went into the Held's save (final audit, group A), so
+  // the one Undo took the Lost move back too.
+  await until(async () => (await one(`SELECT stage FROM "Opportunity" WHERE id='op_s_opp_frisco'`)).stage === "MEETING_SET", "Frisco back at Meeting Set");
 
   log("Sprint: Mark held never sits dead — after a no-show the next step is Reschedule, on that tile; a Meeting Set tile with no meeting opens How did it go? on Meeting and Held logs one meeting on it");
   await page.goto(`${BASE}/dashboard/deals?open=op_s_opp_nora`);
@@ -1628,6 +1677,23 @@ async function openAddDeal(p) {
   await panel.waitFor({ state: "detached" });
 
   log("Sprint: a Member books Chase from the contact page onto Taylor's open tile — the toast says 'the Pipeline' and its link opens that tile past Mine");
+  // Taylor closes Frisco for good this time (Move to… Lost, Not moving
+  // forward), so Lakewood is the one open tile Chase is on.
+  await page.goto(`${BASE}/dashboard/deals`);
+  await tileOf("op_s_opp_frisco").getByTestId("tile-more").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-LOST]").click();
+  await convert.waitFor();
+  await convert.getByTestId("convert-reason-TIMING").click();
+  await convert.getByTestId("convert-save").click();
+  await convert.waitFor({ state: "detached" });
+  await page.locator("[data-testid=pipeline-column-LOST] [data-testid=pipeline-tile][data-id='op_s_opp_frisco']").waitFor();
+  assert.deepEqual(
+    (await sql(`SELECT o.id, o.stage, d.stage AS deal FROM "Opportunity" o LEFT JOIN "Deal" d ON d.id=o."dealId" WHERE o.id IN ${chaseTiles} ORDER BY o.id`)).rows.map(
+      (row) => `${row.id}:${row.deal ?? row.stage}`,
+    ),
+    ["op_s_opp_frisco:LOST", "op_s_opp_lake:MEETING_SET"],
+    "Frisco's deal is Lost; Lakewood is open",
+  );
   const nicBookContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const nicBook = await nicBookContext.newPage();
   nicBook.on("pageerror", (err) => console.error("PAGE ERROR (Nic, book):", err.message));
@@ -2056,7 +2122,10 @@ async function openAddDeal(p) {
   });
 
   /* ---------------- fix review (Nov 11, 2026) ---------------- */
-  await audit("(fix review) a booked entry whose tile has since been Lost, re-saved from the calendar form or ticked done, stays on that tile — no new Meeting Set tile, no second row", async () => {
+  // Its status checks first ran with the Nov 11 D5 test update: re-saving
+  // the entry lifted Lou from Lost to Meeting Set (markMeetingSet moved
+  // everyone before attachMeeting found the row on the closed tile).
+  await audit("(fix review) a booked entry whose tile has since been Lost, re-saved from the calendar form or ticked done, stays on that tile — no new Meeting Set tile, no second row, and its Lost person stays Lost", async () => {
     await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","updatedAt") VALUES ('op_r_lost',$1,'Lou Lostcause','LOST',$2,now())`, [org, taylorId]);
     await sql(
       `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"stageChangedAt","valueCents","ownerId","updatedAt")
