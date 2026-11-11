@@ -179,14 +179,15 @@ export function NextStepStrip({ next, bookFor }: { next: { title: string; when: 
   );
 }
 
-// The phone's sticky bar: Call main line · Log · Book · ⋯.
+// The phone's sticky bar: Call main line · Log · Book · ⋯, on top of the
+// app's 56px tab bar (which shows below lg too), never over it.
 export function PhoneBar({ mainLine, bookFor }: { mainLine: string | null; bookFor: string | null }) {
   const shell = useCompanyShell();
   const cell = "flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[0.7rem] font-medium";
   return (
     <nav
       aria-label="Quick actions"
-      className="popover fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--hairline-3)] pb-[env(safe-area-inset-bottom)] lg:hidden"
+      className="popover fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] z-40 flex border-t border-[var(--hairline-3)] lg:hidden"
       data-testid="company-phone-bar"
     >
       {mainLine ? (

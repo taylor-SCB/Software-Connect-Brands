@@ -12,7 +12,8 @@ export const UNDO_MS = 10_000;
 // Undo takes the whole save back in one go (undoLog: the touch, its
 // calendar copy, the next step and anything it booked, the status moves).
 // Drawn on the body above everything, in thumb reach on a phone (clear of
-// the phone's bottom bars), and read out politely.
+// the bottom bars, which show up to lg: the tab bar and a page's action
+// bar), and read out politely.
 export function UndoToast({
   saved,
   onDone,
@@ -43,7 +44,7 @@ export function UndoToast({
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 bottom-[calc(7.5rem+env(safe-area-inset-bottom,0px))] z-[90] flex justify-center px-4 sm:bottom-6"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(7.5rem+env(safe-area-inset-bottom,0px))] z-[90] flex justify-center px-4 lg:bottom-6"
     >
       <div className="card popover pointer-events-auto flex min-w-0 max-w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm sm:max-w-xl" data-testid="log-toast">
         <span className="min-w-0 break-words" data-testid="log-toast-words">

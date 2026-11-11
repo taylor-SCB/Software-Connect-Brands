@@ -8,6 +8,7 @@ import { IconChevronDown, IconCopy, IconMessage, IconPhone } from "@/components/
 import type { ContactMeeting } from "./contact-data";
 import { useContactPage } from "./contact-shell";
 import { EarlyConfirm, MoveButton, useMeetingActions } from "./meeting-actions";
+import { usePanelFocus } from "@/components/panel-focus";
 
 export type PhoneRow = { label: string; number: string; key: "mobile" | "phone" | "phone2" };
 
@@ -42,7 +43,12 @@ export function MainAction({ data, phones, variant = "header" }: { data: MainAct
   if (!action) return null;
   const bar = variant === "bar";
   const testId = bar ? "phone-bar-main" : "contact-main";
-  const cls = bar ? "btn btn-primary btn-sm min-h-11 w-full px-2" : `${PRIMARY} max-sm:w-full max-sm:min-h-12!`;
+  // In the phone bar a slot is about 64px wide: the words wrap onto two
+  // short lines rather than run over Log and ⋯ ("Tomorrow 10:00 AM",
+  // "Reschedule", "Signing link"; audit, Nov 11, 2026).
+  const cls = bar
+    ? "btn btn-primary btn-sm min-h-11 w-full min-w-0 overflow-hidden px-1 text-center text-[0.7rem] leading-tight whitespace-normal"
+    : `${PRIMARY} max-sm:w-full max-sm:min-h-12!`;
 
   switch (action.key) {
     case "call": {
@@ -178,6 +184,7 @@ export function CallButton({ phones, variant = "header" }: { phones: PhoneRow[];
   const [open, setOpen] = useState(false);
   const bar = variant === "bar";
   const testId = bar ? "phone-bar-call" : "contact-call";
+  usePanelFocus(open, "contact-call-menu", anchor);
   if (phones.length === 0) {
     return (
       <Link

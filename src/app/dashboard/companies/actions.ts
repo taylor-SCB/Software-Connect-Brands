@@ -15,6 +15,7 @@ import { moneyHold, moneyHoldMessage } from "@/lib/money";
 import { markConnected, markContacted, markMeetingSet } from "@/lib/status";
 import { readRepField } from "@/lib/reps";
 import { newBatchId } from "@/lib/undo-log";
+import { signClaim } from "@/lib/claim-token";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -213,7 +214,7 @@ export async function setCompanyFavorite(
 // activities made follow, as if they had been logged on them to begin
 // with — which is why the company link is cleared, the same shape as a
 // touch logged on a person.
-export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState & { batchId?: string }> {
+export async function claimActivities(input: { activityIds: string[]; contactId: string }): Promise<ActionState & { batchId?: string; claimToken?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = z
     .object({ activityIds: z.array(idSchema).min(1, "Nothing to claim").max(500), contactId: idSchema })
@@ -235,6 +236,7 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
   if (activities.some((row) => !at.has(row.companyId!))) return { error: `${contact.name} is not at this company` };
 
   const ids = activities.map((row) => row.id);
+  const claimStarted = Date.now();
   await prisma.$transaction([
     prisma.activity.updateMany({ where: { id: { in: ids }, organizationId }, data: { contactId: contact.id, companyId: null } }),
     prisma.calendarEvent.updateMany({ where: { activityId: { in: ids }, organizationId }, data: { contactId: contact.id } }),
@@ -262,7 +264,11 @@ export async function claimActivities(input: { activityIds: string[]; contactId:
   revalidatePath("/dashboard/contacts");
   revalidatePath("/dashboard/companies");
   revalidatePath("/dashboard/calendar");
-  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}`, batchId };
+  // What Undo may take back, signed so the browser can't widen it.
+  const from: Record<string, string[]> = {};
+  for (const row of activities) (from[row.companyId!] ??= []).push(row.id);
+  const claimToken = signClaim({ batchId, organizationId, userId, contactId: contact.id, from, at: claimStarted });
+  return { success: ids.length === 1 ? `Moved onto ${contact.name}` : `${ids.length} moved onto ${contact.name}`, batchId, claimToken };
 }
 
 // The people stay; they just lose their company link (the database sets

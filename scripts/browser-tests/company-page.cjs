@@ -371,7 +371,9 @@ async function contrastOf(locator) {
   assert.equal(await status("Contact", "ctc_cp_dana"), "CONTACTED", "a front-desk call is a try: Attempted");
   await nudge.locator("[data-testid=not-linked-toggle]").waitFor({ state: "detached" });
   await shot(page, "04-claimed");
+  const undoCall = page.waitForRequest((req) => req.method() === "POST" && Boolean(req.headers()["next-action"]));
   await nudge.locator("[data-testid=claim-undo]").click();
+  const undoRequest = await undoCall;
   await until(async () => (await one(`SELECT "contactId" FROM "Activity" WHERE id='act_cp_desk'`)).contactId === null, "back on the company");
   const desk = await one(`SELECT "contactId", "companyId" FROM "Activity" WHERE id='act_cp_desk'`);
   assert.deepEqual({ ...desk }, { contactId: null, companyId: "cmp_cp_iron" });
@@ -379,6 +381,35 @@ async function contrastOf(locator) {
   assert.equal((await one(`SELECT count(*)::int n FROM "StatusChange" WHERE "contactId"='ctc_cp_dana'`)).n, 0, "and the claim's status rows go");
   assert.equal((await one(`SELECT "lastTouchAt" FROM "Contact" WHERE id='ctc_cp_dana'`)).lastTouchAt, null, "the touch date is recomputed");
   await nudge.locator("[data-testid=not-linked-toggle]").waitFor();
+
+  log("audit fixes (pages): undoClaim acts only on what the claim moved — a forged call can't pull a touch off a person");
+  {
+    // A touch logged straight on Kristen, which no claim ever moved.
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,"occurredAt") VALUES ('act_cp_forge',$1,'ctc_cp_kristen',$2,'PHONE_CALL','Talked about the bid','TALKED',now() - interval '1 hour')`,
+      [org, me],
+    );
+    const headers = undoRequest.headers();
+    // A made-up batch from Jan 2, 2026, the person's touch, any company.
+    const forged = [
+      { batchId: `${Date.UTC(2026, 0, 2).toString(36)}.x`, activityIds: ["act_cp_forge"], contactId: "ctc_cp_kristen", companyId: "cmp_cp_iron" },
+      { token: "e30.bm90LWEtc2lnbmF0dXJl" },
+    ];
+    for (const args of forged) {
+      const answer = await page.evaluate(
+        async ({ url, action, tree, body }) => {
+          const res = await fetch(url, { method: "POST", headers: { "next-action": action, "next-router-state-tree": tree, "content-type": "text/plain;charset=UTF-8", accept: "text/x-component" }, body });
+          return res.text();
+        },
+        { url: undoRequest.url(), action: headers["next-action"], tree: headers["next-router-state-tree"] ?? "", body: JSON.stringify([args]) },
+      );
+      assert.match(answer, /can no longer be undone/, `refused: ${answer.slice(-200)}`);
+    }
+    const kept = await one(`SELECT "contactId", "companyId" FROM "Activity" WHERE id='act_cp_forge'`);
+    assert.deepEqual({ ...kept }, { contactId: "ctc_cp_kristen", companyId: null }, "the touch stays on Kristen");
+    assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE id='om_cp_k'`)).n, 1, "her Pipeline meeting is untouched");
+    await sql(`DELETE FROM "Activity" WHERE id='act_cp_forge'`);
+  }
 
   log("Sprint: Book on a row opens the Book meeting sheet: day and time chips, who else, joining Kristen's open tile; Saved · Undo");
   await row("Chase Hill").locator("[data-testid=person-book]").click();
@@ -461,6 +492,22 @@ async function contrastOf(locator) {
     "the meeting moved",
   );
   await until(async () => /9:30 AM/.test(await main.innerText()), "the button follows");
+
+  log("audit fixes (pages): Reschedule opens on the booked time and takes the keyboard into its panel; moving only the day keeps 9:30");
+  await page.reload();
+  await page.locator("[data-testid=company-reschedule]").focus();
+  await page.keyboard.press("Enter");
+  await moving.waitFor();
+  await until(async () => page.evaluate(() => Boolean(document.activeElement?.closest("[data-testid=company-reschedule-panel]"))), "focus inside the panel");
+  assert.equal(await moving.locator("[data-testid=company-reschedule-time]").inputValue(), "09:30", "the booked time, not blank");
+  await moving.locator("[data-testid=company-reschedule-day]").fill(shift(TODAY, 7));
+  await moving.getByRole("button", { name: "Move it" }).click();
+  await until(
+    async () =>
+      (await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"='opp_cp_iron' AND outcome IS NULL AND to_char(("on" AT TIME ZONE 'UTC') AT TIME ZONE '${ZONE}', 'YYYY-MM-DD HH24:MI') = $1`, [`${shift(TODAY, 7)} 09:30`])).n === 1,
+    "moved a day and still at 9:30",
+  );
+  await page.keyboard.press("Escape");
 
   log("Sprint: Next step shows what is booked; with nothing booked it offers Book meeting and Log a touch");
   const nextStep = page.locator("[data-testid=company-next-step]");
@@ -660,7 +707,17 @@ async function contrastOf(locator) {
   const bar = phone.locator("[data-testid=company-phone-bar]");
   await bar.waitFor();
   const barBox = await bar.boundingBox();
-  assert.ok(Math.abs(barBox.y + barBox.height - 844) < 2, "the bar sits on the bottom edge");
+  // audit fixes (pages): it sat on the bottom edge, over the app's tab bar
+  // (Today / Contacts / …), which then couldn't be reached. It sits on it.
+  const tabsBox = await phone.locator("[data-testid=phone-tabs]").boundingBox();
+  assert.ok(tabsBox && Math.abs(tabsBox.y + tabsBox.height - 844) < 2, "the tab bar is on the bottom edge");
+  assert.ok(Math.abs(barBox.y + barBox.height - tabsBox.y) < 2, `the bar sits right on top of the tab bar (${barBox.y + barBox.height} vs ${tabsBox.y})`);
+  const tabHit = await phone.evaluate(() => {
+    const tabs = document.querySelector("[data-testid=phone-tabs]").getBoundingClientRect();
+    const hit = document.elementFromPoint(tabs.left + tabs.width / 2, tabs.top + tabs.height / 2);
+    return Boolean(hit?.closest("[data-testid=phone-tabs]"));
+  });
+  assert.ok(tabHit, "a tap on the tab bar reaches the tab bar");
   assert.deepEqual(
     (await bar.locator("a, button").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()),
     ["Call main line", "Log", "Book", "⋯ More"],
