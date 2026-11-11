@@ -22,7 +22,9 @@
  * an Owner's bare calendar on a phone swapping to the Agenda. The final
  * audit's cross-area steps (Nov 11, 2026): a rep's own quiet account in the
  * greeting past the workspace's 300 quietest, and the Agenda's Overdue read
- * on its own answering exactly as the Log's, and keeping the Type filter.
+ * on its own answering exactly as the Log's, and keeping the Type filter;
+ * a number with an extension dialled right on Up next, the Rundown and the
+ * Agenda (lists audit L30).
  *
  * Runs against a built app and a local Postgres that has had `prisma
  * migrate deploy`. It signs up its own workspace and deletes it again on
@@ -980,6 +982,36 @@ const ago = (days) => `now() - interval '${days} days'`;
   await am.locator("[data-testid=agenda]").waitFor();
   assert.equal(await am.locator("[data-testid=agenda-overdue]").count(), 0, "an Install is a day of work, never overdue");
   await sql(`DELETE FROM "CalendarEvent" WHERE id LIKE 'ev_md_ag%'`);
+
+  log("audit fixes (lists L30): a number with an extension dials the number, then the extension, on Up next, the Rundown and the Agenda; a text never carries it");
+  // Up next, the Rundown's Call and the Agenda's Call / Text stripped
+  // everything but digits, so "(512) 555-0177 x31" dialled 512555017731.
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId",mobile,"createdAt","updatedAt") VALUES ('ctc_md_ext',$1,'Ezra Extension','CONTACTED',$2,'(512) 555-0177 x31',now() - interval '20 days',now())`,
+    [org, M],
+  );
+  await sql(
+    `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","ownerId","contactId","updatedAt") VALUES ('ev_md_ext',$1,'Call · Ezra Extension','Call',$3::date,$2,'ctc_md_ext',now())`,
+    [org, M, addDays(TODAY, -2)],
+  );
+  await am.goto(`${BASE}/dashboard/calendar?view=agenda&users=${M}`);
+  await am.locator("[data-testid=agenda]").waitFor();
+  const extRow = am.locator('[data-testid=agenda-row][data-event-id="ev_md_ext"]');
+  assert.equal(await extRow.locator("[data-testid=agenda-call]").getAttribute("href"), "tel:5125550177,31");
+  assert.equal(await extRow.locator("[data-testid=agenda-text]").getAttribute("href"), "sms:5125550177");
+  await am.goto(`${BASE}/dashboard`);
+  await am.locator("[data-testid=my-day]").waitFor();
+  const extNext = am.locator("[data-testid=up-next-row][data-contact-id=ctc_md_ext]");
+  assert.equal(await extNext.locator("[data-testid=up-next-call]").getAttribute("href"), "tel:5125550177,31");
+  assert.equal(await extNext.locator("[data-testid=up-next-text]").getAttribute("href"), "sms:5125550177");
+  await am.goto(`${BASE}/dashboard?report=daily`);
+  await am.locator("[data-testid=rundown-overdue]").waitFor();
+  assert.equal(
+    await am.locator('[data-testid=rundown-overdue] [data-testid=rundown-call][aria-label="Call Ezra Extension"]').getAttribute("href"),
+    "tel:5125550177,31",
+  );
+  await sql(`DELETE FROM "CalendarEvent" WHERE id='ev_md_ext'`);
+  await sql(`DELETE FROM "Contact" WHERE id='ctc_md_ext'`);
   await auditM.close();
 
 

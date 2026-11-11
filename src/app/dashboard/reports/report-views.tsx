@@ -12,6 +12,7 @@ import { formatIsoDay } from "@/lib/reports/period";
 import { changeText, formatValue, headlineValue, money, percent, plural, TRY_TALK_COLORS, TRY_TALK_SERIES } from "@/lib/reports/format";
 import { Columns, HBars } from "./charts";
 import { pipelineHref } from "@/lib/pipeline-link";
+import { telHref } from "@/lib/dial";
 
 // The body of each report under its write-up: headline tiles with the
 // comparison, the charts, and a compact table behind every chart.
@@ -192,7 +193,7 @@ function CallButton({ phone, name, contactId }: { phone: string | null; name: st
   if (!phone) return null;
   return (
     <a
-      href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+      href={telHref(phone)}
       className="btn btn-ghost btn-sm min-h-11 shrink-0 sm:min-h-0"
       aria-label={`Call ${name ?? ""}`}
       data-contact-id={contactId ?? undefined}

@@ -40,6 +40,7 @@ import {
 } from "./opportunity-actions";
 import { MoveMenu } from "./move-menu";
 import { FollowUpButton, MeetingSuggest, QuietBadge, SuggestedLabel } from "./ai-assist-ui";
+import { dialNumber, smsHref, telHref } from "@/lib/dial";
 
 type Role = OpportunityPerson["role"];
 const ROLES: { role: Role; label: string }[] = [
@@ -752,16 +753,17 @@ function ReachButtons({
   onLog: () => void;
 }) {
   const button = "btn btn-ghost btn-sm min-h-9 [@media(pointer:coarse)]:min-h-11 min-w-9 [@media(pointer:coarse)]:min-w-11 justify-center !px-2 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
-  const digits = person.phone?.replace(/[^\d+]/g, "") ?? "";
+  // Without the extension (src/lib/dial.ts).
+  const digits = person.phone ? dialNumber(person.phone).main : "";
   return (
     <div className="flex shrink-0 items-center gap-1" data-testid="panel-reach" data-contact-id={person.contactId}>
       {digits ? (
         <>
-          <a href={`tel:${digits}`} className={button} aria-label={`Call ${person.name}`} title={`Call ${person.phone}`} data-testid="panel-call">
+          <a href={telHref(person.phone!)} className={button} aria-label={`Call ${person.name}`} title={`Call ${person.phone}`} data-testid="panel-call">
             <IconPhone size={13} />
             <span className="max-sm:sr-only">Call</span>
           </a>
-          <a href={`sms:${digits}`} className={button} aria-label={`Text ${person.name}`} data-testid="panel-text">
+          <a href={smsHref(person.phone!)} className={button} aria-label={`Text ${person.name}`} data-testid="panel-text">
             <IconMessage size={13} />
             <span className="max-sm:sr-only">Text</span>
           </a>

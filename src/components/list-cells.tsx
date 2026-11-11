@@ -3,6 +3,7 @@ import { LifecycleMeter } from "@/components/lifecycle-meter";
 import { HealthDot } from "@/components/health-marks";
 import { IconPhone, IconMessage } from "@/components/icons";
 import { pulseCaption, type LeadHealth } from "@/lib/health";
+import { dialNumber, smsHref, telHref } from "@/lib/dial";
 
 // The cells the Contacts and Companies lists share (BDR redesign, Nov 11,
 // 2026). No hooks: drawn by the server, with the meter's own client part.
@@ -59,22 +60,8 @@ export function otherPhones(contact: { mobile: string | null; phone: string | nu
   return [contact.phone, contact.phone2].filter((number): number is string => Boolean(number) && number !== best);
 }
 
-// The number to dial or text, without an extension: "(512) 555-0100 x204"
-// is 5125550100, never 5125550100204 (audit fix, Nov 11, 2026). A call
-// waits and then dials the extension (the comma); a text never carries it.
-const EXTENSION = /\s*(?:x|ext\.?|extension)\s*(\d+)\s*$/i;
-export function dialNumber(number: string) {
-  const match = number.match(EXTENSION);
-  const main = (match ? number.slice(0, match.index) : number).replace(/[^\d+]/g, "");
-  return { main, extension: match?.[1] ?? null };
-}
-export function telHref(number: string) {
-  const { main, extension } = dialNumber(number);
-  return `tel:${main}${extension ? `,${extension}` : ""}`;
-}
-export function smsHref(number: string) {
-  return `sms:${dialNumber(number).main}`;
-}
+// Dialling without the extension in the number: src/lib/dial.ts.
+export { dialNumber, telHref, smsHref };
 
 // Tap to call. data-contact-id lets the list open "How did it go?" when the
 // rep comes back from the call.

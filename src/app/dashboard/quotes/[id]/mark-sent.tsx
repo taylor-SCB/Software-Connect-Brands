@@ -5,6 +5,7 @@ import { IconCheck, IconCopy, IconSend } from "@/components/icons";
 import { Sheet } from "@/components/how-did-it-go/sheet";
 import { markQuoteSent } from "../actions";
 import { useQuoteSaveAll } from "./quote-save";
+import { dialNumber } from "@/lib/dial";
 
 // Whether the Line items card holds edits nobody has saved. Send quote
 // sits under the DealJourney strip, away from the editor, and the
@@ -71,7 +72,8 @@ export function SendQuoteButton({
   const url = `${origin}${publicPath}`;
   const firstName = contact.name.split(/\s+/)[0] || contact.name;
   const message = `Hi ${firstName}, here is your quote ${quoteLabel}: ${url}`;
-  const smsHref = `sms:${contact.phone ? contact.phone.replace(/[^\d+]/g, "") : ""}?&body=${encodeURIComponent(message)}`;
+  // The number without its extension (src/lib/dial.ts).
+  const smsHref = `sms:${contact.phone ? dialNumber(contact.phone).main : ""}?&body=${encodeURIComponent(message)}`;
   const mailHref = `mailto:${contact.email ?? ""}?subject=${encodeURIComponent(`Your quote ${quoteLabel}`)}&body=${encodeURIComponent(`${message}\n`)}`;
 
   function send(way: Way) {

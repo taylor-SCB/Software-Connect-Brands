@@ -835,7 +835,12 @@ export type CompanyHealth = LeadHealth & {
 // A company wears its warmest person's health, its furthest person's
 // meter, its own company-wide counts and "n of m reached". Money the
 // company owes late comes first in the reason, and turns a Won company
-// red. With nobody on it, `own` (the company's own touches) stands.
+// red. With nobody on it, `own` (the company's own touches) stands. Its
+// next step and lateness are company-wide (lists audit L32, Nov 11, 2026):
+// `own` is built from everything booked for the company and for every one
+// of its people, so the earliest booking is shown whoever it is with, and
+// a follow-up late on anyone reads "Follow-up N days late" unless money
+// owed comes first.
 export function rollUpCompany(
   own: LeadHealth,
   people: { id: string; health: LeadHealth }[],
@@ -860,6 +865,9 @@ export function rollUpCompany(
     reasonKey = "owes";
     owes = own.owes;
     if (health.state === "WON") tone = "risk";
+  } else if (own.reasonKey === "late" && health.reasonKey !== "late" && health.state !== "WON" && health.state !== "CLOSED") {
+    reason = own.reason;
+    reasonKey = "late";
   }
   return {
     ...health,
@@ -867,6 +875,7 @@ export function rollUpCompany(
     reason,
     reasonKey,
     owes,
+    nextText: own.nextText ?? health.nextText,
     collected: own.collected ?? health.collected,
     caption: own.caption,
     miniCaption: own.miniCaption,

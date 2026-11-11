@@ -24,6 +24,7 @@ import { DoneBox, canLogOnDone } from "./done-box";
 import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
 import { saveUiPref } from "../prefs-actions";
 import { IconMessage, IconPhone } from "@/components/icons";
+import { smsHref, telHref } from "@/lib/dial";
 
 export type EventView = EventFormValues & {
   crewName: string | null;
@@ -53,9 +54,7 @@ export function isLoggedTouch(event: { activityId: string | null; doneAt: string
   return Boolean(event.activityId && event.doneAt);
 }
 
-function dialable(phone: string) {
-  return phone.replace(/[^\d+]/g, "");
-}
+// Call and Text dial without the extension (src/lib/dial.ts).
 
 // A Call entry with a number is a real tap-to-call button.
 export function wantsCall(event: { type: string; contactPhone?: string | null }) {
@@ -531,7 +530,7 @@ export function EventCard({
         </p>
         {wantsCall(event) ? (
           <a
-            href={`tel:${dialable(event.contactPhone!)}`}
+            href={telHref(event.contactPhone!)}
             className="inline-flex items-center pointer-coarse:min-h-11"
             aria-label={`Call ${event.contactName ?? event.title}`}
             data-contact-id={event.contactId ?? undefined}
@@ -864,7 +863,7 @@ function AgendaRow({ event, choices, today, showDay = false }: { event: EventVie
   const [pending, start] = useTransition();
   const color = colorForType(event.type);
   const who = [event.contactName, event.companyName].filter(Boolean).join(" · ");
-  const phone = event.contactPhone ? dialable(event.contactPhone) : null;
+  const phone = event.contactPhone ?? null;
   const when = showDay ? `${event.startOn === today ? "Today" : formatDay(`${event.startOn}T12:00:00Z`)}` : null;
 
   return (
@@ -887,11 +886,11 @@ function AgendaRow({ event, choices, today, showDay = false }: { event: EventVie
         </button>
         {phone && !event.doneAt && (
           <>
-            <a href={`tel:${phone}`} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} aria-label={`Call ${event.contactName ?? ""}`} data-testid="agenda-call">
+            <a href={telHref(phone)} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} aria-label={`Call ${event.contactName ?? ""}`} data-testid="agenda-call">
               <IconPhone size={13} />
               <span className="hidden sm:inline">Call</span>
             </a>
-            <a href={`sms:${phone}`} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} aria-label={`Text ${event.contactName ?? ""}`} data-testid="agenda-text">
+            <a href={smsHref(phone)} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} aria-label={`Text ${event.contactName ?? ""}`} data-testid="agenda-text">
               <IconMessage size={13} />
               <span className="hidden sm:inline">Text</span>
             </a>

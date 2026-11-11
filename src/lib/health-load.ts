@@ -415,9 +415,13 @@ export async function contactHealth(organizationId: string, contactId: string, o
 
 /* -------------------------------- Companies -------------------------------- */
 
-// How many of a company's people are read for its warmest one: the most
-// recently touched. "n of m reached" still counts everybody.
-const COMPANY_PEOPLE_CAP = 100;
+// How many of a company's people are read in full for its warmest one: the
+// most recently reached, then the most recently touched (lists audit L14,
+// Nov 11, 2026: 100 a company meant up to 10,000 people's full health on a
+// 100-company page, every activity of each aggregated). "n of m reached"
+// still counts everybody, and the company's next step and lateness read
+// everybody's bookings (the company's own booking statement below).
+const COMPANY_PEOPLE_CAP = 10;
 
 type CompanyRow = {
   key: string;
@@ -464,6 +468,38 @@ export async function loadCompanyHealth(
   const now = options.now ?? new Date();
   const today = zoneDay(now, settings.timeZone);
 
+  // What is booked for the company and what is late, across the company's
+  // own calendar entries (nobody on them: a front-desk try's follow-up) and
+  // every one of its people's bookings, uncapped (lists audit L31 / L32,
+  // Nov 11, 2026): a company with no people read "Nothing booked" whatever
+  // was on its calendar, and its own late follow-up never showed; and it
+  // showed only its warmest person's booking, hiding another person's
+  // meeting tomorrow or late follow-up. Statement two, keyed on the company.
+  const companyKeys = Prisma.sql`SELECT co.id AS key FROM "Company" co WHERE co."organizationId" = ${organizationId} AND co.id = ANY(${ids})`;
+  const companyMap = Prisma.sql`
+    SELECT k.key, ct.id AS contact_id
+      FROM keys k
+      JOIN "Contact" ct ON ct."companyId" = k.key AND ct."organizationId" = ${organizationId}`;
+  const bookingRows = prisma.$queryRaw<BookRow[]>(
+    bookSql(organizationId, today, {
+      keys: companyKeys,
+      map: companyMap,
+      oppMap: Prisma.sql`
+        SELECT DISTINCT m.key, oc."opportunityId" AS opp_id
+          FROM map m
+          JOIN "OpportunityContact" oc ON oc."contactId" = m.contact_id AND oc.role <> 'HIDDEN'`,
+      extraEvents: Prisma.sql`
+        UNION
+        SELECT k.key, e.id, e.type, e."startOn", e."endOn", e."startTime"
+          FROM keys k
+          JOIN "CalendarEvent" e ON e."companyId" = k.key
+         WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NULL`,
+      // Paperwork and money are read once, in the company statement.
+      paper: Prisma.sql`SELECT NULL::text AS key, NULL::text AS kind, NULL::timestamp AS sent_at WHERE false`,
+      owedJoin: Prisma.sql`JOIN keys k ON false`,
+    }),
+  );
+
   const rows = await prisma.$queryRaw<CompanyRow[]>`
     WITH keys AS (
       SELECT co.id AS key, co.status::text AS status, co.name, co."createdAt" AS created_at
@@ -471,7 +507,7 @@ export async function loadCompanyHealth(
        WHERE co."organizationId" = ${organizationId} AND co.id = ANY(${ids})
     ),
     people AS (
-      SELECT k.key, ct.id, ct.status::text AS status, ct."lastTouchAt" AS last_touch
+      SELECT k.key, ct.id, ct.status::text AS status, ct."lastTouchAt" AS last_touch, ct."lastConnectAt" AS last_connect
         FROM keys k
         JOIN "Contact" ct ON ct."companyId" = k.key AND ct."organizationId" = ${organizationId}
     ),
@@ -484,7 +520,7 @@ export async function loadCompanyHealth(
                      WHERE a."contactId" = p.id AND a."organizationId" = ${organizationId} AND ${TOUCH} AND ${CONNECT}
                   )
              )::int AS reached,
-             (array_agg(p.id ORDER BY p.last_touch DESC NULLS LAST, p.id))[1:${Prisma.raw(String(COMPANY_PEOPLE_CAP))}] AS ids
+             (array_agg(p.id ORDER BY p.last_connect DESC NULLS LAST, p.last_touch DESC NULLS LAST, p.id))[1:${Prisma.raw(String(COMPANY_PEOPLE_CAP))}] AS ids
         FROM people p
        GROUP BY p.key
     ),
@@ -542,11 +578,15 @@ export async function loadCompanyHealth(
       LEFT JOIN owed ON owed.key = k.key`;
 
   const peopleIds = rows.flatMap((row) => row.ids ?? []);
-  const people = await loadContactHealth(organizationId, peopleIds, { settings, now });
+  const [people, bookings] = await Promise.all([loadContactHealth(organizationId, peopleIds, { settings, now }), bookingRows]);
+  const booked = new Map(bookings.map((row) => [row.key, row]));
   const ctx = context(settings, now);
   for (const row of rows) {
     const billed = num(row.billed);
     const late = num(row.late);
+    // The company-wide next step and lateness (only those: its meetings and
+    // paperwork stay its people's).
+    const book = inputFrom(undefined, booked.get(row.key), settings);
     const own = leadHealth(
       {
         status: row.status,
@@ -563,8 +603,8 @@ export async function loadCompanyHealth(
         lastConnectAt: row.last_connect,
         statusTalkAt: null,
         triesSinceTalk: 0,
-        next: null,
-        overdue: null,
+        next: book.next,
+        overdue: book.overdue,
         lastMeeting: null,
         paperwork: [],
         owed:

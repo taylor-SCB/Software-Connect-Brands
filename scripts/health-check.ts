@@ -943,7 +943,27 @@ async function database() {
       assert.equal(r.counts.tries, 4, "talk + shared voicemail once + meeting + front desk");
       assert.equal(r.counts.talks, 2);
       assert.equal(r.caption, "4 tries · 2 talks · 1 meeting · last touch today");
-      assert.ok(statements >= 1 && statements <= 3, `${statements} statements`);
+      // The companies, their bookings (company-wide, lists audit L31 / L32)
+      // and their people's two.
+      assert.ok(statements >= 1 && statements <= 4, `${statements} statements`);
+    });
+
+    await checkAsync("lists audit L31 / L32: a company's next step and lateness are everyone's — its own entries with nobody on them, and every person's, not only its warmest's", async () => {
+      // No people: its own late follow-up (a front-desk try's) reads late.
+      const bluff = await prisma.company.create({ data: { organizationId: O, name: "Bluff Supply" } });
+      await prisma.calendarEvent.create({
+        data: { organizationId: O, title: "Try again · Bluff Supply", type: "Call", startOn: dateOnly(isoShift(-3)), companyId: bluff.id },
+      });
+      const b = (await loadCompanyHealth(O, [bluff.id])).get(bluff.id)!;
+      assert.equal(b.reasonKey, "late", b.reason);
+      assert.equal(b.reason, "Follow-up 3 days late");
+      // Owen, not the warmest, has a call tomorrow: Ridgeline's next step.
+      await prisma.calendarEvent.create({
+        data: { organizationId: O, title: "Call · Owen Ridge", type: "Call", startOn: dateOnly(isoShift(1)), startTime: "09:00", contactId: owen.id },
+      });
+      const r = (await loadCompanyHealth(O, [ridgeline.id])).get(ridgeline.id)!;
+      assert.equal(r.warmestId, jessica.id, "still wearing Jessica's health");
+      assert.match(r.nextText ?? "", /call/i, `Owen's call is the company's next step: ${r.nextText}`);
     });
 
     await checkAsync("tiles: Do Not List left out, the opportunity's own meetings, the deal's paperwork", async () => {

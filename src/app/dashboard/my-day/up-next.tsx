@@ -13,6 +13,7 @@ import { useBookMeeting } from "@/components/book-meeting/book-meeting";
 import { UP_NEXT_SHOWN } from "@/lib/up-next";
 import type { UpNextItem } from "./load";
 import { giveBackLeads, takeUnownedLeads } from "./actions";
+import { smsHref, telHref } from "@/lib/dial";
 
 // Up next on My day (BDR redesign, Nov 11, 2026): one ranked list (the
 // order is rankUpNext's), 8 rows then "Show all n". Each row: the health
@@ -26,13 +27,7 @@ import { giveBackLeads, takeUnownedLeads } from "./actions";
 // Read-only (an Owner looking at a rep's day): no Call / Text / Log, no
 // sticky bar, no Take 10.
 
-function telHref(phone: string) {
-  return `tel:${phone.replace(/[^\d+]/g, "")}`;
-}
-
-function smsHref(phone: string) {
-  return `sms:${phone.replace(/[^\d+]/g, "")}`;
-}
+// Call and Text dial the number without its extension (src/lib/dial.ts).
 
 export function UpNextList({
   items,
