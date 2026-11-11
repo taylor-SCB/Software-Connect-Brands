@@ -350,7 +350,7 @@ async function narrativeText(page) {
     await page.waitForURL(/\/dashboard$/);
     timings.daily = await open(page, `${BASE}/dashboard`, "daily");
     const tabs = await page.locator("[data-testid=report-tab]").allTextContents();
-    assert.deepEqual(tabs, ["Daily Rundown", "Pipeline", "Activity", "Closing", "Money Owed"]);
+    assert.deepEqual(tabs, ["Daily Rundown", "Pipeline report", "Activity", "Closing", "Money Owed"], "Sprint: the Pipeline report tab isn't named like the Pipeline board");
     assert.equal(await page.locator("[data-testid=report-tab][aria-current=page]").textContent(), "Daily Rundown");
     await page.getByText(/Welcome back, Taylor/).waitFor();
     await page.locator("[data-testid=owed-where]").waitFor();
@@ -545,7 +545,7 @@ async function narrativeText(page) {
     assert.equal(await tile(page, "marketing"), 3);
     assert.equal(await tile(page, "untouched"), 3, "Cal, Dee and Eve");
     assert.deepEqual(
-      (await groupRows(page)).map((row) => [row[0], row[1], row[6]]),
+      (await groupRows(page)).map((row) => [row[0], row[1], row[7]]),
       [
         ["Taylor Test", "3", "0"],
         ["Nic Rivera", "2", "2"],
@@ -570,12 +570,12 @@ async function narrativeText(page) {
     );
     log("Activity: Break down by Job title and by State");
     await pick(page, "report-by", "title", "activity");
-    const titles = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[6]]]));
+    const titles = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[7]]]));
     assert.deepEqual(titles.Owner, ["3", "1"], "Ann and ' owner ' Dee are one title");
     assert.deepEqual(titles["Office Manager"], ["2", "0"]);
     assert.deepEqual(titles["No job title"], ["0", "2"]);
     await pick(page, "report-by", "state", "activity");
-    const states = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[6]]]));
+    const states = Object.fromEntries((await groupRows(page)).map((row) => [row[0], [row[1], row[7]]]));
     assert.deepEqual(states.TX, ["3", "2"], "Ann and Dee through Acme, Cal on her own");
     assert.deepEqual(states.CO, ["2", "1"]);
 
@@ -755,7 +755,7 @@ async function narrativeText(page) {
     await page.goto(`${BASE}/dashboard/settings/account`);
     const mine = await page.locator("[data-testid=my-report-email]").allTextContents();
     assert.equal(mine.length, 3);
-    assert.match(mine.join("\n"), /Pipeline · Weekly, Mondays · Whole team/);
+    assert.match(mine.join("\n"), /Pipeline report · Weekly, Mondays · Whole team/);
     assert.match(mine.join("\n"), /Money Owed · Monthly, on the 1st · Whole team/);
     await page.locator("[data-testid=my-report-email]", { hasText: "Money Owed" }).locator("[data-testid=my-report-email-remove]").click();
     await page.waitForFunction(() => document.querySelectorAll("[data-testid=my-report-email]").length === 2);
@@ -809,7 +809,7 @@ async function narrativeText(page) {
     assert.equal(caught.length, 3);
     const pipelineMail = caught.find((message) => /Pipeline/.test(message.subject));
     assert.equal(pipelineMail.to[0], EMAIL);
-    assert.match(pipelineMail.subject, /^Test Reports Co · Pipeline — Last week · Nov 9 – Nov 15, 2026$/);
+    assert.match(pipelineMail.subject, /^Test Reports Co · Pipeline report — Last week · Nov 9 – Nov 15, 2026$/);
     assert.match(pipelineMail.from, /^"Test Reports Co" </);
     assert.match(pipelineMail.html, /Open pipeline/);
     assert.match(pipelineMail.html, new RegExp(`${BASE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/dashboard\\?report=pipeline&amp;period=last-week`));

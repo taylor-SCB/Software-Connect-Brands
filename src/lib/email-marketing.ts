@@ -373,3 +373,92 @@ export async function sendMarketingEmails(
 
   return { ok: true, sent, failed, skipped, used: await sentToday(userId, org.timeZone), limit };
 }
+
+/* ------------------------- One-to-one email ------------------------- */
+
+// The Email button on one contact's page (decision 16, Nov 11, 2026): a
+// plain email from the rep to that one person. No template, no merge
+// fields, no unsubscribe footer, and not in the 40-a-day marketing
+// allowance (no EmailSend row is written — that table is the marketing
+// log the allowance counts). It is a real touch: the caller logs it as an
+// EMAIL with outcome SENT and marketing = false, through logActivity, so
+// it lands on the calendar and moves the ladder like any logged email.
+// The marketing sender above is untouched.
+
+export type OneToOneRequest = { contactId: string; to: string; subject: string; body: string };
+
+export type OneToOneSend =
+  | { ok: false; error: string }
+  | { ok: true; to: string; name: string; subject: string; body: string };
+
+export function renderPlainHtml(body: string) {
+  const paragraphs = body
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => `<p style="margin:0 0 14px">${escapeHtml(block).replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+  return `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1f2328;max-width:600px">\n${paragraphs}\n</div>`;
+}
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export async function sendOneToOneEmail(
+  session: { organizationId: string; userId: string },
+  request: OneToOneRequest,
+): Promise<OneToOneSend> {
+  const { organizationId, userId } = session;
+  if (!isEmailConfigured()) return { ok: false, error: "Email isn't switched on for this site yet." };
+
+  const subject = request.subject.replace(/\s+/g, " ").trim();
+  const body = request.body.replace(/\r\n?/g, "\n").trim();
+  if (!subject) return { ok: false, error: "Add a subject." };
+  if (!body) return { ok: false, error: "Write a message." };
+  if (subject.length > 200) return { ok: false, error: "Keep the subject under 200 characters." };
+  if (body.length > 20_000) return { ok: false, error: "That message is too long to send." };
+
+  const [contact, sender, org] = await Promise.all([
+    prisma.contact.findFirst({
+      where: { id: request.contactId, organizationId },
+      select: { id: true, name: true, email: true, email2: true },
+    }),
+    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true, email: true } }),
+    prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } }),
+  ]);
+  if (!contact) return { ok: false, error: "That contact isn't in this workspace." };
+
+  // Only an address on the contact's own record, so the window can't be
+  // used to email anyone else.
+  const wanted = request.to.trim().toLowerCase();
+  const to = [contact.email, contact.email2].map((value) => value?.trim() ?? "").find((value) => value && value.toLowerCase() === wanted);
+  if (!to) return { ok: false, error: `Pick one of ${contact.name}'s email addresses.` };
+  if (!EMAIL_SHAPE.test(to)) return { ok: false, error: `${to} doesn't look like an email address. Fix it on ${contact.name}'s record first.` };
+
+  const message = {
+    to,
+    // The rep's own name, with the business beside it; replies go to them.
+    fromName: `${sender.name} · ${org.name}`,
+    replyTo: sender.email,
+    subject,
+    text: body,
+    html: renderPlainHtml(body),
+  };
+  let result = await sendEmail(message);
+  if (!result.ok && /\b429\b/.test(result.error)) {
+    await sleep(1500);
+    result = await sendEmail(message);
+  }
+  if (!result.ok) {
+    console.error("[one-to-one email] send failed:", result.error);
+    return { ok: false, error: "The email service refused it. Nothing was sent; try again in a minute." };
+  }
+  return { ok: true, to, name: contact.name, subject, body };
+}
+
+// The line written on the contact's log for a one-to-one email: the
+// subject, then the message, cut to the log's 5,000 characters.
+export function oneToOneLogBody(subject: string, body: string) {
+  const head = `Emailed “${subject}”`;
+  const room = 5000 - head.length - 2;
+  const text = body.length > room ? `${body.slice(0, Math.max(0, room - 1)).trimEnd()}…` : body;
+  return `${head}\n\n${text}`;
+}
