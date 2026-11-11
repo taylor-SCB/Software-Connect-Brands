@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { SidebarNav, MobileNav } from "@/components/sidebar-nav";
+import { SidebarNav, PhoneTabBar } from "@/components/sidebar-nav";
+import { GlobalSearch } from "@/components/global-search";
 import { PageTrail } from "@/components/back-link";
 import { IconLogout, IconSparkles } from "@/components/icons";
 import { Avatar } from "@/components/avatar";
@@ -21,6 +22,9 @@ export default async function DashboardLayout({
   // The person's look, rendered into the server's HTML (data-theme below)
   // so the page never flashes Dark before turning Light.
   const theme = await themeFor(session.userId);
+
+  // A Member's Settings opens My Account (BDR redesign, Nov 11, 2026).
+  const member = session.role !== "OWNER" && session.role !== "ADMIN";
 
   const initials = organization.name
     .split(/\s+/)
@@ -68,10 +72,12 @@ export default async function DashboardLayout({
                 {initials || "W"}
               </div>
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{organization.name}</p>
               <p className="faint truncate text-[0.68rem]">Workspace</p>
             </div>
+            {/* Search people and companies from anywhere (BDR redesign). */}
+            <GlobalSearch className="btn btn-ghost btn-sm h-8 w-8 shrink-0 !p-0" testId="sidebar-search" />
           </div>
 
           {/* Dark / Light, under the workspace name so the page itself
@@ -80,7 +86,7 @@ export default async function DashboardLayout({
             <LookSwitch key={theme} theme={theme} className="inline-flex" />
           </div>
 
-          <SidebarNav />
+          <SidebarNav member={member} />
         </div>
 
         <div className="shrink-0 space-y-2 pt-2">
@@ -107,21 +113,20 @@ export default async function DashboardLayout({
         </div>
       </aside>
 
-      <div className="border-b border-[var(--hairline-3)] p-3 lg:hidden">
-        <div className="mb-2 flex items-center justify-between">
-          <p className="min-w-0 truncate text-sm font-semibold">{organization.name}</p>
-          <LookSwitch key={theme} theme={theme} className="ml-auto mr-2 inline-flex shrink-0" />
-          <form action={logout}>
-            <button type="submit" className="btn btn-ghost btn-sm">
-              <IconLogout size={14} />
-              Log out
-            </button>
-          </form>
-        </div>
-        <MobileNav />
+      {/* The phone's top bar (BDR redesign, Nov 11, 2026): workspace,
+          search, avatar. Its links live in the bottom tab bar and More;
+          Dark / Light and Log out are in More. */}
+      <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-[var(--hairline-3)] bg-[var(--bg)] px-3 py-2 lg:hidden" data-testid="phone-top-bar">
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{organization.name}</p>
+        <GlobalSearch className="btn btn-ghost btn-sm h-11 w-11 shrink-0 !p-0" testId="phone-search" />
+        <Link href="/dashboard/settings/account" className="flex h-11 w-11 shrink-0 items-center justify-center" aria-label="My Account">
+          <Avatar url={session.avatarUrl} name={session.name} size={30} round />
+        </Link>
       </div>
+      <PhoneTabBar member={member} theme={theme} workspace={organization.name} operator={session.isSuperAdmin} />
 
-      <main className="min-w-0 flex-1 p-5 sm:p-8">
+      {/* Room at the foot of a phone for the tab bar. */}
+      <main className="min-w-0 flex-1 p-5 pb-24 sm:p-8 sm:pb-24 lg:pb-8">
         <PageTrail />
         <div className="fade-up mx-auto max-w-[1400px]">{children}</div>
       </main>

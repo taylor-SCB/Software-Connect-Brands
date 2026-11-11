@@ -21,6 +21,9 @@ import { IconCalendar, IconTrash, IconCheck, IconHardHat } from "@/components/ic
 import { EventForm, type EventChoices, type EventFormValues } from "./event-form";
 import { deleteEvent, moveEvent, setEventDone } from "./actions";
 import { DoneBox, canLogOnDone } from "./done-box";
+import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
+import { saveUiPref } from "../prefs-actions";
+import { IconMessage, IconPhone } from "@/components/icons";
 
 export type EventView = EventFormValues & {
   crewName: string | null;
@@ -39,7 +42,25 @@ export type EventView = EventFormValues & {
   contractNumber: number | null;
   // The history line this entry is tied to, when it has one.
   activityId: string | null;
+  // Their person's mobile or phone, for tap-to-call (BDR redesign, Nov 11,
+  // 2026). Filled by the calendar page; absent elsewhere.
+  contactPhone?: string | null;
 };
+
+// A logged touch: a call, text, email or meeting written from the log
+// form, already done. Month hides these behind "n logged" (BDR redesign).
+export function isLoggedTouch(event: { activityId: string | null; doneAt: string | null }) {
+  return Boolean(event.activityId && event.doneAt);
+}
+
+function dialable(phone: string) {
+  return phone.replace(/[^\d+]/g, "");
+}
+
+// A Call entry with a number is a real tap-to-call button.
+export function wantsCall(event: { type: string; contactPhone?: string | null }) {
+  return Boolean(event.contactPhone) && event.type.trim().toLowerCase() === "call";
+}
 
 // An entry that is an activity rather than a day of work, so a missing
 // clock reads "No time set" and not "All day": a call is never all day.
@@ -163,18 +184,26 @@ export function RowConfirm({
 
 // Six weeks, always, so the grid never changes height as you page
 // through and nothing under it jumps.
+//
+// Logged touches (calls, texts, emails and meetings already written in
+// someone's history) are hidden by default and counted as "6 logged" per
+// day, with Show logged to put them back (BDR redesign, Nov 11, 2026;
+// remembered per person). A day's panel always lists everything.
 export function MonthView({
   monthIso,
   today,
   events,
   choices,
+  showLogged: showLoggedAtFirst = false,
 }: {
   monthIso: string;
   today: string;
   events: EventView[];
   choices: EventChoices;
+  showLogged?: boolean;
 }) {
   const [openDay, setOpenDay] = useState<string | null>(null);
+  const [showLogged, setShowLogged] = useState(showLoggedAtFirst);
   const days = monthGrid(monthIso);
 
   const byDay = new Map<string, EventView[]>();
@@ -183,9 +212,28 @@ export function MonthView({
       byDay.set(day, [...(byDay.get(day) ?? []), event]);
     }
   }
+  const anyLogged = events.some(isLoggedTouch);
 
   return (
     <>
+      {anyLogged && (
+        <div className="mb-2 flex justify-end">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
+            aria-pressed={showLogged}
+            onClick={() => {
+              const next = !showLogged;
+              setShowLogged(next);
+              void saveUiPref("calendar", "showLogged", next);
+            }}
+            data-testid="cal-show-logged"
+          >
+            <IconCheck size={12} />
+            {showLogged ? "Hide logged" : "Show logged"}
+          </button>
+        </div>
+      )}
       <Card lit>
         <div className="grid grid-cols-7 border-b border-[var(--hairline-3)]">
           {WEEKDAY_NAMES.map((name) => (
@@ -196,7 +244,9 @@ export function MonthView({
         </div>
         <div className="grid grid-cols-7">
           {days.map((day) => {
-            const onThisDay = (byDay.get(day) ?? []).sort(byTimeThenTitle);
+            const all = (byDay.get(day) ?? []).sort(byTimeThenTitle);
+            const logged = showLogged ? 0 : all.filter(isLoggedTouch).length;
+            const onThisDay = showLogged ? all : all.filter((event) => !isLoggedTouch(event));
             const inMonth = isSameMonth(day, monthIso);
             const isToday = day === today;
             return (
@@ -204,13 +254,14 @@ export function MonthView({
                 key={day}
                 type="button"
                 onClick={() => setOpenDay(day)}
-                aria-label={`${readableDay(day)}, ${onThisDay.length} ${onThisDay.length === 1 ? "thing" : "things"} on`}
+                aria-label={`${readableDay(day)}, ${all.length} ${all.length === 1 ? "thing" : "things"} on`}
                 className={`min-h-[5.5rem] border-b border-r border-[var(--hairline)] p-1.5 text-left align-top transition-colors hover:bg-[var(--tint-2)] ${
                   inMonth ? "" : "bg-[var(--tint-2)]"
                 }`}
                 data-testid="month-day"
                 data-day={day}
-                data-count={onThisDay.length}
+                data-count={all.length}
+                data-logged={logged}
               >
                 <span
                   className={`num inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-xs ${
@@ -223,13 +274,13 @@ export function MonthView({
                     cut to "8:3…" said nothing, so it shows how many things
                     are on instead; tapping the day lists them. The chips
                     are unchanged from sm up. */}
-                {onThisDay.length > 0 && (
+                {all.length > 0 && (
                   <span
                     className="num mt-1 inline-flex min-w-6 items-center justify-center rounded-full bg-[var(--tint-2)] px-1.5 py-0.5 text-xs font-semibold sm:hidden"
                     aria-hidden="true"
                     data-testid="month-count"
                   >
-                    {onThisDay.length}
+                    {all.length}
                   </span>
                 )}
                 <span className="mt-1 hidden space-y-0.5 sm:block">
@@ -250,6 +301,11 @@ export function MonthView({
                   ))}
                   {onThisDay.length > 3 && (
                     <span className="faint block px-1 text-[0.68rem]">+{onThisDay.length - 3} more</span>
+                  )}
+                  {logged > 0 && (
+                    <span className="muted block px-1 text-[0.68rem]" data-testid="month-logged">
+                      {logged} logged
+                    </span>
                   )}
                 </span>
               </button>
@@ -293,12 +349,27 @@ export function WeekView({
     }
   }
 
+  // The week opens on today (BDR redesign, Nov 11, 2026): where the days
+  // stack (below lg) today's card is scrolled to the top of the screen
+  // instead of Sunday's. Side by side, nothing moves.
+  const grid = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!days.includes(today) || window.matchMedia("(min-width: 1024px)").matches) return;
+    const card = grid.current?.querySelector<HTMLElement>(`[data-week-card="${today}"]`);
+    if (!card || card.getBoundingClientRect().top < window.innerHeight * 0.5) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    card.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+    // Once, when the week first shows.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekOf, today]);
+
   return (
-    <div className="grid gap-3 lg:grid-cols-7">
+    <div className="grid gap-3 lg:grid-cols-7" ref={grid} data-testid="week-grid">
       {days.map((day) => {
         const onThisDay = (byDay.get(day) ?? []).sort(byTimeThenTitle);
         return (
-          <Card key={day} lit={day === today}>
+          <div key={day} data-week-card={day} className="min-w-0 scroll-mt-4">
+          <Card lit={day === today}>
             <div className="border-b border-[var(--hairline-3)] px-3 py-2">
               <p className="text-sm font-semibold">
                 {WEEKDAY_NAMES[weekDays(weekOf).indexOf(day)]}{" "}
@@ -315,6 +386,7 @@ export function WeekView({
               )}
             </div>
           </Card>
+          </div>
         );
       })}
     </div>
@@ -457,7 +529,22 @@ export function EventCard({
         >
           {event.title}
         </p>
-        <Badge color={color}>{event.type}</Badge>
+        {wantsCall(event) ? (
+          <a
+            href={`tel:${dialable(event.contactPhone!)}`}
+            className="inline-flex"
+            aria-label={`Call ${event.contactName ?? event.title}`}
+            data-contact-id={event.contactId ?? undefined}
+            data-testid="event-call"
+          >
+            <Badge color={color}>
+              <IconPhone size={10} />
+              {event.type}
+            </Badge>
+          </a>
+        ) : (
+          <Badge color={color}>{event.type}</Badge>
+        )}
       </div>
 
       <p className="faint num mt-0.5 text-xs">
@@ -621,5 +708,215 @@ export function EventList({
         <EventCard key={event.id} event={event} choices={choices} hideJob={hideJob} />
       ))}
     </div>
+  );
+}
+
+/* -------------------------------- The agenda -------------------------------- */
+
+// The Agenda (BDR redesign, Nov 11, 2026): what a rep works from on a
+// phone. Overdue first (red), then Today, then each of the next 7 days
+// that has anything on. Rows are 56px with Call / Text and Done; Done on a
+// call, text, email or meeting with someone on it opens How did it go?,
+// so the next follow-up is asked for and the chain never breaks. Tapping
+// the title opens the full card (Edit, Move, the trash) under the row.
+export function AgendaView({
+  today,
+  days,
+  events,
+  overdue,
+  choices,
+}: {
+  today: string;
+  // Today and the next 7 days.
+  days: string[];
+  events: EventView[];
+  overdue: EventView[];
+  choices: EventChoices;
+}) {
+  const byDay = new Map<string, EventView[]>();
+  for (const event of events) {
+    for (const day of eventDays(event)) {
+      if (days.includes(day)) byDay.set(day, [...(byDay.get(day) ?? []), event]);
+    }
+  }
+  const later = days.slice(1).filter((day) => (byDay.get(day) ?? []).length > 0);
+  const todays = (byDay.get(today) ?? []).sort(byTimeThenTitle);
+  const nothing = overdue.length === 0 && todays.length === 0 && later.length === 0;
+  // Back from the dialler: How did it go? opens itself for whoever the
+  // tapped Call or Text was for (data-contact-id on the row).
+  const how = useHowDidItGo({ dial: true });
+
+  // The phone's one-week strip on top (BDR redesign): today and the six
+  // days after it, each with how many things are on; a tap scrolls to it.
+  const strip = days.slice(0, 7);
+  const goTo = (day: string) => {
+    const target = document.querySelector<HTMLElement>(`[data-agenda-section="${day}"]`);
+    if (!target) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+  };
+
+  return (
+    <div className="space-y-4" data-testid="agenda">
+      {how.element}
+      <div className="grid grid-cols-7 gap-1 sm:hidden" role="group" aria-label="This week" data-testid="agenda-strip">
+        {strip.map((day) => {
+          const count = (byDay.get(day) ?? []).length;
+          const date = new Date(`${day}T12:00:00Z`);
+          return (
+            <button
+              key={day}
+              type="button"
+              disabled={count === 0}
+              onClick={() => goTo(day)}
+              aria-label={`${readableDay(day)}, ${count} ${count === 1 ? "thing" : "things"} on`}
+              className={`flex min-h-14 flex-col items-center justify-center rounded-lg border text-xs ${
+                day === today ? "border-[var(--brand)]" : "border-[var(--border)]"
+              } ${count === 0 ? "opacity-60" : ""}`}
+              data-testid="agenda-strip-day"
+              data-day={day}
+              data-count={count}
+            >
+              <span className="faint">{WEEKDAY_NAMES[date.getUTCDay()].slice(0, 1)}</span>
+              <span className="num font-semibold">{dayOfMonth(day)}</span>
+              <span className="num faint text-[0.65rem]">{count > 0 ? count : "·"}</span>
+            </button>
+          );
+        })}
+      </div>
+      {overdue.length > 0 && (
+        <AgendaSection title="Overdue" count={overdue.length} tone="danger" testId="agenda-overdue">
+          {overdue.map((event) => (
+            <AgendaRow key={event.id} event={event} choices={choices} today={today} showDay />
+          ))}
+        </AgendaSection>
+      )}
+      <AgendaSection title="Today" count={todays.length} testId="agenda-today" day={today}>
+        {todays.length === 0 ? (
+          <p className="faint px-4 py-4 text-sm">Nothing on today.</p>
+        ) : (
+          todays.map((event) => <AgendaRow key={event.id} event={event} choices={choices} today={today} />)
+        )}
+      </AgendaSection>
+      {later.map((day) => {
+        const rows = (byDay.get(day) ?? []).sort(byTimeThenTitle);
+        return (
+          <AgendaSection key={day} title={readableDay(day)} count={rows.length} testId="agenda-day" day={day}>
+            {rows.map((event) => (
+              <AgendaRow key={`${event.id}-${day}`} event={event} choices={choices} today={today} />
+            ))}
+          </AgendaSection>
+        );
+      })}
+      {nothing && (
+        <p className="faint text-sm" data-testid="agenda-empty">
+          Nothing overdue and nothing in the next 7 days.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function AgendaSection({
+  title,
+  count,
+  tone,
+  testId,
+  day,
+  children,
+}: {
+  title: string;
+  count: number;
+  tone?: "danger";
+  testId: string;
+  day?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card lit className="min-w-0">
+      <div className="flex scroll-mt-16 items-center justify-between border-b border-[var(--hairline-3)] px-4 py-2.5" data-agenda-section={day}>
+        <h2 className={`text-sm font-semibold ${tone === "danger" ? "text-[var(--danger)]" : ""}`}>{title}</h2>
+        <span className="faint num text-xs">{count}</span>
+      </div>
+      <ul className="divide-y divide-[var(--hairline-3)]" data-testid={testId} data-day={day} data-count={count}>
+        {children}
+      </ul>
+    </Card>
+  );
+}
+
+function AgendaRow({ event, choices, today, showDay = false }: { event: EventView; choices: EventChoices; today: string; showDay?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [ticking, setTicking] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [pending, start] = useTransition();
+  const color = colorForType(event.type);
+  const who = [event.contactName, event.companyName].filter(Boolean).join(" · ");
+  const phone = event.contactPhone ? dialable(event.contactPhone) : null;
+  const when = showDay ? `${event.startOn === today ? "Today" : formatDay(`${event.startOn}T12:00:00Z`)}` : null;
+
+  return (
+    <li className="min-w-0 px-3 py-2 sm:px-4" data-testid="agenda-row" data-event-id={event.id} data-contact-id={event.contactId ?? undefined}>
+      <div className="flex min-h-10 min-w-0 items-center gap-2">
+        <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: color }} aria-hidden="true" />
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          data-testid="agenda-open"
+        >
+          <span className={`block truncate text-sm font-medium ${event.doneAt ? "line-through opacity-60" : ""}`}>{event.title}</span>
+          <span className="faint block truncate text-xs">
+            {when && `${when} · `}
+            {timeLabel(event)}
+            {who && ` · ${who}`}
+          </span>
+        </button>
+        {phone && !event.doneAt && (
+          <>
+            <a href={`tel:${phone}`} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} aria-label={`Call ${event.contactName ?? ""}`} data-testid="agenda-call">
+              <IconPhone size={13} />
+              <span className="hidden sm:inline">Call</span>
+            </a>
+            <a href={`sms:${phone}`} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} aria-label={`Text ${event.contactName ?? ""}`} data-testid="agenda-text">
+              <IconMessage size={13} />
+              <span className="hidden sm:inline">Text</span>
+            </a>
+          </>
+        )}
+        {event.doneAt ? (
+          <span className="faint shrink-0 px-1 text-xs" data-testid="agenda-done-mark">
+            Done
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              canLogOnDone(event)
+                ? setTicking(true)
+                : start(async () => {
+                    setError(undefined);
+                    const result = await setEventDone(event.id, true);
+                    if (result?.error) setError(result.error);
+                  })
+            }
+            className={`btn btn-primary btn-sm ${ROW_BUTTON}`}
+            data-testid="agenda-done"
+          >
+            <IconCheck size={12} />
+            Done
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-2">
+          <EventCard event={event} choices={choices} />
+        </div>
+      )}
+      {ticking && <DoneBox event={event} onClose={() => setTicking(false)} />}
+      <FormError message={error} />
+    </li>
   );
 }

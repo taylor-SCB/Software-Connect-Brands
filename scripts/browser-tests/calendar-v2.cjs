@@ -117,6 +117,22 @@ const readableDay = (iso) =>
     timeZone: "UTC",
   }).format(new Date(`${iso}T12:00:00Z`))}`;
 
+// BDR redesign (Nov 11, 2026): the Team week, the layouts and Copy this
+// week into next sit in the View menu; the filters in a Filters sheet;
+// "+ New" opens a sheet whose who / where / job / notes are under More.
+async function openView(page) {
+  if (!(await page.locator("[data-testid=cal-view-panel]").count())) await page.locator("[data-testid=cal-view-menu]").click();
+  await page.locator("[data-testid=cal-view-panel]").waitFor();
+}
+async function openFilters(page) {
+  if (!(await page.locator("[data-testid=cal-filters-sheet]").count())) await page.locator("[data-testid=cal-filters-open]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor();
+}
+async function closeFilters(page) {
+  if (await page.locator("[data-testid=cal-filters-sheet]").count()) await page.locator("[data-testid=cal-filters-done]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor({ state: "detached" });
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -457,7 +473,9 @@ const readableDay = (iso) =>
 
   log("the Calendar layout is the landing spot: the grid, no log");
   await page.goto(`${BASE}/dashboard/calendar`);
+  await openView(page);
   await page.locator("[data-testid=cal-layout-calendar][aria-selected=true]").waitFor();
+  await page.keyboard.press("Escape");
   assert.ok((await page.locator("[data-testid=month-day]").count()) === 42, "the six-week grid");
   assert.equal(await page.locator("[data-testid=log-columns]").count(), 0);
   const todayCell = page.locator(`[data-testid=month-day][data-day="${TODAY}"]`);
@@ -472,6 +490,7 @@ const readableDay = (iso) =>
   await shot(page, "02-calendar");
 
   log("Calendar + Log puts the grid on top and the two columns beneath");
+  await openView(page);
   await page.locator("[data-testid=cal-layout-both]").click();
   await page.waitForURL(/layout=both/);
   await page.locator("[data-testid=log-columns]").waitFor();
@@ -514,6 +533,7 @@ const readableDay = (iso) =>
   assert.equal(await page.locator("[data-testid=log-previous]").getAttribute("data-count"), "1");
   assert.match(await page.locator("[data-testid=log-previous]").textContent(), /Meeting · Dana Ruiz/);
   assert.match(await page.locator("[data-testid=cal-active-filters]").textContent(), /Sam Teammate/, "a chip names the teammate");
+  await openFilters(page);
   await page.locator("[data-testid=cal-users]").click();
   await page.getByRole("listbox", { name: "Users" }).getByText("Unassigned").click();
   await page.waitForURL(/users=usr_calv2_sam%2Cnone|users=usr_calv2_sam,none/);
@@ -522,8 +542,9 @@ const readableDay = (iso) =>
   await page.keyboard.press("Escape");
 
   log("the filter menu paints the opaque overlay colour, not the glass card");
+  await openFilters(page);
   await page.locator("[data-testid=cal-companies]").click();
-  const menu = page.locator(".popover").first();
+  const menu = page.locator("[data-testid=cal-filters] .popover").first();
   await menu.waitFor();
   const paint = await menu.evaluate((el) => {
     const styles = getComputedStyle(el);
@@ -569,7 +590,7 @@ const readableDay = (iso) =>
   log("Clear takes every filter off at once");
   await page.goto(`${BASE}/dashboard/calendar?layout=log&projects=${projectId}&users=usr_calv2_sam&type=Call`);
   await page.locator("[data-testid=log-columns]").waitFor();
-  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await page.waitForURL((url) => !url.search.includes("projects=") && !url.search.includes("users=") && !url.search.includes("type="));
   await page.locator("[data-testid=cal-everyone][aria-pressed=true]").waitFor();
 
@@ -682,7 +703,9 @@ const readableDay = (iso) =>
   log("the Team view: a row per teammate with the week's load, and a cell opens the day");
   await page.goto(`${BASE}/dashboard/calendar?view=team&on=${TODAY}`);
   await page.locator("[data-testid=team-grid]").waitFor();
+  await openView(page);
   await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+  await page.keyboard.press("Escape");
   const myRow = page.locator(`[data-testid=team-row][data-row="u-${me.id}"]`);
   const samRow = page.locator("[data-testid=team-row][data-row=u-usr_calv2_sam]");
   assert.ok(Number(await myRow.getAttribute("data-things")) >= 3, "the three milestones sent today are mine");
@@ -715,6 +738,7 @@ const readableDay = (iso) =>
   await page.locator("[data-testid=event-title]").fill("Lunch with Ben");
   await page.locator("[data-testid=event-type]").selectOption("Meeting");
   await page.locator("[data-testid=event-start-on]").fill(daysOn(6));
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-owner]").selectOption("usr_calv2_sam");
   await page.locator("[data-testid=event-company]").selectOption("cmp_calv2_b");
   await page.locator("[data-testid=event-contact]").selectOption("ctc_calv2_b");

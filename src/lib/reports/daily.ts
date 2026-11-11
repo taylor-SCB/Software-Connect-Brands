@@ -5,6 +5,7 @@ import { computeQuoteTotals } from "@/lib/quote-math";
 import { loadTeam, nameOf, num, type Headline, type ReportParams, type SummaryTable } from "@/lib/reports/common";
 import { addDaysIso, daysBetweenIso, periodRange } from "@/lib/reports/period";
 import { Prisma } from "@/generated/prisma/client";
+import { healthSettings, loadContactHealth } from "@/lib/health-load";
 
 // Daily Rundown (Nov 10, 2026): the morning list, in STRATEGY.md's order —
 // money first, then what is on today, what slipped, what went quiet, and
@@ -231,4 +232,211 @@ async function quietFor(organizationId: string, repId: string | null) {
     count: mine.length,
     items: mine.slice(0, LIST).map((row) => ({ id: row.id, title: row.title, days: row.days, ownerId: ownerOf.get(row.id) ?? null })),
   };
+}
+
+/* ------------------------------- Team today ------------------------------- */
+
+// Team today (BDR redesign, Nov 11, 2026): the strip on top of the Daily
+// Rundown, one row per rep who owns records or logged a touch in the last
+// 30 days (someone with neither, like an owner who doesn't sell, is left
+// out). Each row: when they last logged something, Tries · Talks (with the
+// connect rate) · Meetings booked today and this week, and a thin bar of
+// their book's health. My day's three rings read the same numbers
+// (`repNumbers`), so the two can never disagree.
+//
+// The rules: a try is a call, text, email or meeting logged by the rep,
+// dated now or earlier, never a marketing send or a no-show, counted once
+// per save (COALESCE(batchId, id): a call logged on three people is one
+// try). A talk is a try with an outcome of Talked / They replied / Held,
+// or a meeting with no outcome (old meetings count as held). A meeting
+// booked is an OpportunityMeeting the rep booked (bookedById), by when it
+// went on the calendar. "This week" is the report bar's This week; "last week" is
+// the same days of the week before.
+
+export type RepCounts = { tries: number; talks: number; booked: number };
+export type RepNumbers = {
+  today: RepCounts;
+  week: RepCounts;
+  lastWeek: RepCounts;
+  lastLoggedAt: Date | null;
+};
+
+const CONNECT_SQL = Prisma.sql`(a.outcome IN ('TALKED', 'REPLIED', 'HELD') OR (a.type = 'MEETING' AND a.outcome IS NULL))`;
+
+const zero = (): RepCounts => ({ tries: 0, talks: 0, booked: 0 });
+
+export async function repNumbers(organizationId: string, repIds: string[], timeZone: string, now: Date): Promise<Map<string, RepNumbers>> {
+  const result = new Map<string, RepNumbers>();
+  if (repIds.length === 0) return result;
+  const week = periodRange("this-week", timeZone, now);
+  const today = periodRange("today", timeZone, now);
+  const since = week.previous.from < today.from ? week.previous.from : today.from;
+  const monthAgo = new Date(now.getTime() - 30 * 86_400_000);
+  const [touches, booked, logged] = await Promise.all([
+    prisma.$queryRaw<{ user_id: string; t_tries: number; t_talks: number; w_tries: number; w_talks: number; p_tries: number; p_talks: number }[]>`
+      WITH t AS (
+        SELECT a."userId" AS user_id, COALESCE(a."batchId", a.id) AS tid, MAX(a."occurredAt") AS at, bool_or(${CONNECT_SQL}) AS connect
+          FROM "Activity" a
+         WHERE a."organizationId" = ${organizationId} AND a."userId" = ANY(${repIds})
+           AND a.marketing = false AND a.outcome IS DISTINCT FROM 'NO_SHOW'
+           AND a."occurredAt" >= ${since} AND a."occurredAt" <= ${now}
+         GROUP BY 1, 2
+      )
+      SELECT user_id,
+             COUNT(*) FILTER (WHERE at >= ${today.from})::int AS t_tries,
+             COUNT(*) FILTER (WHERE at >= ${today.from} AND connect)::int AS t_talks,
+             COUNT(*) FILTER (WHERE at >= ${week.from})::int AS w_tries,
+             COUNT(*) FILTER (WHERE at >= ${week.from} AND connect)::int AS w_talks,
+             COUNT(*) FILTER (WHERE at >= ${week.previous.from} AND at < ${week.previous.to})::int AS p_tries,
+             COUNT(*) FILTER (WHERE at >= ${week.previous.from} AND at < ${week.previous.to} AND connect)::int AS p_talks
+        FROM t
+       GROUP BY user_id`,
+    // Dated by when the meeting went on the calendar: a meeting first tied
+    // to an opportunity when it was marked Held (a calendar entry nobody
+    // booked through the sheet) was booked when the entry was made, not
+    // the day it was held.
+    prisma.$queryRaw<{ user_id: string; t: number; w: number; p: number }[]>`
+      WITH b AS (
+        SELECT om."bookedById" AS user_id, LEAST(om."createdAt", COALESCE(e."createdAt", om."createdAt")) AS at
+          FROM "OpportunityMeeting" om
+          JOIN "Opportunity" o ON o.id = om."opportunityId"
+          LEFT JOIN "CalendarEvent" e ON e.id = om."eventId" AND e."organizationId" = ${organizationId}
+         WHERE o."organizationId" = ${organizationId} AND om."bookedById" = ANY(${repIds})
+           AND om."createdAt" >= ${since}
+      )
+      SELECT user_id,
+             COUNT(*) FILTER (WHERE at >= ${today.from} AND at <= ${now})::int AS t,
+             COUNT(*) FILTER (WHERE at >= ${week.from} AND at <= ${now})::int AS w,
+             COUNT(*) FILTER (WHERE at >= ${week.previous.from} AND at < ${week.previous.to})::int AS p
+        FROM b
+       GROUP BY 1`,
+    prisma.$queryRaw<{ user_id: string; at: Date }[]>`
+      SELECT a."userId" AS user_id, MAX(a."createdAt") AS at
+        FROM "Activity" a
+       WHERE a."organizationId" = ${organizationId} AND a."userId" = ANY(${repIds})
+         AND a.marketing = false AND a."createdAt" >= ${monthAgo}
+       GROUP BY 1`,
+  ]);
+  for (const id of repIds) result.set(id, { today: zero(), week: zero(), lastWeek: zero(), lastLoggedAt: null });
+  for (const row of touches) {
+    const entry = result.get(row.user_id);
+    if (!entry) continue;
+    entry.today.tries = num(row.t_tries);
+    entry.today.talks = num(row.t_talks);
+    entry.week.tries = num(row.w_tries);
+    entry.week.talks = num(row.w_talks);
+    entry.lastWeek.tries = num(row.p_tries);
+    entry.lastWeek.talks = num(row.p_talks);
+  }
+  for (const row of booked) {
+    const entry = result.get(row.user_id);
+    if (!entry) continue;
+    entry.today.booked = num(row.t);
+    entry.week.booked = num(row.w);
+    entry.lastWeek.booked = num(row.p);
+  }
+  for (const row of logged) {
+    const entry = result.get(row.user_id);
+    if (entry) entry.lastLoggedAt = row.at;
+  }
+  return result;
+}
+
+export type BookMix = { good: number; warn: number; risk: number; none: number; read: number; total: number };
+
+export type TeamTodayRow = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  numbers: RepNumbers;
+  mix: BookMix;
+};
+
+export type TeamToday = {
+  reps: TeamTodayRow[];
+  goals: { tries: number | null; talks: number | null; booked: number | null };
+  // New leads nobody owns and nobody has touched yet (the unowned-leads
+  // gap): they reach a call list only when somebody takes them.
+  unowned: number;
+};
+
+// The statuses a rep is still working, for the book-health bar.
+const OPEN_BOOK = ["NOT_ACTIONED", "CONTACTED", "CONNECTED", "INTERESTED", "MEETING_SET", "MEETING_COMPLETED", "QUOTE_SENT", "CONTRACT_SENT"];
+// Health is worked out per person (leadHealth, never stored), so a big
+// book is read from its most recently touched people: at most this many in
+// all, shared out across the reps. The bar says when it is a sample.
+const MIX_BUDGET = 1500;
+
+export async function loadTeamToday(organizationId: string, timeZone: string, now: Date): Promise<TeamToday> {
+  const monthAgo = new Date(now.getTime() - 30 * 86_400_000);
+  const [people, org, unowned] = await Promise.all([
+    prisma.$queryRaw<{ id: string; name: string; avatar_url: string | null }[]>`
+      SELECT u.id, u.name, u."avatarUrl" AS avatar_url
+        FROM "User" u
+       WHERE u."organizationId" = ${organizationId} AND u."removedAt" IS NULL
+         AND (EXISTS (SELECT 1 FROM "Contact" c WHERE c."organizationId" = ${organizationId} AND c."ownerId" = u.id)
+           OR EXISTS (SELECT 1 FROM "Company" co WHERE co."organizationId" = ${organizationId} AND co."ownerId" = u.id)
+           OR EXISTS (SELECT 1 FROM "Activity" a WHERE a."organizationId" = ${organizationId} AND a."userId" = u.id
+                         AND a.marketing = false AND a."createdAt" >= ${monthAgo}))
+       ORDER BY u.name`,
+    prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { weeklyTryGoal: true, weeklyTalkGoal: true, weeklyMeetingGoal: true },
+    }),
+    prisma.contact.count({ where: { organizationId, ownerId: null, status: "NOT_ACTIONED", lastTouchAt: null } }),
+  ]);
+  const repIds = people.map((person) => person.id);
+  const [numbers, mixes] = await Promise.all([repNumbers(organizationId, repIds, timeZone, now), bookMix(organizationId, repIds, now)]);
+  return {
+    reps: people.map((person) => ({
+      id: person.id,
+      name: person.name,
+      avatarUrl: person.avatar_url,
+      numbers: numbers.get(person.id) ?? { today: zero(), week: zero(), lastWeek: zero(), lastLoggedAt: null },
+      mix: mixes.get(person.id) ?? { good: 0, warn: 0, risk: 0, none: 0, read: 0, total: 0 },
+    })),
+    goals: { tries: org?.weeklyTryGoal ?? null, talks: org?.weeklyTalkGoal ?? null, booked: org?.weeklyMeetingGoal ?? null },
+    unowned,
+  };
+}
+
+// Each rep's book by health tone, from leadHealth over their most recently
+// touched open people (two batched statements for all of them).
+async function bookMix(organizationId: string, repIds: string[], now: Date): Promise<Map<string, BookMix>> {
+  const result = new Map<string, BookMix>();
+  if (repIds.length === 0) return result;
+  const perRep = Math.max(50, Math.min(400, Math.floor(MIX_BUDGET / repIds.length)));
+  const [totals, sample, settings] = await Promise.all([
+    prisma.$queryRaw<{ owner_id: string; n: number }[]>`
+      SELECT c."ownerId" AS owner_id, COUNT(*)::int AS n
+        FROM "Contact" c
+       WHERE c."organizationId" = ${organizationId} AND c."ownerId" = ANY(${repIds})
+         AND c.status::text = ANY(${OPEN_BOOK})
+       GROUP BY 1`,
+    prisma.$queryRaw<{ id: string; owner_id: string }[]>`
+      SELECT s.id, r.id AS owner_id
+        FROM unnest(${repIds}::text[]) AS r(id)
+        CROSS JOIN LATERAL (
+          SELECT c.id FROM "Contact" c
+           WHERE c."organizationId" = ${organizationId} AND c."ownerId" = r.id
+             AND c.status::text = ANY(${OPEN_BOOK})
+           ORDER BY c."lastTouchAt" DESC NULLS LAST, c."createdAt" DESC
+           LIMIT ${perRep}
+        ) s`,
+    healthSettings(organizationId),
+  ]);
+  for (const id of repIds) result.set(id, { good: 0, warn: 0, risk: 0, none: 0, read: 0, total: 0 });
+  for (const row of totals) {
+    const entry = result.get(row.owner_id);
+    if (entry) entry.total = num(row.n);
+  }
+  const health = await loadContactHealth(organizationId, sample.map((row) => row.id), { settings, now });
+  for (const row of sample) {
+    const entry = result.get(row.owner_id);
+    const one = health.get(row.id);
+    if (!entry || !one) continue;
+    entry[one.tone] += 1;
+    entry.read += 1;
+  }
+  return result;
 }
