@@ -35,7 +35,7 @@ export async function linkContactAccounts(input: {
   companyIds: string[];
   newCompany: { name: string; city?: string; state?: string } | null;
 }): Promise<AccountResult> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const parsed = linkSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Pick at least one company" };
   const { contactId, companyIds, newCompany } = parsed.data;
@@ -53,7 +53,7 @@ export async function linkContactAccounts(input: {
   const ids = found.map((company) => company.id);
 
   if (newCompany) {
-    const made = await findOrCreateCompany(newCompany.name, organizationId);
+    const made = await findOrCreateCompany(newCompany.name, organizationId, userId);
     const city = newCompany.city || null;
     const state = normalizeState(newCompany.state || null);
     if (city || state) {
@@ -142,7 +142,7 @@ export async function quickAddContactToCompany(input: {
   email?: string;
   phone?: string;
 }): Promise<{ error?: string; contact?: { id: string; name: string; email: string | null; phone: string | null } }> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const parsed = quickSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the new contact's details" };
 
@@ -156,6 +156,7 @@ export async function quickAddContactToCompany(input: {
       name: parsed.data.name,
       email: parsed.data.email ? parsed.data.email.toLowerCase() : null,
       phone: parsed.data.phone || null,
+      createdById: userId,
     },
     select: { id: true, name: true, email: true, phone: true },
   });

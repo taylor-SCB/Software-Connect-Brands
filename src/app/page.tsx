@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { IconSparkles } from "@/components/icons";
+import { SignedOutLook } from "@/components/signed-out-look";
 
 const FEATURES = [
   {
@@ -26,6 +27,7 @@ export default async function Home() {
 
   return (
     <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-5 py-16">
+      <SignedOutLook />
       <div className="fade-up w-full max-w-3xl text-center">
         <span className="badge mx-auto mb-6 border-[var(--border)] bg-[var(--surface)] text-[var(--text-dim)]">
           <IconSparkles size={13} />

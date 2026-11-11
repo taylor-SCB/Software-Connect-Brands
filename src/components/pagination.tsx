@@ -22,7 +22,7 @@ export function Pagination({
 }) {
   const numbers = pageNumbers(page, pages);
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--hairline-3)] px-5 py-3">
       <p className="faint text-xs" data-testid="page-summary">
         {total === 0
           ? `No ${noun}`

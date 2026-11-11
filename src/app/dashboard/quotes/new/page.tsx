@@ -8,10 +8,10 @@ import { NewQuoteForm } from "./form";
 export default async function NewQuotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ contactId?: string; dealId?: string }>;
+  searchParams: Promise<{ contactId?: string; dealId?: string; draft?: string }>;
 }) {
   const { organizationId } = await requireSession();
-  const { contactId, dealId } = await searchParams;
+  const { contactId, dealId, draft } = await searchParams;
 
   const [contacts, deals] = await Promise.all([
     prisma.contact.findMany({
@@ -60,6 +60,7 @@ export default async function NewQuotePage({
                 contacts.some((contact) => contact.id === contactId) ? contactId : undefined
               }
               defaultDealId={deals.some((deal) => deal.id === dealId) ? dealId : undefined}
+              draftFromMeeting={draft === "meeting"}
             />
           </>
         )}

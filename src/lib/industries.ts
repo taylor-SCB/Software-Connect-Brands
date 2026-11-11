@@ -21,7 +21,33 @@ export function cleanName(raw: string) {
 // added, seeded with the defaults the first time a workspace asks. Lazy
 // seeding means workspaces that existed before this feature get the same
 // starting list as a new signup, with no migration data step.
-export async function getIndustryPickList(organizationId: string): Promise<IndustryPickList> {
+//
+// Retired values (the CRM Labels screen, Nov 10, 2026) are left out unless
+// `includeRetired` — the list filters still offer them, since records keep
+// them. The seeding and Distributor checks below read the whole list, so
+// retiring everything never re-seeds and a retired row is never re-added.
+//
+// `keep` is a company's own tags on its edit form: a retired value it
+// carries stays offered there, so saving the form never drops it.
+export async function getIndustryPickList(
+  organizationId: string,
+  options: { includeRetired?: boolean; keep?: { industries: string[]; types: string[] } } = {},
+): Promise<IndustryPickList> {
+  const all = await getFullPickList(organizationId);
+  if (options.includeRetired) return all.map(({ name, types }) => ({ name, types: types.map((type) => type.name) }));
+  const keepIndustries = new Set((options.keep?.industries ?? []).map((v) => v.toLowerCase()));
+  const keepTypes = new Set((options.keep?.types ?? []).map((v) => v.toLowerCase()));
+  return all
+    .filter((industry) => !industry.retired || keepIndustries.has(industry.name.toLowerCase()))
+    .map(({ name, types }) => ({
+      name,
+      types: types.filter((type) => !type.retired || keepTypes.has(type.name.toLowerCase())).map((type) => type.name),
+    }));
+}
+
+type FullPickList = { name: string; retired: boolean; types: { name: string; retired: boolean }[] }[];
+
+async function getFullPickList(organizationId: string): Promise<FullPickList> {
   let industries = await loadPickList(organizationId);
   if (industries.length === 0) {
     // Two tabs opening at once both try to seed; the unique index lets
@@ -38,7 +64,7 @@ export async function getIndustryPickList(organizationId: string): Promise<Indus
   // the seed above only runs for an empty list. Top it up for everyone
   // else — an in-memory check that costs nothing once it is there.
   try {
-    if (await ensureDistributorType(organizationId, industries)) {
+    if (await ensureDistributorType(organizationId, industries.map(({ name, types }) => ({ name, types: types.map((type) => type.name) })))) {
       industries = await loadPickList(organizationId);
     }
   } catch (error) {
@@ -57,9 +83,13 @@ async function loadPickList(organizationId: string) {
   const rows = await prisma.industryOption.findMany({
     where: { organizationId },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-    include: { companyTypes: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { name: true } } },
+    include: { companyTypes: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { name: true, retiredAt: true } } },
   });
-  return rows.map((row) => ({ name: row.name, types: row.companyTypes.map((type) => type.name) }));
+  return rows.map((row) => ({
+    name: row.name,
+    retired: Boolean(row.retiredAt),
+    types: row.companyTypes.map((type) => ({ name: type.name, retired: Boolean(type.retiredAt) })),
+  }));
 }
 
 export async function seedIndustries(organizationId: string) {

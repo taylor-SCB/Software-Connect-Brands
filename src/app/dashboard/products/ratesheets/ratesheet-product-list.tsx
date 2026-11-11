@@ -389,7 +389,7 @@ export function RatesheetProductList({
               </button>
             </div>
 
-            <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
+            <ul className="divide-y divide-[var(--hairline-3)] rounded-xl border border-[var(--border)]">
               <li className="faint hidden gap-3 px-3 py-2 text-[0.68rem] uppercase tracking-wide sm:flex">
                 <span className="w-5" />
                 <span className="flex-1">Product</span>
@@ -452,7 +452,7 @@ export function RatesheetProductList({
 
         <FormError message={error} />
         {!result && (
-          <div className="popover sticky -bottom-5 z-10 -mx-5 -mb-5 mt-3 border-t border-[var(--border)] px-5 py-3">
+          <div className="popover sticky -bottom-5 z-10 -mx-5 -mb-5 mt-3 border-t border-[var(--hairline-3)] px-5 py-3">
             {actions("bottom")}
           </div>
         )}

@@ -1,9 +1,10 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getTimeZone } from "@/lib/organization";
-import { formatCents, formatDateTime, formatDate } from "@/lib/format";
+import { formatCents, formatDateTime } from "@/lib/format";
 import { ACTIVITY_TYPES, OPEN_DEAL_STAGES, PERSONAL_NOTE_LABELS, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, isOpenStage, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { batchOthers } from "@/lib/logging";
@@ -39,6 +40,9 @@ import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm } from "../../contacts/[id]/forms";
 import { OtherContacts, type BypassGroup } from "@/components/other-contacts";
+import { AddedBy } from "@/components/crm-cells";
+import { RepPicker } from "@/components/rep-select";
+import { loadRepChoices } from "@/lib/reps";
 
 // A company can have thousands of people and years of activity, so the
 // page shows the people fifty at a time and the latest slice of every
@@ -61,7 +65,7 @@ export default async function CompanyDetailPage({
 
   const company = await prisma.company.findFirst({
     where: { id, organizationId },
-    include: { _count: { select: { contacts: true, linkedContacts: true } } },
+    include: { _count: { select: { contacts: true, linkedContacts: true } }, createdBy: { select: { name: true } } },
   });
   if (!company) notFound();
 
@@ -81,7 +85,7 @@ export default async function CompanyDetailPage({
     orderBy: [{ favorite: "desc" }, { name: "asc" }],
     skip: (peoplePage - 1) * PEOPLE_PER_PAGE,
     take: PEOPLE_PER_PAGE,
-    select: { id: true, name: true, title: true, email: true, phone: true, status: true, favorite: true, companyId: true },
+    select: { id: true, name: true, title: true, email: true, phone: true, mobile: true, status: true, favorite: true, companyId: true },
   });
 
   // Everything logged on the company itself, plus everything logged on
@@ -138,9 +142,13 @@ export default async function CompanyDetailPage({
       batchOthers("activity", activities.map((activity) => activity.batchId)),
       prisma.note.count({ where: { organizationId, OR: [{ companyId: company.id }, viaPeople] } }),
       prisma.note.count({ where: { organizationId, label: { in: [...PERSONAL_NOTE_LABELS] }, OR: [{ companyId: company.id }, viaPeople] } }),
+      // Touches only: marketing sends are on the feed, never counted. One
+      // touch logged on several people at once is one row each sharing a
+      // batchId, and counts once (Nov 10, 2026): grouped by batch too, a
+      // batch is one group and the rows with none are counted as they are.
       prisma.activity.groupBy({
-        by: ["type"],
-        where: { organizationId, OR: [{ companyId: company.id }, viaPeople] },
+        by: ["type", "batchId"],
+        where: { organizationId, marketing: false, OR: [{ companyId: company.id }, viaPeople] },
         _count: { _all: true },
       }),
       prisma.deal.count({ where: { organizationId, ...viaPeople } }),
@@ -172,9 +180,15 @@ export default async function CompanyDetailPage({
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, today);
 
-  const [upcoming, eventChoices] = await Promise.all([
+  const [upcoming, eventChoices, reps, lastTouch] = await Promise.all([
     upcomingFor(organizationId, { companyId: company.id }, today),
     loadEventChoices(organizationId, userId),
+    loadRepChoices(organizationId),
+    prisma.activity.findFirst({
+      where: { organizationId, marketing: false, OR: [{ companyId: company.id }, viaPeople] },
+      orderBy: { occurredAt: "desc" },
+      select: { occurredAt: true },
+    }),
   ]);
 
   // The jobs won here, newest first.
@@ -193,11 +207,31 @@ export default async function CompanyDetailPage({
     },
   });
 
-  const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone }));
+  // The pickers' hover line shows a number; someone with only a mobile
+  // on file has that one.
+  const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone ?? person.mobile }));
+
+  // The feed shows a touch logged on several people here once, naming
+  // each of them (Nov 10, 2026); it had listed one copy per person. The
+  // newest row of a batch stands for the rest.
+  const feed: (typeof activities[number] & { people: { id: string; name: string }[] })[] = [];
+  const byBatch = new Map<string, (typeof feed)[number]>();
+  for (const activity of activities) {
+    const shown = activity.batchId ? byBatch.get(activity.batchId) : undefined;
+    if (shown) {
+      if (activity.contact) shown.people.push(activity.contact);
+      continue;
+    }
+    const entry = { ...activity, people: activity.contact ? [activity.contact] : [] };
+    feed.push(entry);
+    if (activity.batchId) byBatch.set(activity.batchId, entry);
+  }
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
-      acc[type] = activityByType.find((row) => row.type === type)?._count._all ?? 0;
+      acc[type] = activityByType
+        .filter((row) => row.type === type)
+        .reduce((sum, row) => sum + (row.batchId ? 1 : row._count._all), 0);
       return acc;
     },
     {} as Record<ActivityTypeValue, number>,
@@ -241,8 +275,11 @@ export default async function CompanyDetailPage({
         }
       />
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
+      {/* One column below lg that is never wider than the screen
+          (Nov 10, 2026): a grid's lone implicit column grew to its widest
+          content and the whole page panned sideways on a phone. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div className="min-w-0 space-y-5 lg:col-span-2">
           <Card lit id="activity">
             <CardHeader
               title="Log activity"
@@ -256,15 +293,18 @@ export default async function CompanyDetailPage({
             />
             <div className="divider" />
             <ActivityFeed
-              items={activities.map((activity) => ({
+              items={feed.map((activity) => ({
                 id: activity.id,
                 type: activity.type,
                 body: activity.body,
                 userName: activity.user.name,
                 when: formatDateTime(activity.occurredAt, timeZone),
-                others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
-                via: activity.contact,
+                // Copies on people not on this page (another company's,
+                // or past the feed's last row) are still "also on N".
+                others: activity.batchId ? Math.max(0, (activityOthers.get(activity.batchId) ?? 0) + 1 - activity.people.length) : 0,
+                via: activity.people.length ? activity.people : null,
                 bypassedBy: activity.contact ? null : activity.user.name,
+                marketing: activity.marketing,
               }))}
             />
           </Card>
@@ -291,7 +331,7 @@ export default async function CompanyDetailPage({
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <Card lit>
             <CardHeader
               title="Details"
@@ -352,7 +392,8 @@ export default async function CompanyDetailPage({
                   ) : null
                 }
               />
-              <Detail label="Added" value={formatDate(company.createdAt, timeZone)} />
+              <Detail label="Rep" value={<RepPicker kind="company" id={company.id} ownerId={company.ownerId} reps={reps} />} />
+              <Detail label="Added" value={<AddedBy name={company.createdBy?.name ?? null} at={company.createdAt} timeZone={timeZone} />} />
               <Detail label="City" value={company.city} />
               <Detail label="State" value={company.state} />
             </dl>
@@ -378,7 +419,7 @@ export default async function CompanyDetailPage({
             notes={noteTotal}
             personalNotes={personalNoteTotal}
             activity={activityCounts}
-            lastTouchAt={activities[0]?.occurredAt ?? null}
+            lastTouchAt={lastTouch?.occurredAt ?? null}
             openDealCents={openDealValue}
             openDealCount={openDeals.length}
             quotesOut={quotesOutTotal}
@@ -397,17 +438,34 @@ export default async function CompanyDetailPage({
                 body="Add the person you actually talk to, and their quotes and deals show up on this page."
               />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
-                {people.map((person) => (
-                  <li key={person.id} className="px-5 py-3">
-                    <Link
-                      href={`/dashboard/contacts/${person.id}`}
-                      className="flex items-center justify-between gap-3"
-                    >
+              <ul className="divide-y divide-[var(--hairline)]">
+                {people.map((person) => {
+                  // Their numbers, each one a tap to call (Nov 10, 2026): a
+                  // person with only a mobile on file showed no number.
+                  const numbers = [
+                    person.phone ? { label: "", number: person.phone } : null,
+                    person.mobile ? { label: "Mobile ", number: person.mobile } : null,
+                  ].filter((entry) => entry !== null);
+                  const parts = [
+                    person.title,
+                    ...numbers.map(({ label, number }) => (
+                      <a key={`${label}${number}`} href={`tel:${number}`} className="link num relative z-10" data-testid="person-call">
+                        {label}
+                        {number}
+                      </a>
+                    )),
+                    person.email,
+                  ].filter(Boolean);
+                  return (
+                    // The name's link covers the whole row, as the row link
+                    // did; the numbers sit above it so a tap on one calls.
+                    <li key={person.id} className="relative flex items-center justify-between gap-3 px-5 py-3" data-testid="person-row">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium hover:underline">
-                          {person.favorite && <span className="mr-1 text-[var(--warn)]">★</span>}
-                          {person.name}
+                        <p className="truncate text-sm font-medium">
+                          <Link href={`/dashboard/contacts/${person.id}`} className="after:absolute after:inset-0 hover:underline">
+                            {person.favorite && <span className="mr-1 text-[var(--warn)]">★</span>}
+                            {person.name}
+                          </Link>
                           {person.companyId !== company.id && (
                             <span className="badge ml-2 border-[var(--border)] text-[0.62rem] text-[var(--text-faint)]" data-testid="linked-person">
                               Additional account
@@ -415,18 +473,25 @@ export default async function CompanyDetailPage({
                           )}
                         </p>
                         <p className="faint truncate text-xs">
-                          {[person.title, person.phone, person.email].filter(Boolean).join(" · ") || "—"}
+                          {parts.length
+                            ? parts.map((part, index) => (
+                                <Fragment key={index}>
+                                  {index > 0 && " · "}
+                                  {part}
+                                </Fragment>
+                              ))
+                            : "—"}
                         </p>
                       </div>
                       <StatusBadge status={person.status} />
-                    </Link>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <OtherContacts companyId={company.id} people={companyPeople} groups={bypassGroups} />
             {peoplePages > 1 && (
-              <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-2.5 text-xs">
+              <div className="flex items-center justify-between border-t border-[var(--hairline-3)] px-5 py-2.5 text-xs">
                 <span className="faint">
                   Page {peoplePage} of {peoplePages}
                 </span>
@@ -455,7 +520,7 @@ export default async function CompanyDetailPage({
             {deals.length === 0 ? (
               <EmptyState title="No deals yet" body="Deals and quotes are started from a person's page." />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {deals.map((deal) => (
                   <li key={deal.id} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
@@ -479,7 +544,7 @@ export default async function CompanyDetailPage({
             {quotes.length === 0 ? (
               <EmptyState title="No quotes yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {quotes.map((quote) => (
                   <li key={quote.id} className="px-5 py-3">
                     <Link
@@ -505,7 +570,7 @@ export default async function CompanyDetailPage({
             {contracts.length === 0 ? (
               <EmptyState title="No contracts yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contracts.map((contract) => (
                   <li key={contract.id} className="px-5 py-3">
                     <Link

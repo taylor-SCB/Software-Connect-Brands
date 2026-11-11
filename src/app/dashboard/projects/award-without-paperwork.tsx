@@ -235,7 +235,7 @@ export function AwardWithoutPaperwork({
       </div>
 
       {open && (
-        <div className="space-y-4 border-t border-[var(--border)] p-5" data-testid="award-form">
+        <div className="space-y-4 border-t border-[var(--hairline-3)] p-5" data-testid="award-form">
           <p className="muted text-sm">
             Records the quote as an agreement the customer said yes to — a signed Sales Order, marked signed
             offline — so the job can be tracked. The rows and the discount are what the job is awarded at, so
@@ -283,7 +283,7 @@ export function AwardWithoutPaperwork({
             <div className="space-y-3">
               <div>
                 <p className="label">What they agreed to</p>
-                <ul className="divide-y divide-[rgb(255_255_255/0.045)] rounded-lg border border-[var(--border)]" data-testid="award-rows">
+                <ul className="divide-y divide-[var(--hairline)] rounded-lg border border-[var(--border)]" data-testid="award-rows">
                   {openRows.map((row) => (
                     <li key={row.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                       <label className="flex min-w-0 items-center gap-2">
@@ -304,7 +304,7 @@ export function AwardWithoutPaperwork({
                   ))}
                 </ul>
               </div>
-              <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3 text-sm">
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="muted text-xs">Subtotal</span>
                   <span className="num" data-testid="award-subtotal">{formatCents(subtotalCents)}</span>
@@ -324,7 +324,7 @@ export function AwardWithoutPaperwork({
                     baseCents={subtotalCents}
                   />
                 </div>
-                <div className="mt-1.5 flex items-center justify-between border-t border-[var(--border)] pt-1.5">
+                <div className="mt-1.5 flex items-center justify-between border-t border-[var(--hairline-3)] pt-1.5">
                   <span className="font-semibold">Awarded</span>
                   <span className="num text-lg font-semibold" data-testid="award-total">{formatCents(totalCents)}</span>
                 </div>

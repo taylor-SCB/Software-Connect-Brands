@@ -15,18 +15,21 @@ import {
   BackLink,
   StatusBadge,
 } from "@/components/ui";
-import { IconTrash, IconSend, IconExternal, IconDownload, IconClock } from "@/components/icons";
+import { IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { LineItemsEditor } from "./line-items-editor";
+import { MarkSentButton, QuoteUnsavedProvider } from "./mark-sent";
+import { DeleteQuoteButton } from "./delete-quote";
 import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
 import { QuotePaymentTable } from "./quote-payment-table";
 import { QuoteMetaForm } from "./quote-meta-form";
 import { dateToIso, todayIso, quoteBaselineRows } from "@/lib/payments";
 import { computeQuoteTotals } from "@/lib/quote-math";
-import { setQuoteStatus, deleteQuote } from "../actions";
+import { setQuoteStatus } from "../actions";
 import { lineLabelsFor } from "@/lib/line-labels";
 import { getCustomUnits } from "@/lib/variations";
 import { readSnapshot } from "@/lib/variation-shared";
+import { aiConfigured } from "@/lib/ai";
 
 // yyyy-mm-dd for <input type="date">, which only accepts that shape.
 function toDateInput(date: Date | null) {
@@ -35,10 +38,13 @@ function toDateInput(date: Date | null) {
 
 export default async function QuoteBuilderPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ draft?: string }>;
 }) {
   const { id } = await params;
+  const { draft: draftParam } = await searchParams;
   const { organizationId } = await requireSession();
 
   const timeZone = await getTimeZone();
@@ -69,6 +75,16 @@ export default async function QuoteBuilderPage({
 
   if (!quote) notFound();
 
+  // "Draft lines from the meeting" (Nov 10, 2026): AI on, a draft, and a
+  // deal that came from a Pipeline opportunity. Build Quote can ask for it
+  // to run on arrival (?draft=meeting), and only while the quote has no
+  // lines, so coming back to that address never drafts on top of saved
+  // ones.
+  const fromOpportunity =
+    aiConfigured() && quote.status === "DRAFT"
+      ? await prisma.opportunity.findFirst({ where: { organizationId, dealId: quote.dealId }, select: { id: true } })
+      : null;
+
   // Suppliers already on a line are fetched back even if they have since
   // stopped being distributors, so the picker can offer the linked one.
   const [suppliers, platformSuppliers, productLabels, units] = await Promise.all([
@@ -96,7 +112,9 @@ export default async function QuoteBuilderPage({
   const quoteTotalCents = computeQuoteTotals(quote.lineItems, quote).totalCents;
 
   return (
-    <div>
+    // Mark as sent (header) waits while the Line items card has unsaved
+    // edits, so the provider holds both.
+    <QuoteUnsavedProvider>
       <BackLink href="/dashboard/quotes" label="Quotes" current={`QUO-${quote.number} ${quote.title}`} />
 
       <PageHeader
@@ -127,14 +145,7 @@ export default async function QuoteBuilderPage({
               Split into contracts
             </Link>
             {quote.status === "DRAFT" ? (
-              <form action={setQuoteStatus}>
-                <input type="hidden" name="quoteId" value={quote.id} />
-                <input type="hidden" name="status" value="SENT" />
-                <button type="submit" className="btn btn-primary btn-sm">
-                  <IconSend size={13} />
-                  Mark as sent
-                </button>
-              </form>
+              <MarkSentButton quoteId={quote.id} />
             ) : (
               <form action={setQuoteStatus}>
                 <input type="hidden" name="quoteId" value={quote.id} />
@@ -217,6 +228,7 @@ export default async function QuoteBuilderPage({
             serviceTypes={serviceTypes}
             suppliers={suppliers}
             platformSuppliers={platformSuppliers}
+            meetingDraft={fromOpportunity ? { auto: draftParam === "meeting" && quote.lineItems.length === 0 } : null}
           />
         </Card>
 
@@ -278,15 +290,16 @@ export default async function QuoteBuilderPage({
 
         <Card className="border-[rgb(251_113_133/0.25)]">
           <CardHeader title="Danger zone" subtitle="Deleting a quote can't be undone." />
-          <form action={deleteQuote} className="p-5">
-            <input type="hidden" name="quoteId" value={quote.id} />
-            <button type="submit" className="btn btn-danger btn-sm">
-              <IconTrash size={13} />
-              Delete quote
-            </button>
-          </form>
+          <DeleteQuoteButton
+            quoteId={quote.id}
+            question={
+              quote.status === "DRAFT"
+                ? `Delete QUO-${quote.number} for good?`
+                : `Delete QUO-${quote.number} for good? The customer's link stops working.`
+            }
+          />
         </Card>
       </div>
-    </div>
+    </QuoteUnsavedProvider>
   );
 }

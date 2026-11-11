@@ -1,3 +1,4 @@
+import { ink } from "@/lib/ink";
 import { DEAL_STAGE_COLORS, DEAL_STAGE_LABELS, TAG_COLORS, TAG_LABELS, type DealStageValue, type LineItemTagValue } from "@/lib/constants";
 
 // Presentational primitives with no hooks, so they can be rendered from
@@ -60,7 +61,7 @@ export function CardHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3.5">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--hairline-3)] px-5 py-3.5">
       <div>
         <h2 className="text-sm font-semibold">{title}</h2>
         {subtitle && <p className="faint mt-0.5 text-xs">{subtitle}</p>}
@@ -125,7 +126,7 @@ export function Meter({
 
   return (
     <div
-      className="flex overflow-hidden rounded-full border border-[rgb(255_255_255/0.08)] bg-[rgb(255_255_255/0.06)]"
+      className="flex overflow-hidden rounded-full border border-[var(--hairline-3)] bg-[var(--tint-3)]"
       style={{ height }}
       role="img"
       aria-label={label}
@@ -143,7 +144,7 @@ export function Meter({
               background:
                 segment.tone === "spent"
                   ? color
-                  : `repeating-linear-gradient(135deg, ${color} 0 5px, rgb(255 255 255 / 0.12) 5px 10px)`,
+                  : `repeating-linear-gradient(135deg, ${color} 0 5px, var(--tint-5) 5px 10px)`,
             }}
           />
         );
@@ -192,7 +193,7 @@ export function Badge({
     <span
       className="badge"
       style={{
-        color,
+        color: ink(color),
         background: `color-mix(in srgb, ${color} 14%, transparent)`,
         borderColor: `color-mix(in srgb, ${color} 32%, transparent)`,
       }}

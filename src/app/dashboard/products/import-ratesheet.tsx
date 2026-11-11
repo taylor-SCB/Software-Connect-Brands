@@ -816,7 +816,7 @@ export function ImportRatesheet({
           )}
 
           {/* 3. What we read */}
-          <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
+          <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4">
             {tabs.length > 1 && (
               <div className="flex flex-wrap gap-3 text-xs" data-testid="ratesheet-tabs">
                 {tabs.map((tab) => (
@@ -1023,7 +1023,7 @@ export function ImportRatesheet({
               </button>
             </div>
 
-            <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
+            <ul className="divide-y divide-[var(--hairline-3)] rounded-xl border border-[var(--border)]">
               {shown.slice(0, visible).map((row) => (
                 <li key={row.key} className="flex items-start gap-3 px-3 py-2.5" data-testid="ratesheet-row">
                   <input

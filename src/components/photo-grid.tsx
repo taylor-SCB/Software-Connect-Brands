@@ -131,7 +131,7 @@ export function PhotoGrid({
                   .map((tag) => (
                     <span
                       key={tag.id}
-                      className={`rounded px-1.5 py-0.5 text-[0.65rem] ${tag.kind === "TYPE" ? "bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]" : "bg-[rgb(255_255_255/0.08)]"}`}
+                      className={`rounded px-1.5 py-0.5 text-[0.65rem] ${tag.kind === "TYPE" ? "bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]" : "bg-[var(--tint-4)]"}`}
                     >
                       {tag.name}
                     </span>
@@ -221,7 +221,7 @@ function TagEditor({
   }
 
   return (
-    <div className="space-y-2 border-t border-[var(--border)] pt-2" data-testid="media-tag-editor">
+    <div className="space-y-2 border-t border-[var(--hairline-3)] pt-2" data-testid="media-tag-editor">
       <PhotoTagPicker tags={tags} selected={selected} onChange={setSelected} onAdd={onAdd} testId="edit-tags" />
       {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
       <div className="flex gap-1">

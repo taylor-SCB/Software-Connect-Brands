@@ -199,15 +199,21 @@ export default async function ContractDetailPage({
                 title="Line items"
                 subtitle="The rows split onto this contract from the quote. They print under the agreement."
               />
+              {/* On a phone (below `sm`) the Tag, Qty, Unit and Discount
+                  columns fold under the item's name, so Item and Total fit
+                  the screen: the total and the grand total sat off to the
+                  right before (UX review, Nov 10, 2026). The footer's label
+                  cell is drawn twice for it, spanning those columns on a
+                  wider screen and only Item on a phone. */}
               <div className="overflow-x-auto">
                 <table className="table" data-testid="contract-line-items">
                   <thead>
                     <tr>
                       <th>Item</th>
-                      <th>Tag</th>
-                      <th className="text-right">Qty</th>
-                      <th className="text-right">Unit</th>
-                      {anyLineDiscount && <th className="text-right">Discount</th>}
+                      <th className="max-sm:hidden">Tag</th>
+                      <th className="text-right max-sm:hidden">Qty</th>
+                      <th className="text-right max-sm:hidden">Unit</th>
+                      {anyLineDiscount && <th className="text-right max-sm:hidden">Discount</th>}
                       <th className="text-right">Total</th>
                     </tr>
                   </thead>
@@ -219,12 +225,21 @@ export default async function ContractDetailPage({
                           {item.variationText && <p className="text-xs text-[var(--text-dim)]">{item.variationText}</p>}
                           {item.unitLabel && <p className="faint text-xs">{item.unitLabel}</p>}
                           {item.description && <p className="faint text-xs">{item.description}</p>}
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden" data-testid="contract-line-phone">
+                            <TagBadge tag={item.tag} />
+                            <span className="num faint text-xs">
+                              {item.quantity} × {formatCents(item.unitPriceCents)}
+                            </span>
+                            {item.discountCents > 0 && (
+                              <span className="num text-xs text-[var(--ok)]">−{formatCents(item.discountCents)}</span>
+                            )}
+                          </div>
                         </td>
-                        <td><TagBadge tag={item.tag} /></td>
-                        <td className="num text-right">{item.quantity}</td>
-                        <td className="num text-right">{formatCents(item.unitPriceCents)}</td>
+                        <td className="max-sm:hidden"><TagBadge tag={item.tag} /></td>
+                        <td className="num text-right max-sm:hidden">{item.quantity}</td>
+                        <td className="num text-right max-sm:hidden">{formatCents(item.unitPriceCents)}</td>
                         {anyLineDiscount && (
-                          <td className="num text-right text-[var(--ok)]" data-testid="contract-line-discount">
+                          <td className="num text-right text-[var(--ok)] max-sm:hidden" data-testid="contract-line-discount">
                             {item.discountCents > 0 ? `−${formatCents(item.discountCents)}` : ""}
                             {item.discountPercent !== null && item.discountCents > 0 && (
                               <span className="faint block text-xs">{item.discountPercent}% off</span>
@@ -238,32 +253,32 @@ export default async function ContractDetailPage({
                   <tfoot>
                     {anyDiscount && (
                       <tr>
-                        <td colSpan={anyLineDiscount ? 5 : 4} className="text-right text-xs">
+                        <FootLabel span={anyLineDiscount ? 5 : 4}>
                           {activeTags.map((tag) => (
                             <span key={tag} className="ml-3 faint">{tag.charAt(0) + tag.slice(1).toLowerCase().replace("_", " ")} {formatCents(totals.byTag[tag])}</span>
                           ))}
                           <span className="ml-4 font-semibold text-[var(--text)]">Subtotal</span>
-                        </td>
+                        </FootLabel>
                         <td className="num text-right font-medium" data-testid="contract-subtotal">{formatCents(subtotalCents)}</td>
                       </tr>
                     )}
                     {contract.discountCents > 0 && (
                       <tr>
-                        <td colSpan={anyLineDiscount ? 5 : 4} className="text-right text-xs">
+                        <FootLabel span={anyLineDiscount ? 5 : 4}>
                           <span className="font-semibold text-[var(--text)]">Discount</span>
                           {contract.discountPercent !== null && <span className="faint ml-2">{contract.discountPercent}% off the subtotal</span>}
-                        </td>
+                        </FootLabel>
                         <td className="num text-right font-medium text-[var(--ok)]" data-testid="contract-discount">−{formatCents(contract.discountCents)}</td>
                       </tr>
                     )}
                     <tr>
-                      <td colSpan={anyLineDiscount ? 5 : 4} className="text-right text-xs">
+                      <FootLabel span={anyLineDiscount ? 5 : 4}>
                         {!anyDiscount &&
                           activeTags.map((tag) => (
                             <span key={tag} className="ml-3 faint">{tag.charAt(0) + tag.slice(1).toLowerCase().replace("_", " ")} {formatCents(totals.byTag[tag])}</span>
                           ))}
                         <span className="ml-4 font-semibold text-[var(--text)]">Total</span>
-                      </td>
+                      </FootLabel>
                       <td className="num text-right text-base font-semibold" data-testid="contract-total">{formatCents(totalCents)}</td>
                     </tr>
                   </tfoot>
@@ -518,5 +533,19 @@ export default async function ContractDetailPage({
         </div>
       </div>
     </div>
+  );
+}
+
+// A footer row's label on the contract's Line items table: across the
+// Item, Tag, Qty, Unit (and Discount) columns on a wider screen, and over
+// Item alone on a phone, where the others fold under the item's name.
+function FootLabel({ span, children }: { span: number; children: React.ReactNode }) {
+  return (
+    <>
+      <td colSpan={span} className="text-right text-xs max-sm:hidden">
+        {children}
+      </td>
+      <td className="text-right text-xs sm:hidden">{children}</td>
+    </>
   );
 }

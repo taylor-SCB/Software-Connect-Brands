@@ -287,17 +287,17 @@ export function LabelsManager({
                   <>
                     <details className="mb-2">
                       <summary className="faint cursor-pointer py-2 text-xs">The {builtInUnits.length} built-in units</summary>
-                      <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+                      <ul className="divide-y divide-[var(--hairline)]">
                         {builtInUnits.map((option, index) => optionRow(group, option, index, live))}
                       </ul>
                     </details>
-                    <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+                    <ul className="divide-y divide-[var(--hairline)]">
                       {ownUnits.map((option, index) => optionRow(group, option, index, live))}
                     </ul>
                     {ownUnits.length === 0 && <p className="faint py-2 text-xs">None of your own yet, like Box of 12 or Case of 6.</p>}
                   </>
                 ) : (
-                  <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+                  <ul className="divide-y divide-[var(--hairline)]">
                     {live.map((option, index) => optionRow(group, option, index, live))}
                     {live.length === 0 && <li className="faint py-2 text-xs">No labels yet.</li>}
                   </ul>
@@ -382,9 +382,9 @@ export function LabelsManager({
                   </div>
                 )}
                 {retired.length > 0 && (
-                  <div className="mt-3 border-t border-[rgb(255_255_255/0.06)] pt-2" data-testid="labels-retired">
+                  <div className="mt-3 border-t border-[var(--hairline-2)] pt-2" data-testid="labels-retired">
                     <p className="eyebrow">Retired</p>
-                    <ul className="divide-y divide-[rgb(255_255_255/0.045)] opacity-75">
+                    <ul className="divide-y divide-[var(--hairline)] opacity-75">
                       {retired.map((option, index) => optionRow(group, option, index, live))}
                     </ul>
                   </div>

@@ -6,6 +6,8 @@ import { IconLogout, IconSparkles } from "@/components/icons";
 import { Avatar } from "@/components/avatar";
 import Link from "next/link";
 import { logout } from "./actions";
+import { themeFor } from "@/lib/theme";
+import { LookSwitch } from "@/components/look-switch";
 
 export default async function DashboardLayout({
   children,
@@ -16,6 +18,9 @@ export default async function DashboardLayout({
   const organization = await prisma.organization.findUniqueOrThrow({
     where: { id: session.organizationId },
   });
+  // The person's look, rendered into the server's HTML (data-theme below)
+  // so the page never flashes Dark before turning Light.
+  const theme = await themeFor(session.userId);
 
   const initials = organization.name
     .split(/\s+/)
@@ -29,9 +34,17 @@ export default async function DashboardLayout({
     <div
       className="relative z-10 flex min-h-screen flex-col lg:flex-row"
       style={{ ["--brand" as string]: organization.primaryColor }}
+      data-theme={theme}
     >
-      <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--border)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
-        <div>
+      {/* The nav scrolls inside the sidebar and the account and Log out
+          stay pinned at its foot (audit fix, Nov 10, 2026): on a short
+          laptop screen the look switch had pushed Log out below the
+          window, out of reach. Its right edge, like the phone bar's
+          bottom line, is a --hairline-3 line: it separates, it isn't
+          the outline of something to click, so it stayed soft when
+          Light's --border was darkened for outlines (UX review). */}
+      <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-[var(--hairline-3)] p-4 lg:flex lg:sticky lg:top-0 lg:h-screen">
+        <div className="-ml-4 -mr-1 min-h-0 flex-1 overflow-y-auto pl-4 pr-1">
           <div className="mb-6 flex items-center gap-2.5 px-1">
             {organization.logoUrl ? (
               // Tenant-supplied URL; next/image would need per-tenant
@@ -61,10 +74,16 @@ export default async function DashboardLayout({
             </div>
           </div>
 
+          {/* Dark / Light, under the workspace name so the page itself
+              never moves to make room for it. */}
+          <div className="-mt-3 mb-5 px-1">
+            <LookSwitch key={theme} theme={theme} className="inline-flex" />
+          </div>
+
           <SidebarNav />
         </div>
 
-        <div className="space-y-2">
+        <div className="shrink-0 space-y-2 pt-2">
           <div className="divider" />
           {session.isSuperAdmin && (
             <Link href="/admin" className="nav-item w-full">
@@ -72,7 +91,7 @@ export default async function DashboardLayout({
               Operator console
             </Link>
           )}
-          <Link href="/dashboard/settings/account" className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-[rgb(255_255_255/0.04)]">
+          <Link href="/dashboard/settings/account" className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-[var(--hover)]">
             <Avatar url={session.avatarUrl} name={session.name} size={28} round />
             <div className="min-w-0">
               <p className="truncate text-xs font-medium">{session.name}</p>
@@ -88,9 +107,10 @@ export default async function DashboardLayout({
         </div>
       </aside>
 
-      <div className="border-b border-[var(--border)] p-3 lg:hidden">
+      <div className="border-b border-[var(--hairline-3)] p-3 lg:hidden">
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-sm font-semibold">{organization.name}</p>
+          <p className="min-w-0 truncate text-sm font-semibold">{organization.name}</p>
+          <LookSwitch key={theme} theme={theme} className="ml-auto mr-2 inline-flex shrink-0" />
           <form action={logout}>
             <button type="submit" className="btn btn-ghost btn-sm">
               <IconLogout size={14} />

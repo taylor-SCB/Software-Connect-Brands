@@ -68,7 +68,7 @@ export function CloseOutButton({
   }
 
   return (
-    <div className="w-full space-y-3 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
+    <div className="w-full space-y-3 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4">
       <p className="text-sm font-medium">Close out {projectName}?</p>
 
       {openItems.length === 0 ? (

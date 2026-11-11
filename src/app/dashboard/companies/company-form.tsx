@@ -6,6 +6,7 @@ import { ImageUploadField } from "@/components/image-upload-field";
 import { IndustryPicker, type IndustryPickList } from "@/components/industry-picker";
 import type { ActionState } from "@/lib/forms";
 import { CONTACT_STATUS_LABELS, START_STATUSES } from "@/lib/constants";
+import { RepField, type RepOption } from "@/components/rep-select";
 
 type CompanyDefaults = {
   id?: string;
@@ -19,6 +20,7 @@ type CompanyDefaults = {
   status?: string;
   industries?: string[];
   companyTypes?: string[];
+  ownerId?: string | null;
 };
 
 export function CompanyForm({
@@ -26,11 +28,13 @@ export function CompanyForm({
   pickList,
   defaults = {},
   submitLabel,
+  reps = [],
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   pickList: IndustryPickList;
   defaults?: CompanyDefaults;
   submitLabel: string;
+  reps?: RepOption[];
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
 
@@ -90,7 +94,7 @@ export function CompanyForm({
           defaultValue={defaults.website ?? ""}
           hint="https:// is added automatically."
         />
-        <div className="hidden sm:block" />
+        <RepField ownerId={defaults.ownerId ?? null} reps={reps} />
         <Field label="City" name="city" placeholder="Austin" defaultValue={defaults.city ?? ""} />
         <Field label="State" name="state" placeholder="TX" defaultValue={defaults.state ?? ""} />
       </div>

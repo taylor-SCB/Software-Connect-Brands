@@ -17,6 +17,15 @@
  * the scrollbar on top, and nobody disappearing when a status is moved by
  * hand.
  *
+ * "audit fixes (UX review)" steps (Nov 10, 2026), at the end where their
+ * data is: the panel's People roles fit a 390px phone with Do Not List on
+ * screen and the greyed-out boxes visible in Light; a meeting booked ahead
+ * reads "Next meeting" on the tile, never "last"; a rep saved in the panel
+ * shows on the tile's rep picker without a reload; the panel's Stage menu
+ * saves the panel's edits first (a refused save keeps it open and moves
+ * nothing, and the convert prompt offers the saved name); every Lead Label
+ * chip and the suggested chip read at 4.5:1 in Dark and Light, unfaded.
+ *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace and deletes it on the next run. Never point
@@ -70,6 +79,88 @@ async function until(check, what, ms = 10000) {
   throw new Error(`timed out waiting for ${what}`);
 }
 const one = async (text, params) => (await sql(text, params)).rows[0];
+
+async function settle(page) {
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity),
+  );
+}
+
+/* An element's words against what is really behind them (its own fill,
+ * else its ancestors' blended down to the page, as looks.cjs reads them),
+ * and the lowest opacity on it or any ancestor. Colours go through a 1x1
+ * canvas so color-mix() comes back as plain RGBA. */
+async function textContrast(locator) {
+  return locator.evaluate((el) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const rgba = (css) => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      return [r, g, b, a / 255];
+    };
+    const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+    const lum = ([r, g, b]) => {
+      const ch = (v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+    };
+    let opacity = 1;
+    for (let node = el; node; node = node.parentElement) opacity = Math.min(opacity, parseFloat(getComputedStyle(node).opacity));
+    const layers = [];
+    for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+      const s = getComputedStyle(node);
+      let c = rgba(s.backgroundColor);
+      if (c[3] === 0 && s.backgroundImage.startsWith("linear-gradient")) {
+        const first = s.backgroundImage.match(/(rgba?\([^)]*\)|color\([^)]*\)|#[0-9a-f]{3,8})/i);
+        if (first) c = rgba(first[1]);
+      }
+      if (c[3] > 0) layers.push(c);
+      if (c[3] >= 0.999) break;
+    }
+    const bg = layers.reverse().reduce((acc, layer) => over(layer, acc), rgba(getComputedStyle(document.documentElement).backgroundColor));
+    const fg = over(rgba(getComputedStyle(el).color), bg);
+    const [x, y] = [lum(fg), lum(bg)].sort((p, q) => q - p);
+    return { ratio: +((x + 0.05) / (y + 0.05)).toFixed(2), opacity, text: el.textContent.trim() };
+  });
+}
+
+/* The strongest contrast any pixel of a small picture has against its
+ * top-left pixel — how visible a drawn control is on what it sits on. */
+async function pixelContrast(page, png) {
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const lum = (r, g, b) => {
+      const ch = (v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+    };
+    const bg = lum(d[0], d[1], d[2]);
+    let best = 1;
+    for (let i = 0; i < d.length; i += 4) {
+      const l = lum(d[i], d[i + 1], d[i + 2]);
+      best = Math.max(best, (Math.max(l, bg) + 0.05) / (Math.min(l, bg) + 0.05));
+    }
+    return +best.toFixed(2);
+  }, png.toString("base64"));
+}
 
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE '${SLUG}%'`);
@@ -160,7 +251,8 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   assert.equal(await meetingSet.locator("[data-testid=pipeline-tile]").count(), 2);
   assert.equal(await patTile.locator("[data-testid=lead-label]").first().getAttribute("data-label"), "N/A");
   const naStyle = await patTile.locator("[data-testid=lead-label]").first().evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
-  assert.deepEqual(naStyle, ["rgb(212, 212, 216)", "rgb(220, 38, 38)"], "N/A is light gray with red letters");
+  // The red is a deeper red since the UX review (5.6:1 on the gray; #dc2626 was 3.3:1).
+  assert.deepEqual(naStyle, ["rgb(212, 212, 216)", "rgb(153, 27, 27)"], "N/A is light gray with red letters");
   await shot(page, "01-board");
 
   log("the stage menu on a first-column tile opens fully on screen, clear of the sidebar (the cut-off bug)");
@@ -412,6 +504,9 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.reload();
   const top = page.locator("[data-testid=pipeline-top-scroll]");
+  // The bar is sized once the page has hydrated; scrolling it before that
+  // does nothing (Nov 10, 2026: the board's extra controls made this a race).
+  await until(async () => (await top.evaluate((el) => el.scrollWidth - el.clientWidth)) > 250, "the top bar is sized");
   await top.evaluate((el) => {
     el.scrollLeft = 300;
     el.dispatchEvent(new Event("scroll"));
@@ -425,6 +520,234 @@ const one = async (text, params) => (await sql(text, params)).rows[0];
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(overflow <= 1, `page scrolls sideways by ${overflow}px`);
   await shot(page, "06-phone");
+
+  const panelOf = async (tileLocator) => {
+    await tileLocator.locator("[data-testid=tile-open]").click();
+    await panel.locator("[data-testid=panel-person]").first().waitFor();
+    await settle(page);
+  };
+  const oldOpp = (
+    await one(
+      `SELECT o.id FROM "Opportunity" o JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE oc."contactId"='op_old1' AND o."organizationId"=$1`,
+      [org],
+    )
+  ).id;
+
+  log("audit fixes (UX review): on a phone the panel's People roles fit — Do Not List on screen — and greyed-out boxes show in Light");
+  // A long name on Old Mia's tile as well: it wraps instead of pushing the boxes off.
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('op_long',$1,'Maximiliana Featherstonehaugh',now())`, [org]);
+  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role) VALUES ('op_oc_long',$1,'op_long','ASSOCIATED')`, [oldOpp]);
+  for (const look of ["light", "dark"]) {
+    await sql(`UPDATE "User" SET theme=$2 WHERE email=$1`, [EMAIL, look]);
+    await page.goto(`${BASE}/dashboard/deals`);
+    await panelOf(page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`));
+    await panel.locator("[data-testid=panel-person][data-name='Maximiliana Featherstonehaugh']").waitFor();
+    const fit = await panel.evaluate((aside) => {
+      const table = aside.querySelector("[data-testid=panel-people]");
+      const body = table.closest(".overflow-y-auto");
+      const edge = body.getBoundingClientRect().right - parseFloat(getComputedStyle(body).paddingRight);
+      const rights = [...aside.querySelectorAll("[data-testid=role-HIDDEN]")].map((box) => box.getBoundingClientRect().right);
+      return { table: table.scrollWidth, room: table.parentElement.clientWidth, right: Math.max(...rights), edge, page: document.documentElement.scrollWidth };
+    });
+    // Before: the table was 453px+ in a 348px panel and Do Not List sat off-screen.
+    assert.ok(fit.table <= fit.room + 1, `${look}: the People table is ${fit.table}px in ${fit.room}px`);
+    assert.ok(fit.right <= fit.edge + 1 && fit.right <= 390, `${look}: Do Not List is off-screen (${fit.right} vs ${fit.edge})`);
+    assert.ok(fit.page <= 391, `${look}: the page scrolls sideways (${fit.page})`);
+    const grey = panel.locator("[data-testid=panel-person] input[type=checkbox]:disabled").first();
+    const greyInfo = await grey.evaluate((el) => {
+      let opacity = 1;
+      for (let node = el; node; node = node.parentElement) opacity = Math.min(opacity, parseFloat(getComputedStyle(node).opacity));
+      return opacity;
+    });
+    assert.equal(greyInfo, 1, `${look}: a greyed-out box is faded on top of the browser's own disabled look`);
+    const box = await grey.boundingBox();
+    const seen = await pixelContrast(page, await page.screenshot({ clip: { x: box.x - 3, y: box.y - 3, width: box.width + 6, height: box.height + 6 } }));
+    // Light was 1.13:1 at 30% opacity on white, all but invisible.
+    assert.ok(seen >= 1.4, `${look}: a greyed-out box is ${seen}:1 against the panel`);
+    await shot(page, `07-phone-people-${look}`);
+    await panel.locator("[data-testid=panel-close]").click();
+    await panel.waitFor({ state: "detached" });
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const zone = (await one(`SELECT "timeZone" FROM "Organization" WHERE id=$1`, [org])).timeZone || "America/Chicago";
+  const day = (date) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: zone }).format(date);
+
+  log("audit fixes (UX review): a meeting booked ahead reads as the next one on the tile, never the last");
+  const patOpen = (
+    await one(
+      `SELECT o.id FROM "Opportunity" o JOIN "OpportunityContact" oc ON oc."opportunityId"=o.id WHERE oc."contactId"='op_pat' AND o."dealId" IS NULL AND o."organizationId"=$1`,
+      [org],
+    )
+  ).id;
+  const held = (await one(`SELECT max("on") AS on FROM "OpportunityMeeting" WHERE "opportunityId"=$1`, [patOpen])).on;
+  const ahead = new Date(Date.now() + 9 * 86400000);
+  await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on") VALUES ('op_m_ahead',$1,$2)`, [patOpen, ahead]);
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_soon',$1,'Sunny Soon','MEETING_SET',now())`, [org]);
+  await sql(`INSERT INTO "Opportunity" (id,"organizationId",title,stage,"createdAt","updatedAt") VALUES ('op_opp_soon',$1,'Sunny Soon','MEETING_SET',now(),now())`, [org]);
+  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_oc_soon','op_opp_soon','op_soon','PRIMARY',true)`);
+  const soonOn = new Date(Date.now() + 5 * 86400000);
+  await sql(`INSERT INTO "OpportunityMeeting" (id,"opportunityId","on") VALUES ('op_m_soon','op_opp_soon',$1)`, [soonOn]);
+  await page.goto(`${BASE}/dashboard/deals`);
+  const patNow = page.locator(`[data-testid=pipeline-tile][data-id='${patOpen}']`);
+  await patNow.waitFor();
+  // Before: "2 meetings · last <the booked date>".
+  assert.ok(!(await patNow.innerText()).includes(`last ${day(ahead)}`), "the booked meeting is called the last one");
+  assert.equal((await patNow.getByTestId("tile-meeting-last").innerText()).trim(), `2 meetings · last ${day(held)}`);
+  assert.equal((await patNow.getByTestId("tile-meeting-next").innerText()).trim(), `Next meeting ${day(ahead)}`);
+  const soonTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_soon']");
+  assert.equal(await soonTile.getByTestId("tile-meeting-last").count(), 0, "a tile whose only meeting is ahead has no last meeting");
+  assert.equal((await soonTile.getByTestId("tile-meeting-next").innerText()).trim(), `Next meeting ${day(soonOn)}`);
+  assert.equal(await page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`).getByTestId("tile-meeting-next").count(), 0, "nothing booked ahead, no next line");
+
+  log("audit fixes (UX review): a rep saved in the panel shows on the tile's rep picker straight away, no reload");
+  const nicId = "usr_opps_nic";
+  const taylor = await one(`SELECT id, "passwordHash" FROM "User" WHERE email=$1`, [EMAIL]);
+  await sql(`INSERT INTO "User" (id,name,email,"passwordHash",role,"organizationId") VALUES ($1,'Nic Rep','test-opps-nic@example.com',$2,'MEMBER',$3)`, [
+    nicId,
+    taylor.passwordHash,
+    org,
+  ]);
+  await page.goto(`${BASE}/dashboard/deals`);
+  const abbyTile = page.locator("[data-testid=pipeline-tile]", { hasText: "Abby Peters" });
+  const tileRep = abbyTile.locator("[data-testid=deal-owner] select");
+  const abbyRep = (await one(`SELECT "ownerId" FROM "Deal" WHERE "contactId"='op_abby'`)).ownerId;
+  assert.notEqual(abbyRep, nicId);
+  assert.equal(await tileRep.inputValue(), abbyRep ?? "");
+  await panelOf(abbyTile);
+  await panel.locator("[data-testid=panel-rep]").selectOption(nicId);
+  await panel.locator("[data-testid=panel-save]").click();
+  await panel.waitFor({ state: "detached" });
+  await until(async () => (await one(`SELECT "ownerId" FROM "Deal" WHERE "contactId"='op_abby'`)).ownerId === nicId, "the panel saved Nic");
+  // Before: the tile kept showing Taylor until a full reload.
+  await until(async () => (await tileRep.inputValue()) === nicId, "the tile's rep picker shows Nic");
+  assert.equal(await tileRep.evaluate((select) => select.options[select.selectedIndex].text), "Nic Rep");
+
+  log("audit fixes (UX review): the panel's Stage menu saves the panel's edits first; a refused save keeps the panel open and moves nothing");
+  const oldTile = page.locator(`[data-testid=pipeline-tile][data-id='${oldOpp}']`);
+  await panelOf(oldTile);
+  await panel.locator("[data-testid=panel-title]").fill("Old shared job");
+  await panel.locator("[data-testid=lead-label-picker]").click();
+  await page.locator("[data-testid=lead-label-menu] [data-testid='lead-label-option-Client']").click();
+  await panel.locator("[data-testid=tile-move]").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_COMPLETED]").click();
+  await panel.waitFor({ state: "detached" });
+  // Before: the panel closed, the stage moved and the name and label were thrown away.
+  await until(async () => (await one(`SELECT stage FROM "Opportunity" WHERE id=$1`, [oldOpp])).stage === "MEETING_COMPLETED", "moved");
+  assert.deepEqual({ ...(await one(`SELECT title, "leadLabel" FROM "Opportunity" WHERE id=$1`, [oldOpp])) }, { title: "Old shared job", leadLabel: "Client" });
+  const moved = page.locator(`[data-testid=pipeline-column-MEETING_COMPLETED] [data-testid=pipeline-tile][data-id='${oldOpp}']`);
+  await moved.waitFor();
+  await until(async () => (await moved.getAttribute("data-title")) === "Old shared job", "the tile shows the saved name");
+  assert.equal(await moved.locator("[data-testid=lead-label]").first().getAttribute("data-label"), "Client");
+  // A save that can't go through: the panel stays open with its message and nothing moves.
+  await panelOf(moved);
+  const primaryBox = panel.locator("[data-testid=panel-person] [data-testid=role-PRIMARY]:checked");
+  const primaryName = await primaryBox.locator("xpath=ancestor::tr").getAttribute("data-name");
+  await primaryBox.uncheck();
+  await panel.locator("[data-testid=tile-move]").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-MEETING_SET]").click();
+  await panel.locator("[data-testid=panel-error]").getByText(`Tick Primary POC, Associated POC or Do Not List for ${primaryName}`).waitFor();
+  assert.equal(await panel.count(), 1, "the panel stays open");
+  assert.equal((await one(`SELECT stage FROM "Opportunity" WHERE id=$1`, [oldOpp])).stage, "MEETING_COMPLETED");
+  // Ticked again and renamed, then into Quote Sent: the edits save and the
+  // convert prompt offers the new name; Cancel leaves it a non-deal.
+  await panel.locator(`[data-testid=panel-person][data-name='${primaryName}'] [data-testid=role-PRIMARY]`).check();
+  await panel.locator("[data-testid=panel-title]").fill("Old shared job two");
+  await panel.locator("[data-testid=tile-move]").click();
+  await page.locator("[data-testid=tile-move-menu] [data-testid=tile-move-QUOTE_SENT]").click();
+  await panel.waitFor({ state: "detached" });
+  await convert.waitFor();
+  assert.equal((await convert.locator(".eyebrow").first().textContent()).trim(), "Old shared job two");
+  await convert.locator("[data-testid=convert-cancel]").click();
+  await convert.waitFor({ state: "detached" });
+  assert.equal((await one(`SELECT title FROM "Opportunity" WHERE id=$1`, [oldOpp])).title, "Old shared job two");
+  assert.equal((await one(`SELECT "dealId" FROM "Opportunity" WHERE id=$1`, [oldOpp])).dealId, null);
+
+  log("audit fixes (UX review): every Lead Label chip and the suggested chip read at 4.5:1 in Dark and Light, and the suggestion isn't faded");
+  // Two tiles with no label that the rules suggest one for: Residential
+  // (no company, a personal email) and Vendor (a Distributor's person).
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"companyTypes","updatedAt") VALUES ('op_dist',$1,'Dist Supply','{Distributor}',now())`, [org]);
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,email,status,"updatedAt") VALUES
+       ('op_hal',$1,NULL,'Hal Homeowner','hal@gmail.com','MEETING_SET',now()), ('op_dana',$1,'op_dist','Dana Distro','dana@dist.test','MEETING_SET',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"createdAt","updatedAt") VALUES
+       ('op_opp_hal',$1,'Hal Homeowner','MEETING_SET',now(),now()), ('op_opp_dana',$1,'Dana Distro','MEETING_SET',now(),now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES
+       ('op_oc_hal','op_opp_hal','op_hal','PRIMARY',true), ('op_oc_dana','op_opp_dana','op_dana','PRIMARY',true)`,
+  );
+  const halTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_hal']");
+  const danaTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_dana']");
+  const readable = (what, result) => {
+    assert.ok(result.ratio >= 4.5, `${what} "${result.text}" is ${result.ratio}:1`);
+    assert.equal(result.opacity, 1, `${what} "${result.text}" is faded`);
+  };
+  for (const look of ["dark", "light"]) {
+    await sql(`UPDATE "User" SET theme=$2 WHERE email=$1`, [EMAIL, look]);
+    await page.goto(`${BASE}/dashboard/deals`);
+    await halTile.waitFor();
+    await settle(page);
+    // The picker lists every chip there is: N/A, the five built-ins and Golf Buddy.
+    await halTile.locator("[data-testid=lead-label-picker]").click();
+    const chips = page.locator("[data-testid=lead-label-menu] [data-testid=lead-label]");
+    await chips.first().waitFor();
+    assert.deepEqual(await chips.evaluateAll((els) => els.map((el) => el.dataset.label)), [
+      "N/A",
+      "Residential",
+      "Client",
+      "Vendor",
+      "Software Integration",
+      "Reseller",
+      "Golf Buddy",
+    ]);
+    // Before: white on Client 2.28:1, Residential 2.8:1, N/A 3.27:1.
+    for (let i = 0; i < (await chips.count()); i += 1) readable(`${look} chip`, await textContrast(chips.nth(i)));
+    await page.keyboard.press("Escape");
+    await page.locator("[data-testid=lead-label-menu]").waitFor({ state: "detached" });
+    // Before: "Residential?" at 60% opacity, 1.88:1 on white.
+    assert.equal(await halTile.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Residential");
+    assert.equal(await danaTile.locator("[data-testid=suggested-label]").getAttribute("data-label"), "Vendor");
+    readable(`${look} suggestion on a tile`, await textContrast(halTile.getByTestId("suggested-label-accept")));
+    readable(`${look} suggestion on a tile`, await textContrast(danaTile.getByTestId("suggested-label-accept")));
+    await shot(page, `08-labels-${look}`);
+    await panelOf(danaTile);
+    readable(`${look} suggestion in the panel`, await textContrast(panel.getByTestId("suggested-label-accept")));
+    readable(`${look} chip in the panel`, await textContrast(panel.locator("[data-testid=lead-label]").first()));
+    await panel.locator("[data-testid=panel-close]").click();
+    await panel.waitFor({ state: "detached" });
+  }
+  await sql(`UPDATE "User" SET theme='dark' WHERE email=$1`, [EMAIL]);
+
+  log("audit fixes (UX review): a long label never covers a short title, and a long name stays inside its tile");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,status,"updatedAt") VALUES ('op_longtile',$1,'Maximiliana Featherstonehaugh-Wolfeschlegelsteinhausen','MEETING_SET',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"leadLabel","createdAt","updatedAt") VALUES ('op_opp_long',$1,'Lab Soft','MEETING_SET','Software Integration',now(),now())`,
+    [org],
+  );
+  await sql(`INSERT INTO "OpportunityContact" (id,"opportunityId","contactId",role,"fromMeeting") VALUES ('op_oc_longtile','op_opp_long','op_longtile','PRIMARY',true)`);
+  await page.goto(`${BASE}/dashboard/deals`);
+  const longTile = page.locator("[data-testid=pipeline-tile][data-id='op_opp_long']");
+  await longTile.waitFor();
+  const fit = await longTile.evaluate((tile) => {
+    const box = tile.getBoundingClientRect();
+    const title = tile.querySelector("[data-testid=tile-open]");
+    const t = title.getBoundingClientRect();
+    const c = tile.querySelector("[data-testid=lead-label-picker]").getBoundingClientRect();
+    const overlap = c.left < t.right && c.right > t.left && c.top < t.bottom && c.bottom > t.top;
+    const name = tile.querySelector("[data-testid=tile-people] a").getBoundingClientRect();
+    return { overlap, titleWidth: Math.round(t.width), titleText: title.textContent, nameRight: Math.round(name.right), tileRight: Math.round(box.right) };
+  });
+  assert.equal(fit.overlap, false, "the label chip sits clear of the title");
+  assert.ok(fit.titleWidth >= 60, `the title is squeezed to ${fit.titleWidth}px`);
+  assert.ok(fit.nameRight <= fit.tileRight, `the name runs to ${fit.nameRight}px, past the tile's edge at ${fit.tileRight}px`);
 
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED. Screenshots in ${OUT}`);

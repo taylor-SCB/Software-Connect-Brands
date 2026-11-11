@@ -93,7 +93,7 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
       },
     }),
     loadWorkspaceUsers(organizationId),
-    prisma.leadLabelOption.findMany({ where: { organizationId }, orderBy: { name: "asc" }, select: { name: true } }),
+    prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, orderBy: { name: "asc" }, select: { name: true } }),
   ]);
   if (!opportunity) return { error: "That opportunity is no longer on the board" };
   const deal = opportunity.deal;

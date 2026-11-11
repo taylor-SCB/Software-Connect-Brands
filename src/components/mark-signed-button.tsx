@@ -48,7 +48,7 @@ export function MarkSignedButton({
   }
 
   return (
-    <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3 text-left" data-testid="mark-signed-form">
+    <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3 text-left" data-testid="mark-signed-form">
       <p className="text-xs font-medium">Record a signature you got another way</p>
       <label className="block text-xs">
         <span className="faint block">Who signed</span>

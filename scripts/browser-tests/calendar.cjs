@@ -73,8 +73,12 @@ async function signAs(browser, token, name) {
   await context.close();
 }
 // Every date in this suite is inside one fixed month, so paging and the
-// month grid are exact rather than dependent on the day it is run.
-const MONTH = "2026-11";
+// month grid are exact rather than dependent on the day it is run. Moved
+// from November 2026 to August 2027 on Nov 10, 2026, once November was no
+// longer ahead: both start on a Sunday, and the months before them line up
+// (Oct/Jul start on a Thursday, Sep/Jun on a Tuesday). Move it again,
+// keeping that alignment, before August 2027.
+const MONTH = "2027-08";
 const day = (n) => `${MONTH}-${String(n).padStart(2, "0")}`;
 // A day that has definitely gone, for the overdue marks. The fixed month
 // above is in the future, which is the point of it.
@@ -235,7 +239,7 @@ function daysAgo(n) {
   log("the calendar shows both installs in the right month");
   await page.goto(`${BASE}/dashboard/calendar?on=${day(1)}`);
   await page.getByRole("heading", { name: "Calendar" }).waitFor();
-  await page.getByText("November 2026").waitFor();
+  await page.getByText("August 2027").waitFor();
   for (const n of [2, 3, 4]) {
     const cell = page.locator(`[data-testid=month-day][data-day="${day(n)}"]`);
     assert.equal(await cell.getAttribute("data-count"), "1", `${day(n)} carries the three-day roofing install`);
@@ -336,9 +340,9 @@ function daysAgo(n) {
 
   log("paging goes back a month and forward again, and Today comes home");
   await page.locator("[data-testid=cal-prev]").click();
-  await page.getByText("October 2026").waitFor();
+  await page.getByText("July 2027").waitFor();
   await page.locator("[data-testid=cal-next]").click();
-  await page.getByText("November 2026").waitFor();
+  await page.getByText("August 2027").waitFor();
   await page.locator("[data-testid=cal-today]").click();
   // Today clears the day from the address bar: the server's today is
   // the workspace's today.
@@ -348,38 +352,38 @@ function daysAgo(n) {
   // 1st, which starts in the month before, and Week -> Month then read
   // that Sunday's month. Two round trips from September landed in July.
   log("Month / Week / Team round trips stay in the same month");
-  await page.goto(`${BASE}/dashboard/calendar?on=2026-09-30`);
-  await page.getByText("September 2026").first().waitFor();
+  await page.goto(`${BASE}/dashboard/calendar?on=2027-06-30`);
+  await page.getByText("June 2027").first().waitFor();
   for (let round = 0; round < 2; round += 1) {
     await page.locator("[data-testid=cal-view-week]").click();
     await page.locator("[data-testid=cal-view-week][aria-selected=true]").waitFor();
-    await page.locator("[data-testid=week-day][data-day='2026-09-30']").waitFor();
+    await page.locator("[data-testid=week-day][data-day='2027-06-30']").waitFor();
     await page.locator("[data-testid=cal-view-team]").click();
     await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
     await page.locator("[data-testid=cal-view-month]").click();
     await page.locator("[data-testid=cal-view-month][aria-selected=true]").waitFor();
-    await page.getByText("September 2026").first().waitFor();
+    await page.getByText("June 2027").first().waitFor();
   }
-  assert.equal(new URL(page.url()).searchParams.get("on"), "2026-09-30");
+  assert.equal(new URL(page.url()).searchParams.get("on"), "2027-06-30");
 
   log("a week paged forward and switched to Month shows the month the day is in");
-  await page.goto(`${BASE}/dashboard/calendar?view=week&on=2026-09-30`);
+  await page.goto(`${BASE}/dashboard/calendar?view=week&on=2027-06-30`);
   await page.locator("[data-testid=cal-next]").click();
-  await page.waitForURL(/on=2026-10-07/);
+  await page.waitForURL(/on=2027-07-07/);
   await page.locator("[data-testid=cal-view-month]").click();
-  await page.getByText("October 2026").first().waitFor();
+  await page.getByText("July 2027").first().waitFor();
 
   log("a filter ticked while the next month is still loading keeps the new month");
-  await page.goto(`${BASE}/dashboard/calendar?on=2026-10-15`);
-  await page.getByText("October 2026").first().waitFor();
+  await page.goto(`${BASE}/dashboard/calendar?on=2027-07-15`);
+  await page.getByText("July 2027").first().waitFor();
   await page.locator("[data-testid=cal-next]").click();
   await page.locator("[data-testid=cal-just-me]").click();
   await page.waitForURL((url) => url.searchParams.has("users"));
-  await page.getByText("November 2026").first().waitFor();
+  await page.getByText("August 2027").first().waitFor();
   await page.waitForTimeout(800);
   // The 1st, or today when November 2026 is the month it is run in (paging
   // into the current month lands on today).
-  assert.match(new URL(page.url()).searchParams.get("on"), /^2026-11-\d\d$/, "still November");
+  assert.match(new URL(page.url()).searchParams.get("on"), /^2027-08-\d\d$/, "still August");
   assert.ok(new URL(page.url()).searchParams.get("users"), "Just me survived the pending month change");
 
   log("the week view lists the days in full");
@@ -429,7 +433,7 @@ function daysAgo(n) {
   await page.goto(`${BASE}/dashboard/calendar?on=${day(1)}`);
   assert.match(
     await page.locator("[data-testid=overlap-note]").textContent(),
-    /Ridgeline Roofing is in 2 places on Nov 2, 2026/,
+    /Ridgeline Roofing is in 2 places on Aug 2, 2027/,
     "the double booking is called out, with the day in plain English",
   );
 
@@ -497,6 +501,8 @@ function daysAgo(n) {
   // Already been, below the later booking in Coming up.
   const firstInstall = page.locator(`[data-testid=event-card][data-start="${day(2)}"]`).filter({ hasText: "Roofing — " }).first();
   await firstInstall.locator("[data-testid=event-delete]").click();
+  // The trash asks first (UX review, Nov 10, 2026).
+  await firstInstall.locator("[data-testid=event-confirm-yes]").click();
   // "Coming up" is already on the screen, so wait for the list to
   // actually shrink rather than for a heading that never moved.
   await page

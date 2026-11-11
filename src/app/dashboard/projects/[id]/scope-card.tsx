@@ -172,7 +172,7 @@ export function ScopeCard({
         )}
 
         {scope.tagTotals.length > 0 && (
-          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-[rgb(255_255_255/0.06)] pt-3 text-xs">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-[var(--hairline-2)] pt-3 text-xs">
             {scope.tagTotals.map((entry) => (
               <span key={entry.tag} className="muted">
                 {entry.label} <span className="num font-medium">{formatCents(entry.cents)}</span>
@@ -198,7 +198,7 @@ export function ScopeCard({
         </div>
 
         {adjust.open && (
-          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-2.5">
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-2.5">
             <label className="block text-xs">
               <span className="faint block">Add or take off</span>
               <input
@@ -246,7 +246,7 @@ export function ScopeCard({
         )}
 
         {open && (
-          <div className="space-y-3 border-t border-[rgb(255_255_255/0.06)] pt-3">
+          <div className="space-y-3 border-t border-[var(--hairline-2)] pt-3">
             <div>
               <p className="eyebrow mb-2">Rows on this scope</p>
               {scope.lineItems.length === 0 ? (

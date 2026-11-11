@@ -102,7 +102,9 @@ export async function createQuote(_prev: ActionState, formData: FormData): Promi
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard/deals");
   revalidatePath(`/dashboard/contacts/${contact.id}`);
-  redirect(`/dashboard/quotes/${quote.id}`);
+  // Build Quote with "Draft lines from the meeting" ticked opens the new
+  // quote drafting them (Nov 10, 2026).
+  redirect(`/dashboard/quotes/${quote.id}${formData.get("draft") === "meeting" ? "?draft=meeting" : ""}`);
 }
 
 const QUOTE_META_FIELDS = ["title", "template", "introNote", "terms", "validUntil"] as const;
@@ -810,7 +812,23 @@ export async function saveQuotePaymentSchedule(input: {
   return { success: "Payment table saved", saved };
 }
 
+// Said when a quote with no saved line items is marked sent: the
+// customer's link prints what is saved, so it would open on an empty $0.00
+// quote (UX review, Nov 10, 2026).
+const NO_SAVED_LINES_MESSAGE =
+  "Add a line item and save it before marking this quote sent. The customer's link shows only saved lines.";
+
 export async function setQuoteStatus(formData: FormData) {
+  await changeQuoteStatus(formData);
+}
+
+// Mark as sent, with the reason on screen when it won't (no saved lines).
+export async function markQuoteSent(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  formData.set("status", "SENT");
+  return changeQuoteStatus(formData);
+}
+
+async function changeQuoteStatus(formData: FormData): Promise<ActionState> {
   const { organizationId, userId } = await requireSession();
 
   const parsed = z
@@ -822,14 +840,17 @@ export async function setQuoteStatus(formData: FormData) {
       quoteId: formData.get("quoteId"),
       status: formData.get("status"),
     });
-  if (!parsed.success) return;
+  if (!parsed.success) return { error: "Missing quote reference" };
 
   const { quoteId, status } = parsed.data;
   const quote = await prisma.quote.findFirst({
     where: { id: quoteId, organizationId },
-    select: { dealId: true, contactId: true, status: true },
+    select: { dealId: true, contactId: true, status: true, _count: { select: { lineItems: true } } },
   });
-  if (!quote) return;
+  if (!quote) return { error: "Quote not found" };
+  // Every way into Sent goes through here, a post before the page's
+  // JavaScript loads included.
+  if (status === "SENT" && quote._count.lineItems === 0) return { error: NO_SAVED_LINES_MESSAGE };
 
   // Leaving Draft, its lines keep the pictures they show now (Taylor, Nov
   // 5: a sent quote keeps the picture it went out with) — only then: an
@@ -861,14 +882,18 @@ export async function setQuoteStatus(formData: FormData) {
   revalidatePath("/dashboard/calendar");
   revalidatePath(`/dashboard/contacts/${quote.contactId}`);
   revalidatePath("/dashboard");
+  return { success: status === "SENT" ? "Marked sent" : "Saved" };
 }
 
-export async function deleteQuote(formData: FormData) {
+// The Danger zone's DeleteQuoteButton, behind an "are you sure" (UX review,
+// Nov 10, 2026: one tap used to delete it, a sent quote included).
+export async function deleteQuote(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const { organizationId } = await requireSession();
   const id = idSchema.safeParse(formData.get("quoteId"));
-  if (!id.success) return;
+  if (!id.success) return { error: "Missing quote reference" };
 
-  await prisma.quote.deleteMany({ where: { id: id.data, organizationId } });
+  const deleted = await prisma.quote.deleteMany({ where: { id: id.data, organizationId } });
+  if (deleted.count === 0) return { error: "Quote not found" };
   revalidatePath("/dashboard/quotes");
   redirect("/dashboard/quotes");
 }

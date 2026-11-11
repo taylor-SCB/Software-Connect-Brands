@@ -370,7 +370,7 @@ export function CalendarToolbar({
       <FormSuccess message={copyState.success} />
 
       {adding && (
-        <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4">
           <EventForm
             choices={choices}
             defaults={{ startOn: view !== "month" && layout !== "log" ? focus : today }}
@@ -446,7 +446,7 @@ function Dropdown({
         className={`btn btn-sm ${count > 0 ? "btn-primary" : "btn-ghost"}`}
       >
         {label}
-        {count > 0 && <span className="num rounded-full bg-[rgb(255_255_255/0.2)] px-1.5 text-[0.65rem]">{count}</span>}
+        {count > 0 && <span className="num rounded-full bg-[var(--tint-5)] px-1.5 text-[0.65rem]">{count}</span>}
         <IconChevronDown size={12} className="opacity-70" />
       </button>
       {open && <div className="card popover absolute left-0 top-full z-30 mt-1 w-72 py-1">{children}</div>}
@@ -457,7 +457,7 @@ function Dropdown({
 function Row({ row, on, onToggle }: { row: Named; on: boolean; onToggle: () => void }) {
   return (
     <li>
-      <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+      <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
         <input type="checkbox" checked={on} onChange={onToggle} className="h-3.5 w-3.5 accent-[var(--brand)]" />
         <span className="min-w-0 flex-1 truncate">{row.name}</span>
         {on && <IconCheck size={11} className="text-[var(--ok)]" />}
@@ -469,7 +469,7 @@ function Row({ row, on, onToggle }: { row: Named; on: boolean; onToggle: () => v
 function ResetLine({ label, count, onReset }: { label: string; count: number; onReset: () => void }) {
   if (count === 0) return null;
   return (
-    <div className="border-t border-[var(--border)] px-3 py-1.5">
+    <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
       <button type="button" onClick={onReset} className="link text-xs">
         Reset {label.toLowerCase()}
       </button>
@@ -502,7 +502,7 @@ function MultiSelect({
   return (
     <Dropdown label={label} count={values.length} testId={testId}>
       {searchable && (
-        <div className="border-b border-[var(--border)] p-2">
+        <div className="border-b border-[var(--hairline-3)] p-2">
           <input
             type="search"
             value={query}
@@ -557,7 +557,7 @@ function SearchSelect({
 
   return (
     <Dropdown label={label} count={values.length} testId={testId} onOpenChange={setOpen}>
-      <div className="border-b border-[var(--border)] p-2">
+      <div className="border-b border-[var(--hairline-3)] p-2">
         <input
           type="search"
           value={query}

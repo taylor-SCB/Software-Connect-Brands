@@ -251,7 +251,7 @@ export function RatesheetForm({
             </div>
 
             {visibility === "PARTNER_SPECIFIC" && !editing && (
-              <div className="rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4">
                 <p className="text-sm font-semibold">Send to</p>
                 <p className="faint mt-0.5 mb-3 text-xs">
                   We don&apos;t email this yet — you&apos;ll get a link to copy and text or email yourself.

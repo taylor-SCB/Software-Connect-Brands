@@ -57,7 +57,7 @@ export function FollowUpPrompt({
 
   return (
     <div
-      className="space-y-2.5 rounded-lg border border-[var(--border-strong)] bg-[rgb(255_255_255/0.03)] p-3"
+      className="space-y-2.5 rounded-lg border border-[var(--border-strong)] bg-[var(--tint-2)] p-3"
       role="group"
       aria-label="Set a follow-up"
       data-testid="follow-up-prompt"

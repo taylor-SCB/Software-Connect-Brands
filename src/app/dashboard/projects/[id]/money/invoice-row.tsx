@@ -125,7 +125,7 @@ export function InvoiceRow({
       </div>
 
       {open && !row.settled && (
-        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-2.5">
+        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-2.5">
           <label className="block text-xs">
             <span className="faint block">Amount</span>
             <input

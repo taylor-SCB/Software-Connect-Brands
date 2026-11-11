@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import { useMemo, useRef, useState, useTransition } from "react";
 import { saveLineItems, type LineItemInput } from "../actions";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
@@ -23,6 +24,9 @@ import { FormError, FormSuccess } from "@/components/ui";
 import { SupplierCell, type SupplierOption } from "./supplier-cell";
 import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
+import { MeetingDraftButton } from "./meeting-draft";
+import { useReportUnsavedLines } from "./mark-sent";
+import type { DraftedLine } from "../ai-actions";
 import {
   customUnitIdOf,
   customUnitValue,
@@ -136,6 +140,12 @@ type Row = {
   // The picture the line holds, if any.
   imageToken: string | null;
   imageRemoved: boolean;
+  // Drafted from the meeting with no catalog product (Nov 10, 2026): it
+  // has no price until someone types one, and the save waits for it.
+  priceNeeded?: boolean;
+  // Why the AI drafted it, shown in the editor only (never saved: project
+  // notes print on the customer's copy).
+  draftNote?: string;
 };
 
 function picksOf(entries: VariationEntry[]) {
@@ -223,6 +233,30 @@ function rowDiscount(row: Row) {
   return resolveDiscount({ percent: null, cents: dollarsToCents(row.discountInput) }, gross);
 }
 
+// UX review, Nov 10, 2026. At 1440 the Qty, Value and Tag boxes were
+// squeezed to 24-40px ("16" read "1", $1,450 read "145", the tag "▾A"):
+// the table's automatic layout shrinks a column to its controls' smallest
+// width, and these had none of their own. They carry a minimum now, and
+// the cells' sides are a little tighter so the row still fits the card.
+// On a phone (below `sm`) each line is a block of its own — the product
+// across the top, then Qty / Value, Discount / Total, Tag / Supplier, each
+// with its name above it — instead of a table squeezed sideways with the
+// product names cut to six letters and the totals off the screen.
+const PHONE_CELL = "max-sm:border-0 max-sm:p-0";
+// Review follow-up: at 1280 those minimums left the product 126px beside
+// a picture ("4MP turret camera, white" cut off) and the row 22px past
+// the card. Tag, Supplier / Contractor and Service type now share one
+// column, one above the other below 2xl (a line's product, description
+// and notes already make it about that tall) and side by side from 2xl,
+// which hands the product name the width of a column. The name box keeps
+// 12rem, so on a tablet, where the table scrolls inside its card anyway,
+// a name is still readable.
+const TAG_BOX = "min-w-0 2xl:w-[8.5rem] 2xl:shrink-0";
+const SIDE_BOX = "min-w-0 2xl:w-40 2xl:shrink-0";
+function PhoneLabel({ children }: { children: React.ReactNode }) {
+  return <span className="label font-sans sm:hidden">{children}</span>;
+}
+
 export function LineItemsEditor({
   quoteId,
   initialLines,
@@ -234,6 +268,7 @@ export function LineItemsEditor({
   productLabels = {},
   units = [],
   draft = true,
+  meetingDraft = null,
 }: {
   quoteId: string;
   initialLines: EditorLine[];
@@ -253,6 +288,9 @@ export function LineItemsEditor({
   productLabels?: Record<string, LineProductLabels>;
   units?: EditorUnit[];
   draft?: boolean;
+  // "Draft lines from the meeting" (AI on, a draft quote whose deal came
+  // from a Pipeline opportunity); auto when Build Quote asked for it.
+  meetingDraft?: { auto: boolean } | null;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
   // Grows as products are added from the catalog.
@@ -290,6 +328,8 @@ export function LineItemsEditor({
   // Saved with the lines, and worked out on the server against them.
   const [quoteDiscount, setQuoteDiscount] = useState<DiscountState>(() => discountStateOf(initialDiscount));
   const [dirty, setDirty] = useState(false);
+  // Mark as sent in the header holds off while this is set.
+  useReportUnsavedLines(dirty);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();
   // Set by any edit made while a save is in flight, so finishing that save
@@ -420,6 +460,89 @@ export function LineItemsEditor({
     ]);
   }
 
+  // Lines drafted from the meeting notes, added unsaved for review: a
+  // catalog line at the catalog's price, a typed one at $0 marked
+  // "Price needed".
+  function addDraftedLines(lines: DraftedLine[]) {
+    if (lines.length === 0) return;
+    const added: Row[] = [];
+    for (const line of lines) {
+      if (line.kind === "catalog") {
+        const product = line.product;
+        if (product.labels) setLabelData((current) => ({ ...current, [product.id]: product.labels! }));
+        if (product.customUnitId && !unitOptions.some((unit) => unit.id === product.customUnitId)) {
+          setUnitOptions((current) => [
+            ...current,
+            { id: product.customUnitId!, name: product.customUnitName ?? "Your unit", tag: product.defaultTag, archived: true },
+          ]);
+        }
+        const term = splitTerm(
+          product.softwareRate === "PER_YEAR" && product.softwareTerm ? product.softwareTerm * 12 : product.softwareTerm,
+        );
+        added.push({
+          ...blankRow(),
+          productId: product.id,
+          name: product.name,
+          description: product.description,
+          draftNote: line.note,
+          quantityInput: String(line.quantity),
+          unitPriceInput: centsToDollarInput(product.unitPriceCents),
+          tag: product.defaultTag as LineItemTagValue,
+          serviceType: product.serviceType ?? "",
+          unitOfMeasure: product.unitOfMeasure ?? (product.customUnitId ? customUnitValue(product.customUnitId) : ""),
+          softwareRate: product.softwareRate ?? "",
+          termYearsInput: term.years,
+          termMonthsInput: term.months,
+          minPriceCents: product.minPriceCents ?? null,
+        });
+      } else {
+        added.push({
+          ...blankRow(),
+          name: line.name,
+          description: line.description,
+          draftNote: line.note,
+          quantityInput: String(line.quantity),
+          tag: line.tag,
+          priceNeeded: true,
+        });
+      }
+    }
+    setRows((current) => [...current, ...added]);
+    setDirty(true);
+    editedDuringSave.current = true;
+    setState({});
+  }
+
+  function blankRow(): Row {
+    return {
+      uid: nextUid(),
+      id: null,
+      productId: null,
+      name: "",
+      description: "",
+      projectNotes: "",
+      quantityInput: "1",
+      unitPriceInput: "0.00",
+      discountInput: "",
+      discountMode: "percent",
+      tag: "MATERIALS",
+      serviceType: "",
+      supplierCompanyId: null,
+      unitOfMeasure: "",
+      softwareRate: "",
+      termYearsInput: "",
+      termMonthsInput: "",
+      saveAsProduct: false,
+      minPriceCents: null,
+      picks: {},
+      savedVariations: [],
+      labelsTouched: false,
+      savedUnitLabel: null,
+      imageToken: null,
+      imageRemoved: false,
+    };
+  }
+
   // One label picked on a row.
   function pickLabel(uid: string, groupId: string, optionId: string) {
     const row = rows.find((item) => item.uid === uid);
@@ -527,6 +650,11 @@ export function LineItemsEditor({
       saveAsProduct: row.saveAsProduct && !row.id && !row.productId,
     }));
 
+    const unpriced = rows.findIndex((row) => row.priceNeeded && rowUnitCents(row) === 0);
+    if (unpriced >= 0) {
+      setState({ error: `Line ${unpriced + 1} needs a price: it was drafted from the meeting and isn't in your catalog.` });
+      return;
+    }
     const blank = payload.findIndex((line) => line.name.length === 0);
     if (blank >= 0) {
       setState({ error: `Line ${blank + 1} needs a product name.` });
@@ -604,25 +732,31 @@ export function LineItemsEditor({
         </label>
       )}
       <div className="overflow-x-auto">
-        <table className="table">
-          <thead>
+        <table className="table max-sm:block [&_td]:px-2 [&_th]:px-2" data-testid="line-items-table">
+          <thead className="max-sm:hidden">
             <tr>
               <th className="w-[42%]">Product</th>
               <th className="w-24 text-right">Qty</th>
               <th className="w-32 text-right">Value</th>
               <th className="w-36 text-right">Discount</th>
-              <th className="w-32 text-right">Total</th>
-              <th className="w-44">Tag</th>
-              {/* Internal. Never rendered on the customer's copy. */}
-              <th className="w-44">Supplier / Contractor</th>
-              {splitByService && <th className="w-44">Service type</th>}
+              <th className="w-24 text-right">Total</th>
+              {/* Tag, Supplier / Contractor (internal, never on the
+                  customer's copy) and Service type share a column: side
+                  by side from 2xl, one above the other below it. */}
+              <th className={`w-44 ${splitByService ? "2xl:w-[30.5rem]" : "2xl:w-80"}`} data-testid="line-pickers-head">
+                <span className="flex flex-col gap-0.5 2xl:flex-row 2xl:gap-2">
+                  <span className={TAG_BOX}>Tag</span>
+                  <span className={SIDE_BOX}>Supplier / Contractor</span>
+                  {splitByService && <span className={SIDE_BOX}>Service type</span>}
+                </span>
+              </th>
               {!readOnly && <th className="w-10" />}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="max-sm:block">
             {rows.length === 0 && (
-              <tr>
-                <td colSpan={(readOnly ? 7 : 8) + (splitByService ? 1 : 0)} className="faint py-8 text-center text-xs">
+              <tr className="max-sm:block">
+                <td colSpan={readOnly ? 6 : 7} className="faint py-8 text-center text-xs max-sm:block">
                   No line items yet. Add one from your catalog or start a blank line.
                 </td>
               </tr>
@@ -641,8 +775,12 @@ export function LineItemsEditor({
                     )
                   : null;
               return (
-                <tr key={row.uid} className="align-top">
-                  <td>
+                <tr
+                  key={row.uid}
+                  className="align-top max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:border-b max-sm:border-[var(--hairline)] max-sm:py-4"
+                  data-testid="line-row"
+                >
+                  <td className={`${PHONE_CELL} max-sm:col-span-2`}>
                     <div className="flex items-start gap-2">
                     {(() => {
                       const token = rowPicture(row);
@@ -658,7 +796,7 @@ export function LineItemsEditor({
                         />
                       ) : null;
                     })()}
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 sm:min-w-[12rem]">
                     <input
                       value={row.name}
                       onChange={(event) =>
@@ -691,6 +829,11 @@ export function LineItemsEditor({
                       disabled={readOnly}
                       className="input input-sm mt-1 border-transparent bg-transparent text-xs italic text-[var(--text-faint)]"
                     />
+                    {row.draftNote && (
+                      <p className="faint mt-0.5 px-2 text-[0.65rem]" data-testid="line-draft-note">
+                        Drafted from the meeting: {row.draftNote}
+                      </p>
+                    )}
 
                     {/* Only for a brand-new hand-typed line. A line that
                         was typed and already saved comes back with no
@@ -844,7 +987,8 @@ export function LineItemsEditor({
                     </div>
                     </div>
                   </td>
-                  <td>
+                  <td className={PHONE_CELL}>
+                    <PhoneLabel>Qty</PhoneLabel>
                     <input
                       value={row.quantityInput}
                       onChange={(event) =>
@@ -853,10 +997,11 @@ export function LineItemsEditor({
                       inputMode="decimal"
                       aria-label={`Line ${index + 1} quantity`}
                       disabled={readOnly}
-                      className="input input-sm num text-right"
+                      className="input input-sm num min-w-[4rem] text-right"
                     />
                   </td>
-                  <td>
+                  <td className={PHONE_CELL}>
+                    <PhoneLabel>Value</PhoneLabel>
                     <input
                       value={row.unitPriceInput}
                       onChange={(event) =>
@@ -865,8 +1010,13 @@ export function LineItemsEditor({
                       inputMode="decimal"
                       aria-label={`Line ${index + 1} unit value`}
                       disabled={readOnly}
-                      className="input input-sm num text-right"
+                      className="input input-sm num min-w-[6rem] text-right"
                     />
+                    {row.priceNeeded && rowUnitCents(row) === 0 && (
+                      <p className="mt-0.5 text-right text-[0.65rem] font-semibold text-[var(--danger)]" data-testid="line-price-needed">
+                        Price needed
+                      </p>
+                    )}
                     {/* Net of the line's discount: a discount can take a
                         line under the minimum as surely as a low price. */}
                     {row.minPriceCents !== null &&
@@ -886,8 +1036,9 @@ export function LineItemsEditor({
                         </p>
                       )}
                   </td>
-                  <td>
-                    <div className="flex items-center justify-end gap-1">
+                  <td className={PHONE_CELL}>
+                    <PhoneLabel>Discount</PhoneLabel>
+                    <div className="flex items-center gap-1 sm:justify-end">
                       <input
                         value={row.discountInput}
                         onChange={(event) => updateRow(row.uid, { discountInput: event.target.value })}
@@ -915,7 +1066,8 @@ export function LineItemsEditor({
                       </p>
                     )}
                   </td>
-                  <td className="num pt-3 text-right font-medium">
+                  <td className={`num pt-3 text-right font-medium ${PHONE_CELL}`} data-testid="line-total">
+                    <PhoneLabel>Total</PhoneLabel>
                     {formatCents(total)}
                     {/* What the line comes to over its whole term, so the
                         unit, the billing period and the term can be checked
@@ -929,14 +1081,17 @@ export function LineItemsEditor({
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td className={`${PHONE_CELL} max-sm:col-span-2`} data-testid="line-pickers">
+                    <div className="flex flex-col gap-1.5 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 2xl:flex-row 2xl:gap-2">
+                    <div className={TAG_BOX}>
+                    <PhoneLabel>Tag</PhoneLabel>
                     <select
                       value={row.tag}
                       onChange={(event) => changeTag(row.uid, event.target.value as LineItemTagValue)}
                       aria-label={`Line ${index + 1} tag`}
                       disabled={readOnly}
-                      className="select input-sm"
-                      style={{ color: TAG_COLORS[row.tag] }}
+                      className="select input-sm min-w-[8.5rem]"
+                      style={{ color: ink(TAG_COLORS[row.tag]) }}
                     >
                       {LINE_ITEM_TAGS.map((tag) => (
                         <option key={tag} value={tag}>
@@ -944,8 +1099,9 @@ export function LineItemsEditor({
                         </option>
                       ))}
                     </select>
-                  </td>
-                  <td>
+                    </div>
+                    <div className={SIDE_BOX}>
+                    <PhoneLabel>Supplier / Contractor</PhoneLabel>
                     <SupplierCell
                       value={row.supplierCompanyId}
                       options={supplierOptions}
@@ -956,9 +1112,10 @@ export function LineItemsEditor({
                       label={`Line ${index + 1} supplier`}
                       disabled={readOnly}
                     />
-                  </td>
+                    </div>
                   {splitByService && (
-                    <td>
+                    <div className={`${SIDE_BOX} max-sm:col-span-2`}>
+                      <PhoneLabel>Service type</PhoneLabel>
                       <select
                         value={row.serviceType}
                         onChange={(event) => updateRow(row.uid, { serviceType: event.target.value })}
@@ -972,10 +1129,12 @@ export function LineItemsEditor({
                           <option key={name} value={name}>{name}</option>
                         ))}
                       </select>
-                    </td>
+                    </div>
                   )}
+                    </div>
+                  </td>
                   {!readOnly && (
-                    <td className="pt-2.5">
+                    <td className={`pt-2.5 ${PHONE_CELL} max-sm:col-span-2 max-sm:text-right`}>
                       <button
                         type="button"
                         onClick={() => removeRow(row.uid)}
@@ -994,8 +1153,9 @@ export function LineItemsEditor({
       </div>
 
       {!readOnly && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
           <CatalogPicker onPick={addProductLine} />
+          {meetingDraft && <MeetingDraftButton quoteId={quoteId} auto={meetingDraft.auto} onLines={addDraftedLines} />}
           <button type="button" onClick={addBlankLine} className="btn btn-ghost btn-sm">
             <IconPlus size={13} />
             Blank line
@@ -1015,11 +1175,11 @@ export function LineItemsEditor({
         </div>
       )}
 
-      <div className="space-y-3 border-t border-[var(--border)] p-5">
+      <div className="space-y-3 border-t border-[var(--hairline-3)] p-5">
         <FormError message={state.error} />
         <FormSuccess message={state.success} />
 
-        <div className="space-y-1.5 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.03)] px-4 py-3" data-testid="quote-totals">
+        <div className="space-y-1.5 rounded-xl border border-[var(--border)] bg-[var(--tint-2)] px-4 py-3" data-testid="quote-totals">
           {/* Items / Line discounts / Subtotal / Discount on the whole quote
               / Quote total, each row only when there is something on it, so
               the figures always tie top to bottom. */}
@@ -1046,7 +1206,7 @@ export function LineItemsEditor({
               disabled={readOnly}
             />
           </div>
-          <div className="flex items-center justify-between border-t border-[var(--border)] pt-2">
+          <div className="flex items-center justify-between border-t border-[var(--hairline-3)] pt-2">
             <span className="text-sm font-semibold">Quote total</span>
             <span className="num text-xl font-semibold" data-testid="quote-total">
               {formatCents(totals.totalCents)}
@@ -1077,7 +1237,7 @@ export function LineItemsEditor({
               >
                 <p
                   className="text-[0.68rem] font-semibold"
-                  style={{ color: TAG_COLORS[tag] }}
+                  style={{ color: ink(TAG_COLORS[tag]) }}
                 >
                   {TAG_LABELS[tag]}
                 </p>

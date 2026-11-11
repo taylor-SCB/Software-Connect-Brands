@@ -118,6 +118,10 @@ model Organization {
   contacts              Contact[]
   deals                 Deal[]
   opportunities         Opportunity[]
+  reportSubscriptions   ReportSubscription[]
+  reportNarratives      ReportNarrative[]
+  // An open opportunity untouched this many days reads "gone quiet".
+  quietDays             Int                    @default(8)
   leadLabelOptions      LeadLabelOption[]
   notes                 Note[]
   activities            Activity[]
@@ -245,6 +249,13 @@ model User {
   ratesheetImportIssues RatesheetImportIssue[]
   ownedDeals            Deal[]                 @relation("DealOwner")
   ownedOpportunities    Opportunity[]          @relation("OpportunityOwner")
+  ownedContacts         Contact[]              @relation("ContactOwner")
+  createdContacts       Contact[]              @relation("ContactCreator")
+  ownedCompanies        Company[]              @relation("CompanyOwner")
+  createdCompanies      Company[]              @relation("CompanyCreator")
+  reportSubscriptions   ReportSubscription[]   @relation("ReportRecipient")
+  // "dark" (the original look), "light" or "bright"; null reads dark.
+  theme                 String?
   opportunityLogs       OpportunityLog[]
   statusChanges         StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
@@ -314,6 +325,14 @@ model Company {
   id             String        @id @default(cuid())
   organizationId String
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Who owns the account and who added it (Nov 10, 2026), as on Contact.
+  ownerId        String?
+  owner          User?         @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdById    String?
+  createdBy      User?         @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  // The latest touch on it or on any of its people (never a marketing
+  // send), kept by database triggers on Activity and Contact.
+  lastTouchAt    DateTime?
   name           String
   phone          String?
   email          String?
@@ -367,6 +386,10 @@ model Company {
   @@index([organizationId, updatedAt])
   @@index([organizationId, state])
   @@index([organizationId, favorite])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, createdById])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, lastTouchAt])
   @@index([industries], type: Gin)
   @@index([companyTypes], type: Gin)
   // No index on autoFilled: the "Auto-filled" toggle asks for a non-empty
@@ -406,6 +429,18 @@ model Contact {
   phoneLabel     ChannelLabel  @default(WORK)
   phone2         String?
   phone2Label    ChannelLabel  @default(PERSONAL)
+  // Who owns this person (Nov 10, 2026, Taylor): null reads Unassigned and
+  // nobody is given one automatically; an import can assign a whole file,
+  // and the list assigns up to 1,000 at a time.
+  ownerId        String?
+  owner          User?         @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  // Who added it, by hand or by import. createdAt is when.
+  createdById    String?
+  createdBy      User?         @relation("ContactCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  // The latest call, text, email or meeting logged on them (never a
+  // marketing send), kept by database triggers on Activity (migration
+  // 20261110171000_crm_data). Read by the lists' Activity filter.
+  lastTouchAt    DateTime?
   // Their cell (Oct 27, 2026). Its own field because an import file
   // carries Mobile beside Phone, and one never stands in for the other:
   // a mobile is never copied to the company's phone.
@@ -456,6 +491,10 @@ model Contact {
   @@index([organizationId, state])
   @@index([organizationId, favorite])
   @@index([organizationId, email])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, createdById])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, lastTouchAt])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_name_trgm_idx")
   @@index([email(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_email_trgm_idx")
   @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "Contact_phone_trgm_idx")
@@ -632,6 +671,10 @@ model Activity {
   type           ActivityType
   body           String
   batchId        String?
+  // An email marketing send (Nov 10, 2026, Taylor): on the person's log and
+  // counted in its own column, never as a touch (Last Contacted, the
+  // Contacted step, activity filters and reports leave it out).
+  marketing      Boolean      @default(false)
   occurredAt     DateTime     @default(now())
   createdAt      DateTime     @default(now())
 
@@ -642,6 +685,8 @@ model Activity {
   @@index([organizationId])
   @@index([contactId])
   @@index([contactId, type])
+  @@index([contactId, marketing, occurredAt])
+  @@index([organizationId, marketing, occurredAt])
   @@index([companyId])
   @@index([projectId])
   @@index([batchId])
@@ -1071,6 +1116,9 @@ model IndustryOption {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
   sortOrder      Int          @default(0)
+  // Retired on the CRM Labels screen (Nov 10, 2026): off the pick lists,
+  // the companies carrying it keep it.
+  retiredAt      DateTime?
   createdAt      DateTime     @default(now())
 
   companyTypes CompanyTypeOption[]
@@ -1090,6 +1138,8 @@ model CompanyTypeOption {
   industry       IndustryOption @relation(fields: [industryId], references: [id], onDelete: Cascade)
   name           String
   sortOrder      Int            @default(0)
+  // Retired on the CRM Labels screen (Nov 10, 2026), as on IndustryOption.
+  retiredAt      DateTime?
   createdAt      DateTime       @default(now())
 
   @@unique([industryId, name])
@@ -2526,7 +2576,50 @@ model LeadLabelOption {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
+  // Retired on the CRM Labels screen (Nov 10, 2026): off the pick list,
+  // opportunities carrying it keep it.
+  retiredAt      DateTime?
   createdAt      DateTime     @default(now())
 
   @@unique([organizationId, name])
+}
+
+// ---------------------------------------------------------------------
+// Reports (Nov 10, 2026). The five on the Overview page's report bar:
+// DAILY, PIPELINE, ACTIVITY, CLOSING, MONEY (src/lib/reports/). A
+// subscription emails one to one teammate on a cadence; the hourly clock
+// (/api/cron/reports) sends what is due at 6am in the workspace's zone.
+model ReportSubscription {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recipientId    String
+  recipient      User         @relation("ReportRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  report         String
+  // DAILY, WEEKLY (Mondays), MONTHLY (the 1st), QUARTERLY, YEARLY.
+  cadence        String
+  // The rep it is about; null is the whole team.
+  repId          String?
+  createdById    String?
+  lastSentAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@unique([recipientId, report, cadence, repId])
+  @@index([organizationId])
+}
+
+// A report's plain-words write-up, written once per report, period and
+// filters and reused, so opening a report twice costs one write-up.
+model ReportNarrative {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // report + period + filters, e.g. "PIPELINE|2026-W46|rep:all".
+  key            String
+  body           String
+  // CLAUDE when written by AI, RULES when written from the numbers alone.
+  source         String
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, key])
 }

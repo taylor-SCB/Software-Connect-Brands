@@ -12,6 +12,9 @@ import { sweepStaleContracts } from "@/lib/status";
 import { opportunityColumn, reconcileOpportunities } from "@/lib/opportunities";
 import { BUILT_IN_LEAD_LABELS, NO_LEAD_LABEL } from "@/lib/lead-labels";
 import { cleanSearch } from "@/lib/list-params";
+import { goneQuietOpportunities } from "@/lib/gone-quiet";
+import { ruleLeadLabels } from "@/lib/ai-assist";
+import { aiConfigured } from "@/lib/ai";
 import type { Prisma } from "@/generated/prisma/client";
 import { PipelineBoard, type BoardTile } from "./pipeline-board";
 import { PipelineFilters } from "./pipeline-filters";
@@ -23,11 +26,14 @@ import { PipelineFilters } from "./pipeline-filters";
 export default async function DealsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string; q?: string; label?: string | string[] }>;
+  searchParams: Promise<{ archived?: string; q?: string; label?: string | string[]; quiet?: string }>;
 }) {
   const { organizationId } = await requireSession();
   const params = await searchParams;
   const showArchived = params.archived === "1";
+  // "Gone quiet" (Nov 10, 2026): only the open opportunities nobody has
+  // touched in the workspace's quietDays.
+  const quietOnly = params.quiet === "1";
   const q = cleanSearch(params.q ?? "").slice(0, 80);
   const labels = (Array.isArray(params.label) ? params.label : params.label ? [params.label] : []).map((label) => label.slice(0, 60));
   const timeZone = await getTimeZone();
@@ -39,7 +45,11 @@ export default async function DealsPage({
   await sweepStaleContracts(organizationId);
   await reconcileOpportunities(organizationId);
 
+  const quiet = await goneQuietOpportunities(organizationId, { limit: 1000 });
+  const quietById = new Map(quiet.opportunities.map((row) => [row.id, row.days]));
+
   const and: Prisma.OpportunityWhereInput[] = [{ organizationId }];
+  if (quietOnly) and.push({ id: { in: [...quietById.keys()] } });
   if (!showArchived) and.push({ OR: [{ dealId: null }, { deal: { stage: { not: "ARCHIVED" } } }] });
   if (q) {
     and.push({
@@ -96,12 +106,26 @@ export default async function DealsPage({
       },
     }),
     loadWorkspaceUsers(organizationId),
-    prisma.leadLabelOption.findMany({ where: { organizationId }, orderBy: { name: "asc" }, select: { name: true } }),
+    prisma.leadLabelOption.findMany({ where: { organizationId, retiredAt: null }, orderBy: { name: "asc" }, select: { name: true } }),
     showArchived ? 0 : prisma.deal.count({ where: { organizationId, stage: "ARCHIVED" } }),
     prisma.opportunity.count({ where: { organizationId }, take: 1 }),
   ]);
 
+  // The faint suggested label on tiles with none, from the rules alone;
+  // the AI is only asked when someone presses "Suggest label".
+  const suggested = await ruleLeadLabels(
+    organizationId,
+    opportunities.filter((row) => !row.leadLabel).map((row) => row.id),
+  );
+
+  // A meeting booked ahead is the next one, never the "last" one (UX
+  // review, Nov 10, 2026): the tile names the newest meeting that has
+  // happened and the soonest one still to come, on the same clock as
+  // gone quiet (src/lib/gone-quiet.ts).
+  const now = new Date();
   const tiles: BoardTile[] = opportunities.map((row) => {
+    const held = row.meetings.filter((meeting) => meeting.on <= now);
+    const booked = row.meetings.filter((meeting) => meeting.on > now);
     const people = row.contacts
       .map((link) => ({ id: link.contact.id, name: link.contact.name, company: link.contact.company?.name ?? null, primary: link.role === "PRIMARY" }))
       .sort((a, b) => Number(b.primary) - Number(a.primary));
@@ -114,8 +138,13 @@ export default async function DealsPage({
       people,
       ownerId,
       ownerName: users.find((user) => user.id === ownerId)?.name ?? row.owner?.name ?? null,
+      quietDays: quietById.get(row.id) ?? null,
+      suggestedLabel: row.leadLabel ? null : (suggested.get(row.id) ?? null),
       meetingCount: row.meetings.length,
-      lastMeetingOn: row.meetings[0]?.on.toISOString() ?? null,
+      // Meetings come newest first: the first held one is the last that
+      // happened, the last booked one is the soonest still to come.
+      lastMeetingOn: held[0]?.on.toISOString() ?? null,
+      nextMeetingOn: booked.at(-1)?.on.toISOString() ?? null,
       deal: row.deal
         ? {
             id: row.deal.id,
@@ -173,13 +202,22 @@ export default async function DealsPage({
         </Card>
       ) : (
         <>
-          <PipelineFilters q={q} labels={labels} labelChoices={labelChoices} shown={tiles.length} />
+          <PipelineFilters
+            q={q}
+            labels={labels}
+            labelChoices={labelChoices}
+            shown={tiles.length}
+            quiet={quietOnly}
+            quietCount={quiet.opportunities.length}
+            quietDays={quiet.quietDays}
+          />
           <PipelineBoard
             tiles={tiles}
             users={users.map((user) => ({ id: user.id, name: user.name }))}
             customLabels={customLabels.map((row) => row.name)}
             timeZone={timeZone}
             today={today}
+            ai={aiConfigured()}
           />
         </>
       )}

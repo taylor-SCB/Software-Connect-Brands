@@ -167,7 +167,7 @@ export default async function AdminPage() {
             body="New signups will land here."
           />
         ) : (
-          <div className="divide-y divide-[var(--border)]">
+          <div className="divide-y divide-[var(--hairline-3)]">
             {waiting.map((organization) => (
               <WorkspaceRow
                 key={organization.id}
@@ -207,7 +207,7 @@ export default async function AdminPage() {
             body="When a workspace asks to become a Distributor, Hardware / OEM, Software Provider or Business / Vendor, it lands here."
           />
         ) : (
-          <ul className="divide-y divide-[var(--border)]" data-testid="type-requests">
+          <ul className="divide-y divide-[var(--hairline-3)]" data-testid="type-requests">
             {[...openRequests, ...decidedRequests].map((request) => (
               <li
                 key={request.id}
@@ -279,7 +279,7 @@ export default async function AdminPage() {
             body="When someone declines a ratesheet import, the file and their note land here."
           />
         ) : (
-          <ul className="divide-y divide-[var(--border)]" data-testid="ratesheet-issues">
+          <ul className="divide-y divide-[var(--hairline-3)]" data-testid="ratesheet-issues">
             {issues.map((issue) => {
               const detected = (issue.detected ?? {}) as {
                 supplier?: string | null;
@@ -347,7 +347,7 @@ export default async function AdminPage() {
             body="Approved signups show up here."
           />
         ) : (
-          <div className="divide-y divide-[var(--border)]">
+          <div className="divide-y divide-[var(--hairline-3)]">
             {decided.map((organization) => (
               <WorkspaceRow
                 key={organization.id}

@@ -91,7 +91,7 @@ function SupplierFacts({ supplier, productName }: { supplier: ListSupplier; prod
   const discount = Math.min(Math.max(supplier.discountBp, 0), 9500);
   return (
     <div
-      className="ml-3 flex flex-wrap items-baseline gap-x-5 gap-y-1 border-l border-[var(--border)] py-1 pl-3 text-xs"
+      className="ml-3 flex flex-wrap items-baseline gap-x-5 gap-y-1 border-l border-[var(--hairline-3)] py-1 pl-3 text-xs"
       aria-label={`${supplier.name} for ${productName}`}
     >
       <span className="inline-flex items-center gap-1 font-medium">

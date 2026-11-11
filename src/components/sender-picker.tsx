@@ -46,7 +46,7 @@ export function SenderPicker({
   }
 
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)]">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)]">
       <input type="hidden" name="allUsersCanSend" value={allUsers ? "true" : "false"} />
       {picked.map((user) => (
         <input key={user.id} type="hidden" name="senderUserIds" value={user.id} />
@@ -77,7 +77,7 @@ export function SenderPicker({
       </div>
 
       {!allUsers && (
-        <div className="border-t border-[var(--border)]">
+        <div className="border-t border-[var(--hairline-3)]">
           <div className="p-2.5">
             <div className="relative">
               <IconSearch
@@ -100,7 +100,7 @@ export function SenderPicker({
             )}
             {visible.map((user) => (
               <li key={user.id}>
-                <label className="flex cursor-pointer items-center gap-3 px-4 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                <label className="flex cursor-pointer items-center gap-3 px-4 py-1.5 text-sm hover:bg-[var(--hover)]">
                   <input
                     type="checkbox"
                     checked={selected.has(user.id)}
@@ -117,7 +117,7 @@ export function SenderPicker({
             ))}
           </ul>
           {users.length === 1 && (
-            <p className="faint border-t border-[var(--border)] px-4 py-2 text-[0.7rem]">
+            <p className="faint border-t border-[var(--hairline-3)] px-4 py-2 text-[0.7rem]">
               You are the only user in this workspace today. Teammates show up here once they
               have logins.
             </p>

@@ -169,6 +169,8 @@ async function resolveProductInput(
   // The product's own unit as stored, which may be offered back retired.
   currentCustomUnitId: string | null = null,
 ): Promise<{ ok: true; data: Resolved } | { ok: false; error: string }> {
+  // Who is saving, for "Added by" on a supplier's company made here.
+  const { userId } = await requireSession();
   const parsed = parseForm(productSchema, readInput(formData));
   if (!parsed.ok) return parsed;
   const input = parsed.data;
@@ -280,13 +282,13 @@ async function resolveProductInput(
     // Makes the matching Company too, so a distributor added here can be
     // picked as a line's Supplier / Contractor on a quote. Adding only the
     // Distributor record leaves the business invisible to the CRM side.
-    const linked = await linkDistributorCompany(organizationId, name);
+    const linked = await linkDistributorCompany(organizationId, name, userId);
     if (!linked) return { ok: false, error: "Type the distributor's name" };
     distributorId = linked.distributorId;
   } else if (input.distributorId?.startsWith(PLATFORM_SUPPLIER_PREFIX)) {
     // Picked from "On Software Connect Brands": this workspace's own
     // supplier for that account, made or found and linked to it.
-    const linked = await linkPlatformSupplier(organizationId, input.distributorId.slice(PLATFORM_SUPPLIER_PREFIX.length));
+    const linked = await linkPlatformSupplier(organizationId, input.distributorId.slice(PLATFORM_SUPPLIER_PREFIX.length), userId);
     if (!linked.ok) return { ok: false, error: linked.error };
     distributorId = linked.distributorId;
   } else if (input.distributorId) {

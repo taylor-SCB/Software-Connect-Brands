@@ -28,7 +28,55 @@ export type ListParams = {
   owed: boolean;
   // Only ever set by a sub-pane's lock, never from the address bar.
   interested: boolean;
+  // Clean CRM data (Nov 10, 2026). Touched in / not touched in the last
+  // 7, 30 or 90 days, or never: a touch is a call, text, email or meeting
+  // anybody logged — never a marketing send — and for a company one on it
+  // or on any of its people.
+  act: ActivityWindow | "";
+  // Contacts only: job titles, matched ignoring case.
+  titles: string[];
+  // Rep (Contact / Company ownerId); UNASSIGNED stands for nobody.
+  reps: string[];
+  // Who added it (createdById).
+  addedBy: string[];
+  // Added between these days (YYYY-MM-DD, the workspace's clock), either
+  // end optional.
+  from: string;
+  to: string;
+  // Has / has no mobile (contacts), email (both), phone (companies).
+  mobile: Presence;
+  email: Presence;
+  phone: Presence;
+  // On an opportunity with this Lead Label (a company: any of its people).
+  labels: string[];
 };
+
+export const ACTIVITY_WINDOWS = ["t7", "t30", "t90", "n7", "n30", "n90", "never"] as const;
+export type ActivityWindow = (typeof ACTIVITY_WINDOWS)[number];
+export const ACTIVITY_WINDOW_LABELS: Record<ActivityWindow, string> = {
+  t7: "Touched in the last 7 days",
+  t30: "Touched in the last 30 days",
+  t90: "Touched in the last 90 days",
+  n7: "Not touched in the last 7 days",
+  n30: "Not touched in the last 30 days",
+  n90: "Not touched in the last 90 days",
+  never: "Never touched",
+};
+export type Presence = "" | "yes" | "no";
+// Bulk Assign on the lists takes at most this many records a go.
+export const MAX_ASSIGN = 1000;
+// The Rep filter's choice for records nobody owns.
+export const UNASSIGNED = "none";
+
+function presence(value: string | string[] | undefined): Presence {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v === "yes" || v === "no" ? v : "";
+}
+
+function day(value: string | string[] | undefined) {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? v : "";
+}
 
 // The sub-panes ("Favorite Contacts", "Companies with Deals") are the same
 // list with one toggle held on; the bar hides that toggle there.
@@ -45,21 +93,72 @@ function list(value: string | string[] | undefined): string[] {
   return Array.from(new Set(values.map((v) => v.trim().slice(0, 120)).filter(Boolean))).slice(0, 50);
 }
 
-// The search box's text. % and _ are SQL wildcards inside a "contains"
-// match and Prisma passes them through, so they become spaces here: a
-// search for "%" then finds nothing instead of everything. A backslash is
-// the match's escape character, and one at the end made the database
-// refuse the search outright (the catalog search, Oct 25, 2026), so it
-// goes the same way.
+// The search box's text (the pickers' and the catalog's type-to-search;
+// the Contacts and Companies lists use cleanListSearch below). % and _
+// are SQL wildcards inside a "contains" match and Prisma passes them
+// through, so they become spaces here: a search for "%" then finds
+// nothing instead of everything. A backslash is the match's escape
+// character, and one at the end made the database refuse the search
+// outright (the catalog search, Oct 25, 2026), so it goes the same way.
 export function cleanSearch(value: string | undefined) {
   return (value ?? "").replace(/[%_\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+// The Contacts and Companies search box (UX review, Nov 10, 2026). It
+// matches word by word now, so % _ and \ are kept as typed rather than
+// turned into spaces — a space would split "r%a" into two words that
+// match nearly everyone — and the list query matches them as plain
+// characters (likeText in list-query.ts).
+export function cleanListSearch(value: string | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+// A search that is a phone number, however it was typed (UX review, Nov
+// 10, 2026): only digits and the marks people put in numbers, with at
+// least seven digits. Phones are stored the way they were typed or
+// imported, so the list also compares it digits-only, the last 10 like
+// the duplicate finder: 512-555-0125, 5125550125, 512.555.0125 and
+// +1 (512) 555-0125 all find "(512) 555-0125". Shorter runs of digits
+// ("0125") already match the stored text as they are.
+export const PHONE_SEARCH_MIN_DIGITS = 7;
+export function phoneSearchDigits(term: string): string | null {
+  if (!/^[\d\s+().\-/]+$/.test(term)) return null;
+  const digits = term.replace(/\D/g, "");
+  return digits.length >= PHONE_SEARCH_MIN_DIGITS ? digits.slice(-10) : null;
+}
+
+// The words of a search, each of which has to be found somewhere on the
+// row (UX review, Nov 10, 2026): "alan delta" is Alan at Delta Door and
+// "howard denise" is Denise Howard. A phone number stays one term, and
+// past six words the rest are left out, as on Products.
+//
+// A word with no letter or digit in it ("&" in "Delta Door & Hardware",
+// "-" in "Smith - Jones") is left out: on its own it matches almost any
+// company, and a contact's company-name matches stop at 500, so in a
+// workspace with more than 500 "&" companies the full name could miss the
+// people at that one. A search of nothing but such marks ("&") is matched
+// as typed.
+export const MAX_SEARCH_WORDS = 6;
+export function searchTerms(q: string): string[] {
+  const text = q.trim();
+  if (!text) return [];
+  if (phoneSearchDigits(text)) return [text];
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const word of text.split(" ")) {
+    const key = word.toLowerCase();
+    if (!word || seen.has(key) || !/[\p{L}\p{N}]/u.test(word)) continue;
+    seen.add(key);
+    terms.push(word);
+  }
+  return terms.length ? terms.slice(0, MAX_SEARCH_WORDS) : [text];
 }
 
 export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams {
   const per = Number(Array.isArray(raw.per) ? raw.per[0] : raw.per);
   const page = Number(Array.isArray(raw.page) ? raw.page[0] : raw.page);
   return {
-    q: cleanSearch(Array.isArray(raw.q) ? raw.q[0] : raw.q),
+    q: cleanListSearch(Array.isArray(raw.q) ? raw.q[0] : raw.q),
     page: Number.isInteger(page) && page > 0 ? page : 1,
     per: (PAGE_SIZES as readonly number[]).includes(per) ? per : DEFAULT_PAGE_SIZE,
     states: list(raw.state),
@@ -75,6 +174,16 @@ export function parseListParams(raw: RawParams, lock: ListLock = {}): ListParams
     auto: raw.auto === "1",
     owed: raw.owed === "1",
     interested: Boolean(lock.interested),
+    act: (ACTIVITY_WINDOWS as readonly string[]).includes(String(raw.act)) ? (raw.act as ActivityWindow) : "",
+    titles: list(raw.title),
+    reps: list(raw.rep),
+    addedBy: list(raw.by),
+    from: day(raw.from),
+    to: day(raw.to),
+    mobile: presence(raw.mobile),
+    email: presence(raw.email),
+    phone: presence(raw.phone),
+    labels: list(raw.label),
   };
 }
 
@@ -98,6 +207,16 @@ export function listHref(basePath: string, params: ListParams, overrides: Partia
   if (next.attn) search.set("attn", "1");
   if (next.auto) search.set("auto", "1");
   if (next.owed) search.set("owed", "1");
+  if (next.act) search.set("act", next.act);
+  for (const title of next.titles) search.append("title", title);
+  for (const rep of next.reps) search.append("rep", rep);
+  for (const by of next.addedBy) search.append("by", by);
+  if (next.from) search.set("from", next.from);
+  if (next.to) search.set("to", next.to);
+  if (next.mobile) search.set("mobile", next.mobile);
+  if (next.email) search.set("email", next.email);
+  if (next.phone) search.set("phone", next.phone);
+  for (const label of next.labels) search.append("label", label);
   const query = search.toString();
   return query ? `${basePath}?${query}` : basePath;
 }
@@ -113,9 +232,43 @@ export function activeFilterCount(params: ListParams, lock: ListLock = {}) {
     (params.deals && !lock.deals ? 1 : 0) +
     (params.attn ? 1 : 0) +
     (params.auto ? 1 : 0) +
-    (params.owed ? 1 : 0)
+    (params.owed ? 1 : 0) +
+    (params.act ? 1 : 0) +
+    params.titles.length +
+    params.reps.length +
+    params.addedBy.length +
+    (params.from || params.to ? 1 : 0) +
+    (params.mobile ? 1 : 0) +
+    (params.email ? 1 : 0) +
+    (params.phone ? 1 : 0) +
+    params.labels.length
   );
 }
+
+// Every filter off (the bar's Clear all); the search box and paging are
+// the caller's.
+export const NO_FILTERS = {
+  states: [],
+  industries: [],
+  types: [],
+  companies: [],
+  statuses: [],
+  fav: false,
+  deals: false,
+  attn: false,
+  auto: false,
+  owed: false,
+  act: "",
+  titles: [],
+  reps: [],
+  addedBy: [],
+  from: "",
+  to: "",
+  mobile: "",
+  email: "",
+  phone: "",
+  labels: [],
+} satisfies Partial<ListParams>;
 
 export function pageWindow(total: number, per: number, page: number) {
   const pages = Math.max(1, Math.ceil(total / per));

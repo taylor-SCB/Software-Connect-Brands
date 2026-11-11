@@ -280,7 +280,9 @@ export async function payableBy(
 }
 
 // One workspace-wide number for the dashboard tile.
-export async function owedTotals(organizationId: string, today: string) {
+// `repId`: only paperwork on that rep's deals (a contract's rep is its
+// deal's, as in the Money Owed report).
+export async function owedTotals(organizationId: string, today: string, repId: string | null = null) {
   const rows = await prisma.$queryRaw<
     { owed: number | string | null; overdue: number | string | null; customers: number | string | null }[]
   >`
@@ -299,6 +301,7 @@ export async function owedTotals(organizationId: string, today: string) {
      WHERE c."organizationId" = ${organizationId}
        AND c.payable = false
        AND c.status = 'SIGNED'
+       ${repId ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Deal" d WHERE d.id = c."dealId" AND d."ownerId" = ${repId})` : Prisma.empty}
   `;
   const row = rows[0];
   return {
@@ -366,4 +369,26 @@ export async function loadBalance(
       };
     }),
   };
+}
+
+/* ------------------------ The owed rows, for reports ------------------------ */
+
+// The rows every "owed" figure above is summed from — signed Money-in
+// paperwork's payment rows, each with what has been paid against it — as a
+// FROM / WHERE block, so the Money Owed report (src/lib/reports/money.ts)
+// ages and groups exactly the money owedTotals adds up rather than a
+// second definition of it. Aliases: c (the contract), cp (its row), paid
+// (paid.total, what came in against the row).
+// `joins` go in before the WHERE, for a report's own lookups.
+export function owedRowsSql(organizationId: string, joins: Prisma.Sql = Prisma.empty): Prisma.Sql {
+  return Prisma.sql`
+      FROM "Contract" c
+      JOIN "ContractPayment" cp ON cp."contractId" = c.id
+      LEFT JOIN LATERAL (
+             SELECT SUM(p."amountCents") AS total FROM "Payment" p WHERE p."contractPaymentId" = cp.id
+           ) paid ON true
+      ${joins}
+     WHERE c."organizationId" = ${organizationId}
+       AND c.payable = false
+       AND c.status = 'SIGNED'`;
 }

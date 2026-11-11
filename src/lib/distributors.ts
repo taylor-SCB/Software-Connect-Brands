@@ -46,12 +46,36 @@ export async function ensureDistributorTypeName(organizationId: string): Promise
 // is matched with Prisma `has` — which compiles to Postgres `@>` and is
 // byte-exact. A workspace that imported "distributor" in lower case would
 // otherwise never match.
+//
+// When both spellings are on the pick list, the canonical one wins (audit
+// fix, Nov 10, 2026): an unordered pick could land on a stray
+// "distributor", and every real Distributor supplier dropped out of the
+// pickers.
 export async function distributorTypeName(organizationId: string): Promise<string> {
-  const option = await prisma.companyTypeOption.findFirst({
+  const options = await prisma.companyTypeOption.findMany({
     where: { organizationId, name: { equals: DISTRIBUTOR_COMPANY_TYPE, mode: "insensitive" } },
     select: { name: true },
+    orderBy: { createdAt: "asc" },
   });
-  return option?.name ?? DISTRIBUTOR_COMPANY_TYPE;
+  return options.find((option) => option.name === DISTRIBUTOR_COMPANY_TYPE)?.name ?? options[0]?.name ?? DISTRIBUTOR_COMPANY_TYPE;
+}
+
+// The two labels new suppliers are filed under: the Distributor company
+// type and the Service Provider industry, each in this workspace's
+// spelling. The CRM Labels screen locks exactly these (a case variant can
+// still be folded into them), because a new supplier would bring a
+// renamed or merged-away one straight back.
+export async function supplierLabelNames(organizationId: string): Promise<{ type: string; industry: string }> {
+  const [type, industries] = await Promise.all([
+    distributorTypeName(organizationId),
+    prisma.industryOption.findMany({
+      where: { organizationId, name: { equals: SERVICE_PROVIDER_INDUSTRY, mode: "insensitive" } },
+      select: { name: true },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  const industry = industries.find((option) => option.name === SERVICE_PROVIDER_INDUSTRY)?.name ?? industries[0]?.name ?? SERVICE_PROVIDER_INDUSTRY;
+  return { type, industry };
 }
 
 // The companies offered as a line's Supplier / Contractor. `keepIds` are
@@ -126,6 +150,9 @@ export async function backfillDistributorCompanies(organizationId: string): Prom
 export async function linkDistributorCompany(
   organizationId: string,
   rawName: string,
+  // Who is adding it, for "Added by" (Nov 10, 2026); null when the app
+  // backfills on its own.
+  createdById: string | null = null,
 ): Promise<{ companyId: string; distributorId: string; name: string } | null> {
   const name = rawName.trim().replace(/\s+/g, " ").slice(0, 160);
   if (!name) return null;
@@ -208,6 +235,7 @@ export async function linkDistributorCompany(
         name,
         industries: [SERVICE_PROVIDER_INDUSTRY],
         companyTypes: [typeName],
+        createdById,
       },
       select: { id: true, name: true },
     });
@@ -266,7 +294,7 @@ export async function linkDistributorCompany(
 // different supplier's pair — it is for one particular record, such as a
 // supplier linked to Software Connect Brands whose company was merged
 // away. Returns the company id, or null when the record isn't there.
-export async function bridgeDistributor(organizationId: string, distributorId: string): Promise<string | null> {
+export async function bridgeDistributor(organizationId: string, distributorId: string, createdById: string | null = null): Promise<string | null> {
   const row = await prisma.distributor.findFirst({
     where: { id: distributorId, organizationId },
     select: { name: true, companyId: true },
@@ -299,7 +327,7 @@ export async function bridgeDistributor(organizationId: string, distributorId: s
   } else {
     companyId = (
       await prisma.company.create({
-        data: { organizationId, name: row.name, industries: [SERVICE_PROVIDER_INDUSTRY], companyTypes: [typeName] },
+        data: { organizationId, name: row.name, industries: [SERVICE_PROVIDER_INDUSTRY], companyTypes: [typeName], createdById },
         select: { id: true },
       })
     ).id;

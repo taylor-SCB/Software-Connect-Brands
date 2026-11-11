@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import { useRef, useState } from "react";
 import { CONTACT_COLUMNS, PIPELINE_COLUMNS, PIPELINE_COLUMN_COLORS, PIPELINE_COLUMN_LABELS, type PipelineColumn } from "@/lib/constants";
 import { FloatingMenu } from "@/components/floating-menu";
@@ -31,7 +32,7 @@ export function MoveMenu({
         type="button"
         onClick={() => setOpen(!open)}
         className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.7rem] font-medium"
-        style={{ borderColor: `color-mix(in srgb, ${accent} 45%, transparent)`, color: accent }}
+        style={{ borderColor: `color-mix(in srgb, ${accent} 45%, transparent)`, color: ink(accent) }}
         aria-label={`Stage: ${archived ? "Archived" : PIPELINE_COLUMN_LABELS[current]}. Move it`}
         data-testid="tile-move"
       >
@@ -55,7 +56,7 @@ export function MoveMenu({
                     setOpen(false);
                     onMove(column);
                   }}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[rgb(255_255_255/0.04)] disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-40 ${
                     column === current ? "font-semibold" : ""
                   }`}
                   data-testid={`tile-move-${column}`}

@@ -44,6 +44,9 @@ import { Avatar } from "@/components/avatar";
 import { ActivityFeed } from "@/components/activity-feed";
 import { NotesList } from "@/components/notes-list";
 import { AddNoteForm, LogActivityForm, AddDealForm } from "./forms";
+import { AddedBy } from "@/components/crm-cells";
+import { RepPicker } from "@/components/rep-select";
+import { loadRepChoices } from "@/lib/reps";
 
 export default async function ContactDetailPage({
   params,
@@ -59,6 +62,7 @@ export default async function ContactDetailPage({
     where: { id, organizationId },
     include: {
       company: { select: { id: true, name: true, industries: true, companyTypes: true } },
+      createdBy: { select: { name: true } },
       accounts: {
         orderBy: { createdAt: "asc" },
         select: { company: { select: { id: true, name: true, city: true, state: true } } },
@@ -102,7 +106,7 @@ export default async function ContactDetailPage({
 
   const today = todayIso(timeZone);
   const meetingSet = await meetingSetDay(organizationId, { contactId: contact.id });
-  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices] = await Promise.all([
+  const [noteOthers, activityOthers, balance, projects, upcoming, eventChoices, reps] = await Promise.all([
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
     // A homeowner's own balance. Someone at a company is billed through
@@ -126,11 +130,14 @@ export default async function ContactDetailPage({
     // attendee on — a property manager is often not the main contact.
     upcomingFor(organizationId, { contactId: contact.id }, today),
     loadEventChoices(organizationId, userId),
+    loadRepChoices(organizationId),
   ]);
+  // Marketing sends are on the log but never a touch (Nov 10, 2026).
+  const touches = contact.activities.filter((a) => !a.marketing);
 
   const activityCounts = ACTIVITY_TYPES.reduce(
     (acc, type) => {
-      acc[type] = contact.activities.filter((a) => a.type === type).length;
+      acc[type] = touches.filter((a) => a.type === type).length;
       return acc;
     },
     {} as Record<ActivityTypeValue, number>,
@@ -139,7 +146,7 @@ export default async function ContactDetailPage({
   const openDeals = contact.deals.filter((deal) => isOpenStage(deal.stage));
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
   const quotesOut = contact.quotes.filter((quote) => quote.status === "SENT").length;
-  const lastTouchAt = contact.activities[0]?.occurredAt ?? null;
+  const lastTouchAt = touches[0]?.occurredAt ?? null;
 
   const pickable = { id: contact.id, name: contact.name, company: contact.company?.name ?? null };
 
@@ -214,7 +221,7 @@ export default async function ContactDetailPage({
       />
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
+        <div className="min-w-0 space-y-5 lg:col-span-2">
           <Card lit id="activity">
             <CardHeader
               title="Log activity"
@@ -233,6 +240,7 @@ export default async function ContactDetailPage({
                     userName: activity.user.name,
                     when: formatDateTime(activity.occurredAt, timeZone),
                     others: activity.batchId ? (activityOthers.get(activity.batchId) ?? 0) : 0,
+                    marketing: activity.marketing,
                   },
                 })),
                 ...contact.opportunityLogs
@@ -275,7 +283,7 @@ export default async function ContactDetailPage({
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <Card lit>
             <CardHeader title="Details" />
             <dl className="space-y-3 p-5 text-sm">
@@ -394,7 +402,8 @@ export default async function ContactDetailPage({
                 label="Birthday"
                 value={contact.birthday ? formatDate(contact.birthday, "UTC") : null}
               />
-              <Detail label="Added" value={formatDate(contact.createdAt, timeZone)} />
+              <Detail label="Rep" value={<RepPicker kind="contact" id={contact.id} ownerId={contact.ownerId} reps={reps} />} />
+              <Detail label="Added" value={<AddedBy name={contact.createdBy?.name ?? null} at={contact.createdAt} timeZone={timeZone} />} />
               <Detail label="City" value={contact.city} />
               <Detail label="State" value={contact.state} />
             </dl>
@@ -416,7 +425,16 @@ export default async function ContactDetailPage({
           <UpcomingCard
             events={upcoming}
             choices={eventChoices}
-            defaults={{ contactId: contact.id, companyId: contact.companyId ?? undefined, startOn: today }}
+            // What gets booked from a person's page is a meeting with them,
+            // and only a Meeting sets Meeting Set, so the form starts on the
+            // workspace's Meeting rather than the first type on its list
+            // (Install).
+            defaults={{
+              contactId: contact.id,
+              companyId: contact.companyId ?? undefined,
+              startOn: today,
+              type: eventChoices.eventTypes.find((name) => name.toLowerCase() === "meeting"),
+            }}
             label={contact.name}
           />
 
@@ -441,7 +459,7 @@ export default async function ContactDetailPage({
             {contact.deals.length === 0 ? (
               <EmptyState title="No deals yet" body="Creating a quote adds one automatically." />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contact.deals.map((deal) => (
                   <li
                     key={deal.id}
@@ -488,7 +506,7 @@ export default async function ContactDetailPage({
             {contact.quotes.length === 0 ? (
               <EmptyState title="No quotes yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contact.quotes.map((quote) => (
                   <li key={quote.id} className="px-5 py-3">
                     <Link
@@ -527,7 +545,7 @@ export default async function ContactDetailPage({
             {contact.contracts.length === 0 ? (
               <EmptyState title="No contracts yet" />
             ) : (
-              <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+              <ul className="divide-y divide-[var(--hairline)]">
                 {contact.contracts.map((contract) => (
                   <li key={contract.id} className="px-5 py-3">
                     <Link

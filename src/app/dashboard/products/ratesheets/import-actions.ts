@@ -257,7 +257,7 @@ export type ImportRatesheetResult =
   | { ok: false; error: string };
 
 export async function importRatesheet(formData: FormData): Promise<ImportRatesheetResult> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const loaded = await loadFile(formData, organizationId);
   if (!loaded.ok) return loaded;
@@ -410,7 +410,7 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     if (refused) return { ok: false, error: refused };
     supplier = existingSupplier;
   } else if (platformSupplier) {
-    const linked = await linkPlatformSupplier(organizationId, platformSupplier.id);
+    const linked = await linkPlatformSupplier(organizationId, platformSupplier.id, userId);
     if (!linked.ok) return { ok: false, error: linked.error };
     const refused = unplanned(linked.distributorId);
     if (refused) {
@@ -427,7 +427,7 @@ export async function importRatesheet(formData: FormData): Promise<ImportRateshe
     supplier = { id: linked.distributorId, name: linked.name };
     if (supplier.id !== plannedFor) ({ plan } = await planFor(supplier.id));
   } else {
-    const linked = await linkDistributorCompany(organizationId, newSupplierName);
+    const linked = await linkDistributorCompany(organizationId, newSupplierName, userId);
     if (!linked) return { ok: false, error: "Type the distributor's name." };
     const refused = unplanned(linked.distributorId);
     if (refused) return { ok: false, error: refused };

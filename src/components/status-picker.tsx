@@ -143,7 +143,7 @@ export function StatusPicker({
                   aria-selected={option === status}
                   disabled={pending}
                   onClick={() => (option === status ? setOpen(false) : choose(option))}
-                  className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-[rgb(255_255_255/0.04)] ${
+                  className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-[var(--hover)] ${
                     option === status ? "font-semibold" : ""
                   }`}
                   data-testid={`status-option-${option}`}

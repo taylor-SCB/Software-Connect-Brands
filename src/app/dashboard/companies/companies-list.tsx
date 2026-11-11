@@ -6,7 +6,7 @@ import { locationLabel } from "@/lib/companies";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { OPEN_DEAL_STAGES } from "@/lib/constants";
 import { PageHeader, Card, EmptyState, StatusBadge } from "@/components/ui";
-import { IconPlus, IconBuilding, IconGlobe, IconUsers } from "@/components/icons";
+import { IconPlus, IconBuilding, IconGlobe, IconUsers, IconMerge } from "@/components/icons";
 import { parseListParams, listHref, pageWindow, type ListLock } from "@/lib/list-params";
 import { companyWhere, getFilterOptions } from "@/lib/list-query";
 import { ListFilters } from "@/components/list-filters";
@@ -22,6 +22,11 @@ import { TagCell } from "../contacts/contacts-list";
 import { lastContactedCompanies } from "@/lib/last-contacted";
 import { LastContactedCell } from "@/components/last-contacted-cell";
 import { MergeButton } from "@/components/merge-button";
+import { marketingCompanies } from "@/lib/last-contacted";
+import { MarketingCell, RepCell } from "@/components/crm-cells";
+import { BulkAssign, PageCheck, RowCheck } from "@/components/bulk-assign";
+import { loadRepChoices } from "@/lib/reps";
+import { loadLeadLabelChoices } from "@/lib/crm-labels";
 import { setCompanyFavorite } from "./actions";
 import { FillMissingButton } from "./fill-missing-button";
 
@@ -44,7 +49,7 @@ export async function CompaniesList({
   const params = parseListParams(searchParams, lock);
   const where = await companyWhere(organizationId, params);
 
-  const [total, options, timeZone, unfiltered] = await Promise.all([
+  const [total, options, timeZone, unfiltered, reps, leadLabels] = await Promise.all([
     prisma.company.count({ where }),
     getFilterOptions(organizationId),
     getTimeZone(),
@@ -56,6 +61,8 @@ export async function CompaniesList({
         ...(lock.interested ? { status: "INTERESTED" as const } : {}),
       },
     }),
+    loadRepChoices(organizationId),
+    loadLeadLabelChoices(organizationId),
   ]);
   const window = pageWindow(total, params.per, params.page);
 
@@ -66,6 +73,7 @@ export async function CompaniesList({
     take: params.per,
     include: {
       _count: { select: { contacts: true } },
+      owner: { select: { name: true, removedAt: true } },
       contacts: {
         select: {
           deals: {
@@ -79,9 +87,10 @@ export async function CompaniesList({
   // What each company on this page still owes, in one statement rather
   // than a query per row, so the list stays fast at forty thousand.
   const pageIds = companies.map((company) => company.id);
-  const [owed, lastContacted] = await Promise.all([
+  const [owed, lastContacted, marketing] = await Promise.all([
     owedBy(organizationId, "company", pageIds, todayIso(timeZone)),
     lastContactedCompanies(organizationId, pageIds),
+    marketingCompanies(organizationId, pageIds),
   ]);
   const filtered = Boolean(params.q) || total !== unfiltered;
 
@@ -93,8 +102,12 @@ export async function CompaniesList({
         subtitle={subtitle ?? `${total.toLocaleString()} ${total === 1 ? "record" : "records"}${params.q ? ` matching “${params.q}”` : ""}`}
         actions={
           <>
-            <ImportCsvButton kind="companies" />
+            <ImportCsvButton kind="companies" reps={reps} />
             <MergeButton kind="companies" />
+            <Link href="/dashboard/companies/duplicates" className="btn btn-ghost btn-sm" data-testid="find-duplicates">
+              <IconMerge size={13} />
+              Find duplicates
+            </Link>
             <FillMissingButton />
             <Link href="/dashboard/companies/new" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
@@ -111,8 +124,18 @@ export async function CompaniesList({
         options={options}
         kind="companies"
         placeholder="Search companies…"
+        reps={reps}
+        leadLabels={leadLabels}
       />
 
+      <BulkAssign
+        kind="companies"
+        pageIds={pageIds}
+        total={total}
+        query={listHref("", params).replace(/^\?/, "")}
+        interested={Boolean(lock.interested)}
+        reps={reps}
+      >
       <Card lit>
         {companies.length === 0 ? (
           <EmptyState
@@ -146,14 +169,18 @@ export async function CompaniesList({
             <table className="table table-hover">
               <thead>
                 <tr>
-                  <th className="w-8"></th>
+                  <th className="w-8 whitespace-nowrap">
+                    <PageCheck />
+                  </th>
                   <th>Last Contacted By</th>
                   <th>Company</th>
+                  <th>Rep</th>
                   <th>Industry · Type</th>
                   <th>Location</th>
                   <th>Phone</th>
                   <th>Website</th>
                   <th>People</th>
+                  <th>Marketing</th>
                   <th className="text-right">Open pipeline</th>
                   <th>Status</th>
                 </tr>
@@ -165,7 +192,8 @@ export async function CompaniesList({
                   const location = locationLabel(company);
                   return (
                     <tr key={company.id} data-testid="company-row">
-                      <td className="pr-0">
+                      <td className="whitespace-nowrap pr-0">
+                        <RowCheck id={company.id} label={company.name} />
                         <StarButton id={company.id} favorite={company.favorite} action={setCompanyFavorite} label={company.name} />
                       </td>
                       <td>
@@ -177,6 +205,9 @@ export async function CompaniesList({
                         </Link>
                         <OwesLine balance={owed.get(company.id)} timeZone={timeZone} />
                       </td>
+                      <td>
+                        <RepCell name={company.owner ? (company.owner.removedAt ? `${company.owner.name} (removed)` : company.owner.name) : null} />
+                      </td>
                       <td className="text-xs">
                         <div className="flex flex-wrap items-center gap-1">
                           <TagCell industries={company.industries} types={company.companyTypes} />
@@ -184,9 +215,11 @@ export async function CompaniesList({
                         </div>
                       </td>
                       <td className="muted">{location || <span className="faint">—</span>}</td>
-                      <td className="muted num">
+                      {/* One line, as on the Contacts list (UX review, Nov 10,
+                          2026): squeezed, "(870) 555-0367" broke into three. */}
+                      <td className="muted num" data-testid="company-row-phone">
                         {company.phone ? (
-                          <a href={`tel:${company.phone}`} className="hover:underline">
+                          <a href={`tel:${company.phone}`} className="whitespace-nowrap hover:underline">
                             {company.phone}
                           </a>
                         ) : (
@@ -220,6 +253,9 @@ export async function CompaniesList({
                           {company._count.contacts}
                         </Link>
                       </td>
+                      <td>
+                        <MarketingCell tally={marketing.get(company.id)} timeZone={timeZone} />
+                      </td>
                       <td className="num text-right">
                         {open > 0 ? (
                           <span className="font-medium">{formatCents(open)}</span>
@@ -247,6 +283,7 @@ export async function CompaniesList({
           noun="companies"
         />
       </Card>
+      </BulkAssign>
     </div>
   );
 }

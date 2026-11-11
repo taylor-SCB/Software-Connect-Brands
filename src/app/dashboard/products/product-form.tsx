@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import { startTransition, useActionState, useState } from "react";
 import {
   Card,
@@ -889,7 +890,7 @@ export function ProductForm({
                   background: "color-mix(in srgb, #a78bfa 8%, transparent)",
                 }}
               >
-                <p className="eyebrow mb-3" style={{ color: "#a78bfa" }}>
+                <p className="eyebrow mb-3" style={{ color: ink("#a78bfa") }}>
                   Software rate &amp; term
                 </p>
                 <div className="grid gap-4 sm:grid-cols-3">

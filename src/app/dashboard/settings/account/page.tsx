@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, CardHeader } from "@/components/ui";
 import { AccountForm, PasswordForm } from "./form";
+import { MyReportEmails } from "./report-emails";
 
 export default async function MyAccountPage() {
   const session = await requireSession();
@@ -42,6 +43,8 @@ export default async function MyAccountPage() {
           />
           <PasswordForm />
         </Card>
+
+        <MyReportEmails organizationId={session.organizationId} userId={session.userId} />
       </div>
     </div>
   );

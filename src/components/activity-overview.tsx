@@ -35,7 +35,9 @@ export function ActivityOverview({
   timeZone: string;
 }) {
   const touches = activity.TEXT + activity.EMAIL + activity.PHONE_CALL + activity.MEETING;
-  const daysSince = lastTouchAt ? daysSinceDate(lastTouchAt) : null;
+  // Days on the workspace's calendar, the same calendar the date beside
+  // it is written in — not 24-hour blocks.
+  const daysSince = lastTouchAt ? daysSinceDate(lastTouchAt, timeZone) : null;
 
   const tiles: { label: string; value: number; Icon: typeof IconNote; href: string }[] = [
     { label: "Calls", value: activity.PHONE_CALL, Icon: IconPhone, href: "#activity" },
@@ -140,7 +142,7 @@ function OverviewRow({
   return (
     <div className="flex items-center justify-between gap-3">
       <dt className="faint flex items-center gap-1.5 text-xs">
-        <Icon size={12} className={warn ? "text-[#fbbf24]" : undefined} />
+        <Icon size={12} className={warn ? "text-[var(--warn)]" : undefined} />
         {label}
       </dt>
       <dd className="text-right text-sm">{value}</dd>

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ForgotPasswordForm } from "./form";
+import { SignedOutLook } from "@/components/signed-out-look";
 
 export const metadata: Metadata = {
   title: "Forgot password",
@@ -9,6 +10,7 @@ export const metadata: Metadata = {
 export default function ForgotPasswordPage() {
   return (
     <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-12">
+      <SignedOutLook />
       <div className="fade-up w-full max-w-sm">
         <div className="card card-lit p-6">
           <h1 className="page-title !text-2xl">Forgot password</h1>

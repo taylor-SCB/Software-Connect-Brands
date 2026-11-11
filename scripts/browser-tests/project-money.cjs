@@ -375,6 +375,50 @@ async function signAs(browser, token, name) {
   await page.waitForFunction(() => document.querySelectorAll("[data-testid=project-file]").length === 0);
   assert.equal(Number((await sql(`SELECT count(*) FROM "Upload" WHERE "projectId"=$1`, [project.id])).rows[0].count), 0);
 
+  log("audit fixes: a purchase order lists materials in the contract's own order, even after a row was moved");
+  await sql(
+    `INSERT INTO "Product" (id,"organizationId",name,description,"unitPriceCents","costCents","defaultTag","distributorId","updatedAt")
+     VALUES ('prd_pm_a',$1,'Door sensor','',5000,2000,'MATERIALS','dst_pm',now()),
+            ('prd_pm_b',$1,'Keypad','',7000,3000,'MATERIALS','dst_pm',now())`,
+    [org],
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId","productId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_pm_a','quo_pm','prd_pm_a','Door sensors',4,5000,'MATERIALS',5),
+            ('qli_pm_b','quo_pm','prd_pm_b','Keypads',2,7000,'MATERIALS',6)`,
+  );
+  // Well clear of the workspace's own numbering, which the order takes next.
+  const addOnNumber = (await sql(`SELECT max(number) + 500 AS n FROM "Contract" WHERE "organizationId"=$1`, [org])).rows[0].n;
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId",number,title,body,"publicToken",status,payable,"projectId","dealId","updatedAt")
+     VALUES ('con_pm_addon',$1,'ctc_pm',$2,'Add-on','','tok_con_pm_addon_0123456789','SIGNED',false,$3,'deal_pm',now())`,
+    [org, addOnNumber, project.id],
+  );
+  await sql(
+    `INSERT INTO "ContractLineItem" (id,"contractId",name,quantity,"unitPriceCents",tag,position,"quoteLineItemId")
+     VALUES ('cli_pm_a','con_pm_addon','Door sensors',4,5000,'MATERIALS',0,'qli_pm_a'),
+            ('cli_pm_b','con_pm_addon','Keypads',2,7000,'MATERIALS',1,'qli_pm_b')`,
+  );
+  // Moving the first row (to another scope, as the Budget page does)
+  // writes it again after the second, so an unordered read gets B, A.
+  await sql(`UPDATE "ContractLineItem" SET "scopeId" = NULL, quantity = quantity WHERE id='cli_pm_a'`);
+  assert.deepEqual(
+    (await sql(`SELECT id FROM "ContractLineItem" WHERE "contractId"='con_pm_addon'`)).rows.map((r) => r.id),
+    ["cli_pm_b", "cli_pm_a"],
+    "the table itself now holds them out of order",
+  );
+  const ordersBefore = (await sql(`SELECT id FROM "Contract" WHERE "organizationId"=$1 AND payable=true`, [org])).rows.map((r) => r.id);
+  await page.goto(`${BASE}/dashboard/projects/${project.id}/money`);
+  await page.locator("[data-testid=order-materials]").click();
+  await page.locator("[data-testid=order-from-supplier]").first().click();
+  await page.waitForURL(/\/dashboard\/contracts\/[a-z0-9]+$/, { timeout: 20000 });
+  const addOnOrder = (await sql(`SELECT id FROM "Contract" WHERE "organizationId"=$1 AND payable=true AND NOT (id = ANY($2))`, [org, ordersBefore])).rows[0];
+  assert.deepEqual(
+    (await sql(`SELECT "quoteLineItemId" FROM "ContractLineItem" WHERE "contractId"=$1 ORDER BY position`, [addOnOrder.id])).rows.map((r) => r.quoteLineItemId),
+    ["qli_pm_a", "qli_pm_b"],
+    "door sensors first, as on the contract",
+  );
+
   log("the Money tab fits a phone screen");
   const phone = await browser.newContext({ viewport: { width: 400, height: 800 } });
   const ppage = await phone.newPage();

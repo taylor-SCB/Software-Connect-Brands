@@ -228,7 +228,7 @@ export function MediaUploader({
                   </span>
                 </div>
                 {row.state === "sending" && (
-                  <div className="mt-1 h-1 overflow-hidden rounded bg-[rgb(255_255_255/0.08)]">
+                  <div className="mt-1 h-1 overflow-hidden rounded bg-[var(--tint-4)]">
                     <div className="h-full bg-[var(--brand)]" style={{ width: `${row.percent}%` }} />
                   </div>
                 )}

@@ -18,6 +18,7 @@ import {
   IconStar,
   IconFlame,
   IconChart,
+  IconTag,
   IconUsers as IconAccount,
 } from "@/components/icons";
 
@@ -64,6 +65,9 @@ const NAV: NavEntry[] = [
           { href: "/dashboard/companies/with-deals", label: "Companies with Deals", Icon: IconTrending },
         ],
       },
+      // Industry, Company Type, Lead Label and Job Title values with
+      // Rename / Merge into / Retire (Nov 10, 2026).
+      { href: "/dashboard/labels", label: "Labels", Icon: IconTag },
     ],
   },
   {
@@ -158,7 +162,7 @@ function Section({ item: { href, label, Icon, children }, pathname }: { item: Na
         {label}
       </Link>
       {children && sectionActive && (
-        <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-[var(--border)] pl-2">
+        <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-[var(--hairline-3)] pl-2">
           {children.map((child) => {
             const on = child === childActive;
             return (

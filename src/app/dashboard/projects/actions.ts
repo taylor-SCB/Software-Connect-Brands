@@ -15,6 +15,7 @@ import { openItems } from "@/lib/close-out";
 import { ensureServiceType } from "@/lib/service-types";
 import { ensureDistributorTypeName } from "@/lib/distributors";
 import { advanceDealStage } from "@/lib/deals";
+import { acceptSourceQuote } from "@/lib/quote-accept";
 import {
   computeSchedule,
   isoToDate,
@@ -524,6 +525,8 @@ export async function awardWithoutPaperwork(
   });
 
   await advanceDealStage(deal.id, organizationId, "WON", userId);
+  // Awarding from a quote is the customer's yes to it, as signing is.
+  await acceptSourceQuote(organizationId, quote?.id ?? null, signedAt, userId);
   const projectId = await awardFromContract(organizationId, contractId);
   if (projectId) revalidateProject(projectId);
   revalidatePath("/dashboard/contracts");
@@ -573,11 +576,15 @@ export async function materialsToOrder(projectId: string) {
 
   // Rows on the customer's own signed paperwork are the work sold; the
   // ones with a product that has a distributor are what has to be bought.
+  // In the paperwork's own order, contract by contract (audit fix, Nov 10,
+  // 2026): unordered, a row moved to another scope came back last and the
+  // purchase order listed it out of place.
   const lines = await prisma.contractLineItem.findMany({
     where: {
       contract: { organizationId, projectId: project.id, payable: false, status: "SIGNED" },
       quoteLineItem: { product: { distributorId: { not: null } } },
     },
+    orderBy: [{ contract: { number: "asc" } }, { position: "asc" }, { id: "asc" }],
     select: {
       id: true,
       name: true,
@@ -675,9 +682,10 @@ export async function orderFromSupplier(
   });
   const owner = await prisma.user.findFirst({ where: { id: userId }, select: { name: true } });
 
-  const lines = await prisma.contractLineItem.findMany({
+  const found = await prisma.contractLineItem.findMany({
     where: { id: { in: mine.lines.map((line) => line.id) } },
     select: {
+      id: true,
       name: true,
       description: true,
       quantity: true,
@@ -701,6 +709,12 @@ export async function orderFromSupplier(
       },
     },
   });
+
+  // In the contract's own order (Nov 10, 2026): an "id in" read comes back
+  // in whatever order the database likes, which shuffled a purchase
+  // order's rows now and then.
+  const order = new Map(mine.lines.map((line, index) => [line.id, index]));
+  const lines = found.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 
   // Priced at what the material costs, which is what a purchase order
   // is: the sell price is the customer's business, not the supplier's.
@@ -749,6 +763,7 @@ export async function orderFromSupplier(
               industries: ["Service Provider"],
               companyTypes: [distributorTypeName],
               status: "WON",
+              createdById: userId,
             },
             select: { id: true },
           })
@@ -788,6 +803,7 @@ export async function orderFromSupplier(
           email: rep?.email ?? null,
           phone: rep?.phone ?? null,
           status: "WON",
+          createdById: userId,
         },
         select: { id: true },
       });

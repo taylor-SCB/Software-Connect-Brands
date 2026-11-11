@@ -24,6 +24,14 @@
  * on a purchase order), re-priced by an inline row edit, and read back the
  * same on the quote page, the customer's copy and the quotes list.
  *
+ * Audit fixes (UX review, Nov 10, 2026), each an "audit fixes (UX
+ * review):" step: the Coordinator on a phone — the page no wider than the
+ * screen, Contract A's card and pickers on it, a row's tick box reached
+ * inside the rows table; and the customer signing accepting the quote the
+ * contract came from — Accepted, its follow-up gone from the calendar and
+ * Coming up, no longer "out with customers", and the won deal keeping its
+ * value beside a newer $0 draft.
+ *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace, activates it with SQL, and deletes it again
@@ -364,6 +372,40 @@ async function anonymousStatus(browser, url) {
   assert.ok(cardBox.y >= tableBox.y + tableBox.height - 1, "the card is under the rows, not beside them");
   assert.ok(cardBox.width >= tableBox.width * 0.9, `the card spans the width (${cardBox.width}px of ${tableBox.width}px)`);
 
+  log("audit fixes (UX review): on a phone the Coordinator fits the screen — Contract A's card and pickers on it, a row's tick box reached inside the rows table");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
+    await phone.locator("[data-testid=tracker-grid]").waitFor();
+    const fits = await phone.evaluate(() => {
+      const box = (el) => {
+        const r = el.getBoundingClientRect();
+        return { left: Math.round(r.left), right: Math.round(r.right) };
+      };
+      return {
+        page: document.documentElement.scrollWidth,
+        card: box(document.querySelector("[data-testid=column-header]")),
+        pickers: ["company", "contact", "template"].map((name) => ({ name, ...box(document.querySelector(`#col-1-${name}`)) })),
+      };
+    });
+    // Before the fix the card was 675px wide and the page scrolled sideways.
+    assert.ok(fits.page <= 390, `the page is ${fits.page}px wide on a 390px phone`);
+    assert.ok(fits.card.left >= 0 && fits.card.right <= 390, `Contract A's card runs off the screen (${fits.card.left}-${fits.card.right})`);
+    for (const picker of fits.pickers) {
+      assert.ok(picker.left >= 0 && picker.right <= 390, `the ${picker.name} picker is cut off (${picker.left}-${picker.right})`);
+    }
+    const tick = phone.getByRole("checkbox", { name: "Put Tile on Contract A" });
+    await tick.scrollIntoViewIfNeeded();
+    const tickBox = await tick.boundingBox();
+    assert.ok(tickBox && tickBox.x >= 0 && tickBox.x + tickBox.width <= 390, `the tick box is off the screen at ${tickBox?.x}`);
+    assert.equal(await phone.evaluate(() => window.scrollX), 0, "the page itself moved sideways to reach it");
+    await tick.check();
+    assert.match(await phone.locator("[data-testid=column-header]").first().textContent(), /1 row/);
+    await phone.screenshot({ path: path.join(OUT, "02b-tracker-phone.png"), fullPage: true });
+    await phoneCtx.close();
+  }
+
   log("price the software row inline — 3 × $20.00 with 10% off — it saves to the quote and re-prices the row");
   const swRow = page.locator("[data-testid=tracker-row][data-line-id=qli_tr3]");
   await swRow.getByLabel("Scheduling software quantity").fill("3");
@@ -528,6 +570,21 @@ async function anonymousStatus(browser, url) {
   assert.match(await page.locator("[data-testid=tracker-contract]").filter({ hasText: "Sales Order" }).textContent(), /1 sent/);
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_tr'`)).rows[0].stage, "CONTRACT_SENT");
 
+  log("audit fixes (UX review): the quote goes out again from its page, so its follow-up is on the calendar and in Coming up");
+  await page.goto(`${BASE}/dashboard/quotes/quo_tr`);
+  await page.getByRole("button", { name: "Back to draft" }).click();
+  await page.getByTestId("mark-sent").click();
+  await page.getByRole("button", { name: "Back to draft" }).waitFor();
+  const openQuoteEvents = async () =>
+    (
+      await sql(`SELECT type FROM "CalendarEvent" WHERE "quoteId"='quo_tr' AND "doneAt" IS NULL ORDER BY type`)
+    ).rows.map((row) => row.type);
+  assert.ok((await openQuoteEvents()).includes("Quote follow up"), "marking it sent writes its follow-up");
+  await page.goto(`${BASE}/dashboard/contacts/ctc_tr`);
+  assert.match(await page.locator("[data-testid=upcoming-card]").textContent(), /Follow up on quote/);
+  await page.goto(`${BASE}/dashboard/quotes`);
+  assert.match(await page.locator("main").textContent(), /out with customers/);
+
   log("the customer's copy prints the Items and Payment schedule tables with the signer; they sign");
   const tokenA = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [a.id])).rows[0].publicToken;
   const customer = await browser.newContext();
@@ -549,6 +606,42 @@ async function anonymousStatus(browser, url) {
   await customer.close();
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [a.id])).rows[0].status, "SIGNED");
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_tr'`)).rows[0].stage, "WON");
+
+  log("audit fixes (UX review): signing accepts the quote it came from — Accepted, its follow-up off Coming up, not out with customers, and the won deal keeps its value beside a newer $0 draft");
+  {
+    // Before the fix the quote stayed Sent: its follow-up stayed in Coming
+    // up, it counted as out with the customer, and a newer draft on the
+    // deal became the won deal's value ($0.00).
+    const accepted = (await sql(`SELECT status, "respondedAt" FROM "Quote" WHERE id='quo_tr'`)).rows[0];
+    assert.equal(accepted.status, "ACCEPTED", "the quote the signed contract came from is still Sent");
+    assert.ok(accepted.respondedAt, "the answer is dated");
+    assert.deepEqual(await openQuoteEvents(), [], "an open follow-up or due date is left for a signed quote");
+    assert.equal(
+      (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_tr' AND type='Quote sent'`)).rows[0].n,
+      1,
+      "the day it went out stays on the calendar",
+    );
+    await page.goto(`${BASE}/dashboard/contacts/ctc_tr`);
+    assert.doesNotMatch(await page.locator("[data-testid=upcoming-card]").textContent(), /Follow up on quote/);
+    // The Deals card's line: "Kitchen remodel · $304.00 · 1 quote".
+    const dealLine = page.locator("li").filter({ hasText: "Kitchen remodel" }).filter({ hasText: /· \d+ quotes?/ }).first();
+    const wonValue = (await dealLine.textContent()).match(/\$[\d,]+\.\d\d/)[0];
+    assert.notEqual(wonValue, "$0.00");
+    await page.goto(`${BASE}/dashboard/quotes`);
+    assert.doesNotMatch(await page.locator("main").textContent(), /out with customers/, "a signed quote still counts as out with the customer");
+    // A newer draft on the won deal, worked on after the signing.
+    await sql(
+      `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
+       VALUES ('quo_tr_new','${org}','ctc_tr','deal_tr',1990,'Option B','DRAFT','tok_quo_tr_new_0123456789',now() + interval '1 minute')`,
+    );
+    await page.goto(`${BASE}/dashboard/contacts/ctc_tr`);
+    assert.match(
+      await dealLine.textContent(),
+      new RegExp(wonValue.replace(/[$.]/g, "\\$&")),
+      "a newer $0 draft became the won deal's value",
+    );
+    await sql(`DELETE FROM "Quote" WHERE id='quo_tr_new'`);
+  }
 
   log("signing made the job: the Job card names PRJ-1000 and the budget is the discounted total");
   await page.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);

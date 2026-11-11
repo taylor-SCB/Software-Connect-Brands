@@ -707,6 +707,212 @@ flipping up when there's more room — the status picker was cut off by
 the first column and the sidebar. `pipeline-opportunities.cjs` (22
 steps) covers it; `crm-pipeline-stats.cjs` was moved onto the tiles.
 
+**Two looks: Dark and Light (Nov 10, 2026).** Taylor: "same layout and
+design but one is a black backdrop and the other white." Dark is the
+original glass and the default; Light is the same page on white. The
+Dark / Light switch (`src/components/look-switch.tsx`) sits under the
+workspace name in the sidebar (in the top bar on a phone) and in the top
+right corner of the signed-out pages (home, login, signup and its
+submitted page, forgot and reset password; `src/components/signed-out-look.tsx`,
+rendered by `src/app/signup/layout.tsx` for the signup pages because the
+signup page is a client component). It is fixed or in the sidebar on
+purpose: **nothing in a page moves for it** — `looks.cjs` checks the
+header lands where it always did. `setTheme` in
+`src/app/dashboard/theme-actions.ts` remembers the pick in this browser
+(the `scb-look` cookie) and, when signed in, saves it on `User.theme`, so
+it follows the person to their phone. A saved look wins over the
+browser's; someone who never picked inherits the browser's
+(`themeFor` in `src/lib/theme.ts`); anything stored but "dark" or "light"
+(an old "bright") reads Dark. The dashboard, /admin and the signed-out
+pages carry `data-theme` in the server's HTML, and
+`:root:has([data-theme="light"])` in `src/app/globals.css` lifts the Light
+tokens onto `<html>`, so there is no flash and menus drawn on
+`document.body` follow. **Every colour is a token in `globals.css`** — the
+`:root` block (Dark) and the Light block under it: `--bg`, `--surface`,
+`--overlay`, `--text*`, `--ok/--warn/--danger`, the `--tint-1..5` /
+`--hover` fills and `--hairline` / `-2` / `-3` lines that replaced the
+`rgb(255_255_255/0.0x)` classes, `--card-bg`, `--title-from/to`,
+`--chart-grid`. A new screen uses those, never a white-at-n% class. A
+status, tag or stage hue used as the colour of *words* goes through
+`ink()` (`src/lib/ink.ts`; `Badge` does it), which mixes it toward the
+text colour by `--ink` (100% in Dark, so Dark is unchanged; 40% in
+Light, where the pastels were unreadable). The tenant's brand colour
+applies in both. The customer's documents (/q, /c, /i, /r, /u, /p, the
+PDFs) carry no `data-theme` and stay as they were. Proven by `looks.cjs`;
+`overlay-readability.cjs` checks every overlay in both looks.
+
+**Reports on Overview (Nov 10, 2026).** Overview (`/dashboard`) has a
+report bar across the top: **Daily Rundown** (the default; it is the old
+Overview — welcome, the Owed to you / pipeline tiles, recent activity, Jump
+in — with today's calendar for the team, overdue follow-ups, gone-quiet
+opportunities, payments in yesterday, quotes and contracts sent yesterday
+and new contacts yesterday inside it), **Pipeline** (open value and count by
+stage as the board reads it, days in stage, what moved in the period from
+`StatusChange` — people for the meeting steps, deals for the paperwork —
+conversions, new opportunities, the oldest open items), **Activity**
+(touches by day / week, kind and rep, marketing sends as their own series
+and never a touch, people and companies touched, who nobody touched by
+contact owner / industry / job title / state), **Closing** (won and lost
+value and count, win rate, average win, days from first meeting to signed,
+biggest wins) and **Money Owed** (owed aged Not due / 0–30 / 31–60 / 61–90 /
+90+ days late, top debtors, contracts waiting on a signature, collected in
+the period; "owed" is `owedRowsSql` in `src/lib/money.ts`, the very rows
+the Owed to you tile adds up). The report, period (Today … This year, plus
+Yesterday and Last year), rep and "Break down by" (Rep, Industry — a
+company's first one —, Job title, State, Lead label, where it makes sense)
+are in the address bar; "this" periods are compared with the same days of
+the period before, finished ones with the whole period before. The
+numbers are pure functions in `src/lib/reports/` (one module per report,
+aggregated in SQL; a deal's value is `dealValueCte`, `dealValueCents` in
+SQL), read by the page, the email and the write-up alike. **The write-up**
+(`src/lib/reports/narrative.ts`): with `ANTHROPIC_API_KEY` set, Claude
+(`REPORT_NARRATIVE`, 60 a day per workspace) is given only the formatted
+numbers as JSON and every number in its answer must be in them ("$12k" for
+$12,345 is fine) or the answer is thrown out; without AI, over the
+allowance, on any error or a failed check it is written by rules from the
+numbers (biggest change, who's ahead and behind, what needs attention).
+Stored in `ReportNarrative` by report, period with its dates, rep,
+breakdown and a fingerprint of the numbers, so it is written once until the
+numbers move; Rewrite asks again. The page never waits on the AI: it shows
+the rules version and swaps the AI one in. **Email me this** on every report
+(`ReportSubscription`; yourself, or any teammate for an Owner or Admin;
+Daily / Weekly on Mondays for last week / Monthly on the 1st / Quarterly /
+Yearly on Jan 1; the Daily Rundown is daily only) and **My report emails**
+with Remove in Settings → My Account. **The clock**: `vercel.json` runs
+`/api/cron/reports` every hour (Vercel Pro); each run sends, for every
+active workspace whose clock has reached 6am, the subscriptions due today
+not yet sent since 6am (claimed through `lastSentAt` before sending and put
+back if the send fails, so a double fire sends nothing twice and a run that
+runs out of time is finished the next hour; one made after 6am waits for
+the next morning). **The route refuses everything unless `CRON_SECRET` is
+set in Vercel** (Vercel then sends it as the Bearer header itself) — until
+Taylor adds it, no report email goes out. Email uses `sendEmail` as the
+business's name; with email off nothing is claimed. `reports.cjs` (33
+steps) covers it; measured through the slow proxy every report opens in
+0.25–0.7 s, and at 200,000 contacts in 0.45–0.7 s (Activity broken down by
+industry, title or state over a whole year about 1 s).
+
+**AI assist and gone quiet (Nov 10, 2026; the five AI items from the CTO
+Think Tank plus "gone quiet").** Every AI answer is a suggestion a person
+accepts; nothing is saved or sent on its own, and every AI control is
+hidden while `ANTHROPIC_API_KEY` is unset. All calls go through
+`askClaude` (`src/lib/ai.ts`) with a per-kind daily allowance per
+workspace (`AI_DAILY_CAPS` in `src/lib/ai-assist.ts`: FOLLOW_UP_DRAFT 200,
+MEETING_TO_OPPORTUNITY 150, QUOTE_DRAFT 100, IMPORT_HEADERS 50, LEAD_LABEL
+200); meeting notes go in fenced as data. **Gone quiet** (no AI): a "Quiet
+N days" badge on Pipeline tiles and in the panel from
+`goneQuietOpportunities`, a **Gone quiet** toggle on the filter bar
+(`?quiet=1`), and the day count (`Organization.quietDays`, 1–365) on
+Settings → General for Owners and Admins. **Draft a follow-up** on quiet
+tiles and in every panel: a text and an email (subject + body) to the
+Primary POC from the latest meeting notes, the deal and its quote, shown
+to edit and Copy; **Log as sent** writes a one-to-one TEXT or EMAIL
+Activity on the person (a real touch: calendar entry, Contacted, the
+badge goes). Nothing is emailed from the site. **Suggest from meeting
+notes** in the panel: Primary POC (people on it only), Lead Label (the
+built-ins and the workspace's own only), an estimated value and a next
+step, as chips to Use or dismiss; Use fills the panel's form and nothing
+is saved until Save (the value only fills a deal's value box; the next
+step is copy-only — there is no field for it). **Draft lines from the
+meeting** on a draft quote whose deal came from an opportunity, and run
+on arrival when Build Quote is converted with its box ticked (`?draft=
+meeting`, dropped from the address once run): the catalog is searched
+for candidates from the notes' words (`catalogCandidates`, 40 at most),
+Claude sees only those, each line must name a candidate's id with a
+quantity (any other id is left out and counted) or be a typed line at $0
+marked **Price needed**, which the save refuses until priced; lines land
+in the editor unsaved and the quote stays a Draft; the AI's reason is
+shown in the editor only, never in the line's project notes (those print
+for the customer). **The contacts import cleans the file first**
+(`src/components/import-cleanup.tsx`): likely duplicates inside the file
+(same phone/mobile digits, same name at the same company;
+`src/lib/import-duplicates.ts`) and against contacts on file (same email
+— which the import updates — same phone digits, or same name at the same
+company; `checkImportDuplicates`), counted and listed; with AI, "Suggest
+where they go" for the headers the planner left out (header + 3 sample
+values), ticked suggestions re-plan the preview through
+`planContactImport(text, mapped)`; nothing saved until Import. **Lead
+Label suggestion**: a faint dashed chip on tiles and the panel with no
+label, from rules first (`src/lib/lead-label-rules.ts`: company type
+Distributor/Manufacturer → Vendor; no company and a personal email domain
+→ Residential; a WON deal under one of its people → Client), and "Suggest
+label" asking Claude only when the rules say nothing; accepting calls
+`setOpportunityLabel`. `ai-assist.cjs` (19 steps) covers all of it with
+a stand-in Claude on :3995.
+
+**Clean CRM data and sharper filters (Nov 10, 2026; Taylor's three
+calls: marketing email is not a touch, no auto-assigning, everyone sees
+everyone).** **Marketing** sends (`Activity.marketing`) stay on the
+person's log with a Marketing badge and sit in their own **Marketing**
+column on both lists (how many, the last one; a company's is its
+people's, `marketingContacts` / `marketingCompanies` in
+`src/lib/last-contacted.ts`); Last Contacted By, the lists' Activity
+counts, the Activity overview box and Last touch on both pages, Stats
+(`src/lib/stats.ts`) and the Activity filter all leave them out (the
+filter reads `lastTouchAt` on Contact and Company, kept by statement
+triggers on Activity and Contact in the migration — a company's is its
+own and its people's — because "on it or its people" from Activity was
+3.4 s a page at 200,000) (the
+status ladder already did, from the base branch). **Rep** (`ownerId`) and
+**Added by** (`createdById`) on contacts and companies: a Rep column on
+both lists; on the pages a Rep picker that saves as it changes and "Added
+by <name> · <date>"; a Rep box on the new and edit forms, Unassigned
+first, that writes only when changed from what the form opened with
+(`ownerOriginal`, `readRepField` in `src/lib/reps.ts`), and a removed
+teammate stays offered, labelled, while they are the one saved. Every
+place that makes a contact or company sets `createdById` (the forms,
+`findOrCreateCompany`, Add person / + Add new contact, the Email window,
+the Contract Coordinator, Order materials, crew/photo invites, supplier
+companies from products, quotes, Import Ratesheet and On Software Connect
+Brands) and nothing sets a rep on its own. **Import**: "Assign everyone in
+this file to: Unassigned / <teammate>" (`AssignToSelect` in
+`import-csv-button.tsx`, passed with every batch): picking a teammate
+gives them every person in the file, new or already here, and every
+company in it nobody owns yet; Unassigned leaves anyone already here with
+the rep they have — an import never takes a rep away. **Bulk Assign** on
+both lists (`src/components/bulk-assign.tsx`, `assignRecords` in
+`src/app/dashboard/assign-actions.ts`): tick rows (the box sits in the
+star's cell so the columns didn't move) or tick the page and "Select all
+N matching these filters"; Assign to me / Assign to… / Unassign; "all
+matching" re-reads the filter on the server from the list's own address
+and takes the first 1,000 in list order in one UPDATE that leaves
+`updatedAt` alone, and says how many still match. **Filters** (address
+bar, stacking): Activity (touched / not touched in 7 / 30 / 90 days,
+never; a company counts its people), Job title (contacts; a searchable
+list with counts from `/dashboard/contacts/titles`, matched ignoring
+case), Rep with Unassigned, Added by, Added (a date range in the
+workspace's clock), Contact info (has / no mobile and email on contacts,
+email and phone on companies), Lead Label (people on an opportunity with
+it, not Do Not List; companies through their people). **CRM → Labels**
+(`/dashboard/labels`, `src/lib/crm-labels.ts`): Industry, Company Type,
+Lead Label and Job Title, every value in use or on the pick list with its
+count, and for Owners and Admins Rename, Merge into… and Retire / Restore
+(a Member reads it). A merge rewrites every record (company arrays keep
+one of each ignoring case, in order), takes A off the pick list, and an
+industry's company types move under the target; renaming onto a name in
+use is refused with "use Merge into…". Retire is `retiredAt` on
+IndustryOption / CompanyTypeOption / LeadLabelOption: off the pick lists
+(`getIndustryPickList` hides it unless `includeRetired`; a company's own
+edit form keeps the retired values it carries, `keep`), still offered by
+the list filters, records keep it. Company types are one value however
+many industries offer them, since a company stores the bare name. The
+built-in lead labels can be merged into only; **Distributor** is locked
+(the supplier pickers find suppliers by it); Job Title has no pick list,
+so no Retire. **Find duplicates** on both lists
+(`/dashboard/{contacts,companies}/duplicates`, `src/lib/duplicates.ts`,
+`DuplicatesView`): contacts by the same email (either one, ignoring
+case), the same phone (phone, second phone or mobile, last 10 digits)
+or the same name at the same company; companies by name ignoring case
+and punctuation, website domain, or phone; 25 groups a page from one
+grouped statement; "Merge these" opens Merge Contacts / Companies with
+the group picked, oldest kept by default, and stays on the finder. A
+merge keeps the keeper's rep and Added by, filling them from the others
+when blank. Migration `20261110171000_crm_data` (retiredAt columns,
+`lastTouchAt` with its backfill and triggers, and indexes for Rep, Added
+by, Added and last touch). `crm-data.cjs` (27 steps) covers it; `load-test.cjs` now seeds 110,000
+activities, reps and 500 Client opportunities and times every new filter,
+the Labels screen, the duplicate finder and a 1,000-record assign.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -729,6 +935,26 @@ are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
 
+- **Report emails need `CRON_SECRET` in Vercel.** The hourly clock is
+  refused without it, by design. Add it (any long random value) under
+  Settings → Environment Variables, all environments, then redeploy. Email
+  itself (`RESEND_API_KEY`, `EMAIL_FROM`) must be on too.
+- **Report write-ups are rules-written until `ANTHROPIC_API_KEY` is set.**
+  They are still useful prose; AI ones cost about a cent each and are
+  written only when a report's numbers change, capped at 60 a workspace a
+  day.
+- **Reports count from what is recorded.** A deal's win or loss is dated
+  by `Deal.stageChangedAt` (a deal won and then moved out of Won is not a
+  win); the Pipeline's "what moved" only knows `StatusChange` rows (from
+  Sept 30, 2026); an opportunity lost before any deal has no date and is
+  left out of Closing; a company in two industries counts under its first.
+- **A report email that fails to send is retried at the next hourly run
+  that day**, not after midnight: a workspace whose send fails all day
+  misses that day's email.
+- **The Daily Rundown is always today and yesterday** in the workspace's
+  zone; its period picker is hidden. The gone-quiet list uses the real
+  clock, so the cron's test clock does not move it.
+
 - **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel** (`DEPLOY.md`).
   Without it the button simply isn't shown. It sends the agreement's
   text to Claude (claude-opus-5-5, server-side fallback on) and costs
@@ -736,6 +962,27 @@ are all blocking before the first paying customer.
   60,000-character one, on the site's own key. 20 a day per workspace
   caps it at roughly $8 a workspace a day; a spend limit on the
   Anthropic account is the backstop.
+- **The Pipeline, quote and import AI helpers wait on `ANTHROPIC_API_KEY`
+  in Vercel too** (Nov 10, 2026). Until it is set, Draft a follow-up,
+  Suggest from meeting notes, Draft lines from the meeting, the import's
+  "Suggest where they go" and "Suggest label" don't show; Gone quiet, the
+  import's duplicate flags and the rule-based label chips need no key.
+  Roughly 2 cents a follow-up or meeting read, 5 cents a quote draft and
+  under a cent a label or header guess, on the site's own key, capped per
+  workspace per day (200 / 150 / 100 / 200 / 50). The import's header
+  suggestions send the headers and three sample values of the unplaced
+  columns to Claude, which can be personal data.
+- **A drafted quote's prices are only as good as the catalog search.** It
+  matches words from the notes against product names, SKUs and
+  descriptions; a product the notes describe in other words isn't a
+  candidate, so it comes back as a typed "Price needed" line. A catalog
+  of tens of thousands narrows to the 300 first word matches before the
+  best 40 are picked.
+- **The meeting suggestion's next step is copy-only**, and its value only
+  fills a deal's value box: an opportunity with no deal has nowhere to
+  keep either until it is converted.
+- **Gone quiet counts a logged touch with anyone on the opportunity**,
+  so a call with the Associated POC about something else still resets it.
 - **A booby-trapped Word or PDF file can still freeze the uploader's own
   tab.** It is read in their browser, so nobody else is affected and the
   limits above stop the common ones, but one page of a PDF built to
@@ -1017,6 +1264,33 @@ are all blocking before the first paying customer.
 - **The 90 / 180-day contract rule runs when the Pipeline or Stats is
   opened.** A workspace nobody opens for a month catches up on the next
   visit, all at once.
+- **An import never unassigns, and an explicit assignee takes everyone in
+  the file** (Nov 10, 2026, Claude's call, to check with Taylor): with a
+  teammate picked, a person already owned by someone else is handed over;
+  a company already owned keeps its rep. Unassigned leaves every existing
+  rep alone.
+- **Bulk "all matching" takes 1,000 at a go, in list order, of the ones
+  that don't already have that rep.** Past that the bar says how many are
+  left; running it again does the next 1,000 (before the Nov 10 audit it
+  picked the same 1,000 every time).
+- **The Job title filter matches ignoring case, not spaces.** A title
+  saved with stray spaces ("Sales  Manager", which the form and import
+  allow) is its own choice in the filter; the Labels screen groups it
+  with the rest (outer spaces and inner runs ignored), and a rename or
+  merge there tidies it.
+- **Search matches word by word, so it can find more than a phrase
+  would** ("Property Manager" also finds a Community Manager at a "…
+  Property Group"). A run of 4–6 digits typed across a dash isn't
+  compared digits-only, and digit matches stop at 1,000 per word.
+- **The Companies list (12 columns) scrolls sideways inside its card at
+  1440**, like Contacts; its scrollbar is at the bottom of the table.
+- **The Overview page's recent-activity list leaves marketing sends out**
+  (Nov 10, 2026); the contact and company feeds show them with the badge.
+- **The Pipeline's Lead Label filter and the opportunity panel no longer
+  offer a retired label** (an opportunity carrying one still shows it,
+  and the CRM lists can still filter on it).
+- **The duplicate finder looks at one rule at a time** (email, phone or
+  name), shows ten records a group and merges five at a go, as Merge does.
 - **A person linked to a second company is not rolled up there.** Their
   deals, quotes and notes stay with their main company; the linked one
   lists them under People with an "Additional account" tag only.
@@ -1032,7 +1306,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Thirty-six** are checked in at
+suite, and the delete-confirmation suite. **Thirty-eight** (plus `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1169,8 +1443,10 @@ staying that way on the purchase order, per-product counts; **it needs
 `STORAGE_DRIVER=local`** like `job-photos.cjs`). **`calendar.cjs` steps
 29 and 30 read the Coming up card and pick the roofing day by its date**
 (Nov 6, 2026): a seeded November day now behind us sits under Already
-been. The suite is built around November 2026; once that month is past,
-its fixed days need moving to a month still ahead.
+been. Since Nov 10, 2026 the suite is built around **August 2027** (moved
+from November 2026 once that month was no longer ahead; both start on a
+Sunday and the months before them line up). Move it again, keeping that
+alignment, before August 2027.
 `products-load-test.cjs` also opens, searches, clears and re-ticks the
 25,000-line sheet through the slow proxy (open 1.2 s, all off 25 s, all
 back 81 s; the 25,000-row import is 26 s, up from 9 s, for the supplier
@@ -1187,6 +1463,17 @@ it ever holds more than 5. **`calendar.cjs` no longer assumes November
 2026 is in the future** (Nov 4, 2026): it clears the Contract sent /
 closed entries its seed contract writes on the real today, and paging
 into its month may land on today.
+`reports.cjs` (Nov 10, 2026, 33 steps: the five reports' numbers against
+the seed and SQL, the pickers, the write-up and its cache, a stand-in Claude
+on :3994 through a second server it starts itself on :3113, Email me this,
+My report emails, the cron's secret and a forced Monday-6am run caught on
+:3993, the phone; `LOAD=200000` adds the at-scale timings) **needs, in
+`.env`, `RESEND_API_KEY`, `EMAIL_FROM`,
+`RESEND_ENDPOINT=http://localhost:3993/emails`, `CRON_SECRET=test-cron-secret`,
+`REPORTS_TEST_CLOCK=1` and `APP_URL` set to the server's own address**, and
+no `ANTHROPIC_API_KEY`. `REPORTS_TEST_CLOCK=1` lets the cron take a `now`
+for the test (never honoured on Vercel's production, and only with the
+secret).
 `overlay-readability.cjs` step 6 (the deal picker on a new quote) used
 to pass one run in three: it photographed the panel while the page was
 still fading in. It waits for the fade now (Oct 25, 2026); **a pixel
@@ -1200,6 +1487,13 @@ seeds and sends paperwork now gets calendar entries written for it, so
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
 
+`ai-assist.cjs` (Nov 10, 2026) answers as Claude on :3995 (set
+`ANTHROPIC_API_KEY=test-key` and `ANTHROPIC_ENDPOINT=http://localhost:3995`
+in `.env`); its "AI off" step needs a second server started with an empty
+`ANTHROPIC_API_KEY=` passed as `NOAI_BASE`, and is skipped without one.
+`quotes-improvement.cjs` step 25 picks the rep straight after a reload and
+can beat hydration on `next dev`; it passes on a production build.
+
 **The local database is too fast to show timing bugs.** An 1,800-row
 import stopped after 500 on the live site (Sept 27, 2026) because one
 step ran a thousand writes in a single transaction and Prisma gives a
@@ -1210,6 +1504,16 @@ adds 8 ms each way (run instructions at the top of each). Anything that
 loops over hundreds of rows against the database gets run that way too,
 and never goes in one `$transaction` unless it truly must be
 all-or-nothing.
+
+`crm-data.cjs` (Nov 10, 2026) is the thirty-seventh: marketing never a
+touch, reps and Added by, the import's assign-to, bulk assign with the
+1,000 cap, every new list filter, the CRM Labels screen, the duplicate
+finder and the phone. It needs email switched on like
+`email-marketing-users.cjs`; both now take `CATCHER_PORT` so two
+sessions can each catch their own mail. **`crm-pipeline-stats.cjs` step
+13 is flaky** (Nov 10, 2026, seen on the base branch too): the
+full-page screenshot right before the second Save sometimes closes the
+status dates panel; a rerun passes.
 
 `password-reset.cjs` and `email-marketing-users.cjs` are the suites that need more than a database:
 the login screen only offers the link when email is switched on, so the
@@ -1261,6 +1565,147 @@ every controlled `<select>` back on the option the page loaded with —
 tag, unit and distributor showed old values after a save and the next
 Save wrote them back. A form full of controlled selects should do the
 same.
+
+The Nov 10, 2026 audit of the combined CRM release found 22 confirmed
+defects (28 flagged, 23 distinct, 1 refuted); each has an "audit fixes:"
+step in its module's suite. Five lessons worth keeping:
+- **An edit form that stays open after a save needs its uncontrolled
+  selects keyed by the saved value** (`RepField` keys on the rep): React
+  resets the form after the action, and a select goes back to the option
+  it was mounted with while hidden "original" inputs move on.
+- **Prisma's `mode: "insensitive"` applies to `not` as well.**
+  `{ equals: "VIP", mode: "insensitive", not: "vip" }` excludes "VIP" too;
+  compare "everything but this exact spelling" in SQL.
+- **`history.replaceState` must be passed `null`, not
+  `window.history.state`** (Next's own state makes its router skip the
+  sync, and the next server action puts the old address back).
+- **A portal still bubbles React events to the component that rendered
+  it**, so a dialog opened from a clickable tile must stop clicks, and an
+  Escape listener on a dialog above a panel must listen in the capture
+  phase and stop there.
+- **"6am" is a wall-clock time, not midnight plus six hours** — on the
+  spring-forward day that's 7am. Use `zonedHour` in
+  `src/lib/reports/period.ts`.
+Also: a "last touch" stored on the row leaves out activities dated ahead
+(`crm_touch_due` puts them on once their time comes), "gone quiet" never
+includes an opportunity with a meeting still to come, and "all matching"
+bulk Assign only picks records that don't already have that rep.
+
+The Nov 10, 2026 UX review walked a seeded sales team (demo workspace
+"Summit Low Voltage", slug demo-summit, in scb_test) through the BDR day
+on phone and desktop, Dark and Light: 128 findings, 34 distinct confirmed
+bugs, all fixed with "audit fixes (UX review): …" steps in their module's
+suite (the step counts quoted elsewhere in these notes predate it; the
+suites are the source). The redesign it proposed (Connected, the
+lifecycle meter, health) is a plan waiting on Taylor's decisions, not
+built. What the fixes taught:
+- **Anything with a transform, filter or backdrop-filter is the box its
+  position:fixed children are placed against, and so is an animation that
+  keeps a transform after it ends.** `.fade-up` ran with fill-mode `both`
+  and every in-place dialog opened in the middle of the whole page column,
+  far below the screen. Entrance animations use `backwards`; in Dark,
+  `.card:has(.modal-backdrop)` drops the glass blur while a dialog is open
+  in it. A new dialog should still render through a portal on
+  document.body. overlay-readability.cjs checks every in-place dialog.
+- **Light outlines clear 3:1** (`--border` slate at 0.5, `--border-strong`
+  0.6). **A line that only separates uses `--hairline-3`**, never
+  `--border`: one-sided borders, `divide-*`, card and dialog header
+  underlines, table header lines. Chart gridlines use `--chart-grid`.
+  A focused field in Light gets the darkened brand edge; a disabled
+  `.btn-primary` in Light is grey with `--text-dim` words, not faded.
+- **A grid item holding a `truncate` line, a wide table or a form needs
+  `min-w-0` (or the grid `grid-cols-1`)**, or the page widens on a phone.
+  Test phone layouts with `isMobile: true`: a phone browser widens the
+  layout viewport instead of showing a sideways scrollbar.
+- **Anything that hangs off a button is a FloatingMenu** (filter menus,
+  Add person). Its panel is hidden the frame it takes to place itself, so
+  `autoFocus` inside does nothing: focus in a requestAnimationFrame. The
+  filter menus steer the keyboard with FocusGuard stops; menus are reached
+  in tests by their `<button testid>-menu` testid, not as DOM siblings.
+- **A form that can sit in a narrow column lays out by its own width**
+  (Tailwind container queries, `@container` + `@sm:`), as EventForm does.
+- **SVG charts draw at their real pixel width** (`useBoxWidth` in
+  stats/charts.tsx), never a fixed viewBox scaled by `w-full`, so labels
+  stay 11px on a phone.
+- **"N days ago" is counted on the workspace's calendar**:
+  `daysSince(date, timeZone)` takes the zone.
+- **A change from zero reads "▲ up from 0"**, through `changeText()` in
+  reports/format.ts, Stats tiles included; never "100%" or "vs 0".
+- **One touch logged on several people is one row each with a shared
+  batchId**: anything counting or listing touches across people counts
+  `COALESCE(batchId, id)`.
+- **Search is word by word** (`searchTerms`, up to 6 words); a search
+  that is a phone number (7+ digits) is also compared digits-only on the
+  last 10 (`phoneSearchDigits`, `contactIdsByPhone`) using the hand-made
+  trigram expression indexes in `20261110231500_list_search_phone`.
+  **`prisma migrate dev` will offer to drop them; take those lines out.**
+  The lists' `q` keeps `% _ \` (`cleanListSearch` + `likeText`); the
+  pickers still use `cleanSearch`.
+- **Signing a contract, Mark as signed and Award without paperwork accept
+  the source quote** (`acceptSourceQuote` in src/lib/quote-accept.ts, kept
+  out of "use server" files). **After this goes live, run once against
+  the live database:** `npx tsx scripts/accept-signed-quotes.ts --check`,
+  then without `--check`, to catch up deals signed before it.
+- Mark as sent is refused with no saved line items, and waits while the
+  editor has unsaved edits. Delete quote and the calendar's trash ask
+  first, with Yes away from where the trash was. The opportunity panel's
+  Stage menu saves the panel's edits first.
+- Lead label fills are Taylor's; built-in chips use black letters, N/A
+  #991b1b on #d4d4d8, and a hue used as words goes through
+  `leadLabelInk()`, never opacity.
+- A component that copies a prop into state (OwnerSelect, RepField) is
+  keyed by that prop wherever something else can save it.
+
+**The BDR redesign: Taylor approved every recommendation (Nov 11, 2026).**
+The plan is the "BDR Flow Redesign" page (claude.ai artifact
+YTVnpnoQPVMcUeE4cKseiW, source in that session's scratchpad). What he
+said yes to, so later work doesn't ask again:
+1. Connected = a live talk, a reply by text or email, a held meeting, or
+   booking one. Voicemail, no answer, busy, front desk, wrong number, an
+   unanswered text or email and a no-show are attempts. One-tap outcome
+   chips; old history is never guessed (old calls are attempts, old
+   meetings held; Stats says "Talks counted from <launch day>").
+2. Connected becomes a real status (CONNECTED between CONTACTED and
+   INTERESTED), in its own small release after the outcome chips ship.
+3. "Contacted" is shown as "Attempted" (label only; the value and CSV
+   import stay CONTACTED).
+4. Meeting Completed is set automatically when a meeting is logged Held or
+   ticked done (asking first when the date is still ahead).
+5. The follow-up box's "Meeting" tick becomes "Try to book a meeting", a
+   reminder that moves no status; booking goes through a Book meeting sheet.
+   (This replaces the Oct 4 rule.)
+6. Health shows as a word and colour; the 0–100 number only on hover or
+   long-press, as a breakdown.
+7. Health colours are fixed on every tenant (teal / amber / rose / grey),
+   not the partner's brand.
+8. People never reached are "Trying": grey, amber when stalled, never red,
+   no number.
+9. Members land on a new "My day" tab; Owners and Admins keep Daily
+   Rundown with a Team today strip on top.
+10. Old activities stay "not recorded"; the voicemail-labelling script runs
+    on the demo only.
+11. Optional team goals (tries, talks, meetings booked) set by Owners and
+    Admins in Settings → General; until set, the rings show "vs last week".
+12. Suggest parking a lead after 6 tries with no connect; parking only books
+    "Try again in 30 days".
+13. The rep who booked a meeting gets credit for it being held (needs a
+    bookedById on the meeting); the deal and its money stay with the deal's
+    rep.
+14. Not interested and Lost ask for an optional one-tap reason (Price ·
+    Timing · Has a vendor · No budget · Other).
+15. A Member can bulk "Assign to me" a teammate's records, with a confirm
+    naming the owner and an Undo.
+16. The Email button on one contact's page becomes a one-to-one send that
+    counts as a touch (no template, no unsubscribe footer, not in the 40-a-day
+    limit); the marketing sender stays exactly as it is.
+17. Members open lists, the Pipeline and the Calendar on "Mine", with
+    Everyone one tap away; everyone still sees everyone.
+18. Up next offers unowned leads ("43 new leads nobody owns · Take 10"):
+    a manual claim with confirm and Undo, never automatic.
+19. Build Quote leaves the deal at Meeting Completed until the quote is
+    sent; Manual Input still moves it straight away.
+The renames and moves listed per release in the plan are approved with
+it. Each release still goes live only after his "Ready to go live?" yes.
 
 **Anything that floats over other content must be opaque.** The app's
 look is glass — `.card` is about 4% white with a blur behind it — which

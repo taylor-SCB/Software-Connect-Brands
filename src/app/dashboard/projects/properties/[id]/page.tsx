@@ -211,7 +211,7 @@ export default async function PropertyPage({
             body="Pick the jobs done at this building and the budget rolls up on its own."
           />
         ) : (
-          <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+          <ul className="divide-y divide-[var(--hairline)]">
             {property.projects.map((job) => {
               const left = leftCents(job);
               const inTotal = counted.has(job.id);

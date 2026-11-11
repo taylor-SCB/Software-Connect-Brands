@@ -13,17 +13,19 @@ import {
   CONTACT_CSV_COLUMNS,
   CONTACT_CSV_LABELS,
   type ContactImportPlan,
+  type ContactCsvColumn,
   type ImportBatchResult,
 } from "@/lib/contacts-csv";
 import { importContactsBatch } from "@/app/dashboard/contacts/import-actions";
 import { describeFilled } from "@/lib/enrich";
+import { ImportCleanup } from "@/components/import-cleanup";
 
 // "Import CSV" on the Contacts and Companies lists. The browser reads the
 // whole file (any size), shows what it found, then sends the rows up in
 // batches of a few hundred with a running count. Closing the tab stops
 // it; re-uploading the same file carries on without doubling anything,
 // because rows that already exist are updated, not added again.
-export function ImportCsvButton({ kind }: { kind: "contacts" | "companies" }) {
+export function ImportCsvButton({ kind, reps = [] }: { kind: "contacts" | "companies"; reps?: { id: string; name: string; removed?: boolean }[] }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -31,7 +33,7 @@ export function ImportCsvButton({ kind }: { kind: "contacts" | "companies" }) {
         <IconUpload size={14} />
         Import CSV
       </button>
-      {open && <ImportDialog kind={kind} onClose={() => setOpen(false)} />}
+      {open && <ImportDialog kind={kind} reps={reps} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -51,12 +53,24 @@ async function readCsvText(file: File) {
 type Phase =
   | { step: "pick" }
   | { step: "reading" }
-  | { step: "preview"; plan: ContactImportPlan }
+  // text and mapped: the file as read and any columns placed by hand from
+  // the clean-up's suggestions, so the preview can be planned again.
+  | { step: "preview"; plan: ContactImportPlan; text?: string; mapped?: Partial<Record<ContactCsvColumn, number>> }
   | { step: "running"; plan: ContactImportPlan; done: number; totals: ImportBatchResult }
   | { step: "finished"; plan: ContactImportPlan; done: number; totals: ImportBatchResult; stopped: boolean; error?: string };
 
-function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClose: () => void }) {
+function ImportDialog({
+  kind,
+  reps,
+  onClose,
+}: {
+  kind: "contacts" | "companies";
+  reps: { id: string; name: string; removed?: boolean }[];
+  onClose: () => void;
+}) {
   const router = useRouter();
+  // "Assign everyone in this file to" (Nov 10, 2026): Unassigned unless picked.
+  const [assignTo, setAssignTo] = useState("");
   const [phase, setPhase] = useState<Phase>({ step: "pick" });
   const [planError, setPlanError] = useState("");
   const stopRef = useRef(false);
@@ -78,8 +92,9 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
     // Let the "Reading…" state paint before the parse takes the thread.
     await new Promise((resolve) => window.setTimeout(resolve, 30));
     try {
-      const planned = planContactImport(await readCsvText(file));
-      if (planned.ok) setPhase({ step: "preview", plan: planned.plan });
+      const text = await readCsvText(file);
+      const planned = planContactImport(text);
+      if (planned.ok) setPhase({ step: "preview", plan: planned.plan, text });
       else {
         setPlanError(planned.error);
         setPhase({ step: "pick" });
@@ -104,7 +119,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
       let result: Awaited<ReturnType<typeof importContactsBatch>> | undefined;
       for (let attempt = 0; attempt < 2 && !(result && !("error" in result)); attempt += 1) {
         try {
-          result = await importContactsBatch(batch);
+          result = await importContactsBatch(batch, { assignTo });
         } catch {
           result = {
             error: `Rows ${(start + 1).toLocaleString()}–${Math.min(plan.rows.length, start + IMPORT_BATCH_SIZE).toLocaleString()} didn't go through. Re-upload the same file to carry on; rows already in are updated, not doubled.`,
@@ -134,7 +149,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
         onClick={(event) => event.stopPropagation()}
         className="card card-lit popover flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden"
       >
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold">Import {kind}</h2>
             <p className="faint mt-0.5 text-xs">
@@ -175,7 +190,24 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
             </div>
           )}
 
-          {phase.step === "preview" && <Preview plan={phase.plan} />}
+          {phase.step === "preview" && (
+            <>
+              <Preview plan={phase.plan} />
+              <AssignToSelect reps={reps} value={assignTo} onChange={setAssignTo} />
+            </>
+          )}
+          {phase.step === "preview" && phase.text !== undefined && (
+            <div className="mt-3">
+              <ImportCleanup
+                plan={phase.plan}
+                onMap={(more) => {
+                  const mapped = { ...phase.mapped, ...more };
+                  const planned = planContactImport(phase.text!, mapped);
+                  if (planned.ok) setPhase({ step: "preview", plan: planned.plan, text: phase.text, mapped });
+                }}
+              />
+            </div>
+          )}
 
           {(phase.step === "running" || phase.step === "finished") && (
             <Progress
@@ -189,7 +221,7 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] px-5 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
           <div className="flex items-center gap-2">
             {phase.step === "preview" && (
               <>
@@ -226,6 +258,37 @@ function ImportDialog({ kind, onClose }: { kind: "contacts" | "companies"; onClo
         </div>
       </div>
     </div>
+  );
+}
+
+// Who the file's people and new companies go to. Self-contained so the
+// dialog's other steps stay as they were.
+function AssignToSelect({
+  reps,
+  value,
+  onChange,
+}: {
+  reps: { id: string; name: string; removed?: boolean }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+      <span className="font-medium">Assign everyone in this file to:</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="select input-sm w-56" data-testid="import-assign">
+        <option value="">Unassigned</option>
+        {reps
+          .filter((rep) => !rep.removed)
+          .map((rep) => (
+            <option key={rep.id} value={rep.id}>
+              {rep.name}
+            </option>
+          ))}
+      </select>
+      <span className="faint w-full text-xs">
+        Unassigned leaves anyone already here with the rep they have. Picking a teammate gives every person in the file to them, and any company in it nobody owns yet.
+      </span>
+    </label>
   );
 }
 
@@ -338,7 +401,7 @@ function Progress({
           </span>
           <span className="num faint">{percent}%</span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-[rgb(255_255_255/0.08)]" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+        <div className="h-2 overflow-hidden rounded-full bg-[var(--tint-4)]" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full bg-[var(--brand)] transition-[width]" style={{ width: `${percent}%` }} />
         </div>
         {!finished && <p className="faint mt-1 text-xs">Keep this tab open. Stopping early is fine; re-upload the same file to finish.</p>}

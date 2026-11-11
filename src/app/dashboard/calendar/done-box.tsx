@@ -54,7 +54,7 @@ export function DoneBox({
     });
 
   return (
-    <div className="mt-1.5 space-y-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3" data-testid="done-box">
+    <div className="mt-1.5 space-y-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3" data-testid="done-box">
       <p className="text-xs font-medium">How did it go?</p>
       <div className="flex flex-wrap gap-1.5">
         {ACTIVITY_TYPES.map((option) => (

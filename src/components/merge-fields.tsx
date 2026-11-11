@@ -83,7 +83,7 @@ export function MergeFieldPalette({
   const visible = group === "ALL" ? MERGE_FIELDS : MERGE_FIELDS.filter((f) => f.group === group);
 
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3">
       <div className="mb-3 flex flex-wrap items-center gap-1" role="tablist" aria-label="Merge field groups">
         {(["ALL", ...MERGE_GROUPS] as const).map((name) => (
           <button

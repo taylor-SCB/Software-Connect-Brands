@@ -1,5 +1,6 @@
 "use client";
 
+import { ink } from "@/lib/ink";
 import Link from "next/link";
 import { useState } from "react";
 import { createPortal } from "react-dom";
@@ -137,20 +138,20 @@ export function RatesheetsBoard({
           </div>
 
           {selected && (
-            <p className="muted border-t border-[var(--border)] px-5 py-2 text-xs">
+            <p className="muted border-t border-[var(--hairline-3)] px-5 py-2 text-xs">
               Showing sends for <span className="font-medium text-[var(--text)]">{selected.name}</span>
             </p>
           )}
 
           {visibleInvites.length === 0 ? (
-            <div className="border-t border-[var(--border)]">
+            <div className="border-t border-[var(--hairline-3)]">
               <EmptyState
                 title={selected ? "Nothing sent from this ratesheet yet" : "No ratesheets sent yet"}
                 body="Send a ratesheet to a partner from its page and the status shows up here."
               />
             </div>
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)] border-t border-[var(--border)]">
+            <ul className="divide-y divide-[var(--hairline)] border-t border-[var(--hairline-3)]">
               {visibleInvites.map((invite) => (
                 <li key={invite.id} className="px-5 py-3">
                   <div className="flex items-start justify-between gap-3">
@@ -190,7 +191,7 @@ export function RatesheetsBoard({
               body="Use + Link Ratesheet on the Products page to upload a distributor's price list."
             />
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {files.map((file) => (
                 <li
                   key={file.id}
@@ -406,7 +407,7 @@ export function RatesheetsBoard({
 
                     {/* Buttons stop the click so using them doesn't toggle the filter. */}
                     <div
-                      className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--border)] pt-3"
+                      className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--hairline-3)] pt-3"
                       onClick={(event) => event.stopPropagation()}
                       onKeyDown={(event) => event.stopPropagation()}
                     >
@@ -517,7 +518,7 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
         background: `color-mix(in srgb, ${color} 8%, transparent)`,
       }}
     >
-      <p className="text-[0.68rem] font-semibold" style={{ color }}>
+      <p className="text-[0.68rem] font-semibold" style={{ color: ink(color) }}>
         {label}
       </p>
       <p className="num mt-0.5 text-lg font-semibold leading-tight">{value}</p>

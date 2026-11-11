@@ -4,8 +4,20 @@ import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition 
 import { useRouter } from "next/navigation";
 import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles, IconFileText } from "@/components/icons";
 import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES, type ContactStatusValue } from "@/lib/constants";
-import { listHref, activeFilterCount, type ListParams, type ListLock } from "@/lib/list-params";
+import {
+  listHref,
+  activeFilterCount,
+  ACTIVITY_WINDOWS,
+  ACTIVITY_WINDOW_LABELS,
+  NO_FILTERS,
+  UNASSIGNED,
+  type ActivityWindow,
+  type ListParams,
+  type ListLock,
+  type Presence,
+} from "@/lib/list-params";
 import { useSearch } from "@/lib/use-search";
+import { FloatingMenu } from "@/components/floating-menu";
 
 export type FilterBarOptions = {
   states: string[];
@@ -25,6 +37,8 @@ export function ListFilters({
   kind,
   selectedCompanies = [],
   placeholder,
+  reps = [],
+  leadLabels = [],
 }: {
   basePath: string;
   params: ListParams;
@@ -33,6 +47,10 @@ export function ListFilters({
   kind: "contacts" | "companies";
   selectedCompanies?: { id: string; name: string }[];
   placeholder: string;
+  // Clean CRM data filters (Nov 10, 2026): the workspace's people for Rep
+  // and Added by, and the Lead Labels on offer.
+  reps?: { id: string; name: string }[];
+  leadLabels?: string[];
 }) {
   const router = useRouter();
   // The bar shows the new choice the instant it is clicked and holds it
@@ -59,6 +77,9 @@ export function ListFilters({
   if (kind === "contacts") typeNames.push(INDIVIDUAL_COMPANY_TYPE);
 
   const active = activeFilterCount(params, lock);
+  const repNames: Record<string, string> = Object.fromEntries(reps.map((rep) => [rep.id, rep.name]));
+  const repLabels: Record<string, string> = { [UNASSIGNED]: "Unassigned", ...repNames };
+  const presenceLabel = (field: string, value: Presence) => `${value === "yes" ? "Has" : "No"} ${field}`;
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
@@ -135,6 +156,49 @@ export function ListFilters({
             empty="No statuses."
           />
         )}
+
+        <ActivitySelect value={params.act} onPick={(act) => go({ act })} />
+        {kind === "contacts" && (
+          <TitleSelect
+            values={params.titles}
+            onToggle={(title) =>
+              go({ titles: params.titles.some((t) => t.toLowerCase() === title.toLowerCase()) ? params.titles.filter((t) => t.toLowerCase() !== title.toLowerCase()) : [...params.titles, title] })
+            }
+            onClear={() => go({ titles: [] })}
+          />
+        )}
+        <MultiSelect
+          label="Rep"
+          values={params.reps}
+          choices={[UNASSIGNED, ...reps.map((rep) => rep.id)]}
+          labels={repLabels}
+          onToggle={(value) => go({ reps: toggle(params.reps, value) })}
+          onClear={() => go({ reps: [] })}
+          empty="No teammates."
+        />
+        <MultiSelect
+          label="Added by"
+          values={params.addedBy}
+          choices={reps.map((rep) => rep.id)}
+          labels={repNames}
+          onToggle={(value) => go({ addedBy: toggle(params.addedBy, value) })}
+          onClear={() => go({ addedBy: [] })}
+          empty="No teammates."
+        />
+        <AddedSelect from={params.from} to={params.to} onApply={(from, to) => go({ from, to })} />
+        <PresenceSelect
+          fields={kind === "contacts" ? (["mobile", "email"] as const) : (["email", "phone"] as const)}
+          params={params}
+          onPick={(field, value) => go({ [field]: value })}
+        />
+        <MultiSelect
+          label="Lead Label"
+          values={params.labels}
+          choices={leadLabels}
+          onToggle={(value) => go({ labels: toggle(params.labels, value) })}
+          onClear={() => go({ labels: [] })}
+          empty="No lead labels yet."
+        />
 
         {!lock.fav && (
           <Toggle on={params.fav} onClick={() => go({ fav: !params.fav })} testId="filter-fav">
@@ -214,11 +278,38 @@ export function ListFilters({
           {params.attn && <Chip onRemove={() => go({ attn: false })}>Needs attention</Chip>}
           {params.owed && <Chip onRemove={() => go({ owed: false })}>Owes money</Chip>}
           {kind === "companies" && params.auto && <Chip onRemove={() => go({ auto: false })}>Auto-filled</Chip>}
+          {params.act && <Chip onRemove={() => go({ act: "" })}>{ACTIVITY_WINDOW_LABELS[params.act]}</Chip>}
+          {params.titles.map((title) => (
+            <Chip key={`ti-${title}`} onRemove={() => go({ titles: params.titles.filter((t) => t !== title) })}>
+              Title: {title}
+            </Chip>
+          ))}
+          {params.reps.map((rep) => (
+            <Chip key={`r-${rep}`} onRemove={() => go({ reps: toggle(params.reps, rep) })}>
+              Rep: {repLabels[rep] ?? "…"}
+            </Chip>
+          ))}
+          {params.addedBy.map((by) => (
+            <Chip key={`b-${by}`} onRemove={() => go({ addedBy: toggle(params.addedBy, by) })}>
+              Added by: {repNames[by] ?? "…"}
+            </Chip>
+          ))}
+          {(params.from || params.to) && (
+            <Chip onRemove={() => go({ from: "", to: "" })}>
+              Added {params.from && params.to ? `${params.from} to ${params.to}` : params.from ? `from ${params.from}` : `up to ${params.to}`}
+            </Chip>
+          )}
+          {params.mobile && <Chip onRemove={() => go({ mobile: "" })}>{presenceLabel("mobile", params.mobile)}</Chip>}
+          {params.email && <Chip onRemove={() => go({ email: "" })}>{presenceLabel("email", params.email)}</Chip>}
+          {params.phone && <Chip onRemove={() => go({ phone: "" })}>{presenceLabel("phone", params.phone)}</Chip>}
+          {params.labels.map((label) => (
+            <Chip key={`l-${label}`} onRemove={() => go({ labels: toggle(params.labels, label) })}>
+              Lead Label: {label}
+            </Chip>
+          ))}
           <button
             type="button"
-            onClick={() =>
-              go({ q: "", states: [], industries: [], types: [], companies: [], statuses: [], fav: false, deals: false, attn: false, auto: false, owed: false })
-            }
+            onClick={() => go({ q: "", ...NO_FILTERS })}
             className="btn btn-ghost btn-sm"
           >
             Clear all
@@ -256,6 +347,41 @@ export function Chip({ children, onRemove }: { children: React.ReactNode; onRemo
 
 // A button that opens a list of checkboxes. Closes on outside click or
 // Escape. Ticks apply straight away.
+//
+// The list is a FloatingMenu (UX review, Nov 10, 2026): drawn on the page
+// body and kept inside the window, flipping up when there is more room
+// above. It used to hang off the button's left edge at a fixed 256px, so
+// any button in the right half of a wrapped filter row — Rep, Added by,
+// Contact info, Status on a phone, Lead Label on the Pipeline — opened a
+// menu that ran off the screen, cut its names and widened the page.
+//
+// Drawn at the end of the page, the menu is no longer next to its button
+// in the Tab order, so the keyboard is walked through it by hand. Opened
+// with Enter or Space (or a screen reader), the cursor goes to its first
+// choice; opened with a click it stays on the button, as it always did,
+// and Tab from the button goes into the menu. Tab past the last choice
+// closes it and moves on to the filter after the button, Shift+Tab before
+// the first closes it back onto the button, and Escape or a pick that
+// closes the menu puts the cursor back on the button. A search box marked
+// data-autofocus takes the cursor however the menu was opened. The edges
+// are two empty stops either side of the choices (FocusGuard), so the
+// browser still walks a date box's month / day / year and a radio group.
+const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]';
+function tabStops(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => {
+    if (el.tabIndex < 0 || (el as HTMLInputElement).disabled || el.hasAttribute("data-focus-guard") || el.getClientRects().length === 0) return false;
+    // A radio group is one stop: its ticked radio, or its first.
+    if (el instanceof HTMLInputElement && el.type === "radio" && el.name) {
+      const group = Array.from(root.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${CSS.escape(el.name)}"]`));
+      return (group.find((radio) => radio.checked) ?? group[0]) === el;
+    }
+    return true;
+  });
+}
+function FocusGuard({ onFocus }: { onFocus: () => void }) {
+  return <span tabIndex={0} data-focus-guard="" className="sr-only" onFocus={onFocus} />;
+}
+
 function Dropdown({
   label,
   count,
@@ -270,7 +396,8 @@ function Dropdown({
   onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpenState] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const setOpen = useCallback(
     (value: boolean) => {
       setOpenState(value);
@@ -278,41 +405,90 @@ function Dropdown({
     },
     [onOpenChange],
   );
+  const close = useCallback(() => setOpen(false), [setOpen]);
 
+  // Where the cursor goes in: the search box, else the first choice.
+  const firstStop = () => panel.current?.querySelector<HTMLElement>("[data-autofocus]") ?? (panel.current ? tabStops(panel.current)[0] : undefined);
+  // Opened from the keyboard: a click with no click count (Enter, Space,
+  // a screen reader's press).
+  const fromKeys = useRef(false);
+
+  // The menu is drawn hidden until it has measured where it fits, and a
+  // hidden box can't take focus, so the cursor goes in on the next frame,
+  // once the menu is on screen.
   useEffect(() => {
     if (!open) return;
-    function onDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    const frame = requestAnimationFrame(() => {
+      const box = panel.current;
+      if (!box || box.contains(document.activeElement)) return;
+      const target = fromKeys.current ? firstStop() : box.querySelector<HTMLElement>("[data-autofocus]");
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  // Closed while the cursor was inside (Escape, a pick that closes it):
+  // the box it was in has gone, so it goes back to the button. Only when it
+  // was left on nothing; a click on something else keeps it there.
+  const inside = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      const left = inside.current;
+      inside.current = false;
+      if (left && (!document.activeElement || document.activeElement === document.body)) button.current?.focus({ preventScroll: true });
+      return;
     }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+    const track = () => {
+      inside.current = !!panel.current?.contains(document.activeElement);
     };
-  }, [open, setOpen]);
+    document.addEventListener("focusin", track);
+    return () => document.removeEventListener("focusin", track);
+  }, [open]);
+
+  // Tabbed off either end of the menu: back to the button, or on to the
+  // next thing after it on the page.
+  function leave(forward: boolean) {
+    const anchor = button.current;
+    const next = forward && anchor
+      ? tabStops(document.body).find((el) => !panel.current?.contains(el) && !!(anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))
+      : null;
+    (next ?? anchor)?.focus();
+    close();
+  }
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={button}
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={(event) => {
+          fromKeys.current = event.detail === 0;
+          setOpen(!open);
+        }}
+        onKeyDown={(event) => {
+          if (!open || event.key !== "Tab" || event.shiftKey) return;
+          const target = firstStop();
+          if (!target) return;
+          event.preventDefault();
+          target.focus({ preventScroll: true });
+        }}
         aria-expanded={open}
         aria-haspopup="listbox"
         data-testid={testId}
         className={`btn btn-sm ${count > 0 ? "btn-primary" : "btn-ghost"}`}
       >
         {label}
-        {count > 0 && <span className="num rounded-full bg-[rgb(255_255_255/0.2)] px-1.5 text-[0.65rem]">{count}</span>}
+        {count > 0 && <span className="num rounded-full bg-[var(--tint-5)] px-1.5 text-[0.65rem]">{count}</span>}
         <IconChevronDown size={12} className="opacity-70" />
       </button>
-      {open && (
-        <div className="card popover absolute left-0 top-full z-30 mt-1 w-64 py-1">{children(() => setOpen(false))}</div>
-      )}
-    </div>
+      <FloatingMenu anchor={button} open={open} onClose={close} width={256} testId={`${testId}-menu`} label={label}>
+        <FocusGuard onFocus={() => leave(false)} />
+        <div ref={panel} className="py-1">
+          {children(close)}
+        </div>
+        <FocusGuard onFocus={() => leave(true)} />
+      </FloatingMenu>
+    </>
   );
 }
 
@@ -350,14 +526,14 @@ export function MultiSelect({
       {() => (
         <>
           {searchable && all.length > 12 && (
-            <div className="border-b border-[var(--border)] p-2">
+            <div className="border-b border-[var(--hairline-3)] p-2">
               <input
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={`Search ${label.toLowerCase()}…`}
                 aria-label={`Search ${label.toLowerCase()}`}
-                autoFocus
+                data-autofocus
                 className="input input-sm"
               />
             </div>
@@ -369,7 +545,7 @@ export function MultiSelect({
               const on = values.includes(choice);
               return (
                 <li key={choice}>
-                  <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                  <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                     <input type="checkbox" checked={on} onChange={() => onToggle(choice)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
                     <span className="min-w-0 flex-1 truncate">{labels?.[choice] ?? choice}</span>
                   </label>
@@ -378,7 +554,7 @@ export function MultiSelect({
             })}
           </ul>
           {values.length > 0 && (
-            <div className="border-t border-[var(--border)] px-3 py-1.5">
+            <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
               <button type="button" onClick={onClear} className="link text-xs">
                 Clear {label.toLowerCase()}
               </button>
@@ -417,14 +593,14 @@ function CompanySelect({
       {() => {
         return (
           <>
-            <div className="border-b border-[var(--border)] p-2">
+            <div className="border-b border-[var(--hairline-3)] p-2">
               <input
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search companies…"
                 aria-label="Search companies"
-                autoFocus
+                data-autofocus
                 className="input input-sm"
               />
             </div>
@@ -433,7 +609,7 @@ function CompanySelect({
                 const on = selectedIds.includes(company.id);
                 return (
                   <li key={company.id}>
-                    <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                    <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
                       <input type="checkbox" checked={on} onChange={() => onToggle(company.id)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
                       <IconBuilding size={12} className="text-[var(--text-faint)]" />
                       <span className="min-w-0 flex-1 truncate">{company.name}</span>
@@ -447,7 +623,7 @@ function CompanySelect({
               )}
             </ul>
             {selectedIds.length > 0 && (
-              <div className="border-t border-[var(--border)] px-3 py-1.5">
+              <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
                 <button type="button" onClick={onClear} className="link text-xs">
                   Clear company
                 </button>
@@ -456,6 +632,188 @@ function CompanySelect({
           </>
         );
       }}
+    </Dropdown>
+  );
+}
+
+// Activity (Nov 10, 2026): one window at a time — touched in, not touched
+// in, or never touched. A touch never includes a marketing send.
+function ActivitySelect({ value, onPick }: { value: ActivityWindow | ""; onPick: (value: ActivityWindow | "") => void }) {
+  return (
+    <Dropdown label="Activity" count={value ? 1 : 0} testId="filter-activity">
+      {(close) => (
+        <ul role="listbox" aria-label="Activity" className="max-h-72 overflow-y-auto">
+          {ACTIVITY_WINDOWS.map((window) => (
+            <li key={window}>
+              <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
+                <input
+                  type="radio"
+                  name="activity-window"
+                  checked={value === window}
+                  onChange={() => {
+                    onPick(window);
+                    close();
+                  }}
+                  className="h-3.5 w-3.5 accent-[var(--brand)]"
+                />
+                <span>{ACTIVITY_WINDOW_LABELS[window]}</span>
+              </label>
+            </li>
+          ))}
+          {value && (
+            <li className="border-t border-[var(--hairline-3)] px-3 py-1.5">
+              <button type="button" onClick={() => (onPick(""), close())} className="link text-xs">
+                Clear activity
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </Dropdown>
+  );
+}
+
+// Job title (contacts): the workspace's distinct titles with how many
+// people carry each, searched on the server since a CRM can hold
+// thousands; ticked titles match ignoring case.
+function TitleSelect({ values, onToggle, onClear }: { values: string[]; onToggle: (title: string) => void; onClear: () => void }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const { results, loading } = useSearch<{ name: string; count: number }>(
+    open ? `/dashboard/contacts/titles?q=${encodeURIComponent(query.trim())}` : null,
+  );
+  const ticked = (name: string) => values.some((value) => value.toLowerCase() === name.toLowerCase());
+  const rows = [
+    ...values.filter((value) => !results.some((row) => row.name.toLowerCase() === value.toLowerCase())).map((name) => ({ name, count: null as number | null })),
+    ...results,
+  ];
+  return (
+    <Dropdown label="Job title" count={values.length} testId="filter-job-title" onOpenChange={setOpen}>
+      {() => (
+        <>
+          <div className="border-b border-[var(--hairline-3)] p-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search job titles…"
+              aria-label="Search job titles"
+              data-autofocus
+              className="input input-sm"
+            />
+          </div>
+          <ul role="listbox" aria-label="Job title" aria-multiselectable="true" className="max-h-64 overflow-y-auto">
+            {rows.map((row) => (
+              <li key={row.name}>
+                <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
+                  <input type="checkbox" checked={ticked(row.name)} onChange={() => onToggle(row.name)} className="h-3.5 w-3.5 accent-[var(--brand)]" />
+                  <span className="min-w-0 flex-1 truncate">{row.name}</span>
+                  {row.count !== null && <span className="faint num text-xs">{row.count.toLocaleString()}</span>}
+                </label>
+              </li>
+            ))}
+            {!loading && rows.length === 0 && <li className="faint px-3 py-3 text-xs">{query.trim() ? "No titles match." : "No job titles on file yet."}</li>}
+          </ul>
+          {values.length > 0 && (
+            <div className="border-t border-[var(--hairline-3)] px-3 py-1.5">
+              <button type="button" onClick={onClear} className="link text-xs">
+                Clear job title
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Dropdown>
+  );
+}
+
+// Added: a date range, either end optional, in the workspace's clock.
+function AddedSelect({ from, to, onApply }: { from: string; to: string; onApply: (from: string, to: string) => void }) {
+  const [draftFrom, setDraftFrom] = useState(from);
+  const [draftTo, setDraftTo] = useState(to);
+  return (
+    <Dropdown
+      label="Added"
+      count={from || to ? 1 : 0}
+      testId="filter-added"
+      onOpenChange={(open) => {
+        if (open) {
+          setDraftFrom(from);
+          setDraftTo(to);
+        }
+      }}
+    >
+      {(close) => (
+        <div className="space-y-2 p-3 text-sm">
+          <label className="block">
+            <span className="faint text-xs">From</span>
+            <input type="date" value={draftFrom} onChange={(event) => setDraftFrom(event.target.value)} className="input input-sm" data-testid="added-from" />
+          </label>
+          <label className="block">
+            <span className="faint text-xs">To</span>
+            <input type="date" value={draftTo} onChange={(event) => setDraftTo(event.target.value)} className="input input-sm" data-testid="added-to" />
+          </label>
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => {
+                onApply(draftFrom, draftTo);
+                close();
+              }}
+              className="btn btn-primary btn-sm"
+              data-testid="added-apply"
+            >
+              Apply
+            </button>
+            {(from || to) && (
+              <button type="button" onClick={() => (onApply("", ""), close())} className="link text-xs">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </Dropdown>
+  );
+}
+
+// Has / has no: mobile and email on contacts, email and phone on companies.
+function PresenceSelect({
+  fields,
+  params,
+  onPick,
+}: {
+  fields: readonly ("mobile" | "email" | "phone")[];
+  params: ListParams;
+  onPick: (field: "mobile" | "email" | "phone", value: Presence) => void;
+}) {
+  const count = fields.filter((field) => params[field]).length;
+  return (
+    <Dropdown label="Contact info" count={count} testId="filter-contact-info">
+      {() => (
+        <div className="space-y-2 p-3 text-sm">
+          {fields.map((field) => (
+            <fieldset key={field} className="flex items-center justify-between gap-2">
+              <legend className="sr-only">{field}</legend>
+              <span className="capitalize">{field}</span>
+              <span className="flex gap-1">
+                {(["", "yes", "no"] as const).map((value) => (
+                  <button
+                    key={value || "any"}
+                    type="button"
+                    aria-pressed={params[field] === value}
+                    onClick={() => onPick(field, value)}
+                    data-testid={`presence-${field}-${value || "any"}`}
+                    className={`btn btn-sm !px-2 ${params[field] === value ? "btn-primary" : "btn-ghost"}`}
+                  >
+                    {value === "" ? "Any" : value === "yes" ? "Has" : "None"}
+                  </button>
+                ))}
+              </span>
+            </fieldset>
+          ))}
+        </div>
+      )}
     </Dropdown>
   );
 }

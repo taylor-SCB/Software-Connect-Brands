@@ -128,8 +128,9 @@ export function PaymentScheduleEditor({
           isSettled: (rowId) => (rowId ? moneyByRow[rowId]?.settled ?? false : false),
           onTogglePaid: togglePaid,
           renderMoneyRow: (row, amountCents) => (
-            <tr className="border-t-0" data-testid="payment-money">
-              <td colSpan={7} className="pt-0 text-xs">
+            <tr className="border-t-0 max-sm:block" data-testid="payment-money">
+              {/* A block of its own on a phone, under its payment. */}
+              <td colSpan={7} className="pt-0 text-xs max-sm:block max-sm:border-0 max-sm:px-0 max-sm:pb-3">
                 <MoneyLine
                   label={row.label}
                   rowId={row.id!}
@@ -277,7 +278,7 @@ function RecordForm({
 
   return (
     <div
-      className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-2.5"
+      className="flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-2.5"
       data-testid="record-payment-form"
       aria-label={`Record a payment on ${label}`}
     >

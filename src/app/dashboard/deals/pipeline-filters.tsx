@@ -14,11 +14,19 @@ export function PipelineFilters({
   labels,
   labelChoices,
   shown,
+  quiet = false,
+  quietCount = 0,
+  quietDays = 8,
 }: {
   q: string;
   labels: string[];
   labelChoices: string[];
   shown: number;
+  // The "Gone quiet" toggle (Nov 10, 2026): open opportunities nobody has
+  // touched in the workspace's quietDays.
+  quiet?: boolean;
+  quietCount?: number;
+  quietDays?: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -29,8 +37,12 @@ export function PipelineFilters({
   const picked = ticked.base === labels ? ticked.values : labels;
   const setPicked = (values: string[]) => setTicked({ base: labels, values });
 
-  function go(next: { q?: string; labels?: string[] }) {
+  function go(next: { q?: string; labels?: string[]; quiet?: boolean }) {
     const query = new URLSearchParams(params.toString());
+    if (next.quiet !== undefined) {
+      if (next.quiet) query.set("quiet", "1");
+      else query.delete("quiet");
+    }
     const text = (next.q ?? typed).trim();
     if (text) query.set("q", text);
     else query.delete("q");
@@ -48,7 +60,7 @@ export function PipelineFilters({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- go reads the latest params on purpose
   }, [typed]);
 
-  const filtered = Boolean(q) || labels.length > 0;
+  const filtered = Boolean(q) || labels.length > 0 || quiet;
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="pipeline-filters">
       <label className="relative min-w-[14rem] flex-1 sm:max-w-sm">
@@ -78,6 +90,16 @@ export function PipelineFilters({
         }}
         empty="No labels yet"
       />
+      <button
+        type="button"
+        onClick={() => go({ quiet: !quiet })}
+        aria-pressed={quiet}
+        title={`Open opportunities with no call, text, email or meeting in ${quietDays} days`}
+        className={`btn btn-sm ${quiet ? "btn-primary" : "btn-ghost"}`}
+        data-testid="pipeline-quiet-toggle"
+      >
+        Gone quiet{quietCount ? ` (${quietCount})` : ""}
+      </button>
       {filtered && (
         <>
           <span className="faint text-xs" data-testid="pipeline-shown">
@@ -88,7 +110,7 @@ export function PipelineFilters({
             onClick={() => {
               setTyped("");
               setPicked([]);
-              go({ q: "", labels: [] });
+              go({ q: "", labels: [], quiet: false });
             }}
             className="link text-xs"
           >

@@ -143,7 +143,11 @@ export function EventForm({
     );
 
   return (
-    <form action={action} className="space-y-3" data-testid="event-form">
+    // The form is its own container (Nov 10, 2026): its rows split into
+    // columns by the room the form has, not by the screen. On a contact
+    // page it sits in the narrow Coming up column of a wide screen, where
+    // the screen's four columns cut the date down to "11/1".
+    <form action={action} className="@container space-y-3" data-testid="event-form">
       {event && <input type="hidden" name="eventId" value={event.id} />}
       {attendees.map((contactId) => (
         <input key={contactId} type="hidden" name="attendees" value={contactId} />
@@ -166,7 +170,7 @@ export function EventForm({
         </p>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <div>
           <label className="label" htmlFor={id("title")}>
             What is it
@@ -224,7 +228,7 @@ export function EventForm({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 @sm:grid-cols-2 @2xl:grid-cols-4">
         <div>
           <label className="label" htmlFor={id("startOn")}>
             {multiDay ? "First day" : "Day"}
@@ -309,7 +313,7 @@ export function EventForm({
         </label>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
         <div>
           <label className="label" htmlFor={id("ownerId")}>
             Whose calendar
@@ -444,7 +448,7 @@ export function EventForm({
             </select>
           </div>
         )}
-        <div className={scopes.length > 0 ? "sm:col-span-2 lg:col-span-3" : "sm:col-span-2 lg:col-span-1"}>
+        <div className={scopes.length > 0 ? "@md:col-span-2 @2xl:col-span-3" : "@md:col-span-2 @2xl:col-span-1"}>
           <label className="label" htmlFor={id("location")}>
             Where<span className="faint font-normal"> · optional</span>
           </label>

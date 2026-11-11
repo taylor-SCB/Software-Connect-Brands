@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/format";
 import { CompanyTiles } from "../company-tiles";
 import { CompanyInfoForm } from "./form";
 import { AccountTypeCard } from "./account-type-card";
+import { QuietDaysCard } from "./quiet-days-card";
 
 // How long an answered type request is still mentioned on the card.
 const ANSWER_SHOWN_DAYS = 30;
@@ -76,6 +77,11 @@ export default async function CompanyGeneralPage() {
               : null
           }
         />
+      </Card>
+
+      <Card lit className="mb-5" id="gone-quiet">
+        <CardHeader title="Gone quiet" subtitle="When the Pipeline flags an open opportunity nobody has touched." />
+        <QuietDaysCard quietDays={organization.quietDays} canEdit={canEdit} />
       </Card>
 
       <Card lit>

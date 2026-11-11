@@ -80,6 +80,16 @@ export type PaymentMoney = {
 let uid = 0;
 const nextUid = () => (uid += 1);
 
+// On a phone (below `sm`) each payment is a block of its own — the label
+// across the top, then Type / Value, Amount / Due, Paid — with its column
+// name above each box, and the total under them. Scrolled sideways as a
+// table, a contract's Amount, Due and the scheduled total sat off the
+// screen (UX review, Nov 10, 2026).
+const PHONE_CELL = "max-sm:block max-sm:border-0 max-sm:p-0";
+function PhoneLabel({ children }: { children: ReactNode }) {
+  return <span className="label font-sans sm:hidden">{children}</span>;
+}
+
 function toRow(input: PaymentTableRowInput): PaymentTableRow {
   return {
     uid: nextUid(),
@@ -310,8 +320,12 @@ export function PaymentTable({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="table">
-          <thead>
+        {/* table-tight: the label box is wide enough for the labels the
+            quote's table writes ("Final Pay — at project close"), and with
+            the usual cell padding that pushed the Due column off a
+            contract's card at 1440. */}
+        <table className="table table-tight max-sm:block" data-testid="payment-table">
+          <thead className="max-sm:hidden">
             <tr>
               <th>Payment</th>
               <th>Type</th>
@@ -322,10 +336,10 @@ export function PaymentTable({
               <th />
             </tr>
           </thead>
-          <tbody>
+          <tbody className="max-sm:block">
             {rows.length === 0 && (
-              <tr>
-                <td colSpan={money ? 7 : 6} className="faint py-6 text-center text-xs">
+              <tr className="max-sm:block">
+                <td colSpan={money ? 7 : 6} className="faint py-6 text-center text-xs max-sm:block">
                   No payment schedule yet. Apply a preset or add a row.
                 </td>
               </tr>
@@ -335,20 +349,28 @@ export function PaymentTable({
               const locked = money?.hasPayments(row.id) ?? false;
               return (
                 <Group key={row.uid}>
-                  <tr data-testid="payment-row">
-                    <td>
+                  <tr
+                    data-testid="payment-row"
+                    className="max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:gap-y-2.5 max-sm:border-t max-sm:border-[var(--hairline)] max-sm:pt-4 max-sm:pb-2"
+                  >
+                    <td className={`${PHONE_CELL} max-sm:col-span-2`}>
+                      <PhoneLabel>Payment</PhoneLabel>
+                      {/* Wide enough for the labels the quote's table
+                          writes itself ("Final Pay — at project close" was
+                          cut to "Final Pay — at project" at 1440). */}
                       <input
-                        className="input input-sm min-w-[10rem]"
+                        className="input input-sm min-w-[12.5rem]"
                         list="paymentLabelOptions"
                         value={row.label}
                         onChange={(event) => patch(row.uid, { label: event.target.value })}
                         aria-label="Payment label"
                       />
                     </td>
-                    <td>
+                    <td className={PHONE_CELL}>
+                      <PhoneLabel>Type</PhoneLabel>
                       {/* First <select> in the row. Keep it that way. */}
                       <select
-                        className="select min-w-[7.5rem]"
+                        className="select min-w-[6.75rem]"
                         value={row.kind}
                         onChange={(event) => patch(row.uid, { kind: event.target.value as PaymentKindValue })}
                         aria-label="Payment type"
@@ -360,7 +382,8 @@ export function PaymentTable({
                         ))}
                       </select>
                     </td>
-                    <td>
+                    <td className={PHONE_CELL}>
+                      <PhoneLabel>Value</PhoneLabel>
                       {row.kind === "PERCENT" && (
                         <div className="flex items-center gap-1">
                           {/* First input.num in the row. Keep it that way. */}
@@ -394,10 +417,12 @@ export function PaymentTable({
                       )}
                       {row.kind === "BALANCE" && <span className="faint text-xs">whatever is left</span>}
                     </td>
-                    <td className="num text-right font-medium" data-testid="payment-amount">
-                      {formatCents(amount)}
+                    <td className={`num text-right font-medium ${PHONE_CELL} max-sm:text-left`}>
+                      <PhoneLabel>Amount</PhoneLabel>
+                      <span data-testid="payment-amount">{formatCents(amount)}</span>
                     </td>
-                    <td>
+                    <td className={PHONE_CELL}>
+                      <PhoneLabel>Due</PhoneLabel>
                       {/* The row's only input[type=date]. The terms box
                           below it is a plain text input with a datalist —
                           not a date, and not .num — so the positional
@@ -421,7 +446,8 @@ export function PaymentTable({
                       />
                     </td>
                     {money && (
-                      <td>
+                      <td className={PHONE_CELL}>
+                        <PhoneLabel>Paid</PhoneLabel>
                         <input
                           type="checkbox"
                           checked={money.isSettled(row.id)}
@@ -434,7 +460,7 @@ export function PaymentTable({
                         />
                       </td>
                     )}
-                    <td>
+                    <td className={`${PHONE_CELL} max-sm:self-end max-sm:text-right`}>
                       <button
                         type="button"
                         disabled={locked}
@@ -452,18 +478,18 @@ export function PaymentTable({
               );
             })}
           </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={3} className="text-xs">
+          <tfoot className="max-sm:block">
+            <tr className="max-sm:flex max-sm:flex-wrap max-sm:items-baseline max-sm:gap-x-2 max-sm:gap-y-2 max-sm:border-t max-sm:border-[var(--hairline)] max-sm:pt-3">
+              <td colSpan={3} className={`text-xs ${PHONE_CELL} max-sm:w-full`}>
                 <button type="button" onClick={addRow} className="btn btn-ghost btn-sm">
                   <IconPlus size={13} />
                   Add payment
                 </button>
               </td>
-              <td className="num text-right text-sm font-semibold" data-testid="scheduled-total">
+              <td className={`num text-right text-sm font-semibold ${PHONE_CELL}`} data-testid="scheduled-total">
                 {formatCents(schedule.scheduledCents)}
               </td>
-              <td colSpan={money ? 3 : 2} className="text-xs">
+              <td colSpan={money ? 3 : 2} className={`text-xs ${PHONE_CELL}`}>
                 <span className="faint">of {formatCents(totalCents)}</span>
                 {/* Advisory, never blocking: a mismatch is worth saying out
                     loud but a half-built table still has to be savable. */}

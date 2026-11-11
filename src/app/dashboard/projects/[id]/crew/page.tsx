@@ -246,7 +246,7 @@ export default async function ProjectCrewPage({ params }: { params: Promise<{ id
             title="Who is on each scope"
             subtitle="The crew that does that kind of work comes first in the list."
           />
-          <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+          <ul className="divide-y divide-[var(--hairline)]">
             {project.scopes.map((scope) => (
               <ScopeCrewPicker
                 key={scope.id}
@@ -278,7 +278,7 @@ export default async function ProjectCrewPage({ params }: { params: Promise<{ id
               body="Log a day above and it shows here, with what it cost and whether it has been paid."
             />
           ) : (
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {entries.map((entry) => (
                 <TimeRow key={entry.id} entry={entry} today={today} />
               ))}

@@ -23,7 +23,7 @@ export function ProjectsCard({ projects }: { projects: ProjectRow[] }) {
         title="Jobs"
         subtitle={`${projects.length} won ${projects.length === 1 ? "job" : "jobs"}`}
       />
-      <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+      <ul className="divide-y divide-[var(--hairline)]">
         {projects.map((project) => {
           const left = leftCents(project);
           return (

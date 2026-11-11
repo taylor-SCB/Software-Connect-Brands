@@ -42,7 +42,7 @@ export function ProjectNotes({ projectId, notes }: { projectId: string; notes: P
       {notes.length === 0 ? (
         <p className="faint text-xs">Nothing noted on this job yet.</p>
       ) : (
-        <ul className="space-y-2 border-t border-[rgb(255_255_255/0.06)] pt-3">
+        <ul className="space-y-2 border-t border-[var(--hairline-2)] pt-3">
           {notes.map((note) => (
             <NoteRow key={note.id} note={note} />
           ))}

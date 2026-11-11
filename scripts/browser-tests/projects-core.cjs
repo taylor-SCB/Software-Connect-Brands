@@ -444,6 +444,9 @@ async function signAs(browser, token, name) {
   );
   assert.equal(handshake.awardedOffline, true, "flagged as recorded by hand");
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_pj2'`)).rows[0].stage, "WON");
+  // Audit follow-up (UX review): awarding from a quote is the customer's
+  // yes to it, as signing is, so it stops counting as out with them.
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_pj2'`)).rows[0].status, "ACCEPTED", "the quote it came from is Accepted");
   const offline = (await sql(
     `SELECT status, payable, "signedOffline", "signedNote" FROM "Contract" WHERE "dealId"='deal_pj2'`,
   )).rows[0];

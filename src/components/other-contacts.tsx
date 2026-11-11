@@ -32,7 +32,7 @@ export function OtherContacts({ companyId, people, groups }: { companyId: string
   const total = groups.reduce((sum, group) => sum + group.activities.length, 0);
 
   return (
-    <div className="border-t border-[var(--border)]" data-testid="other-contacts">
+    <div className="border-t border-[var(--hairline-3)]" data-testid="other-contacts">
       <div className="px-5 pb-2 pt-4">
         <p className="text-sm font-medium">Other Contacts</p>
         <p className="faint text-xs">
@@ -42,7 +42,7 @@ export function OtherContacts({ companyId, people, groups }: { companyId: string
       {groups.map((group) => {
         const groupKey = `group-${group.userId}`;
         return (
-          <div key={group.userId} className="border-t border-[rgb(255_255_255/0.045)]" data-testid="bypass-group" data-user-id={group.userId}>
+          <div key={group.userId} className="border-t border-[var(--hairline)]" data-testid="bypass-group" data-user-id={group.userId}>
             <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5">
               <p className="text-sm">
                 <span className="font-medium">{group.userName} Bypassed</span>
@@ -68,7 +68,7 @@ export function OtherContacts({ companyId, people, groups }: { companyId: string
             {claiming?.key === groupKey && (
               <ClaimBox companyId={companyId} people={people} ids={claiming.ids} label={claiming.label} onClose={() => setClaiming(null)} />
             )}
-            <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+            <ul className="divide-y divide-[var(--hairline)]">
               {group.activities.map((activity) => {
                 const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue] ?? IconPhone;
                 const key = `one-${activity.id}`;
@@ -155,7 +155,7 @@ function ClaimBox({
     });
 
   return (
-    <div className="mt-2 space-y-2 rounded-lg border border-[var(--border-strong)] bg-[rgb(255_255_255/0.03)] p-2.5" data-testid="claim-box">
+    <div className="mt-2 space-y-2 rounded-lg border border-[var(--border-strong)] bg-[var(--tint-2)] p-2.5" data-testid="claim-box">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs">
           Who was <span className="font-medium">{label}</span> with?

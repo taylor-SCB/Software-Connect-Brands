@@ -7,6 +7,7 @@ import { loadStats, FUNNEL, PERIODS, type PeriodKey } from "@/lib/stats";
 import { sweepStaleContracts } from "@/lib/status";
 import { loadWorkspaceUsers } from "@/lib/workspace-users";
 import { readIds } from "@/lib/calendar-filters";
+import { changeSize } from "@/lib/reports/format";
 import { DailyTrend, FunnelBars, RepActivityBars, VelocityBars } from "./charts";
 
 type Params = Promise<{ period?: string; reps?: string }>;
@@ -154,8 +155,10 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
       </Panel>
 
       <Panel title="Leaderboard" kicker="CRO" sub="Every rep, every number — the table behind the charts" className="mt-4">
-        <div className="overflow-x-auto">
-          <table className="table text-xs" data-testid="stats-leaderboard">
+        {/* Cells a little tighter than other tables, so with each name on
+            one line the fourteen columns still fit a 1440 screen. */}
+        <div className="overflow-x-auto" data-testid="stats-leaderboard-scroll">
+          <table className="table text-xs [&_td]:px-3 [&_th]:px-3" data-testid="stats-leaderboard">
             <thead>
               <tr>
                 <th>Rep</th>
@@ -177,7 +180,11 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             <tbody>
               {stats.reps.map((rep) => (
                 <tr key={rep.id} data-testid="stats-rep-row">
-                  <td className="font-medium">{rep.name}</td>
+                  {/* One line per name (UX review, Nov 10, 2026): the
+                      14 columns squeezed "Marcus Lee" onto two. */}
+                  <td className="whitespace-nowrap font-medium" data-testid="stats-rep-name">
+                    {rep.name}
+                  </td>
                   {ACTIVITY_TYPES.map((type) => (
                     <td key={type} className="num text-right">
                       {rep.activities[type]}
@@ -236,8 +243,10 @@ function Panel({ title, kicker, sub, className = "", children }: { title: string
   );
 }
 
+// The change line follows the reports' rule (changeSize): a rise from 0
+// reads "▲ up from 0", never "▲ 100%" (UX review, Nov 10, 2026).
 function Tile({ label, value, before, money = false, sub }: { label: string; value: number; before: number; money?: boolean; sub?: string }) {
-  const change = before ? (value - before) / before : value ? 1 : 0;
+  const change = changeSize(value, before, money ? "money" : "count");
   const up = value >= before;
   return (
     <div className="card card-lit stats-tile p-4" data-testid="stats-tile">
@@ -245,8 +254,8 @@ function Tile({ label, value, before, money = false, sub }: { label: string; val
       <p className="num mt-2 text-2xl font-semibold tracking-tight" data-testid="stats-tile-value">
         {money ? formatCents(value) : value.toLocaleString()}
       </p>
-      <p className={`num mt-1 text-[0.7rem] ${value === before ? "faint" : up ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}>
-        {value === before ? "— same as before" : `${up ? "▲" : "▼"} ${Math.abs(Math.round(change * 100))}% vs before`}
+      <p className={`num mt-1 text-[0.7rem] ${value === before ? "faint" : up ? "text-[var(--ok)]" : "text-[var(--danger)]"}`} data-testid="stats-tile-change">
+        {value === before ? "— same as before" : `${change.text}${change.fromZero ? "" : " vs before"}`}
       </p>
       {sub && <p className="faint text-[0.68rem]">{sub}</p>}
     </div>
@@ -260,7 +269,7 @@ function Rate({ label, hint, value, testId }: { label: string; hint: string; val
         <p className="text-xs font-medium">{label}</p>
         <p className="num text-lg font-semibold">{value === null ? "—" : pct(value)}</p>
       </div>
-      <div className="mt-2 h-1.5 rounded-full bg-[rgb(255_255_255/0.05)]">
+      <div className="mt-2 h-1.5 rounded-full bg-[var(--hover-strong)]">
         <div className="h-1.5 rounded-full bg-[var(--brand)] shadow-[0_0_10px_var(--brand)]" style={{ width: `${Math.min(100, Math.round((value ?? 0) * 100))}%` }} />
       </div>
       <p className="faint mt-1.5 text-[0.66rem]">{hint}</p>

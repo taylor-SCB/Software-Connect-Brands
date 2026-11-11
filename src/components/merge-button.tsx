@@ -7,7 +7,7 @@ import { FormError } from "@/components/ui";
 import { useSearch } from "@/lib/use-search";
 import { mergeCompaniesAction, mergeContactsAction } from "@/app/dashboard/merge-actions";
 
-type Hit = {
+export type Hit = {
   id: string;
   name: string;
   // Contacts
@@ -30,12 +30,27 @@ function detail(kind: "contacts" | "companies", hit: Hit) {
 // shown with what tells them apart), pick the one to keep, and everything
 // on the others moves onto it. The kept record's details win; its blanks
 // are filled from the others.
-export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
+//
+// The duplicate finder (Nov 10, 2026) opens it on one group: `initial` is
+// that group pre-picked (the first one to keep), `label` the button's
+// words, and `stay` keeps the person on the finder after the merge.
+export function MergeButton({
+  kind,
+  initial,
+  label,
+  stay = false,
+}: {
+  kind: "contacts" | "companies";
+  initial?: Hit[];
+  label?: string;
+  stay?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<Hit[]>([]);
-  const [keepId, setKeepId] = useState<string | null>(null);
+  const start0 = (initial ?? []).slice(0, MAX);
+  const [picked, setPicked] = useState<Hit[]>(start0);
+  const [keepId, setKeepId] = useState<string | null>(start0[0]?.id ?? null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
@@ -66,11 +81,21 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
     if (!keepId) setKeepId(hit.id);
   }
 
+  // Picks start from the group as it is shown now (audit fix, Nov 10,
+  // 2026): after a merge the finder refreshes and a group still listed
+  // keeps this component, so the picks made before would name records
+  // the merge just removed.
+  function openDialog() {
+    setPicked(start0);
+    setKeepId(start0[0]?.id ?? null);
+    setOpen(true);
+  }
+
   function close() {
     setOpen(false);
     setQuery("");
-    setPicked([]);
-    setKeepId(null);
+    setPicked(start0);
+    setKeepId(start0[0]?.id ?? null);
     setConfirming(false);
     setError(undefined);
   }
@@ -87,7 +112,8 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
         return;
       }
       close();
-      router.push(`/dashboard/${kind}/${result.keptId}`);
+      if (stay) router.refresh();
+      else router.push(`/dashboard/${kind}/${result.keptId}`);
     });
   }
 
@@ -95,9 +121,14 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost btn-sm" data-testid="merge-open">
+      <button
+        type="button"
+        onClick={openDialog}
+        className={`btn btn-sm ${initial ? "btn-primary" : "btn-ghost"}`}
+        data-testid={initial ? "duplicate-merge" : "merge-open"}
+      >
         <IconMerge size={13} />
-        Merge {kind === "contacts" ? "Contacts" : "Companies"}
+        {label ?? `Merge ${kind === "contacts" ? "Contacts" : "Companies"}`}
       </button>
 
       {open && (
@@ -110,7 +141,7 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
             className="card card-lit popover flex max-h-[88vh] w-full max-w-xl flex-col"
             data-testid="merge-dialog"
           >
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-5 py-3.5">
               <div>
                 <h2 className="text-sm font-semibold">Merge duplicate {noun}</h2>
                 <p className="faint mt-0.5 text-xs">
@@ -122,7 +153,7 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
               </button>
             </div>
 
-            <div className="border-b border-[var(--border)] p-3">
+            <div className="border-b border-[var(--hairline-3)] p-3">
               <div className="relative">
                 <IconSearch size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]" />
                 <input
@@ -142,7 +173,7 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
                     const on = picked.some((row) => row.id === hit.id);
                     return (
                       <li key={hit.id}>
-                        <label className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-[rgb(255_255_255/0.04)]">
+                        <label className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-[var(--hover)]">
                           <input
                             type="checkbox"
                             checked={on}
@@ -203,7 +234,7 @@ export function MergeButton({ kind }: { kind: "contacts" | "companies" }) {
               )}
             </div>
 
-            <div className="border-t border-[var(--border)] px-5 py-3">
+            <div className="border-t border-[var(--hairline-3)] px-5 py-3">
               <FormError message={error} />
               {confirming && keeper ? (
                 <div className="flex flex-wrap items-center justify-between gap-2" data-testid="merge-confirm">

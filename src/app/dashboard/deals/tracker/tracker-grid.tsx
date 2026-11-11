@@ -557,7 +557,9 @@ export function TrackerGrid({
         <table className="table" data-testid="tracker-lines">
           <thead>
             <tr>
-              <th className="whitespace-normal align-bottom" style={{ minWidth: 260 }}>
+              {/* Narrower on a phone, so the Contract tick boxes are a
+                  shorter swipe away inside the table's own scroll. */}
+              <th className="min-w-[10rem] whitespace-normal align-bottom sm:min-w-[260px]">
                 <span className="block">Line items on QUO-{quote.number}</span>
                 <span className="faint mt-1 block font-normal normal-case tracking-normal">
                   Change a quantity, price or discount here and it saves to the quote.
@@ -732,7 +734,7 @@ export function TrackerGrid({
 
       {/* --------------------------- The quote's total --------------------------- */}
       <div
-        className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] px-4 py-3 text-sm"
+        className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] px-4 py-3 text-sm"
         data-testid="quote-totals"
       >
         <div className="flex items-center gap-2">
@@ -809,7 +811,7 @@ export function TrackerGrid({
         ))}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="sm:w-80">
           <label className="label" htmlFor="signerName">
             Your Company Signer
@@ -900,8 +902,12 @@ function ContractCard({
   const selectedRows = column.selected.map((lineId) => rows.find((row) => row.id === lineId)).filter((row) => row !== undefined);
 
   return (
+    // min-w-0: a grid item is otherwise as wide as its widest content —
+    // the payment schedule's table — and on a phone that made the card,
+    // and the whole page, 675px wide (UX review, Nov 10, 2026). Held to
+    // the column, the schedule scrolls inside its own box instead.
     <div
-      className="space-y-3 rounded-xl border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-4"
+      className="min-w-0 space-y-3 rounded-xl border border-[var(--border)] bg-[var(--tint-1)] p-4"
       data-testid="column-header"
       data-column={letter(index)}
     >
@@ -1029,7 +1035,7 @@ function ContractCard({
         </div>
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3" data-testid="column-money">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3" data-testid="column-money">
         <div className="flex flex-wrap items-center gap-1.5" data-testid="column-rows">
           {selectedRows.length === 0 ? (
             <span className="faint text-xs">No rows yet — tick them under {name} in the table above.</span>
@@ -1070,7 +1076,7 @@ function ContractCard({
               baseCents={subtotalCents}
             />
           </div>
-          <div className="flex items-center justify-between border-t border-[var(--border)] pt-1.5">
+          <div className="flex items-center justify-between border-t border-[var(--hairline-3)] pt-1.5">
             <span className="font-semibold">Total</span>
             <span className="num font-semibold">{formatCents(totalCents)}</span>
           </div>

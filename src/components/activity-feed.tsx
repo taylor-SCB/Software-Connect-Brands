@@ -1,3 +1,5 @@
+import { ink } from "@/lib/ink";
+import { Fragment } from "react";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui";
 import {
@@ -7,6 +9,7 @@ import {
   IconCalendar,
   IconTrending,
 } from "@/components/icons";
+import { MarketingBadge } from "@/components/crm-cells";
 import { ACTIVITY_LABELS, DEAL_STAGE_COLORS, DEAL_STAGE_LABELS, type ActivityTypeValue, type DealStageValue } from "@/lib/constants";
 
 const ACTIVITY_ICONS = {
@@ -31,7 +34,10 @@ export type ActivityItem = {
   userName: string;
   when: string;
   others: number;
-  via?: { id: string; name: string } | null;
+  // Who it was with, on a company page. Several people when one touch was
+  // logged on them at once: the company page shows that batch as one line
+  // naming each of them (Nov 10, 2026).
+  via?: { id: string; name: string } | { id: string; name: string }[] | null;
   // On a company page: logged on the company with nobody linked, by this
   // teammate, who ticked "I'm choosing not to link a contact". Reads
   // "Nic Steffl Bypassed" where the person's name would be, until the
@@ -40,6 +46,8 @@ export type ActivityItem = {
   // "Opportunity Created" / "Deal Created": the person's role on it now,
   // and for a deal its stage now.
   special?: { role: "PRIMARY" | "ASSOCIATED"; stage: string | null } | null;
+  // An email marketing send (Nov 10, 2026): on the log, never a touch.
+  marketing?: boolean;
 };
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {
@@ -52,7 +60,7 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
     );
   }
   return (
-    <ul className="divide-y divide-[rgb(255_255_255/0.045)]">
+    <ul className="divide-y divide-[var(--hairline)]">
       {items.map((activity) => {
         const Icon = ACTIVITY_ICONS[activity.type as keyof typeof ACTIVITY_ICONS] ?? IconCalendar;
         if (activity.special) {
@@ -78,7 +86,7 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
                   {stage && (
                     <span
                       className="badge text-[0.62rem]"
-                      style={{ color: DEAL_STAGE_COLORS[stage], borderColor: `color-mix(in srgb, ${DEAL_STAGE_COLORS[stage]} 45%, transparent)` }}
+                      style={{ color: ink(DEAL_STAGE_COLORS[stage]), borderColor: `color-mix(in srgb, ${DEAL_STAGE_COLORS[stage]} 45%, transparent)` }}
                       data-testid="activity-stage"
                     >
                       {DEAL_STAGE_LABELS[stage]}
@@ -93,8 +101,9 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             </li>
           );
         }
+        const via = activity.via ? [activity.via].flat() : [];
         return (
-          <li key={activity.id} className="flex gap-3 px-5 py-3">
+          <li key={activity.id} className="flex gap-3 px-5 py-3" data-testid="activity-line" data-marketing={activity.marketing ? "1" : undefined}>
             <div
               className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
               style={{
@@ -107,17 +116,18 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
             <div className="min-w-0">
               <p className="text-sm leading-relaxed">{activity.body}</p>
               <p className="faint mt-1 text-[0.7rem]">
-                {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} · {activity.userName} ·{" "}
+                {ACTIVITY_LABELS[activity.type as ActivityTypeValue]}
+                {activity.marketing && <MarketingBadge />} · {activity.userName} ·{" "}
                 {activity.when}
-                {activity.via && (
-                  <>
-                    {" · "}
-                    <Link href={`/dashboard/contacts/${activity.via.id}`} className="link">
-                      {activity.via.name}
+                {via.map((person, index) => (
+                  <Fragment key={person.id}>
+                    {index === 0 ? " · " : ", "}
+                    <Link href={`/dashboard/contacts/${person.id}`} className="link">
+                      {person.name}
                     </Link>
-                  </>
-                )}
-                {!activity.via && activity.bypassedBy && (
+                  </Fragment>
+                ))}
+                {via.length === 0 && activity.bypassedBy && (
                   <>
                     {" · "}
                     <span className="badge border-[var(--border)] text-[0.62rem] text-[var(--text-faint)]" data-testid="activity-bypassed">

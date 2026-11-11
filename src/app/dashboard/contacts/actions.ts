@@ -32,6 +32,7 @@ import {
 } from "@/lib/logging";
 
 import { hasFile, imageProblem, removeImage, replaceImage } from "@/lib/uploads";
+import { readRepField } from "@/lib/reps";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -103,6 +104,7 @@ async function contactData(
   parsed: z.infer<typeof contactSchema>,
   organizationId: string,
   formData: FormData,
+  userId: string,
 ) {
   // The exact company picked, when its name still matches the box; a
   // typed name otherwise finds or makes the company by name.
@@ -115,7 +117,7 @@ async function contactData(
         })
       : null;
   const companyId = parsed.companyName
-    ? (picked ?? (await findOrCreateCompany(parsed.companyName, organizationId))).id
+    ? (picked ?? (await findOrCreateCompany(parsed.companyName, organizationId, userId))).id
     : null;
   // Industry and Company Type belong to the company; the contact form
   // edits them in place so one business is never tagged three ways.
@@ -158,16 +160,19 @@ async function contactData(
 }
 
 export async function createContact(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const parsed = parseForm(contactSchema, readContactForm(formData));
   if (!parsed.ok) return { error: parsed.error };
   const imageFile = formData.get("imageFile");
   const problem = imageProblem(imageFile);
   if (problem) return { error: problem };
+  // Unassigned unless a rep was picked on the form (Nov 10, 2026).
+  const rep = await readRepField(organizationId, formData);
+  if ("error" in rep) return { error: rep.error };
 
   const contact = await prisma.contact.create({
-    data: { organizationId, ...(await contactData(parsed.data, organizationId, formData)) },
+    data: { organizationId, createdById: userId, ...rep, ...(await contactData(parsed.data, organizationId, formData, userId)) },
   });
   if (hasFile(imageFile)) {
     const imageUrl = await replaceImage({ organizationId, kind: "CONTACT_IMAGE", file: imageFile, contactId: contact.id });
@@ -180,7 +185,7 @@ export async function createContact(_prev: ActionState, formData: FormData): Pro
 }
 
 export async function updateContact(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
 
   const id = idSchema.safeParse(formData.get("contactId"));
   if (!id.success) return { error: "Missing contact reference" };
@@ -192,6 +197,8 @@ export async function updateContact(_prev: ActionState, formData: FormData): Pro
   if (problem) return { error: problem };
 
   if (!(await assertContact(id.data, organizationId))) return { error: "Contact not found" };
+  const rep = await readRepField(organizationId, formData);
+  if ("error" in rep) return { error: rep.error };
 
   const image: { imageUrl?: string | null } = {};
   if (hasFile(imageFile)) {
@@ -205,7 +212,7 @@ export async function updateContact(_prev: ActionState, formData: FormData): Pro
   // WHERE clause — a guessed id from another tenant matches zero rows.
   const result = await prisma.contact.updateMany({
     where: { id: id.data, organizationId },
-    data: { ...(await contactData(parsed.data, organizationId, formData)), ...image },
+    data: { ...(await contactData(parsed.data, organizationId, formData, userId)), ...image, ...rep },
   });
   if (result.count === 0) return { error: "Contact not found" };
 

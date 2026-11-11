@@ -17,6 +17,7 @@ import { OwnerSelect } from "./owner-select";
 import { ConvertDialog } from "./convert-dialog";
 import { MoveMenu, isMeetingColumn } from "./move-menu";
 import { OpportunityPanel } from "./opportunity-panel";
+import { FollowUpButton, QuietBadge, SuggestedLabel } from "./ai-assist-ui";
 
 export type BoardTile = {
   id: string;
@@ -29,8 +30,15 @@ export type BoardTile = {
   people: { id: string; name: string; company: string | null; primary: boolean }[];
   ownerId: string | null;
   ownerName: string | null;
+  // Days since anyone touched it, when that is past the workspace's
+  // quietDays (src/lib/gone-quiet.ts); null when it isn't quiet.
+  quietDays: number | null;
+  // The rules' lead label for a tile with none (src/lib/lead-label-rules.ts).
+  suggestedLabel: { label: string; reason: string } | null;
   meetingCount: number;
+  // The newest meeting that has happened, and the soonest one booked ahead.
   lastMeetingOn: string | null;
+  nextMeetingOn: string | null;
   deal: { id: string; stage: string; valueCents: number; quotes: { id: string; number: number; title: string }[] } | null;
 };
 
@@ -50,12 +58,15 @@ export function PipelineBoard({
   customLabels,
   timeZone,
   today,
+  ai = false,
 }: {
   tiles: BoardTile[];
   users: { id: string; name: string }[];
   customLabels: string[];
   timeZone: string;
   today: string;
+  // ANTHROPIC_API_KEY is set: the AI helpers show.
+  ai?: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -162,7 +173,7 @@ export function PipelineBoard({
                   if (tile) move(tile, column);
                 }}
               >
-                <div className="border-b border-[var(--border)] px-3 py-3">
+                <div className="border-b border-[var(--hairline-3)] px-3 py-3">
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: accent, boxShadow: `0 0 10px ${accent}` }} />
                     <h2 className="whitespace-nowrap text-sm font-semibold">{PIPELINE_COLUMN_LABELS[column]}</h2>
@@ -185,6 +196,7 @@ export function PipelineBoard({
                       users={users}
                       customLabels={customLabels}
                       timeZone={timeZone}
+                      ai={ai}
                       onOpen={() => setPanelId(tile.id)}
                       onMove={(next) => move(tile, next)}
                       onLabel={(next) => label(tile, next)}
@@ -217,6 +229,7 @@ export function PipelineBoard({
           tile={converting.tile}
           stage={converting.stage}
           today={today}
+          ai={ai}
           onClose={() => setConverting(null)}
           onDone={(quoteUrl) => {
             setConverting(null);
@@ -229,11 +242,15 @@ export function PipelineBoard({
       {panelId && (
         <OpportunityPanel
           id={panelId}
+          ai={ai}
+          quietDays={tiles.find((row) => row.id === panelId)?.quietDays ?? null}
+          suggestedLabel={tiles.find((row) => row.id === panelId)?.suggestedLabel ?? null}
           timeZone={timeZone}
           onClose={() => setPanelId(null)}
-          onMove={(column) => {
+          onMove={(column, saved) => {
             const tile = tiles.find((row) => row.id === panelId);
-            if (tile) move(tile, column);
+            // A name just saved in the panel is the one the convert prompt offers.
+            if (tile) move(saved ? { ...tile, title: saved.title } : tile, column);
           }}
         />
       )}
@@ -260,6 +277,7 @@ function Tile({
   users,
   customLabels,
   timeZone,
+  ai,
   onOpen,
   onMove,
   onLabel,
@@ -272,6 +290,7 @@ function Tile({
   users: { id: string; name: string }[];
   customLabels: string[];
   timeZone: string;
+  ai: boolean;
   onOpen: () => void;
   onMove: (column: PipelineColumn) => void;
   onLabel: (label: string | null) => void;
@@ -293,23 +312,32 @@ function Tile({
         if ((event.target as HTMLElement).closest("a,button,select,input,label")) return;
         onOpen();
       }}
-      className="cursor-grab rounded-lg border border-[var(--border)] bg-[rgb(255_255_255/0.02)] p-3 hover:border-[var(--border-strong)] active:cursor-grabbing"
+      className="cursor-grab rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-3 hover:border-[var(--border-strong)] active:cursor-grabbing"
       data-testid="pipeline-tile"
       data-id={tile.id}
       data-title={tile.title}
     >
-      <div className="flex items-start justify-between gap-2">
-        <button type="button" onClick={onOpen} className="min-w-0 text-left text-sm font-medium hover:underline" data-testid="tile-open">
+      {/* Wraps rather than squeezing (UX review follow-up, Nov 10, 2026): a
+          long lead label used to cover a short title ("Lab Soft" read
+          "Lal"); now the chips drop under the title when there's no room. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+        <button type="button" onClick={onOpen} className="min-w-[6rem] flex-1 break-words text-left text-sm font-medium hover:underline" data-testid="tile-open">
           {tile.title}
         </button>
         <LeadLabelPicker value={label} customLabels={customLabels} onChange={onLabel} />
       </div>
+      {(tile.quietDays !== null || !label) && (
+        <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5">
+          {!label && <SuggestedLabel opportunityId={tile.id} rule={tile.suggestedLabel} ai={ai} onAccept={(next) => onLabel(next)} />}
+          {tile.quietDays !== null && <QuietBadge days={tile.quietDays} />}
+        </div>
+      )}
 
       <ul className="mt-1.5 space-y-0.5" data-testid="tile-people">
         {shown.map((person) => (
           <li key={person.id} className="flex min-w-0 items-center gap-1 text-xs">
             <IconUsers size={11} className="faint shrink-0" />
-            <Link href={`/dashboard/contacts/${person.id}`} className="shrink-0 hover:underline">
+            <Link href={`/dashboard/contacts/${person.id}`} title={person.name} className="min-w-0 truncate hover:underline">
               {person.name}
             </Link>
             {person.company && person.company !== tile.title && <span className="faint truncate">· {person.company}</span>}
@@ -322,7 +350,9 @@ function Tile({
 
       {tile.deal ? (
         <div className="mb-1 mt-1.5 flex">
-          <OwnerSelect dealId={tile.deal.id} ownerId={tile.ownerId} users={users} />
+          {/* Keyed by the saved rep: the picker holds its own choice, so a
+              rep saved in the panel has to start it afresh (UX review). */}
+          <OwnerSelect key={tile.ownerId ?? ""} dealId={tile.deal.id} ownerId={tile.ownerId} users={users} />
         </div>
       ) : (
         <p className="mt-1.5 flex items-center gap-1 text-[0.7rem]">
@@ -331,10 +361,17 @@ function Tile({
         </p>
       )}
       {tile.lastMeetingOn && (
-        <p className="faint mt-0.5 flex items-center gap-1 text-[0.7rem]">
+        <p className="faint mt-0.5 flex items-center gap-1 text-[0.7rem]" data-testid="tile-meeting-last">
           <IconCalendar size={11} />
           {tile.meetingCount > 1 ? `${tile.meetingCount} meetings · last ` : "Meeting "}
           {formatDate(tile.lastMeetingOn, timeZone)}
+        </p>
+      )}
+      {tile.nextMeetingOn && (
+        <p className="faint mt-0.5 flex items-center gap-1 text-[0.7rem]" data-testid="tile-meeting-next">
+          <IconCalendar size={11} />
+          {!tile.lastMeetingOn && tile.meetingCount > 1 ? `${tile.meetingCount} meetings · next ` : "Next meeting "}
+          {formatDate(tile.nextMeetingOn, timeZone)}
         </p>
       )}
 
@@ -357,6 +394,11 @@ function Tile({
         {tile.deal ? <span className="num text-xs font-medium">{formatCents(tile.deal.valueCents)}</span> : <span />}
         <MoveMenu current={column} archived={tile.column === "ARCHIVED"} locked={isDeal(tile)} onMove={onMove} />
       </div>
+      {ai && tile.quietDays !== null && (
+        <div className="mt-2">
+          <FollowUpButton opportunityId={tile.id} compact />
+        </div>
+      )}
       {tile.deal && (
         <Link href={`/dashboard/deals/tracker?dealId=${tile.deal.id}`} className="faint mt-2 flex items-center gap-1 text-[0.7rem] hover:text-[var(--text)]">
           <IconClock size={11} />

@@ -8,6 +8,15 @@
  * note or call on several contacts at once, the Activity overview box,
  * and company roll-ups.
  *
+ * "audit fixes (UX review):" steps (Nov 10, 2026): the + Event form in a
+ * contact's narrow Coming up column laid out for its own width and
+ * starting on Meeting (the calendar's wide one still in columns); Last
+ * touch counted in calendar days on the workspace's clock (late last
+ * night is Yesterday, eight dates back warns); a call logged on two
+ * people from the company page counted once and shown as one line naming
+ * both, and a marketing send to both shown once; the company page on a
+ * 390px phone with nothing past the right edge and Claim tappable.
+ *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
  * signs up its own workspace, activates it with SQL, and deletes it again
@@ -117,6 +126,43 @@ function backLink(page) {
   assert.ok(await page.getByText("Activity overview").isVisible(), "overview box present");
   assert.ok(await page.getByText("Never").isVisible(), "no touches yet");
   await shot(page, "02-contact-page");
+  const dannyId = dannyUrl.split("/").pop();
+  const me = (await sql(`SELECT id FROM "User" WHERE email=$1`, [EMAIL])).rows[0].id;
+
+  log("audit fixes (UX review): + Event in the narrow Coming up column fits its width and starts on Meeting");
+  await page.locator("[data-testid=upcoming-add-event]").click();
+  const upcomingForm = page.locator("[data-testid=upcoming-card] [data-testid=event-form]");
+  await upcomingForm.waitFor();
+  assert.equal(await upcomingForm.locator("[data-testid=event-type]").inputValue(), "Meeting", "a meeting is what gets booked from a person's page, not an Install");
+  await upcomingForm.locator("[data-testid=event-timed]").check();
+  const narrow = await upcomingForm.evaluate((form) => ({
+    width: form.getBoundingClientRect().width,
+    fields: [...form.querySelectorAll("input, select")]
+      .filter((el) => el.type !== "checkbox" && el.type !== "hidden")
+      .map((el) => ({ name: el.name, w: el.getBoundingClientRect().width })),
+  }));
+  assert.ok(narrow.width < 420, `the form sits in the sidebar column (${narrow.width}px)`);
+  assert.ok(narrow.fields.length >= 8, `day, times and pickers measured (${narrow.fields.map((f) => f.name)})`);
+  // The date read "11/1" at 65px; every box now has the column to itself.
+  for (const field of narrow.fields) {
+    assert.ok(field.w >= narrow.width - 2, `${field.name} is ${field.w}px of the column's ${narrow.width}px`);
+  }
+  await shot(page, "02b-contact-plus-event");
+  await page.locator("[data-testid=upcoming-add-event]").click();
+  // The calendar's own form is wide and keeps its columns.
+  await page.goto(`${BASE}/dashboard/calendar`);
+  await page.locator("[data-testid=cal-add-event]").click();
+  const wideForm = page.locator("[data-testid=event-form]").first();
+  await wideForm.locator("[data-testid=event-timed]").check();
+  const tops = await wideForm.evaluate((form) =>
+    ["event-title", "event-type", "event-start-on", "event-start-time", "event-end-time", "event-owner", "event-crew", "event-project"].map((id) =>
+      Math.round(form.querySelector(`[data-testid=${id}]`).getBoundingClientRect().top),
+    ),
+  );
+  assert.equal(tops[0], tops[1], "title and kind side by side");
+  assert.ok(tops[2] === tops[3] && tops[3] === tops[4], `day and both times on one row (${tops})`);
+  assert.ok(tops[5] === tops[6] && tops[6] === tops[7], `whose calendar, who is going and which job on one row (${tops})`);
+  assert.notEqual(await wideForm.locator("[data-testid=event-type]").inputValue(), "", "the calendar's form still starts on the list's first type");
 
   log("Companies list has the company with 1 person; company page lists Danny");
   await page.goto(`${BASE}/dashboard/companies`);
@@ -305,6 +351,28 @@ function backLink(page) {
   assert.ok(await overview.getByText("1 touch logged").isVisible());
   await shot(page, "09-overview");
 
+  log("audit fixes (UX review): Last touch counts days on the workspace's calendar: 11:59pm last night is Yesterday, eight dates back warns");
+  // Honolulu, where the day turns ten hours after UTC's, so neither 24-hour
+  // blocks nor the server's own calendar give these answers.
+  await sql(`UPDATE "Organization" SET "timeZone"='Pacific/Honolulu' WHERE id=$1`, [org]);
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('ctc_cc_late',$1,'Lena Late',now()), ('ctc_cc_eight',$1,'Owen Eight',now())`, [org]);
+  const lateLastNight = `(((date_trunc('day', now() AT TIME ZONE 'Pacific/Honolulu') - interval '1 minute') AT TIME ZONE 'Pacific/Honolulu') AT TIME ZONE 'UTC')`;
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,"occurredAt") VALUES
+       ('act_cc_late',$1,'ctc_cc_late',$2,'PHONE_CALL','Late call',${lateLastNight}),
+       ('act_cc_eight',$1,'ctc_cc_eight',$2,'PHONE_CALL','Old call',${lateLastNight} - interval '7 days')`,
+    [org, me],
+  );
+  const lastTouchRow = page.locator("div.card", { hasText: "Activity overview" }).locator("dl > div", { hasText: "Last touch" });
+  await page.goto(`${BASE}/dashboard/contacts/ctc_cc_late`);
+  const yesterdayWords = (await sql(`SELECT to_char((now() AT TIME ZONE 'Pacific/Honolulu') - interval '1 day', 'Mon FMDD, YYYY') AS d`)).rows[0].d;
+  assert.equal((await lastTouchRow.locator("dd").innerText()).trim(), `Yesterday · ${yesterdayWords}`, "under 24 hours ago, but yesterday's date");
+  assert.doesNotMatch((await lastTouchRow.locator("dt svg").getAttribute("class")) ?? "", /--warn/);
+  await page.goto(`${BASE}/dashboard/contacts/ctc_cc_eight`);
+  assert.match(await lastTouchRow.locator("dd").innerText(), /^8 days ago · /, "under 8 × 24 hours ago, eight dates back");
+  assert.match((await lastTouchRow.locator("dt svg").getAttribute("class")) ?? "", /--warn/, "the 8-day warning");
+  await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);
+
   log("Sara and Resi got their copies; Sara's Personal view has the birthday note");
   await page.goto(saraUrl);
   await page.locator("#notes").getByText("Birthday is March 9").waitFor();
@@ -322,6 +390,80 @@ function backLink(page) {
   await companyNotes.getByText("Net-30 terms").waitFor();
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "company sees its people's pipeline");
   await shot(page, "10-company-page");
+  const spiritId = spiritUrl.split("/").pop();
+  const saraId = saraUrl.split("/").pop();
+
+  log("audit fixes (UX review): a call logged on two people here at once counts once and is one line naming both");
+  const coOverview = page.locator("div.card", { hasText: "Activity overview" });
+  const tile = (label) => coOverview.locator("a", { hasText: label }).locator("span.num");
+  const callsBefore = Number(await tile("Calls").innerText());
+  const coForm = page.locator("[data-testid=log-activity-form]");
+  const coPicker = coForm.locator("[data-testid=company-people-picker]");
+  await coPicker.locator("[data-testid=company-person-chip]", { hasText: "Danny Ortiz" }).click();
+  await coPicker.locator("[data-testid=company-person-chip]", { hasText: "Sara Lee" }).click();
+  await coForm.locator("textarea[name=body]").fill("Conference call with Danny and Sara");
+  await coForm.locator("[data-testid=activity-submit]").click();
+  await page.locator("[data-testid=follow-up-prompt]").waitFor();
+  await page.locator("[data-testid=follow-up-skip]").click();
+  const confLines = page.locator("#activity [data-testid=activity-line]", { hasText: "Conference call with Danny and Sara" });
+  await confLines.first().waitFor();
+  const confRows = await sql(`SELECT "batchId" FROM "Activity" WHERE "organizationId"=$1 AND body='Conference call with Danny and Sara'`, [org]);
+  assert.equal(confRows.rows.length, 2, "one row on each of them…");
+  assert.ok(confRows.rows[0].batchId && confRows.rows[0].batchId === confRows.rows[1].batchId, "…sharing a batch");
+  assert.equal(await confLines.count(), 1, "one line in the feed");
+  assert.equal(await confLines.getByRole("link", { name: "Danny Ortiz" }).count(), 1, "naming Danny");
+  assert.equal(await confLines.getByRole("link", { name: "Sara Lee" }).count(), 1, "and Sara");
+  assert.doesNotMatch(await confLines.innerText(), /also on/, "nobody left over to count");
+  assert.equal(Number(await tile("Calls").innerText()), callsBefore + 1, "Calls goes up by one");
+  const distinctTouches = (
+    await sql(
+      `SELECT count(DISTINCT COALESCE(a."batchId", a.id))::int AS n FROM "Activity" a LEFT JOIN "Contact" c ON c.id = a."contactId"
+        WHERE a."organizationId"=$1 AND NOT a.marketing AND (a."companyId"=$2 OR c."companyId"=$2)`,
+      [org, spiritId],
+    )
+  ).rows[0].n;
+  assert.match(await coOverview.innerText(), new RegExp(`${distinctTouches} touch(es)? logged`), `the total counts each touch once (${distinctTouches})`);
+  // A marketing send to both is one batch too: one line, still no touch.
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,"batchId") VALUES
+       ('act_cc_promo1',$1,$2,$4,'EMAIL','Emailed “November promo”',true,'batch_cc_promo'),
+       ('act_cc_promo2',$1,$3,$4,'EMAIL','Emailed “November promo”',true,'batch_cc_promo')`,
+    [org, dannyId, saraId, me],
+  );
+  await page.reload();
+  const promoLines = page.locator("#activity [data-testid=activity-line]", { hasText: "November promo" });
+  await promoLines.first().waitFor();
+  assert.equal(await promoLines.count(), 1, "the send is one line");
+  assert.equal(await promoLines.getAttribute("data-marketing"), "1");
+  assert.match(await coOverview.innerText(), new RegExp(`${distinctTouches} touch(es)? logged`), "and not a touch");
+  await shot(page, "10b-company-one-line-per-touch");
+
+  log("audit fixes (UX review): the company page fits a 390px phone: nothing past the right edge, Claim tappable");
+  // Something logged here with nobody linked, so Other Contacts offers Claim.
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","companyId","userId",type,body) VALUES ('act_cc_bypass',$1,$2,$3,'PHONE_CALL','Front desk said call back Tuesday')`,
+    [org, spiritId, me],
+  );
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const phonePage = await phoneContext.newPage();
+  await phonePage.goto(spiritUrl);
+  await phonePage.getByRole("heading", { name: "Spirit Communications" }).waitFor();
+  const fit = await phonePage.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth,
+    client: document.documentElement.clientWidth,
+    past: [...document.querySelectorAll("main .card")]
+      .filter((card) => card.getBoundingClientRect().right > document.documentElement.clientWidth + 0.5)
+      .map((card) => `${(card.querySelector("h2, h3")?.textContent ?? card.textContent).trim().slice(0, 30)} ends at ${Math.round(card.getBoundingClientRect().right)}`),
+  }));
+  assert.ok(fit.scroll <= fit.client, `the page is ${fit.scroll}px on a ${fit.client}px phone`);
+  assert.deepEqual(fit.past, [], "no card runs past the right edge");
+  const claim = phonePage.locator("[data-testid=claim-one]").first();
+  await claim.scrollIntoViewIfNeeded();
+  const claimBox = await claim.boundingBox();
+  assert.ok(claimBox.x >= 0 && claimBox.x + claimBox.width <= 390, `Claim is on screen (${claimBox.x}–${claimBox.x + claimBox.width})`);
+  await claim.tap({ trial: true });
+  await phonePage.screenshot({ path: path.join(OUT, "10c-company-phone.png"), fullPage: true });
+  await phoneContext.close();
 
   log("a contract can name the deal; sending moves it to Contract Sent, signing wins it");
   await page.goto(`${BASE}/dashboard/contracts/new?contactId=${dannyUrl.split("/").pop()}`);
@@ -372,6 +514,18 @@ function backLink(page) {
   assert.equal(await page.locator("dl").first().getByRole("link", { name: "Spirit Communications" }).count(), 0);
   const remaining = await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE name IN ('Danny Ortiz','Sara Lee') AND "organizationId"=$1`, [org]);
   assert.equal(remaining.rows[0].n, 2, "deleting a company keeps its people");
+
+  log("audit fixes (UX review): the people picker finds a number however it's typed, and shows a mobile-only person's mobile");
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,mobile,"updatedAt") VALUES ('cc_mobile_only',$1,'Mona Mobile','(870) 555-0167',now())`,
+    [org],
+  );
+  for (const typed of ["870-555-0167", "8705550167", "870.555.0167"]) {
+    const hits = await (await page.request.get(`${BASE}/dashboard/contacts/search?q=${encodeURIComponent(typed)}`)).json();
+    const mona = hits.find((hit) => hit.id === "cc_mobile_only");
+    assert.ok(mona, `"${typed}" doesn't find Mona`);
+    assert.equal(mona.phone, "(870) 555-0167", "her mobile stands in for the missing phone");
+  }
 
   void quoteBUrl;
   void quoteCUrl;

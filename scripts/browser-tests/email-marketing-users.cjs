@@ -26,7 +26,7 @@ const assert = require("node:assert/strict");
 
 const BASE = process.env.BASE || "http://localhost:3000";
 const DB = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5433/scb_test";
-const CATCHER_PORT = 3999;
+const CATCHER_PORT = Number(process.env.CATCHER_PORT || 3999);
 
 const COMPANY = "Test Mail Co";
 const SLUG_LIKE = "test-mail-co%";
