@@ -285,7 +285,7 @@ function backLink(page) {
   // The Pipeline starts at Meeting Set (Sept 30, 2026).
   const columns = page.locator("[data-testid^=pipeline-column-] h2");
   assert.deepEqual(await columns.allTextContents(), ["Meeting Set", "Meeting Completed", "Quote Sent", "Contract Sent", "Signed / Won", "Lost"]);
-  const quoteSentCol = page.locator("div.card", { has: page.locator("h2", { hasText: "Quote Sent" }) }).first();
+  const quoteSentCol = page.getByTestId("pipeline-column-QUOTE_SENT");
   assert.ok(await quoteSentCol.getByText("Fiber install").first().isVisible(), "deal moved to Quote Sent");
   assert.ok(await quoteSentCol.getByText("$1,250.00").first().isVisible(), "value read from the sent quote");
   // Oct 27, 2026: the tile's stage menu; a deal can't go back to a meeting
