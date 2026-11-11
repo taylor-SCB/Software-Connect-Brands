@@ -180,7 +180,7 @@ async function openLog(p) {
   log("Contacts: the Status dropdown lists the ladder in its own order");
   await page.goto(`${BASE}/dashboard/contacts`);
   assert.equal(await page.locator("[data-testid=contact-row]").count(), 4);
-  await page.getByTestId("filter-status").click();
+  await openFilters(page); await page.getByTestId("filter-status").click();
   await statusList.waitFor();
   assert.deepEqual((await statusList.locator("label span").allTextContents()).map((t) => t.trim()), LADDER);
   await shot(page, "01-status-dropdown");
@@ -189,15 +189,16 @@ async function openLog(p) {
   await statusOption("Interested").click();
   await page.waitForURL(/status=INTERESTED/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 1, "one interested contact");
-  assert.deepEqual(await page.locator("[data-testid=contact-row] td:nth-child(4) a").allTextContents(), ["Eli Park"]);
+  assert.deepEqual(await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents(), ["Eli Park"]);
   await statusOption("Meeting Set").click();
   await page.waitForURL(/status=INTERESTED&status=MEETING_SET/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 2, "two contacts");
-  const twoNames = (await page.locator("[data-testid=contact-row] td:nth-child(4) a").allTextContents()).sort();
+  const twoNames = (await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents()).sort();
   assert.deepEqual(twoNames, ["Eli Park", "Faye Chen"]);
   const chips = page.locator("[data-testid=active-filters]");
   assert.match(await chips.textContent(), /Status: Interested/);
   assert.match(await chips.textContent(), /Status: Meeting Set/);
+  await openFilters(page);
   assert.match(await page.getByTestId("filter-status").textContent(), /2/, "the button counts two");
   await shot(page, "02-status-two-ticked");
 
@@ -208,7 +209,7 @@ async function openLog(p) {
   await page.waitForURL(/q=Faye.*status=|status=.*q=Faye/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 1, "Faye only");
   await page.getByRole("button", { name: "Clear all" }).click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 4, "all four back");
 
   log("a pasted status that is not on the ladder is ignored, not a crash");
@@ -221,7 +222,7 @@ async function openLog(p) {
   log("Companies: the same dropdown; Meeting Set is Pine Roofing alone");
   await page.goto(`${BASE}/dashboard/companies`);
   assert.equal(await page.locator("[data-testid=company-row]").count(), 3);
-  await page.getByTestId("filter-status").click();
+  await openFilters(page); await page.getByTestId("filter-status").click();
   await statusList.waitFor();
   await statusOption("Meeting Set").click();
   await page.waitForURL(/status=MEETING_SET/);
@@ -232,9 +233,11 @@ async function openLog(p) {
   log("the Interested sub-panes hold the status already and hide the dropdown");
   await page.goto(`${BASE}/dashboard/contacts/interested`);
   await page.locator("[data-testid=contact-row]").first().waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-status").count(), 0, "no Status dropdown on Interested Contacts");
   await page.goto(`${BASE}/dashboard/companies/interested`);
   await page.locator("[data-testid=company-row]").first().waitFor();
+  await openFilters(page);
   assert.equal(await page.getByTestId("filter-status").count(), 0, "nor on Interested Companies");
   void rowNames;
 
@@ -407,3 +410,20 @@ async function openLog(p) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

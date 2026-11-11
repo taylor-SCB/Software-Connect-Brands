@@ -13,8 +13,10 @@
  * step: Mark signed (signed on paper) on a contract made from a sent quote
  * accepts that quote, dated the day it was signed, and takes its open
  * follow-up off the calendar; and a contract signed before that fix, its
- * quote still Sent, is caught up by `scripts/accept-signed-quotes.ts`
- * (--check lists it and changes nothing; a second run finds nothing).
+ * quote still Sent, is caught up by the migration
+ * 20261111140000_paperwork_accept_signed_quotes (a sent contract, a
+ * purchase order and another workspace's contract are left alone; a
+ * second run changes nothing).
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -28,7 +30,6 @@
  */
 /* eslint-disable @typescript-eslint/no-require-imports -- CommonJS on purpose: NODE_PATH only resolves the global playwright for require() */
 const os = require("node:os");
-const { execFileSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const { Client } = require("pg");
 const fs = require("node:fs");
@@ -202,14 +203,14 @@ async function previewChips(page) {
   const sw = page.getByRole("switch", { name: "All company users can send" });
   assert.equal(await sw.getAttribute("aria-checked"), "true");
   await sw.click();
-  await page.getByLabel("Search people").fill("tayl");
+  await page.getByLabel("Search people", { exact: true }).fill("tayl");
   const me = page.getByRole("checkbox", { name: /Taylor Test/ });
   await me.waitFor();
   await me.check();
   await page.getByText("Only Taylor Test can send.").waitFor();
-  await page.getByLabel("Search people").fill("zzz");
+  await page.getByLabel("Search people", { exact: true }).fill("zzz");
   await page.getByText("Nobody matches.").waitFor();
-  await page.getByLabel("Search people").fill("");
+  await page.getByLabel("Search people", { exact: true }).fill("");
   await shot(page, "04-type-and-senders");
 
   log("Preview with nobody picked: missing chips flash red, workspace fields fill in");
@@ -316,11 +317,53 @@ async function previewChips(page) {
   assert.ok(await page.getByText("Project: Kitchen remodel for $250.00").isVisible());
   await shot(page, "10-public-sign");
 
+  log("Sprint: the sign box's name starts empty; on a phone a pinned Review and sign bar with the total takes them to it");
+  assert.equal(await page.locator("[name=signerName]").inputValue(), "", "the customer's name was typed in for them");
+  assert.equal(await page.locator("[name=signerName]").getAttribute("placeholder"), "Type your full name");
+  assert.equal(await page.getByTestId("review-and-sign-bar").isVisible(), false, "the phone bar shows on a wide screen");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(link);
+    const bar = phone.getByTestId("review-and-sign-bar");
+    await bar.waitFor();
+    const barBox = await bar.boundingBox();
+    assert.ok(barBox.y + barBox.height <= 845 && barBox.y > 700, `the bar isn't pinned to the foot (${barBox.y})`);
+    assert.match(await bar.textContent(), /Review and sign ↓/);
+    await bar.getByRole("link").click();
+    await phone.waitForFunction(() => location.hash === "#sign");
+    const signBox = await phone.locator("#sign").boundingBox();
+    assert.ok(signBox.y < 844, "the link didn't bring the sign box on screen");
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the customer's page scrolls sideways");
+    await phoneCtx.close();
+  }
+
+  log("Sprint: a sent contract's wording is locked on screen and on the server, with Pull back to draft to edit");
+  await page.goto(contractUrl);
+  await page.getByTestId("contract-body-sent").waitFor();
+  assert.equal(await page.locator("#body").count(), 0, "the body is editable while it is out for signature");
+  await page.getByTestId("pull-back-to-edit").click();
+  await page.locator("#body").waitFor();
+  assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [contractId])).rows[0].status, "DRAFT");
+  // A second tab still holds the editor when the first sends it again.
+  const staleTab = await context.newPage();
+  await staleTab.goto(contractUrl);
+  await staleTab.locator("#body").waitFor();
+  await page.getByRole("button", { name: "Send for signature" }).first().click();
+  await page.getByTestId("contract-body-sent").waitFor();
+  const bodyBefore = (await sql(`SELECT body FROM "Contract" WHERE id=$1`, [contractId])).rows[0].body;
+  await staleTab.locator("#body").fill(`${bodyBefore}\nA sneaky extra clause.`);
+  await staleTab.getByRole("button", { name: "Save changes" }).click();
+  await staleTab.getByText("This contract is out for signature. Pull it back to draft to edit it.").waitFor();
+  assert.equal((await sql(`SELECT body FROM "Contract" WHERE id=$1`, [contractId])).rows[0].body, bodyBefore, "the server saved new wording on a sent contract");
+  await staleTab.close();
+
   log("audit fixes (UX review): Mark signed on a contract made from a sent quote accepts the quote and takes its follow-up off the calendar");
   // The quote goes out from its page, so its follow-up is on the calendar.
   await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   const openFollowUps = async () =>
     (
@@ -345,34 +388,54 @@ async function previewChips(page) {
   await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
   await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
 
-  log("audit fixes (UX review): a contract signed before the fix is caught up by scripts/accept-signed-quotes.ts, once");
+  log("Sprint: a contract signed before the fix is caught up by the paperwork_accept_signed_quotes migration, safely twice");
   // The state the review found in the live data: the contract signed, its
   // quote still Sent with its follow-up open. The quote goes out again
-  // from its page while the contract stays signed.
+  // from its page while the contract stays signed. The catch-up used to be
+  // scripts/accept-signed-quotes.ts, run by hand; it is a migration now,
+  // so it runs on release. Its SQL is run here straight from the file.
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT");
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [contractId])).rows[0].status, "SIGNED");
   assert.ok((await openFollowUps()) > 0, "the quote's follow-up is back on the calendar");
-  const backfill = (...flags) =>
-    execFileSync("npx", ["tsx", "scripts/accept-signed-quotes.ts", `--org=${org}`, ...flags], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, DATABASE_URL: DB },
-    });
-  const checked = backfill("--check");
-  assert.match(checked, /would accept QUO-\d+ \(Danny Ortiz\), signed on CON-\d+ 2026-11-09/, checked);
-  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "--check changed the quote");
-  const caughtUp = backfill();
-  assert.match(caughtUp, /1 quote accepted\./, caughtUp);
+  const migrationSql = fs.readFileSync(
+    path.join(process.cwd(), "prisma/migrations/20261111140000_paperwork_accept_signed_quotes/migration.sql"),
+    "utf8",
+  );
+  const catchUp = () => sql(migrationSql);
+  // Left alone: the contract only sent, not signed.
+  await sql(`UPDATE "Contract" SET status='SENT' WHERE id=$1`, [contractId]);
+  await catchUp();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "an unsigned contract accepted its quote");
+  // Left alone: a signed purchase order is not the customer saying yes.
+  await sql(`UPDATE "Contract" SET status='SIGNED', payable=true WHERE id=$1`, [contractId]);
+  await catchUp();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "a signed purchase order accepted its quote");
+  // Left alone: a contract in another workspace pointing at this quote.
+  const foreignOrg = `test-foreign-${Date.now()}`;
+  await sql(`INSERT INTO "Organization" (id, name, slug, "updatedAt") VALUES ($1, 'Foreign', $1, now())`, [foreignOrg]);
+  await sql(`UPDATE "Contract" SET payable=false, "organizationId"=$2 WHERE id=$1`, [contractId, foreignOrg]);
+  await catchUp();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "another workspace's contract accepted this quote");
+  await sql(`UPDATE "Contract" SET "organizationId"=$2 WHERE id=$1`, [contractId, org]);
+  await sql(`DELETE FROM "Organization" WHERE id=$1`, [foreignOrg]);
+  // Caught up: the quote is Accepted, dated the day the contract was signed.
+  await catchUp();
   const backfilled = (await sql(`SELECT status, "respondedAt"::date::text AS day FROM "Quote" WHERE id='quo_ct'`)).rows[0];
   assert.deepEqual(backfilled, { status: "ACCEPTED", day: "2026-11-09" }, "accepted, dated the day the contract was signed");
   assert.equal(await openFollowUps(), 0, "the follow-up is still on the calendar after the catch-up");
+  const quoteSentKept = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_ct' AND type='Quote sent'`)).rows[0].n;
+  assert.ok(quoteSentKept > 0, "the Quote sent history line was taken off too");
+  // A second run changes nothing.
+  const before = (await sql(`SELECT "respondedAt"::text AS r, "updatedAt"::text AS u FROM "Quote" WHERE id='quo_ct'`)).rows[0];
+  await catchUp();
+  const after = (await sql(`SELECT "respondedAt"::text AS r, "updatedAt"::text AS u FROM "Quote" WHERE id='quo_ct'`)).rows[0];
+  assert.deepEqual(after, before, "a second run touched the quote again");
   await page.reload();
   await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
-  // A second run finds nothing to do.
-  assert.match(backfill(), /already answered/);
 
   log("New contract: same two columns, template dropdown, preview, residential customer with no deal");
   await page.goto(`${BASE}/dashboard/contracts/new`);

@@ -17,6 +17,10 @@ import { readNarrative } from "@/lib/reports/narrative";
 import { PERIOD_KEYS, PERIOD_LABELS } from "@/lib/reports/period";
 import { CADENCE_LABELS, cadencesFor, isCadence } from "@/lib/reports/subscriptions";
 import { ReportControls } from "./reports/report-controls";
+import { loadMyDay } from "./my-day/load";
+import { MyDayView, TeamTodayStrip } from "./my-day/my-day";
+import { MemberJumpIn } from "./my-day/jump-in";
+import { loadTeamToday } from "@/lib/reports/daily";
 import { NarrativeCard } from "./reports/narrative-card";
 import { EmailMe } from "./reports/email-me";
 import { HeadlineTiles, ReportBody } from "./reports/report-views";
@@ -47,21 +51,10 @@ const ACTIVITY_ICONS = {
 // line naming the rep). The same rules as the reports: money and
 // paperwork by the deal's rep, contacts by their rep, activity by who
 // logged it.
-async function OverviewSummary({
-  organizationId,
-  name,
-  timeZone,
-  repId,
-  intro,
-  children,
-}: {
-  organizationId: string;
-  name: string | null;
-  timeZone: string;
-  repId: string | null;
-  intro: React.ReactNode;
-  children: React.ReactNode;
-}) {
+//
+// The tiles and Recent activity are their own pieces (BDR redesign, Nov
+// 11, 2026) so My day's collapsed "Team & money" shows the very same ones.
+async function loadOverview(organizationId: string, timeZone: string, repId: string | null) {
   const mine = repId ? { ownerId: repId } : {};
   const myDeal = repId ? { deal: { ownerId: repId } } : {};
 
@@ -114,7 +107,146 @@ async function OverviewSummary({
     (sum, quote) => sum + computeQuoteTotals(quote.lineItems, quote).totalCents,
     0,
   );
+  return { contactCount, leadCount, openDeals, sentQuotes, awaitingSignature, signedCount, recentActivity, owed, activeProjects, openDealValue, quotedValue };
+}
 
+type Overview = Awaited<ReturnType<typeof loadOverview>>;
+
+function OverviewTiles({ data }: { data: Overview }) {
+  const { owed, activeProjects, contactCount, leadCount, openDealValue, openDeals, quotedValue, sentQuotes, awaitingSignature, signedCount } = data;
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {/* The tile counts homeowners as well as companies, so it says
+          where each half is rather than sending every click to the
+          companies list and hiding a homeowner's share of the money. */}
+      <div>
+        <Link href="/dashboard/companies?owed=1" className="contents">
+          <StatTile
+            label="Owed to you"
+            value={formatCents(owed.owedCents)}
+            hint={owed.overdueCount > 0 ? `${owed.overdueCount} past due` : `${owed.customerCount} to chase`}
+            accent={owed.overdueCount > 0 ? "#f87171" : "#34d399"}
+          />
+        </Link>
+        <p className="faint mt-1.5 text-xs" data-testid="owed-where">
+          <Link href="/dashboard/companies?owed=1" className="link">
+            Companies
+          </Link>
+          {" · "}
+          <Link href="/dashboard/contacts?owed=1" className="link">
+            People with no company
+          </Link>
+        </p>
+      </div>
+      <Link href="/dashboard/projects" className="contents">
+        <StatTile
+          label="Active jobs"
+          value={activeProjects}
+          hint="Won and still running"
+          accent="#818cf8"
+        />
+      </Link>
+      <StatTile label="Contacts" value={contactCount} hint={`${leadCount} not yet at a meeting`} />
+      <StatTile
+        label="Open pipeline"
+        value={formatCents(openDealValue)}
+        hint={`${openDeals.length} active deals`}
+        accent="#38bdf8"
+      />
+      <StatTile
+        label="Quoted & sent"
+        value={formatCents(quotedValue)}
+        hint={`${sentQuotes.length} quotes out`}
+        accent="#a78bfa"
+      />
+      <StatTile
+        label="Awaiting signature"
+        value={awaitingSignature}
+        hint="Contracts sent"
+        accent="#fbbf24"
+      />
+      <StatTile
+        label="Signed"
+        value={signedCount}
+        hint="Contracts closed"
+        accent="#34d399"
+      />
+    </div>
+  );
+}
+
+function RecentActivityCard({ data, repId, timeZone, className = "" }: { data: Overview; repId: string | null; timeZone: string; className?: string }) {
+  const { recentActivity } = data;
+  return (
+    <Card lit className={`min-w-0 ${className}`}>
+      <CardHeader title="Recent activity" subtitle={repId ? "Logged by this rep" : "Across every contact"} />
+      {recentActivity.length === 0 ? (
+        <EmptyState
+          title="Nothing logged yet"
+          body="Calls, texts, emails and meetings you log on a contact show up here."
+        />
+      ) : (
+        <ul className="divide-y divide-[var(--hairline)]">
+          {recentActivity.map((activity) => {
+            const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue];
+            return (
+              <li key={activity.id} className="flex min-w-0 gap-3 px-5 py-3">
+                <div
+                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+                  style={{
+                    background: "color-mix(in srgb, var(--brand) 14%, transparent)",
+                    color: "var(--brand)",
+                  }}
+                >
+                  <Icon size={14} />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm">{activity.body}</p>
+                  <p className="faint mt-0.5 text-[0.7rem]">
+                    {activity.contact ? (
+                      <Link href={`/dashboard/contacts/${activity.contact.id}`} className="link">
+                        {activity.contact.company?.name || activity.contact.name}
+                      </Link>
+                    ) : activity.company ? (
+                      <Link href={`/dashboard/companies/${activity.company.id}`} className="link">
+                        {activity.company.name}
+                      </Link>
+                    ) : null}{" "}
+                    · {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} ·{" "}
+                    {formatDateTime(activity.occurredAt, timeZone)}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+async function OverviewSummary({
+  organizationId,
+  name,
+  timeZone,
+  repId,
+  member,
+  today,
+  intro,
+  children,
+}: {
+  organizationId: string;
+  name: string | null;
+  timeZone: string;
+  repId: string | null;
+  // A Member gets BDR shortcuts in Jump in instead of the owner's chores
+  // (BDR redesign, Nov 11, 2026).
+  member: boolean;
+  today: string;
+  intro: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const data = await loadOverview(organizationId, timeZone, repId);
   const firstName = name?.split(" ")[0] ?? "there";
 
   return (
@@ -138,63 +270,7 @@ async function OverviewSummary({
       />
       {intro}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {/* The tile counts homeowners as well as companies, so it says
-            where each half is rather than sending every click to the
-            companies list and hiding a homeowner's share of the money. */}
-        <div>
-          <Link href="/dashboard/companies?owed=1" className="contents">
-            <StatTile
-              label="Owed to you"
-              value={formatCents(owed.owedCents)}
-              hint={owed.overdueCount > 0 ? `${owed.overdueCount} past due` : `${owed.customerCount} to chase`}
-              accent={owed.overdueCount > 0 ? "#f87171" : "#34d399"}
-            />
-          </Link>
-          <p className="faint mt-1.5 text-xs" data-testid="owed-where">
-            <Link href="/dashboard/companies?owed=1" className="link">
-              Companies
-            </Link>
-            {" · "}
-            <Link href="/dashboard/contacts?owed=1" className="link">
-              People with no company
-            </Link>
-          </p>
-        </div>
-        <Link href="/dashboard/projects" className="contents">
-          <StatTile
-            label="Active jobs"
-            value={activeProjects}
-            hint="Won and still running"
-            accent="#818cf8"
-          />
-        </Link>
-        <StatTile label="Contacts" value={contactCount} hint={`${leadCount} not yet at a meeting`} />
-        <StatTile
-          label="Open pipeline"
-          value={formatCents(openDealValue)}
-          hint={`${openDeals.length} active deals`}
-          accent="#38bdf8"
-        />
-        <StatTile
-          label="Quoted & sent"
-          value={formatCents(quotedValue)}
-          hint={`${sentQuotes.length} quotes out`}
-          accent="#a78bfa"
-        />
-        <StatTile
-          label="Awaiting signature"
-          value={awaitingSignature}
-          hint="Contracts sent"
-          accent="#fbbf24"
-        />
-        <StatTile
-          label="Signed"
-          value={signedCount}
-          hint="Contracts closed"
-          accent="#34d399"
-        />
-      </div>
+      <OverviewTiles data={data} />
 
       {children}
       {/* grid-cols-1 and min-w-0 (UX review, Nov 10, 2026): below lg the
@@ -202,78 +278,57 @@ async function OverviewSummary({
           width and the page panned sideways on a phone instead of the
           line ending in "…". */}
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <Card lit className="min-w-0 lg:col-span-2">
-          <CardHeader title="Recent activity" subtitle={repId ? "Logged by this rep" : "Across every contact"} />
-          {recentActivity.length === 0 ? (
-            <EmptyState
-              title="Nothing logged yet"
-              body="Calls, texts, emails and meetings you log on a contact show up here."
-            />
-          ) : (
-            <ul className="divide-y divide-[var(--hairline)]">
-              {recentActivity.map((activity) => {
-                const Icon = ACTIVITY_ICONS[activity.type as ActivityTypeValue];
-                return (
-                  <li key={activity.id} className="flex min-w-0 gap-3 px-5 py-3">
-                    <div
-                      className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-                      style={{
-                        background: "color-mix(in srgb, var(--brand) 14%, transparent)",
-                        color: "var(--brand)",
-                      }}
-                    >
-                      <Icon size={14} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm">{activity.body}</p>
-                      <p className="faint mt-0.5 text-[0.7rem]">
-                        {activity.contact ? (
-                          <Link href={`/dashboard/contacts/${activity.contact.id}`} className="link">
-                            {activity.contact.company?.name || activity.contact.name}
-                          </Link>
-                        ) : activity.company ? (
-                          <Link href={`/dashboard/companies/${activity.company.id}`} className="link">
-                            {activity.company.name}
-                          </Link>
-                        ) : null}{" "}
-                        · {ACTIVITY_LABELS[activity.type as ActivityTypeValue]} ·{" "}
-                        {formatDateTime(activity.occurredAt, timeZone)}
-                      </p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Card>
+        <RecentActivityCard data={data} repId={repId} timeZone={timeZone} className="lg:col-span-2" />
 
         <Card lit className="min-w-0">
           <CardHeader title="Jump in" />
-          <div className="space-y-2 p-5">
-            <Link href="/dashboard/products" className="nav-item">
-              Manage product catalog
-            </Link>
-            <Link href="/dashboard/quotes/new" className="nav-item">
-              Build a quote
-            </Link>
-            <Link href="/dashboard/contracts/templates" className="nav-item">
-              Edit contract templates
-            </Link>
-            <Link href="/dashboard/contracts/new" className="nav-item">
-              <IconSignature size={15} className="opacity-70" />
-              Send a contract
-            </Link>
-            <Link href="/dashboard/settings" className="nav-item">
-              Change branding
-            </Link>
-          </div>
+          {member ? (
+            <MemberJumpIn today={today} />
+          ) : (
+            <div className="space-y-2 p-5">
+              <Link href="/dashboard/products" className="nav-item">
+                Manage product catalog
+              </Link>
+              <Link href="/dashboard/quotes/new" className="nav-item">
+                Build a quote
+              </Link>
+              <Link href="/dashboard/contracts/templates" className="nav-item">
+                Edit contract templates
+              </Link>
+              <Link href="/dashboard/contracts/new" className="nav-item">
+                <IconSignature size={15} className="opacity-70" />
+                Send a contract
+              </Link>
+              <Link href="/dashboard/settings" className="nav-item">
+                Change branding
+              </Link>
+            </div>
+          )}
         </Card>
       </div>
     </div>
   );
 }
 
-type Search = Promise<{ report?: string; period?: string; rep?: string; by?: string }>;
+// My day's "Team & money": the whole team's tiles and Recent activity.
+async function TeamMoney({ organizationId, timeZone }: { organizationId: string; timeZone: string }) {
+  const data = await loadOverview(organizationId, timeZone, null);
+  return (
+    <div className="space-y-5">
+      <OverviewTiles data={data} />
+      <RecentActivityCard data={data} repId={null} timeZone={timeZone} />
+      <p className="faint text-xs">
+        The team&apos;s write-up is on the{" "}
+        <Link href="/dashboard?report=daily" className="link">
+          Daily Rundown
+        </Link>
+        .
+      </p>
+    </div>
+  );
+}
+
+type Search = Promise<{ report?: string; period?: string; rep?: string; by?: string; view?: string }>;
 
 // Overview (/dashboard) with the report bar across the top (Nov 10, 2026):
 // Daily Rundown (the default, wrapped in what Overview always showed),
@@ -285,8 +340,35 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const { organizationId, userId } = session;
   const params = await searchParams;
   const [team, timeZone, organization] = await Promise.all([loadTeam(organizationId), getTimeZone(), getOrganization()]);
-  const choice = readChoice(params, team.map((member) => member.id));
   const isAdmin = session.role === "OWNER" || session.role === "ADMIN";
+  const member = !isAdmin;
+
+  // My day (BDR redesign, Nov 11, 2026; decision 9): a Member's first tab
+  // and where /dashboard lands them; Owners and Admins land on the Daily
+  // Rundown as before and open a rep's My day from Team today, read-only.
+  // ?view=myday&rep=<id> is that read-only view (anyone may look: everyone
+  // sees everyone); the person's own day is the only one they can act on.
+  if (params.view === "myday" || (member && !params.report && !params.view)) {
+    const target = params.rep && team.some((one) => one.id === params.rep) ? params.rep : userId;
+    const repRow = team.find((one) => one.id === target);
+    const day = await loadMyDay(organizationId, { id: target, name: repRow?.name ?? session.name ?? "there" });
+    const readOnly = target !== userId;
+    return (
+      <div>
+        <ReportBar choice={readChoice({}, [])} member={member} myDay />
+        {readOnly && (
+          <p className="mb-3 text-sm">
+            <Link href="/dashboard" className="link" data-testid="my-day-back">
+              ← Team today
+            </Link>
+          </p>
+        )}
+        <MyDayView day={day} readOnly={readOnly} teamMoney={<TeamMoney organizationId={organizationId} timeZone={timeZone} />} />
+      </div>
+    );
+  }
+
+  const choice = readChoice(params, team.map((one) => one.id));
   const reportParams = paramsFor(choice, { organizationId, timeZone, now: new Date() });
   const repName = choice.repId ? nameOf(team, choice.repId) : null;
 
@@ -359,11 +441,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   );
   const body = <ReportBody report={report} range={range} by={choice.by} />;
 
+  const now = new Date();
+  const teamToday = isAdmin && choice.report === "daily" ? await loadTeamToday(organizationId, timeZone, now) : null;
+
   return (
     <div>
-      <ReportBar choice={choice} />
+      <ReportBar choice={choice} member={member} />
       {choice.report === "daily" ? (
-        <OverviewSummary organizationId={organizationId} name={session.name} timeZone={timeZone} repId={choice.repId} intro={head}>
+        <OverviewSummary
+          organizationId={organizationId}
+          name={session.name}
+          timeZone={timeZone}
+          repId={choice.repId}
+          member={member}
+          today={todayIso(timeZone)}
+          intro={
+            <>
+              {teamToday && <TeamTodayStrip team={teamToday} now={now} />}
+              {head}
+            </>
+          }
+        >
           <div className="mt-5">{body}</div>
         </OverviewSummary>
       ) : (
@@ -378,18 +476,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 }
 
 // The five reports as tabs. Switching keeps the rep; the period and the
-// breakdown go back to each report's own default.
-function ReportBar({ choice }: { choice: ReportChoice }) {
+// breakdown go back to each report's own default. A Member's bar starts
+// with My day (BDR redesign, Nov 11, 2026), so their Daily Rundown tab
+// names itself in the address (a bare /dashboard is My day for them).
+function ReportBar({ choice, member, myDay = false }: { choice: ReportChoice; member: boolean; myDay?: boolean }) {
   return (
     <nav className="mb-6 flex flex-wrap gap-1.5 border-b border-[var(--hairline-3)] pb-3" aria-label="Reports" data-testid="report-bar">
+      {member && (
+        <Link
+          href="/dashboard"
+          className={`btn btn-sm pointer-coarse:min-h-11 ${myDay ? "btn-primary" : "btn-ghost"}`}
+          aria-current={myDay ? "page" : undefined}
+          data-testid="report-tab"
+          data-report="myday"
+        >
+          My day
+        </Link>
+      )}
       {REPORT_KEYS.map((key) => {
-        const active = key === choice.report;
+        const active = !myDay && key === choice.report;
         const target: ReportChoice = { report: key, period: "today", repId: choice.repId, by: REPORT_BREAKDOWNS[key][0] ?? "rep" };
+        let href = reportHref({ ...target, period: key === "daily" ? "today" : (readChoice({ report: key }, []).period) });
+        if (member && key === "daily") {
+          const query = href.split("?")[1];
+          href = `/dashboard?report=daily${query ? `&${query}` : ""}`;
+        }
         return (
           <Link
             key={key}
-            href={reportHref({ ...target, period: key === "daily" ? "today" : (readChoice({ report: key }, []).period) })}
-            className={`btn btn-sm ${active ? "btn-primary" : "btn-ghost"}`}
+            href={href}
+            className={`btn btn-sm pointer-coarse:min-h-11 ${active ? "btn-primary" : "btn-ghost"}`}
             aria-current={active ? "page" : undefined}
             data-testid="report-tab"
             data-report={key}

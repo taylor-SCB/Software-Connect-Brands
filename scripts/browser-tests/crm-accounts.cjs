@@ -392,7 +392,7 @@ async function openMore(p) {
     [org],
   );
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.locator("[data-testid=merge-open]").click();
+  await cleanUp(page, "merge");
   const merge = page.locator("[data-testid=merge-dialog]");
   await merge.locator("[data-testid=merge-search]").fill("Matt Smith");
   const results = merge.locator("[data-testid=merge-results] label");
@@ -418,7 +418,7 @@ async function openMore(p) {
 
   log("Merge Companies: the two Acme Roofings become one, people and tags together");
   await page.goto(`${BASE}/dashboard/companies`);
-  await page.locator("[data-testid=merge-open]").click();
+  await cleanUp(page, "merge");
   await merge.locator("[data-testid=merge-search]").fill("Acme");
   await results.filter({ hasText: "Dallas, TX" }).locator("input").check();
   await results.filter({ hasText: "Austin, TX" }).locator("input").check();
@@ -449,3 +449,20 @@ async function openMore(p) {
   console.error(err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

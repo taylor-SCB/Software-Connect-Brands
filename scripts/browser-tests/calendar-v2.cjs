@@ -135,6 +135,22 @@ async function openLog(p) {
   return logForm;
 }
 
+// BDR redesign (Nov 11, 2026): the Team week, the layouts and Copy this
+// week into next sit in the View menu; the filters in a Filters sheet;
+// "+ New" opens a sheet whose who / where / job / notes are under More.
+async function openView(page) {
+  if (!(await page.locator("[data-testid=cal-view-panel]").count())) await page.locator("[data-testid=cal-view-menu]").click();
+  await page.locator("[data-testid=cal-view-panel]").waitFor();
+}
+async function openFilters(page) {
+  if (!(await page.locator("[data-testid=cal-filters-sheet]").count())) await page.locator("[data-testid=cal-filters-open]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor();
+}
+async function closeFilters(page) {
+  if (await page.locator("[data-testid=cal-filters-sheet]").count()) await page.locator("[data-testid=cal-filters-done]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor({ state: "detached" });
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -289,7 +305,9 @@ async function openLog(p) {
 
   log("marking a quote sent puts Quote sent, Quote follow up and Quote due on the calendar");
   await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   const quoteRows = (
     await sql(
@@ -324,13 +342,15 @@ async function openLog(p) {
 
   log("sending it again does not double the milestones");
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
+  await page.getByTestId("send-quote").waitFor();
   assert.equal(
     (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
     1,
     "back to draft takes the open follow-up and due off, and keeps the sent one",
   );
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   assert.equal(
     (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
@@ -364,8 +384,10 @@ async function openLog(p) {
   // Re-sending the quote picks the new rhythm up.
   await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  await page.getByTestId("send-quote").waitFor();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   const rhythm = (
     await sql(`SELECT title, "startOn" FROM "CalendarEvent" WHERE "quoteId"='quo_calv2' AND type='Quote follow up' ORDER BY "startOn"`)
@@ -454,7 +476,9 @@ async function openLog(p) {
 
   log("the Calendar layout is the landing spot: the grid, no log");
   await page.goto(`${BASE}/dashboard/calendar`);
+  await openView(page);
   await page.locator("[data-testid=cal-layout-calendar][aria-selected=true]").waitFor();
+  await page.keyboard.press("Escape");
   assert.ok((await page.locator("[data-testid=month-day]").count()) === 42, "the six-week grid");
   assert.equal(await page.locator("[data-testid=log-columns]").count(), 0);
   const todayCell = page.locator(`[data-testid=month-day][data-day="${TODAY}"]`);
@@ -469,6 +493,7 @@ async function openLog(p) {
   await shot(page, "02-calendar");
 
   log("Calendar + Log puts the grid on top and the two columns beneath");
+  await openView(page);
   await page.locator("[data-testid=cal-layout-both]").click();
   await page.waitForURL(/layout=both/);
   await page.locator("[data-testid=log-columns]").waitFor();
@@ -511,6 +536,7 @@ async function openLog(p) {
   assert.equal(await page.locator("[data-testid=log-previous]").getAttribute("data-count"), "1");
   assert.match(await page.locator("[data-testid=log-previous]").textContent(), /Meeting · Dana Ruiz/);
   assert.match(await page.locator("[data-testid=cal-active-filters]").textContent(), /Sam Teammate/, "a chip names the teammate");
+  await openFilters(page);
   await page.locator("[data-testid=cal-users]").click();
   await page.getByRole("listbox", { name: "Users" }).getByText("Unassigned").click();
   await page.waitForURL(/users=usr_calv2_sam%2Cnone|users=usr_calv2_sam,none/);
@@ -519,8 +545,9 @@ async function openLog(p) {
   await page.keyboard.press("Escape");
 
   log("the filter menu paints the opaque overlay colour, not the glass card");
+  await openFilters(page);
   await page.locator("[data-testid=cal-companies]").click();
-  const menu = page.locator(".popover").first();
+  const menu = page.locator("[data-testid=cal-filters] .popover").first();
   await menu.waitFor();
   const paint = await menu.evaluate((el) => {
     const styles = getComputedStyle(el);
@@ -566,7 +593,7 @@ async function openLog(p) {
   log("Clear takes every filter off at once");
   await page.goto(`${BASE}/dashboard/calendar?layout=log&projects=${projectId}&users=usr_calv2_sam&type=Call`);
   await page.locator("[data-testid=log-columns]").waitFor();
-  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await page.waitForURL((url) => !url.search.includes("projects=") && !url.search.includes("users=") && !url.search.includes("type="));
   await page.locator("[data-testid=cal-everyone][aria-pressed=true]").waitFor();
 
@@ -679,7 +706,9 @@ async function openLog(p) {
   log("the Team view: a row per teammate with the week's load, and a cell opens the day");
   await page.goto(`${BASE}/dashboard/calendar?view=team&on=${TODAY}`);
   await page.locator("[data-testid=team-grid]").waitFor();
+  await openView(page);
   await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+  await page.keyboard.press("Escape");
   const myRow = page.locator(`[data-testid=team-row][data-row="u-${me.id}"]`);
   const samRow = page.locator("[data-testid=team-row][data-row=u-usr_calv2_sam]");
   assert.ok(Number(await myRow.getAttribute("data-things")) >= 3, "the three milestones sent today are mine");
@@ -712,6 +741,7 @@ async function openLog(p) {
   await page.locator("[data-testid=event-title]").fill("Lunch with Ben");
   await page.locator("[data-testid=event-type]").selectOption("Meeting");
   await page.locator("[data-testid=event-start-on]").fill(daysOn(6));
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-owner]").selectOption("usr_calv2_sam");
   await page.locator("[data-testid=event-company]").selectOption("cmp_calv2_b");
   await page.locator("[data-testid=event-contact]").selectOption("ctc_calv2_b");

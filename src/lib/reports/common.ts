@@ -13,7 +13,9 @@ export type ReportKey = (typeof REPORT_KEYS)[number];
 
 export const REPORT_LABELS: Record<ReportKey, string> = {
   daily: "Daily Rundown",
-  pipeline: "Pipeline",
+  // "Pipeline report" so it isn't confused with the Pipeline board (Nov 11,
+  // 2026).
+  pipeline: "Pipeline report",
   activity: "Activity",
   closing: "Closing",
   money: "Money Owed",

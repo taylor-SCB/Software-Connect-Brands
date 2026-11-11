@@ -566,8 +566,10 @@ async function textContrast(locator) {
     await login(phone);
     assert.equal(await phone.locator("[data-theme]").first().getAttribute("data-theme"), "light");
     assert.equal(await htmlBg(phone), PAGE_BG.light);
+    // The phone's switch is under More (BDR redesign, Nov 11, 2026).
+    await phone.locator("[data-testid=phone-more]").tap();
     const visible = phone.locator("[data-testid=look-switch]:visible");
-    assert.equal(await visible.count(), 1, "the phone header has its own switch");
+    assert.equal(await visible.count(), 1, "the phone has its own switch, under More");
     assert.equal(await visible.locator("[data-testid=look-light]").getAttribute("aria-pressed"), "true");
     await other.close();
   }
@@ -578,6 +580,7 @@ async function textContrast(locator) {
     const phone = await mobile.newPage();
     for (const look of LOOKS) {
       await phone.goto(`${BASE}/dashboard`);
+      await phone.locator("[data-testid=phone-more]").tap();
       await phone.locator(`[data-testid=look-switch]:visible [data-testid=look-${look}]`).tap();
       await waitForSaved(look);
       for (const [name, url] of PAGES) {
@@ -684,8 +687,10 @@ async function textContrast(locator) {
   log("audit fixes (UX review): Light outlines on buttons, fields, filter chips and cards clear 3:1; Dark's are unchanged");
   await sql(`UPDATE "User" SET theme = 'light' WHERE email = $1`, [EMAIL]);
   const OUTLINED = [
-    ["/dashboard/contacts", "Import CSV button", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
-    ["/dashboard/contacts", "State filter chip", (p) => p.locator("[data-testid=filter-state]")],
+    // Import CSV sits under Clean up and the State filter in the Filters
+    // panel since Nov 11, 2026: the buttons now on the bar are measured.
+    ["/dashboard/contacts", "Clean up button", (p) => p.getByTestId("cleanup")],
+    ["/dashboard/contacts", "Filters button", (p) => p.getByTestId("filters-toggle")],
     ["/dashboard/contacts", "search box", (p) => p.getByPlaceholder(/Search contacts/)],
     ["/dashboard/contacts", "the list's card", (p) => p.locator("main .card").first()],
     // The contact page folds its log form into "What happened with …?".
@@ -811,7 +816,8 @@ async function textContrast(locator) {
     ];
     // The bar holding the phone's look switch: its first ancestor with a
     // line along the bottom only (the switch has an outline all round).
-    const PHONE_BAR = `() => { let n = [...document.querySelectorAll("[data-testid=look-switch]")].find((e) => e.offsetParent); n = n.parentElement; while (n && !(getComputedStyle(n).borderBottomWidth === "1px" && getComputedStyle(n).borderTopWidth === "0px")) n = n.parentElement; return [n, getComputedStyle(n).borderBottomColor]; }`;
+    // (BDR redesign: the phone's top bar, the switch having moved into More.)
+    const PHONE_BAR = `() => { const n = document.querySelector("[data-testid=phone-top-bar]"); return [n, getComputedStyle(n).borderBottomColor]; }`;
     const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
     const phone = await mobile.newPage();
     for (const look of LOOKS) {
@@ -861,6 +867,10 @@ async function textContrast(locator) {
     await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
     await page.goto(`${BASE}/dashboard/deals/tracker?dealId=${dealId}`);
     await settle(page);
+    // A first contract starts with its open rows ticked (BDR redesign,
+    // Release 8); Clear takes them off to see the disabled button.
+    const clear = page.locator("[data-testid=tracker-lines] thead").getByRole("button", { name: "Clear" });
+    if (await clear.count()) await clear.first().click();
     const create = page.getByTestId("create-contracts");
     assert.equal(await create.isDisabled(), true, "nothing is ticked, so Create is disabled");
     assert.equal((await create.textContent()).trim(), "Tick rows to create contracts");
@@ -948,12 +958,18 @@ async function textContrast(locator) {
       for (const url of ["/dashboard/contacts", "/dashboard/calendar", "/dashboard/deals"]) {
         await phone.goto(`${BASE}${url}`);
         await settle(phone);
-        const here = phone.locator("nav a[aria-current=page]:visible");
-        assert.equal(await here.count(), 1, `${look} ${url}: one link in the strip marks the page`);
+        // The strip is the bottom tab bar now (BDR redesign, Nov 11, 2026):
+        // Contacts and Pipeline are tabs, Calendar lives under More.
+        const here = phone.locator("[data-testid=phone-tabs] [aria-current=page]:visible");
+        assert.equal(await here.count(), 1, `${look} ${url}: one tab marks the page`);
+        assert.equal(
+          (await here.textContent()).trim(),
+          { "/dashboard/contacts": "Contacts", "/dashboard/calendar": "More", "/dashboard/deals": "Pipeline" }[url],
+        );
         // It was a 3px glowing bar 9px left of the pill, in the gap after
         // the link before it ("Calendar | Contacts").
         const bar = await here.evaluate((el) => getComputedStyle(el, "::before").content);
-        assert.equal(bar, "none", `${look} ${url}: the strip still draws the sidebar's bar (${bar})`);
+        assert.equal(bar, "none", `${look} ${url}: the tab bar draws the sidebar's bar (${bar})`);
       }
       await phone.goto(`${BASE}/dashboard/contacts`);
       await settle(phone);
@@ -1040,6 +1056,8 @@ async function textContrast(locator) {
       ]);
     }
     const brand = [parseInt(BRAND.slice(1, 3), 16), parseInt(BRAND.slice(3, 5), 16), parseInt(BRAND.slice(5, 7), 16)];
+    // The Status pill is a Columns-menu column on the list since Nov 11, 2026.
+    await sql(`UPDATE "User" SET "uiPrefs" = '{"contacts.columns":["status"]}'::jsonb WHERE email = $1`, [EMAIL]);
     for (const look of LOOKS) {
       await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
       await page.goto(`${BASE}/dashboard/contacts`);

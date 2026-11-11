@@ -9,7 +9,7 @@ import type { ClosingReport } from "@/lib/reports/closing";
 import type { MoneyReport } from "@/lib/reports/money";
 import type { PeriodRange } from "@/lib/reports/period";
 import { formatIsoDay } from "@/lib/reports/period";
-import { changeText, formatValue, headlineValue, money, percent, plural } from "@/lib/reports/format";
+import { changeText, formatValue, headlineValue, money, percent, plural, TRY_TALK_COLORS, TRY_TALK_SERIES } from "@/lib/reports/format";
 import { Columns, HBars } from "./charts";
 
 // The body of each report under its write-up: headline tiles with the
@@ -34,7 +34,7 @@ export function ReportBody({ report, range, by }: { report: AnyReport } & ViewPr
 
 export function HeadlineTiles({ headlines, compareLabel }: { headlines: Headline[]; compareLabel?: string }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6" data-testid="report-tiles">
+    <div className={`grid grid-cols-2 gap-3 ${headlines.length === 8 ? "md:grid-cols-4" : "md:grid-cols-3 xl:grid-cols-6"}`} data-testid="report-tiles">
       {headlines.map((headline) => {
         const moved = changeText(headline);
         return (
@@ -112,7 +112,11 @@ function ChartAndTable({ empty, chart, table }: { empty: boolean; chart: React.R
   return (
     <>
       {chart}
-      <div className="mt-3">{table}</div>
+      {/* The same numbers as the chart, one tap away (Nov 11, 2026). */}
+      <details className="mt-3" data-testid="report-show-numbers">
+        <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">Show numbers</summary>
+        <div className="mt-2">{table}</div>
+      </details>
     </>
   );
 }
@@ -367,13 +371,43 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
 
 function ActivityView({ report, by }: { report: ActivityReport } & ViewProps) {
   const series = ACTIVITY_TYPES.map((type) => ACTIVITY_LABELS[type]);
+  // Tries (grey) and talks (green), stacked: each bar is the tries, the
+  // green part the ones that connected (Nov 11, 2026). The kinds of touch
+  // are one tap down, under "By kind".
+  const split = (tries: number, talks: number) => [Math.max(0, tries - talks), talks];
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title={`Touches by ${report.bucket}`} sub="Calls, emails, texts and meetings logged" className="xl:col-span-2" testId="activity-daily">
-        <Columns buckets={report.series.map((bucket) => ({ label: bucket.start, parts: bucket.parts }))} series={series} format="count" label="Touches over time by kind" bucketWord={report.bucket} />
+      <Panel title={`Tries and talks by ${report.bucket}`} sub="Every bar is the tries logged; the green part connected" className="xl:col-span-2" testId="activity-daily">
+        {report.talksSince && (
+          <p className="faint mb-2 text-xs" data-testid="activity-talks-since">
+            Talks counted from {formatIsoDay(report.talksSince.slice(0, 10), true)}, when the app started recording how each touch went.
+          </p>
+        )}
+        <Columns
+          buckets={report.series.map((bucket) => ({ label: bucket.start, parts: split(bucket.parts.reduce((a, b) => a + b, 0), bucket.talks) }))}
+          series={TRY_TALK_SERIES}
+          colors={TRY_TALK_COLORS}
+          format="count"
+          label="Tries and talks over time"
+          bucketWord={report.bucket}
+          testId="activity-tries-talks"
+        />
+        <details className="mt-3" data-testid="activity-by-kind">
+          <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">By kind</summary>
+          <div className="mt-2">
+            <Columns buckets={report.series.map((bucket) => ({ label: bucket.start, parts: bucket.parts }))} series={series} format="count" label="Touches over time by kind" bucketWord={report.bucket} />
+          </div>
+        </details>
       </Panel>
-      <Panel title={`Touches by ${BREAKDOWN_LABELS[by].toLowerCase()}`} sub={by === "rep" ? "Who logged them" : "Who they were with"} testId="activity-groups">
-        <HBars rows={report.groups.filter((group) => group.touches > 0 || by === "rep").map((group) => ({ label: group.name, values: group.parts }))} series={series} format="count" label={`Touches by ${BREAKDOWN_LABELS[by]}`} />
+      <Panel title={`Tries and talks by ${BREAKDOWN_LABELS[by].toLowerCase()}`} sub={by === "rep" ? "Who logged them" : "Who they were with"} testId="activity-groups">
+        <HBars
+          rows={report.groups.filter((group) => group.touches > 0 || by === "rep").map((group) => ({ label: group.name, values: split(group.touches, group.talks), note: group.touches ? `${percent(group.talks / group.touches)} talks` : undefined }))}
+          series={TRY_TALK_SERIES}
+          colors={TRY_TALK_COLORS}
+          format="count"
+          label={`Tries and talks by ${BREAKDOWN_LABELS[by]}`}
+          testId="activity-groups-chart"
+        />
       </Panel>
       <Panel title="Marketing emails" sub="Their own series — never counted as a touch" testId="activity-marketing">
         <p className="mb-2 text-sm">

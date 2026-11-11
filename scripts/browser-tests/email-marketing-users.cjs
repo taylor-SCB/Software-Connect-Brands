@@ -394,6 +394,92 @@ async function login(page, who) {
   await waitForMail(7);
   await page.click('button:has-text("Done")');
 
+  log("Sprint: the one-to-one Email goes to just that person — no template, footer or daily allowance, so it sends at 40 of 40");
+  const contactId = async (name) => (await db.query(`SELECT id FROM "Contact" WHERE "organizationId"=$1 AND name=$2`, [org.id, name])).rows[0].id;
+  const aliceId = await contactId("Alice Adams");
+  await page.goto(`${BASE}/dashboard/email/to/${aliceId}`);
+  await page.waitForSelector('[data-testid="one-to-one-email"]', { timeout: 20000 });
+  assert.match(await page.textContent('[data-testid="one-to-one-to"]'), /alice@mailtest\.example\.com/);
+  assert.equal(await page.locator('[data-testid="one-to-one-email"] #email-template').count(), 0, "no template picker");
+  assert.ok(await page.locator('[data-testid="one-to-one-send"]').isDisabled(), "nothing to send yet");
+  await page.fill('[data-testid="one-to-one-subject"]', "Quick question");
+  await page.fill('[data-testid="one-to-one-body"]', "Hi Alice,\n\nAre you free Thursday for {{first_name}}'s walkthrough?\n\nOlive");
+  await page.click('[data-testid="one-to-one-send"]');
+  await page.waitForSelector('[data-testid="one-to-one-sent-message"]:has-text("Sent to alice@mailtest.example.com")', { timeout: 30000 });
+  await waitForMail(8);
+  const direct = inbox[7];
+  assert.deepEqual(direct.to, ["alice@mailtest.example.com"]);
+  assert.equal(direct.subject, "Quick question");
+  assert.equal(direct.reply_to, OWNER.email);
+  assert.match(direct.from, new RegExp(`^"${OWNER.name} · ${COMPANY}" <`));
+  assert.equal(direct.text, "Hi Alice,\n\nAre you free Thursday for {{first_name}}'s walkthrough?\n\nOlive", "sent as typed: no merge fields filled, no footer");
+  assert.ok(!/unsubscribe/i.test(direct.text + direct.html), "no unsubscribe footer");
+  assert.ok(!/12 Main St/.test(direct.text + direct.html), "no marketing address footer");
+  assert.ok(!direct.headers || !direct.headers["List-Unsubscribe"], "no List-Unsubscribe header");
+  const sends = await db.query(`SELECT count(*)::int AS n FROM "EmailSend" WHERE "userId"=$1`, [ownerRow.id]);
+  assert.equal(sends.rows[0].n, 40, "not counted in the marketing allowance");
+
+  log("Sprint: it is logged on Alice as a Sent email — a touch, not marketing — and offers a follow-up");
+  const line = (
+    await db.query(`SELECT type, outcome, marketing, body, "userId" FROM "Activity" WHERE "organizationId"=$1 AND "contactId"=$2 AND outcome IS NOT NULL`, [org.id, aliceId])
+  ).rows;
+  assert.equal(line.length, 1);
+  assert.equal(line[0].type, "EMAIL");
+  assert.equal(line[0].outcome, "SENT");
+  assert.equal(line[0].marketing, false);
+  assert.equal(line[0].userId, ownerRow.id);
+  assert.match(line[0].body, /^Emailed “Quick question”\n\nHi Alice,/);
+  const aliceRow = (await db.query(`SELECT status, "lastTouchAt" FROM "Contact" WHERE id=$1`, [aliceId])).rows[0];
+  assert.equal(aliceRow.status, "CONTACTED", "a touch makes them Attempted");
+  assert.ok(aliceRow.lastTouchAt, "and counts as their last touch");
+  await page.waitForSelector('[data-testid="one-to-one-follow-up"]');
+  await page.keyboard.press("Escape");
+  await page.waitForSelector('[data-testid="one-to-one-email"]', { state: "detached" });
+
+  log("Sprint: someone who unsubscribed can't be emailed one-to-one — the window says call or text, Send is off, and the server refuses a forced send");
+  const eveId = await contactId("Eve Gone");
+  await page.goto(`${BASE}/dashboard/email/to/${eveId}`);
+  const note = page.locator('[data-testid="one-to-one-opted-out"]');
+  await note.waitFor();
+  assert.match((await note.textContent()).trim(), /^Eve Gone unsubscribed from your emails on [A-Z][a-z]{2} \d{1,2}, \d{4}\. Call or text instead\.$/);
+  await page.fill('[data-testid="one-to-one-subject"]', "Still there?");
+  await page.fill('[data-testid="one-to-one-body"]', "Just checking in.");
+  assert.ok(await page.locator('[data-testid="one-to-one-send"]').isDisabled(), "Send stays off with a subject and message typed");
+  assert.equal(await page.locator('[data-testid="one-to-one-use-marketing"]').count(), 0, "no way round it through the marketing window");
+  const mailBefore = inbox.length;
+  // A request the page allowed but the server must refuse: the window is
+  // opened for Alice while she can be emailed, she unsubscribes before Send
+  // is pressed (as a stale tab or a crafted call would), and the server
+  // action alone stands in the way.
+  await page.goto(`${BASE}/dashboard/email/to/${aliceId}`);
+  await page.waitForSelector('[data-testid="one-to-one-email"]');
+  await page.fill('[data-testid="one-to-one-subject"]', "Still there?");
+  await page.fill('[data-testid="one-to-one-body"]', "Just checking in.");
+  await db.query(`UPDATE "Contact" SET "emailOptOutAt" = now() WHERE id=$1`, [aliceId]);
+  await page.click('[data-testid="one-to-one-send"]');
+  await page.waitForSelector('[data-testid="one-to-one-email"] :text("Alice Adams unsubscribed from your emails. Call or text instead.")', { timeout: 20000 });
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(inbox.length, mailBefore, "the server refused: nothing was sent");
+  const refusedLines = await db.query(`SELECT count(*)::int AS n FROM "Activity" WHERE "contactId"=$1 AND outcome='SENT'`, [aliceId]);
+  assert.equal(refusedLines.rows[0].n, 1, "and nothing more was logged (only the earlier send)");
+  await db.query(`UPDATE "Contact" SET "emailOptOutAt" = NULL WHERE id=$1`, [aliceId]);
+  await page.keyboard.press("Escape");
+
+  log("Sprint: with no address the button reads 'No email on file · Add one' and goes to the edit form");
+  const danId = await contactId("Dan Nomail");
+  await page.goto(`${BASE}/dashboard/email/to/${danId}`);
+  const missing = page.locator('[data-testid="contact-email-button-missing"]');
+  assert.equal((await missing.textContent()).trim(), "No email on file · Add one");
+  assert.equal(await missing.getAttribute("href"), `/dashboard/contacts/${danId}/edit`);
+
+  log("Sprint: 'Use a marketing template instead' opens the marketing window with them on the To line");
+  await page.goto(`${BASE}/dashboard/email/to/${aliceId}`);
+  await page.waitForSelector('[data-testid="one-to-one-email"]');
+  await page.click('[data-testid="one-to-one-use-marketing"]');
+  await page.waitForSelector('[data-testid="email-counter"]:has-text("40 of 40 sent today")', { timeout: 20000 });
+  assert.match(await page.textContent('[data-testid="email-recipients"]'), /Alice Adams/);
+  await page.keyboard.press("Escape");
+
   log("the member has their own allowance, and Company Users shows each count");
   await m.goto(`${BASE}/dashboard/contacts`);
   await m.click('button:has-text("Email")');

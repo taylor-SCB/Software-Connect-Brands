@@ -98,7 +98,7 @@ function backLink(page) {
 
   log("Companies is in the sidebar and starts empty");
   await page.locator("aside").getByRole("link", { name: "Companies" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   await page.getByText("No companies yet").waitFor();
 
   log("create a contact, typing a brand-new company into the picker, with title / birthday / city / state");
@@ -154,26 +154,30 @@ function backLink(page) {
   }
   await shot(page, "02b-contact-plus-event");
   await page.locator("[data-testid=upcoming-add-event]").click();
-  // The calendar's own form is wide and keeps its columns.
+  // The calendar's own form keeps its columns where it has the room. Since
+  // the BDR redesign (Nov 11, 2026) it opens in the "+ New" sheet (about
+  // 470px wide on a desktop), with who / where / job under More.
   await page.goto(`${BASE}/dashboard/calendar`);
   await page.locator("[data-testid=cal-add-event]").click();
-  const wideForm = page.locator("[data-testid=event-form]").first();
+  const wideForm = page.locator("[data-testid=cal-new-sheet] [data-testid=event-form]");
   await wideForm.locator("[data-testid=event-timed]").check();
+  await wideForm.locator("[data-testid=event-more]").click();
   const tops = await wideForm.evaluate((form) =>
     ["event-title", "event-type", "event-start-on", "event-start-time", "event-end-time", "event-owner", "event-crew", "event-project"].map((id) =>
       Math.round(form.querySelector(`[data-testid=${id}]`).getBoundingClientRect().top),
     ),
   );
   assert.equal(tops[0], tops[1], "title and kind side by side");
-  assert.ok(tops[2] === tops[3] && tops[3] === tops[4], `day and both times on one row (${tops})`);
-  assert.ok(tops[5] === tops[6] && tops[6] === tops[7], `whose calendar, who is going and which job on one row (${tops})`);
+  assert.ok(tops[2] === tops[3], `day and start time on one row (${tops})`);
+  assert.ok(tops[5] === tops[6], `whose calendar and who is going on one row (${tops})`);
   assert.notEqual(await wideForm.locator("[data-testid=event-type]").inputValue(), "", "the calendar's form still starts on the list's first type");
 
   log("Companies list has the company with 1 person; company page lists Danny");
   await page.goto(`${BASE}/dashboard/companies`);
   const spiritRow = page.locator("tr", { hasText: "Spirit Communications" });
   await spiritRow.waitFor();
-  assert.ok(await spiritRow.getByRole("link", { name: "1" }).isVisible(), "people count 1");
+  // The people count is the Reached column's "of 1" since Nov 11, 2026.
+  assert.equal((await spiritRow.getByTestId("reached").textContent()).trim(), "0 of 1 talked to", "people count 1");
   await spiritRow.getByRole("link", { name: "Spirit Communications" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
   const spiritUrl = page.url();
@@ -290,7 +294,9 @@ function backLink(page) {
     [quoteA.rows[0].id],
   );
   await page.goto(quoteAUrl);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByText("Customer link").waitFor();
   await page.goto(`${BASE}/dashboard/deals`);
   // The Pipeline starts at Meeting Set (Sept 30, 2026).
@@ -546,7 +552,7 @@ function backLink(page) {
   await page.getByText("already exists").waitFor();
   await page.goto(`${spiritUrl}/edit`);
   await page.getByRole("button", { name: "Delete company" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   await page.goto(dannyUrl);
   await page.getByRole("heading", { name: "Danny Ortiz" }).waitFor();
   assert.equal(await page.locator("dl").first().getByRole("link", { name: "Spirit Communications" }).count(), 0);

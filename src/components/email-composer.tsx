@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { sendContactEmail } from "@/app/dashboard/email/actions";
+import { FollowUpPrompt } from "@/components/follow-up-prompt";
+import type { FollowUpSeed } from "@/lib/logging";
 import { IconMail, IconX, IconSearch, IconCheck, IconUserPlus, IconFileText, IconLayers, IconSend } from "@/components/icons";
 import { FormError } from "@/components/ui";
 import { useSearch } from "@/lib/use-search";
@@ -214,7 +219,9 @@ function EmailComposer({
 
   const attached = setup ? setup.files.filter((file) => fileIds.includes(file.id)) : [];
 
-  return (
+  // Drawn on document.body (Nov 11, 2026), so a card's blur or a
+  // fading-in page can never place it against the wrong box.
+  return createPortal(
     <div className="modal-backdrop" onClick={() => !sending && onClose()}>
       <div
         role="dialog"
@@ -524,7 +531,8 @@ function EmailComposer({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -586,5 +594,263 @@ function QuickContact({ onAdded, onCancel }: { onAdded: (recipient: Recipient) =
         </button>
       </div>
     </div>
+  );
+}
+
+/* ------------------------- One-to-one email ------------------------- */
+
+export type OneToOneContact = {
+  id: string;
+  name: string;
+  email: string | null;
+  email2?: string | null;
+  // When they unsubscribed from the workspace's emails, as words, or null:
+  // the window then says so and won't send.
+  optedOutOn?: string | null;
+};
+
+// The Email button for one contact's own page (decision 16, Nov 11, 2026):
+// a plain email from the rep to that person, logged as their Sent email —
+// a touch. No template, no merge fields, no unsubscribe footer, and not in
+// the 40-a-day marketing allowance. With no address on file it reads "No
+// email on file · Add one" and goes to the edit form. The marketing window
+// (EmailButton above) stays as it is for the Contacts list and the
+// marketing files, and is one tap away from this one ("Use a marketing
+// template instead").
+export function ContactEmailButton({
+  contact,
+  label = "Email",
+  className = "btn btn-ghost btn-sm pointer-coarse:min-h-11",
+  addEmailHref,
+  today,
+  onSent,
+  defaultOpen = false,
+  testId = "contact-email-button",
+}: {
+  contact: OneToOneContact;
+  // Opens the window straight away (the /dashboard/email/to page).
+  defaultOpen?: boolean;
+  label?: string;
+  className?: string;
+  // Where "Add one" goes; the contact's edit form unless given.
+  addEmailHref?: string;
+  // Today in the workspace's zone; when given, "Want to set a follow-up?"
+  // opens after a send.
+  today?: string;
+  onSent?: (result: { message: string; batchId?: string }) => void;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const addresses = [contact.email, contact.email2].map((value) => value?.trim() ?? "").filter(Boolean);
+  if (addresses.length === 0) {
+    return (
+      <Link href={addEmailHref ?? `/dashboard/contacts/${contact.id}/edit`} className={className} data-testid={`${testId}-missing`}>
+        <IconMail size={13} />
+        No email on file · Add one
+      </Link>
+    );
+  }
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={className} data-testid={testId} aria-haspopup="dialog">
+        <IconMail size={13} />
+        {label}
+      </button>
+      {open && <OneToOneDialog contact={contact} addresses={addresses} today={today} onSent={onSent} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function OneToOneDialog({
+  contact,
+  addresses,
+  today,
+  onSent,
+  onClose,
+}: {
+  contact: OneToOneContact;
+  addresses: string[];
+  today?: string;
+  onSent?: (result: { message: string; batchId?: string }) => void;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [to, setTo] = useState(addresses[0]);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<{ message: string; warning?: string; batchId?: string; followUp?: FollowUpSeed } | null>(null);
+  const [marketing, setMarketing] = useState(false);
+  // Unsubscribed: never emailed from the app, one-to-one included (a sales
+  // email is still commercial email); the server refuses too.
+  const optedOut = Boolean(contact.optedOutOn);
+  const subjectRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => subjectRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !sending) {
+        event.stopPropagation();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose, sending]);
+
+  if (marketing) {
+    return (
+      <EmailComposer
+        initialRecipients={[{ id: contact.id, name: contact.name, company: null, email: addresses[0], optedOut: Boolean(contact.optedOutOn) }]}
+        onClose={onClose}
+      />
+    );
+  }
+
+  async function send() {
+    if (sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const result = await sendContactEmail({ contactId: contact.id, to, subject, body });
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      setDone({ message: result.success, warning: result.logError, batchId: result.batchId, followUp: result.followUp });
+      onSent?.({ message: result.success, batchId: result.batchId });
+      router.refresh();
+    } catch {
+      setError("Couldn't reach the server. Nothing was sent; check your connection and try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return createPortal(
+    <div className="modal-backdrop" onClick={() => !sending && onClose()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Email ${contact.name}`}
+        onClick={(event) => event.stopPropagation()}
+        className="card card-lit popover flex max-h-[92vh] w-full max-w-xl flex-col"
+        data-testid="one-to-one-email"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--hairline-3)] px-5 py-3.5">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold">Email {contact.name}</h2>
+            <p className="faint mt-0.5 text-xs">Just to them, from you. Replies come to you, and it&apos;s logged as an email.</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={sending} className="btn btn-ghost btn-sm pointer-coarse:min-h-11" aria-label="Close">
+            <IconX size={14} />
+          </button>
+        </div>
+
+        {done ? (
+          <div className="space-y-3 px-5 py-4" data-testid="one-to-one-sent">
+            <p className="flex items-center gap-2 text-sm">
+              <IconCheck size={14} />
+              <span data-testid="one-to-one-sent-message">{done.message}</span>
+            </p>
+            {done.warning && <FormError message={done.warning} />}
+            {done.followUp && today ? (
+              <FollowUpPrompt seed={done.followUp} batchId={done.batchId} today={today} testId="one-to-one-follow-up" onClose={() => onClose()} />
+            ) : (
+              <div className="flex justify-end">
+                <button type="button" className="btn btn-primary btn-sm pointer-coarse:min-h-11" onClick={onClose} data-testid="one-to-one-done">
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+              {contact.optedOutOn && (
+                <p className="rounded-md border border-[var(--border)] px-3 py-2 text-sm" role="status" data-testid="one-to-one-opted-out">
+                  {contact.name} unsubscribed from your emails on {contact.optedOutOn}. Call or text instead.
+                </p>
+              )}
+              <div>
+                <label className="label" htmlFor="one-to-one-to">
+                  To
+                </label>
+                {addresses.length > 1 ? (
+                  <select id="one-to-one-to" className="input" value={to} onChange={(event) => setTo(event.target.value)} data-testid="one-to-one-to">
+                    {addresses.map((address) => (
+                      <option key={address} value={address}>
+                        {address}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p id="one-to-one-to" className="text-sm" data-testid="one-to-one-to">
+                    {contact.name} · {to}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="label" htmlFor="one-to-one-subject">
+                  Subject
+                </label>
+                <input
+                  ref={subjectRef}
+                  id="one-to-one-subject"
+                  className="input"
+                  value={subject}
+                  maxLength={200}
+                  onChange={(event) => setSubject(event.target.value)}
+                  data-testid="one-to-one-subject"
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="one-to-one-body">
+                  Message
+                </label>
+                <textarea
+                  id="one-to-one-body"
+                  className="input min-h-[10rem]"
+                  value={body}
+                  onChange={(event) => setBody(event.target.value)}
+                  data-testid="one-to-one-body"
+                />
+              </div>
+              <FormError message={error ?? undefined} />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
+              {optedOut ? (
+                <span />
+              ) : (
+                <button
+                  type="button"
+                  className="link inline-flex min-h-11 items-center text-xs sm:min-h-0"
+                  onClick={() => setMarketing(true)}
+                  disabled={sending}
+                  data-testid="one-to-one-use-marketing"
+                >
+                  Use a marketing template instead
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={send}
+                disabled={sending || optedOut || !subject.trim() || !body.trim()}
+                className="btn btn-primary btn-sm pointer-coarse:min-h-11"
+                data-testid="one-to-one-send"
+              >
+                <IconSend size={13} />
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
   );
 }

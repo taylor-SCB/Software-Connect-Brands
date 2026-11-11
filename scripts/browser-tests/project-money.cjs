@@ -394,6 +394,11 @@ async function signAs(browser, token, name) {
      VALUES ('con_pm_addon',$1,'ctc_pm',$2,'Add-on','','tok_con_pm_addon_0123456789','SIGNED',false,$3,'deal_pm',now())`,
     [org, addOnNumber, project.id],
   );
+  // Compacted first, so the rows below land at the end of the table and
+  // the moved one after them: in a database reused across runs, free
+  // space left by deleted workspaces could take the moved row back in
+  // front and the precondition below read A, B (paperwork sprint).
+  await sql(`VACUUM FULL "ContractLineItem"`);
   await sql(
     `INSERT INTO "ContractLineItem" (id,"contractId",name,quantity,"unitPriceCents",tag,position,"quoteLineItemId")
      VALUES ('cli_pm_a','con_pm_addon','Door sensors',4,5000,'MATERIALS',0,'qli_pm_a'),

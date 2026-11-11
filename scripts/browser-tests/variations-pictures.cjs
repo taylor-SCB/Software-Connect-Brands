@@ -490,7 +490,9 @@ async function makePicture(page, color, size = 900, type = "image/png") {
 
   log("Mark as sent: each line keeps the picture it went out with");
   await page.goto(`${BASE}/dashboard/quotes/quo_vp`);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   for (let i = 0; i < 40 && (await linesOf("quo_vp"))[0].imageId === null; i += 1) await page.waitForTimeout(150);
   lines = await linesOf("quo_vp");
   assert.deepEqual(lines.map((line) => line.imageId), [navyPicture.id, mainPic.id]);
@@ -705,7 +707,9 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   assert.match(await page.locator("[data-testid=document-line-picture]").first().getAttribute("src"), new RegExp(heldMain.publicToken));
   await page.goto(`${BASE}/dashboard/quotes/quo_vp2`);
   await page.locator("[data-testid=line-picture]").first().waitFor();
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   for (let i = 0; i < 40 && (await linesOf("quo_vp2"))[0].imageId === null; i += 1) await page.waitForTimeout(150);
   assert.equal((await linesOf("quo_vp2"))[0].imageId, newMain.id);
   await page.waitForFunction(

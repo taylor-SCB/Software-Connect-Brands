@@ -487,7 +487,15 @@ async function openAddDeal(p) {
   assert.equal((await convert.locator("#convert-title").innerText()).trim(), "What happened after the meeting with Abby Peters?");
   await convert.locator("[data-testid=convert-mode-quote]").check();
   await convert.locator("[data-testid=convert-save]").click();
-  await page.waitForURL(/\/dashboard\/quotes\/new\?contactId=op_abby&dealId=/);
+  // Build Quote starts the quote on the new deal and opens it (paperwork
+  // sprint: no setup form in between). The deal itself stays put until the
+  // quote is sent (approved decision 19).
+  await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+$/);
+  assert.equal(
+    (await one(`SELECT count(*)::int n FROM "Quote" q JOIN "Deal" d ON d.id=q."dealId" WHERE d."contactId"='op_abby'`)).n,
+    1,
+    "Build Quote made exactly one quote",
+  );
   const abbyDeal = await one(`SELECT d.stage, o.stage AS opp FROM "Deal" d JOIN "Opportunity" o ON o."dealId"=d.id WHERE d."contactId"='op_abby'`);
   assert.deepEqual({ ...abbyDeal }, { stage: "LEAD", opp: "MEETING_COMPLETED" }, "Build Quote moves nothing until the quote is sent");
   assert.equal((await one(`SELECT outcome FROM "Activity" WHERE "contactId"='op_abby' AND type='MEETING'`)).outcome, "HELD");

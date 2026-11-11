@@ -363,7 +363,26 @@ async function anonymousStatus(browser, url) {
   assert.match(await selected("#col-1-template"), /Sales Order/);
   assert.equal(await page.locator("#col-1-direction").inputValue(), "in", "a Sales Order is money coming in");
   assert.equal(await page.locator("#signerName").inputValue(), "Taylor Test");
-  assert.ok(await page.locator("[data-testid=create-contracts]").isDisabled(), "nothing ticked yet");
+
+  log("Sprint: a first contract starts with every open row ticked onto Contract A and one Create button with its total; Award without paperwork is a text link");
+  assert.equal(await page.locator("[data-testid=tracker-lines] tbody input[type=checkbox]:checked").count(), 3, "the open rows start ticked on A");
+  assert.match(await page.locator("[data-testid=create-contracts]").textContent(), /^Create contract for \$[\d,]+\.\d\d →$/);
+  assert.ok(await page.locator("[data-testid=create-contracts]").isEnabled());
+  assert.doesNotMatch(await jobCard.locator("[data-testid=award-without-paperwork]").getAttribute("class"), /btn-primary/, "Award without paperwork is still the bright button");
+  // Template, direction, terms and title fold into one line with Change.
+  assert.match(await colA.getByTestId("column-summary").textContent(), /Sales Order · Money in · Net 30/);
+  assert.ok(await page.locator("#col-1-template").isHidden(), "the card's settings start folded");
+  await colA.getByTestId("column-change").click();
+  assert.ok(await page.locator("#col-1-template").isVisible(), "Change opens them");
+  await colA.getByTestId("column-change").click();
+  // The journey strip: the quote is out, so the step is the contract and
+  // Next is "Customer said yes"; the stats sit in its details row.
+  assert.match(await page.getByTestId("deal-journey").locator(".dj-steps").getAttribute("aria-label"), /Quote done.*Contract next/);
+  assert.equal((await page.getByTestId("journey-next").textContent()).trim(), "Customer said yes");
+  assert.equal(await page.getByTestId("tracker-open-rows").textContent(), "3");
+  // The rest of this suite builds its contracts by hand: start from none.
+  await page.locator("[data-testid=tracker-lines] thead").getByRole("button", { name: "Clear" }).first().click();
+  assert.ok(await page.locator("[data-testid=create-contracts]").isDisabled(), "nothing ticked after Clear");
 
   log("Contract A's card sits below the rows table and uses the width, not a sliver off the right edge");
   const linesTable = page.locator("[data-testid=tracker-lines]");
@@ -378,6 +397,7 @@ async function anonymousStatus(browser, url) {
     const phone = await phoneCtx.newPage();
     await phone.goto(`${BASE}/dashboard/deals/tracker?dealId=deal_tr`);
     await phone.locator("[data-testid=tracker-grid]").waitFor();
+    await phone.locator("[data-testid=column-header]").first().getByTestId("column-change").click();
     const fits = await phone.evaluate(() => {
       const box = (el) => {
         const r = el.getBoundingClientRect();
@@ -400,8 +420,11 @@ async function anonymousStatus(browser, url) {
     const tickBox = await tick.boundingBox();
     assert.ok(tickBox && tickBox.x >= 0 && tickBox.x + tickBox.width <= 390, `the tick box is off the screen at ${tickBox?.x}`);
     assert.equal(await phone.evaluate(() => window.scrollX), 0, "the page itself moved sideways to reach it");
+    // A first contract starts with all three ticked.
+    await tick.uncheck();
+    assert.match(await phone.locator("[data-testid=column-header]").first().textContent(), /2 rows/);
     await tick.check();
-    assert.match(await phone.locator("[data-testid=column-header]").first().textContent(), /1 row/);
+    assert.match(await phone.locator("[data-testid=column-header]").first().textContent(), /3 rows/);
     await phone.screenshot({ path: path.join(OUT, "02b-tracker-phone.png"), fullPage: true });
     await phoneCtx.close();
   }
@@ -573,7 +596,8 @@ async function anonymousStatus(browser, url) {
   log("audit fixes (UX review): the quote goes out again from its page, so its follow-up is on the calendar and in Coming up");
   await page.goto(`${BASE}/dashboard/quotes/quo_tr`);
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   const openQuoteEvents = async () =>
     (
@@ -585,7 +609,14 @@ async function anonymousStatus(browser, url) {
   await page.goto(`${BASE}/dashboard/quotes`);
   assert.match(await page.locator("main").textContent(), /out with customers/);
 
-  log("the customer's copy prints the Items and Payment schedule tables with the signer; they sign");
+  log("Sprint: the contract page carries the DealJourney strip; with A out for signature its Next is Copy signing link and the badges sit under it");
+  await page.goto(`${BASE}/dashboard/contracts/${a.id}`);
+  const strip = page.getByTestId("deal-journey");
+  assert.match(await strip.locator(".dj-steps").getAttribute("aria-label"), /Contract done.*Signed next/);
+  assert.equal((await strip.getByTestId("journey-next").textContent()).trim(), "Copy signing link");
+  assert.ok(await strip.getByTestId("contract-direction").isVisible(), "the badges moved into the strip's details row");
+
+
   const tokenA = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [a.id])).rows[0].publicToken;
   const customer = await browser.newContext();
   const cpage = await customer.newPage();
@@ -606,6 +637,38 @@ async function anonymousStatus(browser, url) {
   await customer.close();
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [a.id])).rows[0].status, "SIGNED");
   assert.equal((await sql(`SELECT stage FROM "Deal" WHERE id='deal_tr'`)).rows[0].stage, "WON");
+
+  log("Sprint: a signed contract's main button is Send deposit invoice; it stamps the first payment row INV-n and offers the link");
+  await page.goto(`${BASE}/dashboard/contracts/${a.id}`);
+  const signedStrip = page.getByTestId("deal-journey");
+  assert.equal((await signedStrip.getByTestId("journey-next").textContent()).trim(), "Send deposit invoice");
+  await signedStrip.getByTestId("journey-next").click();
+  await signedStrip.getByTestId("deposit-invoice-link").waitFor();
+  const deposit = (await sql(`SELECT "invoiceNumber", "invoiceToken" FROM "ContractPayment" WHERE "contractId"=$1 ORDER BY position LIMIT 1`, [a.id])).rows[0];
+  assert.ok(deposit.invoiceNumber && deposit.invoiceToken, "the deposit row was not stamped as an invoice");
+  assert.equal(await signedStrip.getByTestId("deposit-invoice-link").getAttribute("href"), `/i/${deposit.invoiceToken}`);
+  assert.equal((await signedStrip.getByTestId("journey-next").textContent()).trim(), "Copy invoice link");
+  {
+    // On a phone: five dots, "Step 5 of 5 · …" and a full-width Next
+    // pinned to the foot of the screen; nothing scrolls sideways.
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/contracts/${a.id}`);
+    const summary = phone.getByTestId("deal-journey-summary");
+    await summary.waitFor();
+    // The page fades in on a transform, which places a pinned button
+    // against the page until it ends.
+    await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    assert.match(await summary.textContent(), /Step 5 of 5 · /);
+    assert.equal(await summary.locator(".health-dot").count(), 5);
+    const next = await phone.getByTestId("deal-journey").getByTestId("journey-next").boundingBox();
+    assert.ok(next.width >= 300, `the phone's Next is ${next.width}px wide`);
+    assert.ok(next.height >= 44, `the phone's Next is ${next.height}px tall`);
+    assert.ok(next.y + next.height <= 844 + 1 && next.y > 600, `the phone's Next is not pinned to the foot (${next.y})`);
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the contract page scrolls sideways on a phone");
+    await phone.screenshot({ path: path.join(OUT, "08b-contract-journey-phone.png") });
+    await phoneCtx.close();
+  }
 
   log("audit fixes (UX review): signing accepts the quote it came from — Accepted, its follow-up off Coming up, not out with customers, and the won deal keeps its value beside a newer $0 draft");
   {
@@ -722,6 +785,7 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.locator("#col-1-discountMode").inputValue(), "percent");
   assert.ok(await page.locator("[data-testid=column-discount-from-quote]").isVisible());
   assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$48.60", "10% off $54");
+  await page.locator("[data-testid=column-header]").nth(0).getByTestId("column-change").click();
   await page.locator("#col-1-direction").selectOption("out");
   assert.equal(await page.locator("#col-1-discount").inputValue(), "", "a purchase order never carries the customer's discount");
   assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$54.00");
@@ -745,6 +809,7 @@ async function anonymousStatus(browser, url) {
   await page.locator("#col-1-discount").fill("5");
   assert.equal(await page.locator("[data-testid=column-total]").nth(0).textContent(), "$95.00", "5% off $100");
   assert.equal(await page.locator("[data-testid=column-discount-from-quote]").count(), 0);
+  await page.locator("[data-testid=column-header]").nth(0).getByTestId("column-change").click();
   await page.locator("#col-1-direction").selectOption("out");
   await page.locator("#col-1-direction").selectOption("in");
   assert.equal(await page.locator("#col-1-discount").inputValue(), "5", "a typed discount is not written over");
@@ -762,6 +827,7 @@ async function anonymousStatus(browser, url) {
   await totals.locator("[data-testid=quote-discount-saved]").waitFor();
   assert.deepEqual(await quoteDiscount(), { discountCents: 3540, discountPercent: null });
   await page.locator("[data-testid=add-column]").click();
+  await page.locator("[data-testid=column-header]").nth(1).getByTestId("column-change").click();
   await page.locator("#col-2-direction").selectOption("in");
   await page.getByRole("checkbox", { name: "Put Tile on Contract B" }).check();
   // Tile is $100 of the $354 quote, so it carries $10.00 of the $35.40.

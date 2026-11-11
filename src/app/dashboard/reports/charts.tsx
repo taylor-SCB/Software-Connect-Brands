@@ -49,13 +49,13 @@ function Tooltip({ tip }: { tip: Tip }) {
   );
 }
 
-export function Legend({ series }: { series: string[] }) {
+export function Legend({ series, colors = SERIES_COLORS }: { series: string[]; colors?: readonly string[] }) {
   if (series.length < 2) return null;
   return (
     <div className="mb-2 flex flex-wrap gap-3 text-[0.7rem] text-[var(--text-dim)]">
       {series.map((name, index) => (
         <span key={name} className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES_COLORS[index] }} />
+          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: colors[index] }} />
           {name}
         </span>
       ))}
@@ -70,12 +70,14 @@ export function HBars({
   format,
   label,
   testId,
+  colors = SERIES_COLORS,
 }: {
   rows: { label: string; values: number[]; note?: string }[];
   series: string[];
   format: Format;
   label: string;
   testId?: string;
+  colors?: readonly string[];
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<Tip>(null);
@@ -90,13 +92,13 @@ export function HBars({
       x: (clientX ?? rect.left + rect.width / 2) - outer.left,
       y: (clientY ?? rect.top) - outer.top,
       title,
-      rows: [{ label: series[index], value: show(value, format), color: series.length > 1 ? SERIES_COLORS[index] : undefined }],
+      rows: [{ label: series[index], value: show(value, format), color: series.length > 1 ? colors[index] : undefined }],
     });
   }
 
   return (
     <div ref={box} className="relative" onPointerLeave={() => setTip(null)} data-testid={testId} role="img" aria-label={label}>
-      <Legend series={series} />
+      <Legend series={series} colors={colors} />
       <div className="space-y-1.5">
         {rows.map((row) => {
           const total = row.values.reduce((a, b) => a + Math.max(0, b), 0);
@@ -113,7 +115,7 @@ export function HBars({
                     <div
                       key={index}
                       className="h-full first:rounded-l-[4px] last:rounded-r-[4px] hover:opacity-80"
-                      style={{ width: `${Math.max(0.8, width)}%`, background: SERIES_COLORS[index] }}
+                      style={{ width: `${Math.max(0.8, width)}%`, background: colors[index] }}
                       tabIndex={0}
                       aria-label={`${row.label}, ${series[index]}: ${show(value, format)}`}
                       onPointerMove={(event) => place(event.currentTarget, row.label, index, value, event.clientX, event.clientY)}
@@ -165,6 +167,7 @@ export function Columns({
   label,
   bucketWord = "day",
   testId,
+  colors = SERIES_COLORS,
 }: {
   buckets: { label: string; parts: number[] }[];
   series: string[];
@@ -172,6 +175,7 @@ export function Columns({
   label: string;
   bucketWord?: "day" | "week";
   testId?: string;
+  colors?: readonly string[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const [box, width] = useBoxWidth(640);
@@ -200,7 +204,7 @@ export function Columns({
 
   return (
     <div className="relative" data-testid={testId}>
-      <Legend series={series} />
+      <Legend series={series} colors={colors} />
       <div ref={box}>
         <svg
           viewBox={`0 0 ${width} ${height}`}
@@ -240,7 +244,7 @@ export function Columns({
                       width={barW}
                       height={Math.max(1, segment)}
                       rx={isTop ? Math.min(4, barW / 2) : 0}
-                      fill={SERIES_COLORS[part]}
+                      fill={colors[part]}
                     />
                   );
                 })}
@@ -268,7 +272,7 @@ export function Columns({
             title: `${bucketWord === "week" ? "Week of " : ""}${pretty(h.label)}`,
             rows: [
               ...(series.length > 1 ? [{ label: "All", value: show(totals[hover], format) }] : []),
-              ...series.map((name, index) => ({ label: name, value: show(h.parts[index] ?? 0, format), color: series.length > 1 ? SERIES_COLORS[index] : undefined })),
+              ...series.map((name, index) => ({ label: name, value: show(h.parts[index] ?? 0, format), color: series.length > 1 ? colors[index] : undefined })),
             ],
           }}
         />

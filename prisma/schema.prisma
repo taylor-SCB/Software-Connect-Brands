@@ -1028,6 +1028,10 @@ model Quote {
   publicToken      String        @unique
   sentAt           DateTime?
   respondedAt      DateTime?
+  // The name the customer typed when they said yes on their own copy
+  // (/q/<token>, "Accept this quote"). Null when it was marked accepted
+  // from inside the app, or by signing a contract made from it.
+  acceptedByName   String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 

@@ -430,9 +430,8 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   await convert.getByTestId("convert-mode-quote").check();
   assert.equal(await convert.getByTestId("convert-draft-lines").isChecked(), true);
   await convert.getByTestId("convert-save").click();
-  await page.waitForURL(/\/dashboard\/quotes\/new\?.*draft=meeting/);
-  await page.fill("[name=title]", "New wing cabling");
-  await page.locator("form:has([name=title]) button[type=submit]").click();
+  // Build Quote starts the quote itself, titled after the deal, and opens
+  // it drafting (paperwork sprint: no setup form in between).
   await page.waitForURL(/\/dashboard\/quotes\/(?!new)[^/?]+/);
   await page.getByTestId("quote-draft-info").waitFor();
   assert.match(await page.getByTestId("quote-draft-info").innerText(), /Added 2 lines[\s\S]*1 needs a price[\s\S]*1 line named a product not in your catalog/);
@@ -497,7 +496,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   fs.writeFileSync(csvPath, csv);
   const contactsBefore = (await one(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1`, [org])).n;
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   const cleanup = page.getByTestId("import-cleanup");
   await cleanup.waitFor();
@@ -539,7 +538,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   const csv2Path = path.join(OUT, "ai-import-2.csv");
   fs.writeFileSync(csv2Path, csv2);
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csv2Path);
   await cleanup.waitFor();
   await until(async () => (await cleanup.getByTestId("import-dup-updates").count()) === 1, "existing check");
@@ -682,7 +681,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
     await offPage.locator("input[aria-label='Line 1 quantity']").waitFor();
     assert.equal(await offPage.locator("[data-testid=quote-draft-meeting]").count(), 0);
     await offPage.goto(`${NOAI_BASE}/dashboard/contacts`);
-    await offPage.getByTestId("import-csv").click();
+    await cleanUp(offPage, "import");
     await offPage.getByTestId("import-file").setInputFiles(csvPath);
     await offPage.getByTestId("import-cleanup").waitFor();
     await offPage.getByTestId("import-dup-file-count").waitFor();
@@ -701,3 +700,20 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   fakeClaude.close();
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

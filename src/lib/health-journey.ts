@@ -47,7 +47,9 @@ export function dealJourney(input: JourneyInput, timeZone: string): JourneyState
   const signed = input.signedAt !== null;
   const contractOut = input.contractSentAt !== null || signed;
   const quoteOut = input.quoteSentAt !== null || contractOut;
-  const done = [input.meetingAt !== null || quoteOut, quoteOut, contractOut, signed, input.depositPaidAt !== null];
+  // A quote started is past the meeting, whether or not one was logged
+  // (a deal added by hand, or a meeting kept off the Pipeline).
+  const done = [input.meetingAt !== null || quoteOut || Boolean(input.quoteDraft), quoteOut, contractOut, signed, input.depositPaidAt !== null];
   let current = done.findIndex((value) => !value);
   if (current === -1) current = 5;
 

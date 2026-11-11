@@ -98,7 +98,8 @@ export function factsFor(report: AnyReport, ctx: NarrativeContext): Facts {
       return {
         ...base,
         byKind: report.byType.map((row) => ({ kind: row.label, now: row.count, before: row.previous })),
-        breakdown: report.groups.map((group) => ({ name: group.name, touches: group.touches, notTouched: group.untouched, people: group.people })),
+        talks: { now: report.talks, before: report.previousTalks, countedFrom: report.talksSince ? report.talksSince.slice(0, 10) : null },
+        breakdown: report.groups.map((group) => ({ name: group.name, touches: group.touches, talks: group.talks, notTouched: group.untouched, people: group.people })),
         peopleInScope: report.people,
         companiesTouched: report.companiesTouched,
       };
@@ -269,7 +270,12 @@ export function rulesNarrative(report: AnyReport, ctx: NarrativeContext): string
       const type = (key: string) => report.byType.find((row) => row.type === key)!.count;
       const p1 = sentence([
         `${who} logged ${plural(report.touches, "touch", "touches")} ${lowerPeriod(range)} — ${plural(type("PHONE_CALL"), "call")}, ${plural(type("EMAIL"), "email")}, ${plural(type("TEXT"), "text")} and ${plural(type("MEETING"), "meeting")} — reaching ${plural(report.peopleTouched, "person", "people")}, against ${plural(report.previousTouches, "touch", "touches")} ${range.compareLabel}.`,
-        biggestMove(report, range, ["touches", "marketing"]),
+        report.touches
+          ? report.talks === 1
+            ? `1 of them was a talk (${percent(report.talks / report.touches)}).`
+            : `${report.talks.toLocaleString("en-US")} of them were talks (${percent(report.talks / report.touches)}).`
+          : null,
+        biggestMove(report, range, ["touches", "marketing", "talks", "connect-rate"]),
         report.marketing ? `${plural(report.marketing, "marketing email")} went out as well, counted on their own.` : null,
       ]);
       const ranked = report.groups.filter((group) => group.key !== "__other");
