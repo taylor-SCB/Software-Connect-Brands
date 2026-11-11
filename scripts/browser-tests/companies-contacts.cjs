@@ -288,19 +288,26 @@ function backLink(page) {
   const quoteSentCol = page.locator("div.card", { has: page.locator("h2", { hasText: "Quote Sent" }) }).first();
   assert.ok(await quoteSentCol.getByText("Fiber install").first().isVisible(), "deal moved to Quote Sent");
   assert.ok(await quoteSentCol.getByText("$1,250.00").first().isVisible(), "value read from the sent quote");
-  assert.ok(await quoteSentCol.getByText("QUO-1000").isVisible(), "quotes listed on the deal card");
-  // Oct 27, 2026: the tile's stage menu; a deal can't go back to a meeting column.
-  await quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" }).locator("[data-testid=tile-move]").click();
-  assert.equal(await page.locator("[data-testid=tile-move-menu] button:not([disabled])").count(), 4);
+  // Oct 27, 2026: the tile's stage menu; a deal can't go back to a meeting
+  // column. Since the BDR redesign (Nov 11, 2026) Move to… sits under the
+  // tile's ⋯ and the quotes are listed in its panel.
+  await quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" }).locator("[data-testid=tile-more]").click();
+  assert.equal(await page.locator("[data-testid=tile-move-menu] button:not([disabled])").count(), 3, "Contract Sent, Won, Lost (Quote Sent is where it is)");
   await page.keyboard.press("Escape");
   assert.ok(await page.getByText("$1,250.00 in quotes and contracts out").isVisible());
   await shot(page, "06-pipeline");
 
   log("Back from a contact reached via the pipeline says Pipeline");
-  // Oct 27, 2026: the tile lists its people by name, their company beside them.
+  // Oct 27, 2026: the tile lists its people by name, their company beside
+  // them; since Nov 11, 2026 it is titled by the person, and the panel it
+  // opens lists the quotes and links each person.
   const fiberTile = quoteSentCol.locator("[data-testid=pipeline-tile]", { hasText: "Fiber install" });
   assert.ok(await fiberTile.getByText("Spirit Communications").isVisible());
-  await fiberTile.getByRole("link", { name: "Danny Ortiz" }).click();
+  assert.equal((await fiberTile.getByTestId("tile-person").innerText()).trim(), "Danny Ortiz");
+  await fiberTile.getByTestId("tile-open").click();
+  const fiberPanel = page.getByTestId("opportunity-panel");
+  assert.ok(await fiberPanel.getByText("QUO-1000").isVisible(), "quotes listed in the deal's panel");
+  await fiberPanel.getByRole("link", { name: "Danny Ortiz" }).click();
   await page.waitForURL(dannyUrl);
   await backLink(page).getByText("Pipeline").waitFor();
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "open pipeline on the contact reads the quote");
