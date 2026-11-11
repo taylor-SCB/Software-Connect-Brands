@@ -26,6 +26,9 @@ Branch `claude/round2-lists`. The eight approved-plan items still unbuilt on the
    - `src/lib/health-sql.ts`: `pulseRulesSql()` is leadHealth()'s colour logic in SQL: the state, the 0–100 score, stalled, late money on a win, and warmth. `contactPulseInputs()` reads its inputs for a whole workspace from the same tables and definitions as the health loader.
    - **Filter**: Filters → Stage → **Pulse**, with Won, Won — owes money, Warm, Cooling, Cold, Trying, Trying — stalled, New and Closed (`?pulse=`). Choices stack as "any of", and each shows as a removable chip.
    - **Sort**: **Warmest first** (`?sort=pulse`) runs Won → Warm → Cooling → Cold → Trying → stalled → New → Closed, most recently touched first inside each. Contacts only; Companies never offer it and a pasted one reads as the default.
+   - **Speed**: the list's sets score only "candidates" — won, touched within Q days, talked (or moved into a talk status) within 2Q, or with something booked, late or paperwork out. Everyone else reached can score at most 10 (Cold), and everyone else being tried has nothing late or booked, so the answer is the same.
+     - JIT is switched off for that one statement (`SET LOCAL jit = off` in a transaction): the planner's estimate for the per-person paperwork look set off ~2 seconds of compiling.
+     - Warmest first went from 6.1s to 1.47s at 200,000 contacts.
    - **Proof**: `scripts/health-check.ts` runs every one of its 140 leadHealth() fixtures through the twin. It also checks the twin's table inputs against `loadContactHealth()` on its seeded workspace, and the list's where-clauses (alone and in every pair and several triples) against each seeded person. `health.cjs` runs that script and checks the list against every person's own meter.
 8. **The first card on a phone starts ~185px down** (was ~355–430). On a phone the list header is one row: the search box, with ⋯ (Clean up) and + (Add) beside it. Under it is one sideways-scrolling row: Mine · Everyone · Unowned · Filters · Select · the presets.
    - The page title and count stay for screen readers. The count also shows in the Filters sheet ("Show 27 people") and the footer.
@@ -39,7 +42,7 @@ Branch `claude/round2-lists`. The eight approved-plan items still unbuilt on the
 - **Inside a Reached band, Warmest first orders by most recent touch, not the exact score.** Ordering by score would mean shipping the whole Reached set's scores through the database as ids. The band (Warm / Cooling / Cold) is exact.
 - **Bulk "all matching" on a Warmest-first view takes the first 1,000 by Recently added**, not warmest first. `orderFor` has no column for warmth; the filter itself is honoured. (`assign-actions.ts` is outside my files, so I left it.)
 - **The ids behind Pulse stop at 12,000** (`PULSE_ID_CAP`). Two kinds of id list are capped:
-  - inside Reached, everyone not in the biggest band;
+  - inside Reached, the Warm and Cooling people (Cold is "the rest");
   - inside Won, whichever of won / owes is smaller;
   - among the people being tried, who has something late or booked.
   - Postgres takes about 32,000 values in one statement, and a preset's list (10,000) and Owes money's (10,000) can sit beside it. Past the cap the warmest are kept and the smaller pulses narrow a little less, like the presets.
@@ -82,7 +85,17 @@ Branch `claude/round2-lists`. The eight approved-plan items still unbuilt on the
 
 `npx tsc --noEmit -p .` and `npx next build` are green. Run against `scb_lists2` on a production build:
 
-LOAD_RESULTS
+| Suite | Result | New "Sprint:" steps |
+|---|---|---|
+| contacts-import-filters | PASS, 26 steps | the import preview; a Member's Import my list |
+| companies-contacts | PASS, 26 | — |
+| crm-reps | PASS, 16 | — |
+| connected | PASS, 30 | — |
+| health | PASS, 33 | Pulse filter and Warmest first against every person's own meter, plus `health-check.ts` |
+| looks | PASS, 31 | — (desktop header unchanged) |
+| overlay-readability | PASS, 16 | — |
+| crm-data (email) | PASS, 58 | 8: seed; Not connected; Pulse filter; Warmest first and paging; Activity + Last Contacted By; Per page in the footer; row boxes; phone first card ≤ 200px |
+| load-test | PASS, 12 steps | Warmest first 1.47s (Everyone), 1.42s (page 2,000), 1.07s (Mine); Pulse = Cold 0.87s; every pulse adds up to 200,000 of 200,000. Not connected in 30 days 0.94s, Never connected 0.63s, with item 6's SQL |
 
 - `npx tsx scripts/health-check.ts`: PASS, 36 checks. The twin agrees on all 140 fixtures, on the batched loader, and on the where-clauses in every combination.
 
@@ -106,4 +119,5 @@ Fixed at their cause on the way (the suites, not the app, were stale after earli
 - **Not connected / Never connected** leave out Connected, Interested, Not interested and Meeting Set → Won with no talk logged. Their date is the latest move into a talk status (`StatusChange`), read when the list asks; there is no migration and `lastConnectAt` still means a talk logged.
 - **Pulse** (`?pulse=`, `?sort=pulse` "Warmest first", Contacts only) comes from the SQL twin in `src/lib/health-sql.ts`. **Any change to leadHealth()'s state, score, stalled or owes rules must be made in `pulseRulesSql` too**; `scripts/health-check.ts` fails if they drift (every fixture is run through both). The state and Trying/stalled are stored-column clauses. Bands and Won/owes use id lists capped at 12,000 in all (Postgres takes ~32,000 values a statement). Inside a band, Warmest first is most recently touched first.
 - **On a phone** the list header is the search with ⋯ and + beside it, then one sideways row of scope, Filters, Select and presets. The first card is ~185px down. `ListHeader` keeps the title for screen readers; the page around it must be `relative`.
+- **Postgres plans with JIT above a cost, and a per-row subquery over JSON can price a 200,000-row statement into it** (2s of compiling for a 0.5s query). `SET LOCAL jit = off` inside a `$transaction` turns it off for one statement.
 - **Prisma refuses an `in` list of ~32,000+ values** (P2029, "query parameter limit"). Anything that would hand Prisma a big id list needs a cap or a stored-column clause.
