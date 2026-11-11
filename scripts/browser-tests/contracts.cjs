@@ -203,14 +203,14 @@ async function previewChips(page) {
   const sw = page.getByRole("switch", { name: "All company users can send" });
   assert.equal(await sw.getAttribute("aria-checked"), "true");
   await sw.click();
-  await page.getByLabel("Search people").fill("tayl");
+  await page.getByLabel("Search people", { exact: true }).fill("tayl");
   const me = page.getByRole("checkbox", { name: /Taylor Test/ });
   await me.waitFor();
   await me.check();
   await page.getByText("Only Taylor Test can send.").waitFor();
-  await page.getByLabel("Search people").fill("zzz");
+  await page.getByLabel("Search people", { exact: true }).fill("zzz");
   await page.getByText("Nobody matches.").waitFor();
-  await page.getByLabel("Search people").fill("");
+  await page.getByLabel("Search people", { exact: true }).fill("");
   await shot(page, "04-type-and-senders");
 
   log("Preview with nobody picked: missing chips flash red, workspace fields fill in");
