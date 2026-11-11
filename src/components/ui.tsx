@@ -1,5 +1,5 @@
 import { ink } from "@/lib/ink";
-import { DEAL_STAGE_COLORS, DEAL_STAGE_LABELS, TAG_COLORS, TAG_LABELS, type DealStageValue, type LineItemTagValue } from "@/lib/constants";
+import { CONTACT_STATUS_LABELS, DEAL_STAGE_LABELS, TAG_COLORS, TAG_LABELS, type DealStageValue, type LineItemTagValue } from "@/lib/constants";
 
 // Presentational primitives with no hooks, so they can be rendered from
 // server components and client components alike.
@@ -208,75 +208,115 @@ export function TagBadge({ tag }: { tag: LineItemTagValue }) {
   return <Badge color={TAG_COLORS[tag]}>{TAG_LABELS[tag]}</Badge>;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  LEAD: "#fbbf24",
-  CUSTOMER: "#34d399",
-  ARCHIVED: "#64748b",
-  // The status ladder (Sept 30, 2026).
-  NOT_ACTIONED: "#94a3b8",
-  NOT_INTERESTED: "#64748b",
-  INTERESTED: "#facc15",
-  MEETING_SET: "#38bdf8",
-  MEETING_COMPLETED: "#22d3ee",
-  NEW: "#38bdf8",
-  CONTACTED: "#fbbf24",
-  QUOTE_SENT: "#a78bfa",
-  CONTRACT_SENT: "#f97316",
-  WON: "#34d399",
-  LOST: "#fb7185",
-  DRAFT: "#94a3b8",
-  SENT: "#38bdf8",
-  ACCEPTED: "#34d399",
-  DECLINED: "#fb7185",
-  SIGNED: "#34d399",
-  PENDING: "#fbbf24",
-  ACTIVE: "#34d399",
-  PAUSED: "#f97316",
-  REJECTED: "#fb7185",
-  APPROVED: "#34d399",
-  EXPIRED: "#64748b",
-  INACTIVE: "#64748b",
-  CANCELLED: "#64748b",
-  OPEN: "#38bdf8",
-  PAID: "#34d399",
-  DUE: "#fbbf24",
-  OVERDUE: "#fb7185",
-  AWARDED: "#818cf8",
-  COMPLETED: "#64748b",
-  // A job on hold reads "Delayed"; see STATUS_LABELS below.
-  ON_HOLD: "#f97316",
+// Status chips (BDR redesign, Nov 11, 2026): one brand ramp, light to
+// dark, in place of the old rainbow. Each status sits at a step 0-8 by how
+// far along it is; closed, lost, cancelled and paused things are grey; and
+// only late money is red, because amber and red now mean "act now"
+// (health and money) and nothing else. The words are always the text
+// colour (globals.css .status-chip), so every tenant's brand reads.
+const STATUS_RAMP: Record<string, number> = {
+  // The ladder.
+  NOT_ACTIONED: 0,
+  CONTACTED: 1,
+  CONNECTED: 2,
+  INTERESTED: 3,
+  MEETING_SET: 4,
+  MEETING_COMPLETED: 5,
+  QUOTE_SENT: 6,
+  CONTRACT_SENT: 7,
+  WON: 8,
+  // Paperwork, jobs, accounts, ratesheets, on the same ramp.
+  LEAD: 1,
+  NEW: 1,
+  DRAFT: 1,
+  PENDING: 2,
+  OPEN: 4,
+  SENT: 5,
+  DUE: 5,
+  AWARDED: 6,
+  ACTIVE: 7,
+  CUSTOMER: 8,
+  ACCEPTED: 8,
+  SIGNED: 8,
+  PAID: 8,
+  APPROVED: 8,
 };
 
+const STATUS_CLOSED = new Set([
+  "NOT_INTERESTED",
+  "LOST",
+  "ARCHIVED",
+  "DECLINED",
+  "REJECTED",
+  "CANCELLED",
+  "EXPIRED",
+  "INACTIVE",
+  "COMPLETED",
+  "PAUSED",
+  "ON_HOLD",
+]);
+
+const STATUS_LATE = new Set(["OVERDUE"]);
+
 // Where the plain-words label isn't just the status with a capital
-// letter. A job that is ON_HOLD is "Delayed" everywhere it shows.
+// letter. A job that is ON_HOLD is "Delayed" everywhere it shows. The
+// ladder's words come from CONTACT_STATUS_LABELS, so a rename there
+// ("Contacted" → "Attempted") reaches every chip.
 const STATUS_LABELS: Record<string, string> = {
   ON_HOLD: "Delayed",
   WON: "Signed / Won",
-  NOT_ACTIONED: "Not Actioned",
-  NOT_INTERESTED: "Not Interested",
-  MEETING_SET: "Meeting Set",
-  MEETING_COMPLETED: "Meeting Completed",
-  QUOTE_SENT: "Quote Sent",
-  CONTRACT_SENT: "Contract Sent",
+  CONNECTED: "Connected",
 };
 
+export function statusRamp(status: string): number | "closed" | "late" {
+  if (STATUS_LATE.has(status)) return "late";
+  if (STATUS_CLOSED.has(status)) return "closed";
+  return STATUS_RAMP[status] ?? 1;
+}
+
+export function statusLabel(status: string): string {
+  return (
+    (CONTACT_STATUS_LABELS as Record<string, string | undefined>)[status] ??
+    STATUS_LABELS[status] ??
+    status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ")
+  );
+}
+
+function StatusChip({ ramp, status, children }: { ramp: number | "closed" | "late"; status: string; children: React.ReactNode }) {
+  return (
+    <span className="badge status-chip" data-ramp={String(ramp)} data-status={status}>
+      <span className="badge-dot" />
+      {children}
+    </span>
+  );
+}
+
 // A deal's stage, in the deal's own words: before its quote goes out a
-// deal is "Quote not sent", not the contact ladder's "Contacted".
+// deal is "Quote not sent", not the contact ladder's "Contacted". Same
+// ramp as the ladder: a quote not sent sits with Meeting Completed.
+const DEAL_STAGE_RAMP: Record<string, number | "closed"> = {
+  LEAD: 5,
+  CONTACTED: 5,
+  QUOTE_SENT: 6,
+  CONTRACT_SENT: 7,
+  WON: 8,
+  LOST: "closed",
+  ARCHIVED: "closed",
+};
+
 export function DealStageBadge({ stage }: { stage: string }) {
   return (
-    <Badge color={DEAL_STAGE_COLORS[stage as DealStageValue] ?? "var(--text-dim)"} dot>
+    <StatusChip ramp={DEAL_STAGE_RAMP[stage] ?? 1} status={stage}>
       {DEAL_STAGE_LABELS[stage as DealStageValue] ?? stage}
-    </Badge>
+    </StatusChip>
   );
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const label =
-    STATUS_LABELS[status] ?? status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
   return (
-    <Badge color={STATUS_COLORS[status] ?? "var(--text-dim)"} dot>
-      {label}
-    </Badge>
+    <StatusChip ramp={statusRamp(status)} status={status}>
+      {statusLabel(status)}
+    </StatusChip>
   );
 }
 
