@@ -321,7 +321,8 @@ async function previewChips(page) {
   // The quote goes out from its page, so its follow-up is on the calendar.
   await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   const openFollowUps = async () =>
     (

@@ -279,7 +279,9 @@ function backLink(page) {
     [quoteA.rows[0].id],
   );
   await page.goto(quoteAUrl);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByText("Customer link").waitFor();
   await page.goto(`${BASE}/dashboard/deals`);
   // The Pipeline starts at Meeting Set (Sept 30, 2026).

@@ -286,7 +286,9 @@ const readableDay = (iso) =>
 
   log("marking a quote sent puts Quote sent, Quote follow up and Quote due on the calendar");
   await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   const quoteRows = (
     await sql(
@@ -321,13 +323,15 @@ const readableDay = (iso) =>
 
   log("sending it again does not double the milestones");
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
+  await page.getByTestId("send-quote").waitFor();
   assert.equal(
     (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
     1,
     "back to draft takes the open follow-up and due off, and keeps the sent one",
   );
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   assert.equal(
     (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_calv2'`)).rows[0].n,
@@ -361,8 +365,10 @@ const readableDay = (iso) =>
   // Re-sending the quote picks the new rhythm up.
   await page.goto(`${BASE}/dashboard/quotes/quo_calv2`);
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByRole("button", { name: "Mark as sent" }).waitFor();
-  await page.getByRole("button", { name: "Mark as sent" }).click();
+  await page.getByTestId("send-quote").waitFor();
+  // Send quote (was Mark as sent) opens a share sheet; Just mark it sent marks it.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Mark accepted" }).waitFor();
   const rhythm = (
     await sql(`SELECT title, "startOn" FROM "CalendarEvent" WHERE "quoteId"='quo_calv2' AND type='Quote follow up' ORDER BY "startOn"`)

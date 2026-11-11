@@ -1022,7 +1022,7 @@ let context;
    * Audit fixes (UX review, Nov 10, 2026). A second quote on the deal,
    * QUO-1900, so nothing above moves.
    * ---------------------------------------------------------------- */
-  log("audit fixes (UX review): Mark as sent refuses a quote with no saved lines, and holds off while a typed line is unsaved");
+  log("audit fixes (UX review): Send quote refuses a quote with no saved lines, and holds off while a typed line is unsaved");
   await sql(
     `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")
      VALUES ('quo_qi_ux','${org}','ctc_qi','deal_qi',1900,'Option B','DRAFT','tok_quo_qi_ux_0123456789',now())`,
@@ -1034,23 +1034,30 @@ let context;
       )
     ).rows[0];
   await page.goto(`${BASE}/dashboard/quotes/quo_qi_ux`);
-  await page.getByTestId("mark-sent").click();
-  await page.getByTestId("mark-sent-error").waitFor();
-  assert.match(await page.getByTestId("mark-sent-error").innerText(), /Add a line item and save it/);
+  // Send quote (was Mark as sent) opens its share sheet; the server's
+  // refusal shows in the sheet.
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
+  await page.getByTestId("send-quote-error").waitFor();
+  assert.match(await page.getByTestId("send-quote-error").innerText(), /Add a line item and save it/);
   assert.deepEqual(await uxQuote(), { status: "DRAFT", lines: 0 }, "a quote with no lines went out to the customer");
+  await page.getByTestId("sheet-close").click();
+  await page.getByTestId("send-quote-sheet").waitFor({ state: "detached" });
   // Typed, not saved: before the fix Mark as sent sent the quote without
   // it, the editor kept showing $23,200.00 and the customer's link $0.00.
   await page.getByRole("button", { name: "Blank line" }).click();
   await page.getByLabel("Line 1 product", { exact: true }).fill("NVR 16-channel, 8TB");
   await page.getByLabel("Line 1 quantity", { exact: true }).fill("16");
   await page.getByLabel("Line 1 unit value", { exact: true }).fill("1450.00");
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
   await page.getByText("Save line items first", { exact: false }).waitFor();
+  assert.equal(await page.getByTestId("send-quote-sheet").count(), 0, "the share sheet opened over unsaved lines");
   assert.deepEqual(await uxQuote(), { status: "DRAFT", lines: 0 }, "the quote went out without the line typed into it");
   assert.equal(await page.getByLabel("Line 1 product", { exact: true }).inputValue(), "NVR 16-channel, 8TB", "the typed line was dropped");
   await saveLines(page);
-  await page.getByTestId("mark-sent-error").waitFor({ state: "detached" });
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote-error").waitFor({ state: "detached" });
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   assert.deepEqual(await uxQuote(), { status: "SENT", lines: 1 });
   const uxCustomer = await context.newPage();

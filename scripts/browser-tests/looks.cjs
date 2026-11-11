@@ -853,6 +853,10 @@ async function textContrast(locator) {
     await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
     await page.goto(`${BASE}/dashboard/deals/tracker?dealId=${dealId}`);
     await settle(page);
+    // A first contract starts with its open rows ticked (BDR redesign,
+    // Release 8); Clear takes them off to see the disabled button.
+    const clear = page.locator("[data-testid=tracker-lines] thead").getByRole("button", { name: "Clear" });
+    if (await clear.count()) await clear.first().click();
     const create = page.getByTestId("create-contracts");
     assert.equal(await create.isDisabled(), true, "nothing is ticked, so Create is disabled");
     assert.equal((await create.textContent()).trim(), "Tick rows to create contracts");
