@@ -109,7 +109,7 @@ export async function DuplicatesView({
       </div>
       <Card lit>
         {groups.length === 0 ? (
-          <EmptyState title="No duplicates found" body={`Nothing shares ${DUPLICATE_LABELS[kind][by]?.toLowerCase().replace("same ", "a ")}.`} />
+          <EmptyState title="No duplicates found" body={`Nothing shares ${sharedThing(DUPLICATE_LABELS[kind][by] ?? "")}.`} />
         ) : (
           <ul className="divide-y divide-[var(--hairline)]">
             {groups.map((group) => {
@@ -165,4 +165,11 @@ export async function DuplicatesView({
       </Card>
     </div>
   );
+}
+
+// "Same email" → "an email", "Same phone" → "a phone" (ux-gaps: it read
+// "a email").
+function sharedThing(label: string) {
+  const thing = label.toLowerCase().replace(/^same /, "");
+  return `${/^[aeiou]/.test(thing) ? "an" : "a"} ${thing}`;
 }

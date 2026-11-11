@@ -578,7 +578,7 @@ export default async function CompanyDetailPage({
               id="notes"
               mode="phone"
               title="Notes"
-              subtitle={`${noteTotal > notes.length ? `latest ${notes.length} of ${noteTotal.toLocaleString()}` : `${noteTotal} total`}, including everyone here`}
+              subtitle={noteTotal === 0 ? "None yet" : `${noteTotal > notes.length ? `latest ${notes.length} of ${noteTotal.toLocaleString()}` : `${noteTotal} total`}, including everyone here`}
               testId="company-notes"
             >
               <AddNoteForm target={{ companyId: company.id }} />

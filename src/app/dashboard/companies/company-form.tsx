@@ -47,7 +47,7 @@ export function CompanyForm({
         name="logo"
         currentUrl={defaults.logoUrl ?? null}
         fallback={(defaults.name ?? "?").charAt(0).toUpperCase()}
-        hint="Shown on the deal tracker and on documents addressed to this company."
+        hint="Shown on the Contract Coordinator and on documents addressed to this company."
       />
 
       <div className="grid gap-4 sm:grid-cols-2">

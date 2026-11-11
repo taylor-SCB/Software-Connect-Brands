@@ -576,6 +576,54 @@ function backLink(page) {
     assert.equal(mona.phone, "(870) 555-0167", "her mobile stands in for the missing phone");
   }
 
+  log("Sprint (polish): Add contact asks the Name before the Company, and its hints say Contract Coordinator, never deal tracker");
+  await page.goto(`${BASE}/dashboard/contacts/new`);
+  const order = await page.evaluate(() => {
+    const name = document.querySelector("input[name=name]");
+    const company = document.querySelector("input[name=companyName]");
+    return name && company ? (name.compareDocumentPosition(company) & Node.DOCUMENT_POSITION_FOLLOWING ? "name first" : "company first") : "missing";
+  });
+  assert.equal(order, "name first");
+  assert.ok(await page.locator("input[name=name]").evaluate((el) => el.required), "the name is required");
+  const formText = await page.locator("main").textContent();
+  assert.doesNotMatch(formText, /deal tracker/i);
+  assert.match(formText, /Contract Coordinator/);
+  await page.goto(`${BASE}/dashboard/companies/new`);
+  assert.doesNotMatch(await page.locator("main").textContent(), /deal tracker/i);
+
+  log("Sprint (polish): a new person's Notes card says None yet, not 0 total; Find duplicates says 'an email'");
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,"updatedAt") VALUES ('cc_no_notes',$1,'Nora Notes',now())`, [org]);
+  await page.goto(`${BASE}/dashboard/contacts/cc_no_notes`);
+  const emptyNotes = page.getByTestId("notes-card");
+  await emptyNotes.waitFor();
+  assert.doesNotMatch(await emptyNotes.textContent(), /0 total/);
+  assert.match(await emptyNotes.textContent(), /None yet/);
+  const sharedEmails = (await sql(
+    `SELECT count(*)::int AS n FROM (SELECT lower(email) FROM "Contact" WHERE "organizationId"=$1 AND email IS NOT NULL GROUP BY 1 HAVING count(*) > 1) d`,
+    [org],
+  )).rows[0].n;
+  assert.equal(sharedEmails, 0, "this workspace has no shared emails");
+  await page.goto(`${BASE}/dashboard/contacts/duplicates?by=email`);
+  assert.equal((await page.getByText(/^Nothing shares/).first().textContent()).trim(), "Nothing shares an email.");
+  await page.goto(`${BASE}/dashboard/contacts/duplicates?by=phone`);
+  const phoneEmpty = page.getByText(/^Nothing shares/);
+  if (await phoneEmpty.count()) assert.equal((await phoneEmpty.first().textContent()).trim(), "Nothing shares a phone.");
+
+  log("Sprint (polish): Settings tile descriptions show whole, and Products has one filled button in its header");
+  await page.goto(`${BASE}/dashboard/settings/general`);
+  const blurbs = await page.getByTestId("settings-tile-blurb").evaluateAll((els) => els.map((el) => ({ text: el.textContent, cut: el.scrollWidth > el.clientWidth + 0.5 || getComputedStyle(el).textOverflow === "ellipsis" })));
+  assert.equal(blurbs.length, 5);
+  for (const b of blurbs) assert.ok(!b.cut, `"${b.text}" is cut off`);
+  await page.goto(`${BASE}/dashboard/products`);
+  const header = page.locator("main header, main [data-testid=page-header]").first();
+  await page.getByTestId("create-ratesheet").waitFor();
+  const loud = await page.evaluate(() => {
+    const row = document.querySelector("[data-testid=create-ratesheet]").parentElement;
+    return [...row.querySelectorAll(".btn")].filter((b) => /btn-(primary|pink|neon)/.test(b.className)).map((b) => b.textContent.trim());
+  });
+  assert.deepEqual(loud, ["Add product"]);
+  void header;
+
   void quoteBUrl;
   void quoteCUrl;
   await browser.close();

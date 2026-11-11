@@ -630,6 +630,65 @@
   .table tbody tr {
     transition: background 0.14s ease;
   }
+  /* The quote editor's pinned Save bar (Nov 11, 2026): anything scrolled
+     into view — a catalog row reached with the arrow keys, a field with an
+     error — stops above it rather than under it. */
+  @media (min-width: 640px) {
+    html:has([data-testid="quote-save-bar"]) {
+      scroll-padding-bottom: 5rem;
+    }
+  }
+  /* A numbers table on a phone (Nov 11, 2026): each row becomes a small
+     two-column list — the row's name across the top, then label · value
+     pairs two to a line — so nothing scrolls sideways at 390px. Each cell
+     carries its column's name in data-label. One copy of the table, so
+     anything reading its rows reads the same cells at every width. */
+  @media (max-width: 767.98px) {
+    .table-stack thead {
+      display: none;
+    }
+    .table-stack,
+    .table-stack tbody {
+      display: block;
+      width: 100%;
+    }
+    .table-stack tbody tr {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.25rem 1rem;
+      padding: 0.6rem 0.25rem;
+      border-bottom: 1px solid var(--hairline-3);
+    }
+    .table-stack tbody tr:last-child {
+      border-bottom: none;
+    }
+    .table-stack tbody td {
+      display: flex;
+      min-width: 0;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0;
+      border-bottom: none;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    .table-stack tbody td::before {
+      content: attr(data-label);
+      color: var(--text-faint);
+      text-align: left;
+      font-weight: 400;
+    }
+    .table-stack tbody td:first-child {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+      text-align: left;
+      font-weight: 600;
+    }
+    .table-stack tbody td:first-child::before {
+      content: none;
+    }
+  }
   .table-hover tbody tr:hover {
     background: var(--tint-2);
   }

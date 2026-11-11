@@ -25,6 +25,7 @@ import { loadDealJourney } from "@/lib/deal-journey-load";
 import { JourneyNext } from "@/app/dashboard/contracts/journey-next";
 import { DeleteQuoteButton } from "./delete-quote";
 import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
+import { QuoteSaveBar, QuoteSaveProvider } from "./quote-save";
 import { QuotePaymentTable } from "./quote-payment-table";
 import { QuoteMetaForm } from "./quote-meta-form";
 import { dateToIso, todayIso, quoteBaselineRows } from "@/lib/payments";
@@ -130,6 +131,7 @@ export default async function QuoteBuilderPage({
     // Send quote (under the strip) waits while the Line items card has
     // unsaved edits, so the provider holds both.
     <QuoteUnsavedProvider>
+      <QuoteSaveProvider>
       {/* Room at the foot of a phone for the strip's pinned Next button. */}
       <div className={journey?.journey.next ? "max-sm:pb-24" : undefined}>
       <BackLink href="/dashboard/quotes" label="Quotes" current={`QUO-${quote.number} ${quote.title}`} />
@@ -342,7 +344,11 @@ export default async function QuoteBuilderPage({
           />
         </Card>
       </div>
+      {/* The one Save for the cards above (a phone uses the Line items
+          card's pinned bar, which saves the same). */}
+      <QuoteSaveBar />
       </div>
+      </QuoteSaveProvider>
     </QuoteUnsavedProvider>
   );
 }

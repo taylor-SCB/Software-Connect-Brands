@@ -52,7 +52,11 @@ export function CompanyTiles({ current }: { current: CompanyTile }) {
             </span>
             <span className="min-w-0">
               <span className="block text-sm font-semibold">{label}</span>
-              <span className="faint block truncate text-[0.7rem]">{blurb}</span>
+              {/* Whole, on as many lines as it needs (ux-gaps: the
+                  descriptions were cut off with …). */}
+              <span className="faint block text-[0.7rem] leading-snug" data-testid="settings-tile-blurb">
+                {blurb}
+              </span>
             </span>
           </Link>
         );

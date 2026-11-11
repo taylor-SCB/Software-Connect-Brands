@@ -665,7 +665,7 @@ let browser;
   await ownerPage.waitForFunction(
     () => document.querySelector('[data-testid="line-supplier"]')?.selectedOptions[0]?.textContent?.includes("on Software Connect Brands"),
   );
-  await ownerPage.getByRole("button", { name: "Save line items" }).click();
+  await ownerPage.getByTestId("quote-save").click();
   await ownerPage.getByText("Line items saved", { exact: true }).waitFor();
   const panelLocal = (await sql(`SELECT * FROM "Distributor" WHERE "organizationId"=$1 AND "platformOrganizationId"=$2`, [spirit.id, panelOrg.id])).rows[0];
   assert.ok(panelLocal?.companyId);

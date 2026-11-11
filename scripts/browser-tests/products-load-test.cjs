@@ -367,7 +367,7 @@ async function timedSearch(page, label, query) {
     }
   })();
   const saveStart = Date.now();
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText(/Line items saved|went wrong|error/i).first().waitFor({ timeout: 30000 });
   const saveSeconds = (Date.now() - saveStart) / 1000;
   watching = false;
