@@ -88,6 +88,22 @@ function daysAgo(n) {
   return date.toISOString().slice(0, 10);
 }
 
+// BDR redesign (Nov 11, 2026): the Team week, the layouts and Copy this
+// week into next sit in the View menu; the filters in a Filters sheet;
+// "+ New" opens a sheet whose who / where / job / notes are under More.
+async function openView(page) {
+  if (!(await page.locator("[data-testid=cal-view-panel]").count())) await page.locator("[data-testid=cal-view-menu]").click();
+  await page.locator("[data-testid=cal-view-panel]").waitFor();
+}
+async function openFilters(page) {
+  if (!(await page.locator("[data-testid=cal-filters-sheet]").count())) await page.locator("[data-testid=cal-filters-open]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor();
+}
+async function closeFilters(page) {
+  if (await page.locator("[data-testid=cal-filters-sheet]").count()) await page.locator("[data-testid=cal-filters-done]").click();
+  await page.locator("[data-testid=cal-filters-sheet]").waitFor({ state: "detached" });
+}
+
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG_LIKE]);
 
@@ -264,6 +280,7 @@ function daysAgo(n) {
   await page.locator("[data-testid=event-timed]").check();
   await page.locator("[data-testid=event-start-time]").fill("09:30");
   await page.locator("[data-testid=event-end-time]").fill("10:30");
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-attendees]").getByRole("button", { name: "Priya Menon" }).click();
   await page.locator("[data-testid=event-location]").fill("1400 Harbor Blvd");
   await page.locator("[data-testid=event-save]").click();
@@ -288,7 +305,7 @@ function daysAgo(n) {
   await page.locator("[data-testid=event-end-time]").fill("09:00");
   await page.locator("[data-testid=event-save]").click();
   await page.getByText("The finish time is before the start time.").waitFor();
-  await page.locator("[data-testid=cal-add-event]").click();
+  await page.locator("[data-testid=cal-new-sheet] [data-testid=sheet-close]").click();
 
   log("the workspace's own event type can be added from the form");
   await page.locator("[data-testid=cal-add-event]").click();
@@ -315,6 +332,7 @@ function daysAgo(n) {
   await shot(page, "02-day-panel");
 
   log("the crew filter keeps only that crew's days");
+  await openFilters(page);
   await page.locator("[data-testid=cal-crew-filter]").selectOption({ label: "Install Team A" });
   await page.waitForURL(/crew=/);
   assert.equal(
@@ -335,7 +353,9 @@ function daysAgo(n) {
     await page.locator(`[data-testid=month-day][data-day="${day(2)}"]`).getAttribute("data-count"),
     "0",
   );
-  await page.getByRole("button", { name: "Clear" }).click();
+  await closeFilters(page);
+  assert.match(await page.locator("[data-testid=cal-active-filters]").textContent(), /Site walk/, "a chip names the filter");
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
   await page.locator(`[data-testid=month-day][data-day="${day(2)}"][data-count="1"]`).waitFor();
 
   log("paging goes back a month and forward again, and Today comes home");
@@ -358,8 +378,12 @@ function daysAgo(n) {
     await page.locator("[data-testid=cal-view-week]").click();
     await page.locator("[data-testid=cal-view-week][aria-selected=true]").waitFor();
     await page.locator("[data-testid=week-day][data-day='2027-06-30']").waitFor();
+    await openView(page);
     await page.locator("[data-testid=cal-view-team]").click();
+    await page.waitForURL(/view=team/);
+    await openView(page);
     await page.locator("[data-testid=cal-view-team][aria-selected=true]").waitFor();
+    await page.keyboard.press("Escape");
     await page.locator("[data-testid=cal-view-month]").click();
     await page.locator("[data-testid=cal-view-month][aria-selected=true]").waitFor();
     await page.getByText("June 2027").first().waitFor();
@@ -408,6 +432,7 @@ function daysAgo(n) {
   log("Copy this week into next repeats the same days a week on");
   const beforeCopy = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1`, [org]))
     .rows[0].n;
+  await openView(page);
   await page.locator("[data-testid=cal-copy-week]").click();
   await page.getByText(/days copied into the week of/).waitFor();
   const afterCopy = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "organizationId"=$1`, [org]))
@@ -427,6 +452,7 @@ function daysAgo(n) {
 
   log("an empty week has nothing to copy, and says so");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=2027-03-03`);
+  await openView(page);
   await page.locator("[data-testid=cal-copy-week]").click();
   await page.getByText("There is nothing in that week to copy.").waitFor();
 
@@ -595,6 +621,7 @@ function daysAgo(n) {
   await page.locator("[data-testid=cal-add-event]").click();
   await page.locator("[data-testid=event-title]").fill("Walk with the super");
   await page.locator("[data-testid=event-start-on]").fill(day(18));
+  await page.locator("[data-testid=event-more]").click();
   await page.locator("[data-testid=event-notes]").fill("Gate code 4412");
   await page.locator("[data-testid=event-timed]").check();
   await page.locator("[data-testid=event-start-time]").fill("16:00");
@@ -612,9 +639,11 @@ function daysAgo(n) {
   await page.locator(`[data-testid=month-day][data-day="${day(18)}"][data-count="1"]`).waitFor();
 
   log("audit fixes: two open new-event forms do not share DOM ids");
-  await page.locator("[data-testid=cal-add-event]").click();
+  // The day's own form first: "+ New" is a sheet over the page now.
   await page.locator(`[data-testid=month-day][data-day="${day(20)}"]`).click();
   await page.locator("[data-testid=day-add-event]").click();
+  await page.locator("[data-testid=cal-add-event]").click();
+  await page.locator("[data-testid=cal-new-sheet]").waitFor();
   const dupes = await page.evaluate(() => {
     const seen = new Map();
     for (const el of document.querySelectorAll("[id]")) {
@@ -731,6 +760,7 @@ function daysAgo(n) {
   const walksBefore = await countBy("Site walk");
   const installsBefore = await countBy("Install");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=${day(4)}&type=Install`);
+  await openView(page);
   await page.locator("[data-testid=cal-copy-week]").click();
   await page.getByText(/copied into the week of/).waitFor();
   assert.equal(

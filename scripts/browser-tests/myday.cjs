@@ -285,6 +285,52 @@ const ago = (days) => `now() - interval '${days} days'`;
   await page.locator("[data-testid=done-box]").waitFor({ state: "detached" });
   await shot(page, "agenda-desktop");
 
+  log("the toolbar: [Mine | Team] [Agenda · Week · Month] [View] [Filters (n)] [+ New]; nothing removed");
+  await page.locator("[data-testid=cal-view-menu]").click();
+  const viewPanel = page.locator("[data-testid=cal-view-panel]");
+  await viewPanel.waitFor();
+  assert.equal(await viewPanel.locator("[data-testid=cal-view-team]").count(), 1, "the Team week is in View");
+  await page.keyboard.press("Escape");
+  await page.goto(`${BASE}/dashboard/calendar?view=week&on=${TODAY}`);
+  await page.locator("[data-testid=cal-view-menu]").click();
+  for (const id of ["cal-layout-calendar", "cal-layout-log", "cal-layout-both", "cal-copy-week"]) {
+    assert.equal(await viewPanel.locator(`[data-testid=${id}]`).count(), 1, `${id} is in View`);
+  }
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("[data-testid=cal-filters-open]").textContent(), "Filters");
+  await page.locator("[data-testid=cal-filters-open]").click();
+  const filterSheet = page.locator("[data-testid=cal-filters-sheet]");
+  await filterSheet.waitFor();
+  for (const id of ["cal-users", "cal-companies", "cal-contacts", "cal-projects", "cal-crew-filter", "cal-type-filter"]) {
+    assert.equal(await filterSheet.locator(`[data-testid=${id}]`).count(), 1, `${id} is in Filters`);
+  }
+  await filterSheet.locator("[data-testid=cal-type-filter]").selectOption("Call");
+  await page.waitForURL(/type=Call/);
+  await page.locator("[data-testid=cal-filters-done]").click();
+  await page.locator("[data-testid=cal-filters-open]", { hasText: /^Filters \(1\)$/ }).waitFor();
+  assert.match(await page.locator("[data-testid=cal-active-filters]").textContent(), /Call/);
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.waitForURL((url) => !url.searchParams.has("type"));
+
+  log("+ New opens a sheet set to Call with Title, Type, Day and Time; the rest is under More");
+  await page.locator("[data-testid=cal-add-event]").click();
+  const newSheet = page.locator("[data-testid=cal-new-sheet]");
+  await newSheet.waitFor();
+  assert.equal(await newSheet.locator("[data-testid=event-type]").inputValue(), "Call");
+  for (const id of ["event-title", "event-type", "event-start-on", "event-start-time"]) {
+    assert.ok(await newSheet.locator(`[data-testid=${id}]`).isVisible(), `${id} shows at once`);
+  }
+  assert.equal(await newSheet.locator("[data-testid=event-owner]").isVisible(), false, "Whose calendar waits under More");
+  await newSheet.locator("[data-testid=event-title]").fill("Call back Nia");
+  await newSheet.locator("[data-testid=event-start-time]").fill("15:00");
+  await newSheet.locator("[data-testid=event-more]").click();
+  assert.ok(await newSheet.locator("[data-testid=event-owner]").isVisible());
+  await newSheet.locator("[data-testid=event-contact]").selectOption("ctc_md_nia");
+  await newSheet.locator("[data-testid=event-save]").click();
+  await newSheet.waitFor({ state: "detached" });
+  const nia = (await sql(`SELECT type, "startTime", "ownerId", "contactId" FROM "CalendarEvent" WHERE "organizationId"=$1 AND title='Call back Nia'`, [org])).rows[0];
+  assert.deepEqual(nia, { type: "Call", startTime: "15:00", ownerId: M, contactId: "ctc_md_nia" });
+
   log("Mine / Everyone is remembered per person");
   await page.locator("[data-testid=cal-everyone]").click();
   await until(async () => (await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs?.calendar?.scope === "team", "team remembered");
@@ -420,6 +466,19 @@ const ago = (days) => `now() - interval '${days} days'`;
   await p2.goto(`${BASE}/dashboard/calendar`);
   await p2.waitForURL(/view=agenda/);
   await p2.locator("[data-testid=agenda]").waitFor();
+  const strip = p2.locator("[data-testid=agenda-strip-day]");
+  assert.equal(await strip.count(), 7, "a one-week day strip on top");
+  assert.equal(await strip.first().getAttribute("data-day"), TODAY);
+  for (const box of await strip.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) assert.ok(box >= 44);
+  assert.equal(await p2.locator("[data-testid=cal-view-month]").isVisible(), false, "Month sits behind View on a phone");
+  await p2.locator("[data-testid=cal-view-menu]").tap();
+  await p2.locator("[data-testid=cal-view-month-phone]").tap();
+  await p2.locator("[data-testid=month-day]").first().waitFor();
+  await p2.goto(`${BASE}/dashboard/calendar?view=agenda`);
+  await p2.locator("[data-testid=cal-add-event]").tap();
+  const phoneSheet = await p2.locator("[data-testid=cal-new-sheet]").boundingBox();
+  assert.ok(Math.abs(phoneSheet.y + phoneSheet.height - 844) <= 2, "a new entry opens as a bottom sheet");
+  await p2.locator("[data-testid=cal-new-sheet] [data-testid=sheet-close]").tap();
   const w2 = await p2.evaluate(() => document.documentElement.scrollWidth);
   assert.ok(w2 <= 391, `the Agenda on a phone scrolls sideways (${w2}px)`);
   await shot(p2, "agenda-phone");

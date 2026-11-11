@@ -206,6 +206,16 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   await timed(page, "New contact form (pick list, no company dump)", `${BASE}/dashboard/contacts/new`, "#companyName");
   await timed(page, "Dashboard overview", `${BASE}/dashboard`, "main");
 
+  // BDR redesign, release 5 (Nov 11, 2026): My day ranks Up next from a
+  // rep's whole book (here the owner holds 60,000 of the 200,000, with
+  // 140,000 nobody owns for "Take 10"), Team today reads every rep's
+  // week and book health, and the calendar opens on the Agenda.
+  log("Sprint: My day's Up next for a rep with 60,000 people, Team today and the Agenda, inside budget");
+  await timed(page, "My day (Up next from a 60,000-person book)", `${BASE}/dashboard?view=myday`, "[data-testid=up-next-row]");
+  assert.match(await page.locator("[data-testid=unowned-count]").textContent(), /^1\d\d,?\d{3} new leads nobody owns|^\d+ new leads nobody owns/);
+  await timed(page, "Daily Rundown with Team today", `${BASE}/dashboard?report=daily`, "[data-testid=team-row]");
+  await timed(page, "Calendar Agenda", `${BASE}/dashboard/calendar?view=agenda`, "[data-testid=agenda]");
+
   log("time the Clean CRM data filters, the Labels screen and the duplicate finder");
   const ownerId = (await sql(`SELECT id FROM "User" WHERE email = $1`, [EMAIL])).rows[0].id;
   for (const [label, url, ready] of [

@@ -145,7 +145,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
   const filtering =
     Boolean(params.crew || params.type) ||
-    (filters.userIds?.length ?? 0) +
+    (scope === "mine" && urlUsers.length === 0 ? 0 : (filters.userIds?.length ?? 0)) +
       (filters.companyIds?.length ?? 0) +
       (filters.contactIds?.length ?? 0) +
       (filters.projectIds?.length ?? 0) >

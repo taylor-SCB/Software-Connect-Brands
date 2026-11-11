@@ -746,9 +746,44 @@ export function AgendaView({
   // tapped Call or Text was for (data-contact-id on the row).
   const how = useHowDidItGo({ dial: true });
 
+  // The phone's one-week strip on top (BDR redesign): today and the six
+  // days after it, each with how many things are on; a tap scrolls to it.
+  const strip = days.slice(0, 7);
+  const goTo = (day: string) => {
+    const target = document.querySelector<HTMLElement>(`[data-agenda-section="${day}"]`);
+    if (!target) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+  };
+
   return (
     <div className="space-y-4" data-testid="agenda">
       {how.element}
+      <div className="grid grid-cols-7 gap-1 sm:hidden" role="group" aria-label="This week" data-testid="agenda-strip">
+        {strip.map((day) => {
+          const count = (byDay.get(day) ?? []).length;
+          const date = new Date(`${day}T12:00:00Z`);
+          return (
+            <button
+              key={day}
+              type="button"
+              disabled={count === 0}
+              onClick={() => goTo(day)}
+              aria-label={`${readableDay(day)}, ${count} ${count === 1 ? "thing" : "things"} on`}
+              className={`flex min-h-14 flex-col items-center justify-center rounded-lg border text-xs ${
+                day === today ? "border-[var(--brand)]" : "border-[var(--border)]"
+              } ${count === 0 ? "opacity-60" : ""}`}
+              data-testid="agenda-strip-day"
+              data-day={day}
+              data-count={count}
+            >
+              <span className="faint">{WEEKDAY_NAMES[date.getUTCDay()].slice(0, 1)}</span>
+              <span className="num font-semibold">{dayOfMonth(day)}</span>
+              <span className="num faint text-[0.65rem]">{count > 0 ? count : "·"}</span>
+            </button>
+          );
+        })}
+      </div>
       {overdue.length > 0 && (
         <AgendaSection title="Overdue" count={overdue.length} tone="danger" testId="agenda-overdue">
           {overdue.map((event) => (
@@ -756,7 +791,7 @@ export function AgendaView({
           ))}
         </AgendaSection>
       )}
-      <AgendaSection title="Today" count={todays.length} testId="agenda-today">
+      <AgendaSection title="Today" count={todays.length} testId="agenda-today" day={today}>
         {todays.length === 0 ? (
           <p className="faint px-4 py-4 text-sm">Nothing on today.</p>
         ) : (
@@ -799,7 +834,7 @@ function AgendaSection({
 }) {
   return (
     <Card lit className="min-w-0">
-      <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-4 py-2.5">
+      <div className="flex scroll-mt-16 items-center justify-between border-b border-[var(--hairline-3)] px-4 py-2.5" data-agenda-section={day}>
         <h2 className={`text-sm font-semibold ${tone === "danger" ? "text-[var(--danger)]" : ""}`}>{title}</h2>
         <span className="faint num text-xs">{count}</span>
       </div>

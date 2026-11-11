@@ -15,9 +15,12 @@ import {
   IconCopy,
   IconPlus,
   IconX,
+  IconFilter,
 } from "@/components/icons";
 import { EventForm, type EventChoices } from "./event-form";
 import { copyWeek } from "./actions";
+import { FloatingMenu } from "@/components/floating-menu";
+import { Sheet } from "@/components/how-did-it-go/sheet";
 import { saveUiPref } from "../prefs-actions";
 
 export type CalendarLayout = "calendar" | "log" | "both";
@@ -48,7 +51,7 @@ export function CalendarToolbar({
   labels,
 }: {
   view: "agenda" | "month" | "week" | "team";
-  // Mine / Everyone (BDR redesign, Nov 11, 2026): whose days the page shows
+  // Mine / Team (BDR redesign, Nov 11, 2026): whose days the page shows
   // when the address bar names no users — the person's remembered choice
   // (User.uiPrefs calendar.scope), else Mine for a Member and Team for an
   // Owner or Admin. "custom" is a pick of users from the Users menu.
@@ -71,6 +74,9 @@ export function CalendarToolbar({
   const router = useRouter();
   const params = useSearchParams();
   const [adding, setAdding] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const viewButton = useRef<HTMLButtonElement>(null);
   const [copyState, setCopyState] = useState<{ error?: string; success?: string }>({});
   const [pending, start] = useTransition();
 
@@ -100,7 +106,16 @@ export function CalendarToolbar({
     return value === "week" || value === "team" || value === "agenda" ? value : "month";
   };
 
-  // Mine / Everyone is remembered for the person before the page moves, so
+  const showView = (option: "agenda" | "week" | "month" | "team") =>
+    go(
+      option === "month"
+        ? { view: live.current.get("on") ? null : "month", layout: null }
+        : option === "agenda"
+          ? { view: "agenda", layout: null, on: null }
+          : { view: option },
+    );
+
+  // Mine / Team is remembered for the person before the page moves, so
   // the next visit (and the server drawing this one) opens on it.
   const pickScope = (next: "mine" | "team") =>
     start(async () => {
@@ -142,137 +157,31 @@ export function CalendarToolbar({
   const userName = (id: string) =>
     id === UNASSIGNED_USER ? "Unassigned" : (choices.users.find((user) => user.id === id)?.name ?? "…");
 
+  const filterCount =
+    (filters.crewId ? 1 : 0) +
+    (filters.type ? 1 : 0) +
+    filters.userIds.length +
+    filters.companyIds.length +
+    filters.contactIds.length +
+    filters.projectIds.length;
+  const crewName = choices.crews.find((crew) => crew.id === filters.crewId)?.name ?? "…";
+  const clearAll = () =>
+    start(async () => {
+      await saveUiPref("calendar", "scope", "team");
+      go({ crew: null, type: null, users: null, companies: null, contacts: null, projects: null });
+      router.refresh();
+    });
+
+  // BDR redesign (Nov 11, 2026): one row — [Mine | Team] [Agenda · Week ·
+  // Month] [‹ Today ›] [View ▾] [Filters (n)] [+ New]. Nothing went away:
+  // the Team week, Calendar / Log / Calendar + Log and Copy this week into
+  // next are in View; Users, Companies, Contacts, Projects, the crew and
+  // the activity are in Filters, a sheet (a bottom sheet on a phone), and
+  // every filter that is on shows as a chip under the row. On a phone,
+  // Month sits in View.
   return (
     <div className="mb-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {layout !== "log" && view !== "agenda" && (
-          <>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => step(-1)}
-                aria-label={view === "month" ? "The month before" : "The week before"}
-                className="btn btn-ghost btn-sm !px-1.5"
-                data-testid="cal-prev"
-              >
-                <IconChevronLeft size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => go({ on: null })}
-                className="btn btn-ghost btn-sm"
-                data-testid="cal-today"
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={() => step(1)}
-                aria-label={view === "month" ? "The month after" : "The week after"}
-                className="btn btn-ghost btn-sm !px-1.5"
-                data-testid="cal-next"
-              >
-                <IconChevronRight size={14} />
-              </button>
-            </div>
-
-          </>
-        )}
-        {(layout !== "log" || view === "agenda") && (
-          <>
-            <div className="flex flex-wrap gap-1" role="tablist" aria-label="How much to show">
-              {(["agenda", "month", "week", "team"] as const).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="tab"
-                  aria-selected={view === option}
-                  // The day stays put; the server snaps it to the month or
-                  // week. Snapping here, from the already-snapped anchor,
-                  // lost a month every Month -> Week -> Month.
-                  onClick={() =>
-                    // Month is named in the address only when there is no
-                    // day to imply it, so a bare address can still default
-                    // to the Agenda for a Member or a phone.
-                    go(
-                      option === "month"
-                        ? { view: live.current.get("on") ? null : "month", layout: null }
-                        : option === "agenda"
-                          ? { view: "agenda", layout: null, on: null }
-                          : { view: option },
-                    )
-                  }
-                  className={`btn btn-sm pointer-coarse:min-h-11 ${view === option ? "btn-primary" : "btn-ghost"}`}
-                  data-testid={`cal-view-${option}`}
-                >
-                  {option === "agenda" ? "Agenda" : option === "month" ? "Month" : option === "week" ? "Week" : "Team"}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {view !== "agenda" && (
-        <div className="flex gap-1" role="tablist" aria-label="How to lay it out">
-          {(
-            [
-              ["calendar", "Calendar"],
-              ["log", "Log"],
-              ["both", "Calendar + Log"],
-            ] as const
-          ).map(([option, label]) => (
-            <button
-              key={option}
-              type="button"
-              role="tab"
-              aria-selected={layout === option}
-              onClick={() => go({ layout: option === "calendar" ? null : option })}
-              className={`btn btn-sm ${layout === option ? "btn-primary" : "btn-ghost"}`}
-              data-testid={`cal-layout-${option}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        )}
-
-        <div className="ml-auto flex flex-wrap gap-2">
-          {view === "week" && layout !== "log" && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() =>
-                start(async () => {
-                  setCopyState({});
-                  const result = await copyWeek({
-                    weekOf: anchor,
-                    crewId: filters.crewId || undefined,
-                    type: filters.type || undefined,
-                  });
-                  setCopyState(result ?? {});
-                })
-              }
-              className="btn btn-ghost btn-sm"
-              data-testid="cal-copy-week"
-            >
-              <IconCopy size={13} />
-              {pending ? "Copying…" : "Copy this week into next"}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setAdding(!adding)}
-            className="btn btn-primary btn-sm"
-            data-testid="cal-add-event"
-          >
-            <IconPlus size={13} />
-            {adding ? "Close" : "Event"}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2" data-testid="cal-filters">
-        {/* The company view: everyone's days, or just mine, or a pick of teammates. */}
         <div className="flex gap-1" role="group" aria-label="Whose calendar">
           <button
             type="button"
@@ -290,100 +199,274 @@ export function CalendarToolbar({
             className={`btn btn-sm pointer-coarse:min-h-11 ${scope === "team" ? "btn-primary" : "btn-ghost"}`}
             data-testid="cal-everyone"
           >
-            Everyone
+            Team
           </button>
         </div>
-        <MultiSelect
-          label="Users"
-          testId="cal-users"
-          values={filters.userIds}
-          rows={[...choices.users, { id: UNASSIGNED_USER, name: "Unassigned" }]}
-          onToggle={(id) => go({ users: toggleIn("users", id) })}
-          onReset={() => go({ users: null })}
-        />
-        <SearchSelect
-          label="Companies"
-          testId="cal-companies"
-          values={filters.companyIds}
-          selected={labels.companies}
-          fallback={choices.companies}
-          searchUrl="/dashboard/companies/search"
-          onToggle={(id) => go({ companies: toggleIn("companies", id) })}
-          onReset={() => go({ companies: null })}
-        />
-        <SearchSelect
-          label="Contacts"
-          testId="cal-contacts"
-          values={filters.contactIds}
-          selected={labels.contacts}
-          fallback={choices.contacts}
-          searchUrl="/dashboard/contacts/search"
-          onToggle={(id) => go({ contacts: toggleIn("contacts", id) })}
-          onReset={() => go({ contacts: null })}
-        />
-        <MultiSelect
-          label="Projects"
-          testId="cal-projects"
-          values={filters.projectIds}
-          rows={[
-            ...labels.projects.filter((project) => !choices.projects.some((entry) => entry.id === project.id)),
-            ...choices.projects.map((project) => ({ id: project.id, name: project.label })),
-          ]}
-          onToggle={(id) => go({ projects: toggleIn("projects", id) })}
-          onReset={() => go({ projects: null })}
-          searchable
-        />
 
-        <select
-          value={filters.crewId}
-          onChange={(fired) => go({ crew: fired.target.value || null })}
-          aria-label="Which crew's days to show"
-          className="select input-sm w-40"
-          data-testid="cal-crew-filter"
-        >
-          <option value="">Every crew</option>
-          {choices.crews.map((crew) => (
-            <option key={crew.id} value={crew.id}>
-              {crew.name}
-              {crew.kind === "SUBCONTRACTOR" ? " (sub)" : ""}
-            </option>
+        <div className="flex gap-1" role="tablist" aria-label="How much to show">
+          {(["agenda", "week", "month"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="tab"
+              aria-selected={view === option}
+              // The day stays put; the server snaps it to the month or
+              // week. Snapping here, from the already-snapped anchor,
+              // lost a month every Month -> Week -> Month.
+              onClick={() => showView(option)}
+              className={`btn btn-sm pointer-coarse:min-h-11 ${option === "month" ? "hidden sm:inline-flex" : ""} ${view === option ? "btn-primary" : "btn-ghost"}`}
+              data-testid={`cal-view-${option}`}
+            >
+              {option === "agenda" ? "Agenda" : option === "month" ? "Month" : "Week"}
+            </button>
           ))}
-        </select>
+        </div>
 
-        <select
-          value={filters.type}
-          onChange={(fired) => go({ type: fired.target.value || null })}
-          aria-label="Which kind of activity to show"
-          className="select input-sm w-44"
-          data-testid="cal-type-filter"
-        >
-          <option value="">Every activity</option>
-          {choices.eventTypes.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
+        {layout !== "log" && view !== "agenda" && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => step(-1)}
+              aria-label={view === "month" ? "The month before" : "The week before"}
+              className="btn btn-ghost btn-sm !px-1.5 pointer-coarse:min-h-11"
+              data-testid="cal-prev"
+            >
+              <IconChevronLeft size={14} />
+            </button>
+            <button type="button" onClick={() => go({ on: null })} className="btn btn-ghost btn-sm pointer-coarse:min-h-11" data-testid="cal-today">
+              Today
+            </button>
+            <button
+              type="button"
+              onClick={() => step(1)}
+              aria-label={view === "month" ? "The month after" : "The week after"}
+              className="btn btn-ghost btn-sm !px-1.5 pointer-coarse:min-h-11"
+              data-testid="cal-next"
+            >
+              <IconChevronRight size={14} />
+            </button>
+          </div>
+        )}
 
-        {filtering && (
+        <div className="ml-auto flex flex-wrap gap-2">
+          <button
+            ref={viewButton}
+            type="button"
+            onClick={() => setViewOpen(!viewOpen)}
+            aria-expanded={viewOpen}
+            aria-haspopup="menu"
+            className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
+            data-testid="cal-view-menu"
+          >
+            View
+            <IconChevronDown size={12} className="opacity-70" />
+          </button>
           <button
             type="button"
-            // Clear shows everything, so it is Everyone from then on too.
-            onClick={() =>
-              start(async () => {
-                await saveUiPref("calendar", "scope", "team");
-                go({ crew: null, type: null, users: null, companies: null, contacts: null, projects: null });
-                router.refresh();
-              })
-            }
-            className="btn btn-ghost btn-sm"
+            onClick={() => setFiltersOpen(true)}
+            aria-haspopup="dialog"
+            className={`btn btn-sm pointer-coarse:min-h-11 ${filterCount > 0 ? "btn-primary" : "btn-ghost"}`}
+            data-testid="cal-filters-open"
           >
-            Clear
+            <IconFilter size={12} />
+            Filters{filterCount > 0 ? ` (${filterCount})` : ""}
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="btn btn-primary btn-sm pointer-coarse:min-h-11"
+            data-testid="cal-add-event"
+          >
+            <IconPlus size={13} />
+            New
+          </button>
+        </div>
       </div>
 
-      {filters.userIds.length + filters.companyIds.length + filters.contactIds.length + filters.projectIds.length > 0 && (
+      <FloatingMenu anchor={viewButton} open={viewOpen} onClose={() => setViewOpen(false)} width={260} testId="cal-view-panel" label="View">
+        <div className="space-y-3 p-3">
+          <div className="sm:hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setViewOpen(false);
+                showView("month");
+              }}
+              className={`btn btn-sm w-full min-h-11 ${view === "month" ? "btn-primary" : "btn-ghost"}`}
+              data-testid="cal-view-month-phone"
+            >
+              Month
+            </button>
+          </div>
+          <div>
+            <p className="eyebrow mb-1">The team</p>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "team"}
+              onClick={() => {
+                setViewOpen(false);
+                showView("team");
+              }}
+              className={`btn btn-sm w-full pointer-coarse:min-h-11 ${view === "team" ? "btn-primary" : "btn-ghost"}`}
+              data-testid="cal-view-team"
+            >
+              Team week, a row each
+            </button>
+          </div>
+          {view !== "agenda" && (
+            <div role="tablist" aria-label="How to lay it out">
+              <p className="eyebrow mb-1">Lay it out as</p>
+              <div className="grid gap-1">
+                {(
+                  [
+                    ["calendar", "Calendar"],
+                    ["log", "Log"],
+                    ["both", "Calendar + Log"],
+                  ] as const
+                ).map(([option, label]) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    aria-selected={layout === option}
+                    onClick={() => {
+                      setViewOpen(false);
+                      go({ layout: option === "calendar" ? null : option });
+                    }}
+                    className={`btn btn-sm pointer-coarse:min-h-11 ${layout === option ? "btn-primary" : "btn-ghost"}`}
+                    data-testid={`cal-layout-${option}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {view === "week" && layout !== "log" && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  setCopyState({});
+                  const result = await copyWeek({
+                    weekOf: anchor,
+                    crewId: filters.crewId || undefined,
+                    type: filters.type || undefined,
+                  });
+                  setCopyState(result ?? {});
+                  setViewOpen(false);
+                })
+              }
+              className="btn btn-ghost btn-sm w-full pointer-coarse:min-h-11"
+              data-testid="cal-copy-week"
+            >
+              <IconCopy size={13} />
+              {pending ? "Copying…" : "Copy this week into next"}
+            </button>
+          )}
+        </div>
+      </FloatingMenu>
+
+      <Sheet
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title="Filters"
+        testId="cal-filters-sheet"
+        footer={
+          <div className="flex gap-2">
+            {filtering && (
+              <button type="button" onClick={clearAll} className="btn btn-ghost min-h-11" data-testid="cal-filters-clear">
+                Clear all
+              </button>
+            )}
+            <button type="button" onClick={() => setFiltersOpen(false)} className="btn btn-primary ml-auto min-h-11" data-testid="cal-filters-done">
+              Done
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3" data-testid="cal-filters">
+          <section className="space-y-1.5">
+            <p className="eyebrow">Who</p>
+            <MultiSelect
+              label="Users"
+              testId="cal-users"
+              values={filters.userIds}
+              rows={[...choices.users, { id: UNASSIGNED_USER, name: "Unassigned" }]}
+              onToggle={(id) => go({ users: toggleIn("users", id) })}
+              onReset={() => go({ users: null })}
+            />
+            <SearchSelect
+              label="Companies"
+              testId="cal-companies"
+              values={filters.companyIds}
+              selected={labels.companies}
+              fallback={choices.companies}
+              searchUrl="/dashboard/companies/search"
+              onToggle={(id) => go({ companies: toggleIn("companies", id) })}
+              onReset={() => go({ companies: null })}
+            />
+            <SearchSelect
+              label="Contacts"
+              testId="cal-contacts"
+              values={filters.contactIds}
+              selected={labels.contacts}
+              fallback={choices.contacts}
+              searchUrl="/dashboard/contacts/search"
+              onToggle={(id) => go({ contacts: toggleIn("contacts", id) })}
+              onReset={() => go({ contacts: null })}
+            />
+          </section>
+          <section className="space-y-1.5">
+            <p className="eyebrow">Work</p>
+            <MultiSelect
+              label="Projects"
+              testId="cal-projects"
+              values={filters.projectIds}
+              rows={[
+                ...labels.projects.filter((project) => !choices.projects.some((entry) => entry.id === project.id)),
+                ...choices.projects.map((project) => ({ id: project.id, name: project.label })),
+              ]}
+              onToggle={(id) => go({ projects: toggleIn("projects", id) })}
+              onReset={() => go({ projects: null })}
+              searchable
+            />
+            <select
+              value={filters.crewId}
+              onChange={(fired) => go({ crew: fired.target.value || null })}
+              aria-label="Which crew's days to show"
+              className="select w-full"
+              data-testid="cal-crew-filter"
+            >
+              <option value="">Every crew</option>
+              {choices.crews.map((crew) => (
+                <option key={crew.id} value={crew.id}>
+                  {crew.name}
+                  {crew.kind === "SUBCONTRACTOR" ? " (sub)" : ""}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filters.type}
+              onChange={(fired) => go({ type: fired.target.value || null })}
+              aria-label="Which kind of activity to show"
+              className="select w-full"
+              data-testid="cal-type-filter"
+            >
+              <option value="">Every activity</option>
+              {choices.eventTypes.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </section>
+        </div>
+      </Sheet>
+
+      {filtering && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="cal-active-filters">
           {filters.userIds.map((id) => (
             <Chip key={`u-${id}`} onRemove={() => go({ users: toggleIn("users", id) })}>
@@ -405,21 +488,28 @@ export function CalendarToolbar({
               {labels.projects.find((row) => row.id === id)?.name ?? "…"}
             </Chip>
           ))}
+          {filters.crewId && <Chip onRemove={() => go({ crew: null })}>Crew: {crewName}</Chip>}
+          {filters.type && <Chip onRemove={() => go({ type: null })}>{filters.type}</Chip>}
+          <button type="button" onClick={clearAll} className="btn btn-ghost btn-sm pointer-coarse:min-h-11">
+            Clear
+          </button>
         </div>
       )}
 
       <FormError message={copyState.error} />
       <FormSuccess message={copyState.success} />
 
-      {adding && (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--tint-1)] p-4">
-          <EventForm
-            choices={choices}
-            defaults={{ startOn: view !== "month" && view !== "agenda" && layout !== "log" ? focus : today }}
-            onDone={() => setAdding(false)}
-          />
-        </div>
-      )}
+      <Sheet open={adding} onClose={() => setAdding(false)} title="New entry" testId="cal-new-sheet">
+        <EventForm
+          choices={choices}
+          quick
+          defaults={{
+            startOn: view !== "month" && view !== "agenda" && layout !== "log" ? focus : today,
+            type: choices.eventTypes.find((name) => name.toLowerCase() === "call"),
+          }}
+          onDone={() => setAdding(false)}
+        />
+      </Sheet>
     </div>
   );
 }
@@ -478,20 +568,21 @@ function Dropdown({
   }, [open, setOpen]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-haspopup="listbox"
         data-testid={testId}
-        className={`btn btn-sm ${count > 0 ? "btn-primary" : "btn-ghost"}`}
+        className={`btn btn-sm w-full justify-between pointer-coarse:min-h-11 ${count > 0 ? "btn-primary" : "btn-ghost"}`}
       >
         {label}
         {count > 0 && <span className="num rounded-full bg-[var(--tint-5)] px-1.5 text-[0.65rem]">{count}</span>}
         <IconChevronDown size={12} className="opacity-70" />
       </button>
-      {open && <div className="card popover absolute left-0 top-full z-30 mt-1 w-72 py-1">{children}</div>}
+      {/* In the Filters sheet the list opens in place, under its button. */}
+      {open && <div className="card popover mt-1 w-full py-1">{children}</div>}
     </div>
   );
 }

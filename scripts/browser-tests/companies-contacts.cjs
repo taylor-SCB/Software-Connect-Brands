@@ -149,19 +149,22 @@ function backLink(page) {
   }
   await shot(page, "02b-contact-plus-event");
   await page.locator("[data-testid=upcoming-add-event]").click();
-  // The calendar's own form is wide and keeps its columns.
+  // The calendar's own form keeps its columns where it has the room. Since
+  // the BDR redesign (Nov 11, 2026) it opens in the "+ New" sheet (about
+  // 470px wide on a desktop), with who / where / job under More.
   await page.goto(`${BASE}/dashboard/calendar`);
   await page.locator("[data-testid=cal-add-event]").click();
-  const wideForm = page.locator("[data-testid=event-form]").first();
+  const wideForm = page.locator("[data-testid=cal-new-sheet] [data-testid=event-form]");
   await wideForm.locator("[data-testid=event-timed]").check();
+  await wideForm.locator("[data-testid=event-more]").click();
   const tops = await wideForm.evaluate((form) =>
     ["event-title", "event-type", "event-start-on", "event-start-time", "event-end-time", "event-owner", "event-crew", "event-project"].map((id) =>
       Math.round(form.querySelector(`[data-testid=${id}]`).getBoundingClientRect().top),
     ),
   );
   assert.equal(tops[0], tops[1], "title and kind side by side");
-  assert.ok(tops[2] === tops[3] && tops[3] === tops[4], `day and both times on one row (${tops})`);
-  assert.ok(tops[5] === tops[6] && tops[6] === tops[7], `whose calendar, who is going and which job on one row (${tops})`);
+  assert.ok(tops[2] === tops[3], `day and start time on one row (${tops})`);
+  assert.ok(tops[5] === tops[6], `whose calendar and who is going on one row (${tops})`);
   assert.notEqual(await wideForm.locator("[data-testid=event-type]").inputValue(), "", "the calendar's form still starts on the list's first type");
 
   log("Companies list has the company with 1 person; company page lists Danny");
