@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { aheadDay, pastDay, time12 } from "@/lib/health";
+import { pipelineHref } from "@/lib/pipeline-link";
 import { completeEventWithLog } from "@/app/dashboard/calendar/actions";
 import { markMeetingHeld, markMeetingNoShow } from "@/app/dashboard/deals/opportunity-actions";
 import { UndoToast } from "@/components/how-did-it-go/undo-toast";
@@ -14,7 +15,9 @@ import type { MeetingItem } from "./load";
 // Held / No-show, one tap each, with "Saved · Undo". Held on a booked
 // meeting goes through markMeetingHeld (Meeting Completed, credit to
 // whoever booked it); an entry with no booked meeting behind it is ticked
-// done through completeEventWithLog with the same outcome.
+// done through completeEventWithLog with the same outcome. Which past
+// meeting still waits is waitingMeetings' rule (src/lib/meeting-rule.ts),
+// read in load.ts; a row links to its Pipeline tile.
 export function MeetingsCard({ meetings, today, readOnly }: { meetings: MeetingItem[]; today: string; readOnly: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -62,7 +65,8 @@ export function MeetingsCard({ meetings, today, readOnly }: { meetings: MeetingI
         {meetings.map((row) => {
           const when = row.on < today ? pastDay(row.on, today) : aheadDay(row.on, today);
           const time = time12(row.time);
-          const waiting = row.past && !row.done;
+          // Waiting for an answer by the one meeting rule (load.ts).
+          const waiting = row.waiting;
           return (
             <li key={row.eventId} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5" data-testid="meeting-row" data-event-id={row.eventId}>
               <div className="w-20 shrink-0 text-xs">
@@ -70,7 +74,15 @@ export function MeetingsCard({ meetings, today, readOnly }: { meetings: MeetingI
                 <p className="faint num">{time ?? "No time set"}</p>
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{row.title}</p>
+                <p className="truncate text-sm font-medium">
+                  {row.opportunityId ? (
+                    <Link href={pipelineHref(row.opportunityId)} className="hover:underline" data-testid="meeting-tile">
+                      {row.title}
+                    </Link>
+                  ) : (
+                    row.title
+                  )}
+                </p>
                 {row.who && (
                   <p className="faint truncate text-xs">
                     {row.contactId ? (

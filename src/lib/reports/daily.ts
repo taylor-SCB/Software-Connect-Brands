@@ -24,9 +24,13 @@ export type DailyReport = {
   // the open ones first, then the done ones (UX review, Nov 10, 2026: by
   // start time alone a morning of ticked-off calls filled the card and
   // pushed the afternoon's open entries behind See all).
-  calendar: { count: number; open: number; items: { id: string; title: string; type: string; time: string | null; owner: string; who: string | null; done: boolean }[] };
-  overdue: { count: number; items: { id: string; title: string; type: string; on: string; days: number; owner: string; who: string | null }[] };
-  quiet: { count: number; quietDays: number; items: { id: string; title: string; days: number; owner: string }[] };
+  // Round 2 (BDR redesign): every row names its person (contactId, their
+  // mobile or phone for Call) or its company; done entries are also listed
+  // on their own (doneItems) for the collapsed "Done today".
+  calendar: { count: number; open: number; items: RundownEntry[]; doneItems: RundownEntry[] };
+  overdue: { count: number; items: (RundownPerson & { id: string; title: string; type: string; on: string; days: number; owner: string; who: string | null })[] };
+  // Gone quiet names the Primary POC, with the company under it.
+  quiet: { count: number; quietDays: number; items: { id: string; title: string; days: number; owner: string; person: { id: string; name: string; phone: string | null } | null; company: string | null }[] };
   payments: { cents: number; count: number; previousCents: number; items: { customer: string; cents: number; method: string | null }[] };
   quotes: { count: number; cents: number; items: { id: string; number: number; title: string; customer: string; cents: number }[] };
   contracts: { count: number; items: { id: string; number: number; title: string; customer: string }[] };
@@ -34,6 +38,22 @@ export type DailyReport = {
   headlines: Headline[];
   table: SummaryTable;
 };
+
+export type RundownPerson = { contactId: string | null; companyId: string | null; phone: string | null; company: string | null };
+export type RundownEntry = RundownPerson & { id: string; title: string; type: string; time: string | null; owner: string; who: string | null; done: boolean };
+
+type EventPeople = {
+  contact: { id: string; name: string; mobile: string | null; phone: string | null; company: { name: string } | null } | null;
+  company: { id: string; name: string } | null;
+};
+function personOf(event: EventPeople): RundownPerson {
+  return {
+    contactId: event.contact?.id ?? null,
+    companyId: event.contact ? null : (event.company?.id ?? null),
+    phone: event.contact ? event.contact.mobile || event.contact.phone || null : null,
+    company: event.contact?.company?.name ?? null,
+  };
+}
 
 export async function loadDaily(params: ReportParams): Promise<DailyReport> {
   const { organizationId, repId, timeZone, now } = params;
@@ -60,7 +80,11 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
   const yesterdayWindow = { gte: yesterdayRange.from, lt: yesterdayRange.to };
 
   const calendarOrder: Prisma.CalendarEventOrderByWithRelationInput[] = [{ startTime: { sort: "asc", nulls: "last" } }, { title: "asc" }];
-  const calendarSelect = { id: true, title: true, type: true, startTime: true, endTime: true, ownerId: true, doneAt: true, contact: { select: { name: true } }, company: { select: { name: true } } } as const;
+  const peopleSelect = {
+    contact: { select: { id: true, name: true, mobile: true, phone: true, company: { select: { name: true } } } },
+    company: { select: { id: true, name: true } },
+  } as const;
+  const calendarSelect = { id: true, title: true, type: true, startTime: true, endTime: true, ownerId: true, doneAt: true, ...peopleSelect } as const;
   const [team, calendarCount, calendarOpenCount, calendarOpen, calendarDone, overdueCount, overdue, quiet, payments, quotes, contracts, contactCounts, contacts] = await Promise.all([
     loadTeam(organizationId),
     prisma.calendarEvent.count({ where: calendarWhere }),
@@ -72,7 +96,7 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
       where: overdueWhere,
       orderBy: [{ startOn: "asc" }, { startTime: "asc" }],
       take: LIST,
-      select: { id: true, title: true, type: true, startOn: true, ownerId: true, contact: { select: { name: true } }, company: { select: { name: true } } },
+      select: { id: true, title: true, type: true, startOn: true, ownerId: true, ...peopleSelect },
     }),
     quietFor(organizationId, repId),
     prisma.$queryRaw<{ day: string; customer: string; cents: number; method: string | null }[]>`
@@ -123,6 +147,16 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
   ]);
 
   const calendar = [...calendarOpen, ...calendarDone].slice(0, LIST);
+  const entry = (event: (typeof calendarOpen)[number]): RundownEntry => ({
+    id: event.id,
+    title: event.title,
+    type: event.type,
+    time: event.startTime ? (event.endTime ? `${event.startTime}–${event.endTime}` : event.startTime) : null,
+    owner: nameOf(team, event.ownerId),
+    who: event.contact?.name ?? event.company?.name ?? null,
+    done: Boolean(event.doneAt),
+    ...personOf(event),
+  });
   const paidYesterday = payments.filter((row) => row.day === yesterday);
   const paidBefore = payments.filter((row) => row.day !== yesterday);
   const quoteRows = quotes.map((quote) => ({
@@ -140,15 +174,8 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
     calendar: {
       count: calendarCount,
       open: calendarOpenCount,
-      items: calendar.map((event) => ({
-        id: event.id,
-        title: event.title,
-        type: event.type,
-        time: event.startTime ? (event.endTime ? `${event.startTime}–${event.endTime}` : event.startTime) : null,
-        owner: nameOf(team, event.ownerId),
-        who: event.contact?.name ?? event.company?.name ?? null,
-        done: Boolean(event.doneAt),
-      })),
+      items: calendar.map(entry),
+      doneItems: calendarDone.map(entry),
     },
     overdue: {
       count: overdueCount,
@@ -162,10 +189,15 @@ export async function loadDaily(params: ReportParams): Promise<DailyReport> {
           days: daysBetweenIso(on, today),
           owner: nameOf(team, event.ownerId),
           who: event.contact?.name ?? event.company?.name ?? null,
+          ...personOf(event),
         };
       }),
     },
-    quiet: { count: quiet.count, quietDays: quiet.quietDays, items: quiet.items.map((item) => ({ ...item, owner: nameOf(team, item.ownerId) })) },
+    quiet: {
+      count: quiet.count,
+      quietDays: quiet.quietDays,
+      items: quiet.items.map(({ ownerId, ...item }) => ({ ...item, owner: nameOf(team, ownerId) })),
+    },
     payments: {
       cents: paidYesterday.reduce((sum, row) => sum + num(row.cents), 0),
       count: paidYesterday.length,
@@ -230,8 +262,27 @@ async function quietFor(organizationId: string, repId: string | null) {
   return {
     quietDays,
     count: mine.length,
-    items: mine.slice(0, LIST).map((row) => ({ id: row.id, title: row.title, days: row.days, ownerId: ownerOf.get(row.id) ?? null })),
+    items: await withPrimary(organizationId, mine.slice(0, LIST).map((row) => ({ id: row.id, title: row.title, days: row.days, ownerId: ownerOf.get(row.id) ?? null }))),
   };
+}
+
+// Each quiet opportunity's Primary POC (one statement for the list), so the
+// row names a person to call, with the company under it.
+async function withPrimary<T extends { id: string }>(organizationId: string, rows: T[]) {
+  if (!rows.length) return rows.map((row) => ({ ...row, person: null, company: null }));
+  const links = await prisma.opportunityContact.findMany({
+    where: { opportunityId: { in: rows.map((row) => row.id) }, role: "PRIMARY", opportunity: { organizationId } },
+    select: { opportunityId: true, contact: { select: { id: true, name: true, mobile: true, phone: true, company: { select: { name: true } } } } },
+  });
+  const primary = new Map(links.map((link) => [link.opportunityId, link.contact]));
+  return rows.map((row) => {
+    const person = primary.get(row.id);
+    return {
+      ...row,
+      person: person ? { id: person.id, name: person.name, phone: person.mobile || person.phone || null } : null,
+      company: person?.company?.name ?? null,
+    };
+  });
 }
 
 /* ------------------------------- Team today ------------------------------- */
@@ -367,10 +418,13 @@ const OPEN_BOOK = ["NOT_ACTIONED", "CONTACTED", "CONNECTED", "INTERESTED", "MEET
 // all, shared out across the reps. The bar says when it is a sample.
 const MIX_BUDGET = 1500;
 
-export async function loadTeamToday(organizationId: string, timeZone: string, now: Date): Promise<TeamToday> {
+// The teammates who sell: they own records or logged a touch in the last
+// 30 days. Team today's rows, and the Activity report's Rep rows and its
+// write-up, leave everyone else out (an owner who doesn't sell is not "the
+// fewest"; Round 2).
+export async function sellingReps(organizationId: string, now: Date) {
   const monthAgo = new Date(now.getTime() - 30 * 86_400_000);
-  const [people, org, unowned] = await Promise.all([
-    prisma.$queryRaw<{ id: string; name: string; avatar_url: string | null }[]>`
+  return prisma.$queryRaw<{ id: string; name: string; avatar_url: string | null }[]>`
       SELECT u.id, u.name, u."avatarUrl" AS avatar_url
         FROM "User" u
        WHERE u."organizationId" = ${organizationId} AND u."removedAt" IS NULL
@@ -378,7 +432,12 @@ export async function loadTeamToday(organizationId: string, timeZone: string, no
            OR EXISTS (SELECT 1 FROM "Company" co WHERE co."organizationId" = ${organizationId} AND co."ownerId" = u.id)
            OR EXISTS (SELECT 1 FROM "Activity" a WHERE a."organizationId" = ${organizationId} AND a."userId" = u.id
                          AND a.marketing = false AND a."createdAt" >= ${monthAgo}))
-       ORDER BY u.name`,
+       ORDER BY u.name`;
+}
+
+export async function loadTeamToday(organizationId: string, timeZone: string, now: Date): Promise<TeamToday> {
+  const [people, org, unowned] = await Promise.all([
+    sellingReps(organizationId, now),
     prisma.organization.findUnique({
       where: { id: organizationId },
       select: { weeklyTryGoal: true, weeklyTalkGoal: true, weeklyMeetingGoal: true },

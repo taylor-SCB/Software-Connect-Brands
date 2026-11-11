@@ -11,6 +11,7 @@ import type { PeriodRange } from "@/lib/reports/period";
 import { formatIsoDay } from "@/lib/reports/period";
 import { changeText, formatValue, headlineValue, money, percent, plural, TRY_TALK_COLORS, TRY_TALK_SERIES } from "@/lib/reports/format";
 import { Columns, HBars } from "./charts";
+import { pipelineHref } from "@/lib/pipeline-link";
 
 // The body of each report under its write-up: headline tiles with the
 // comparison, the charts, and a compact table behind every chart.
@@ -129,22 +130,82 @@ function Delta({ now, before }: { now: number; before: number }) {
 /* ------------------------------- Daily ------------------------------- */
 
 // `count` goes in the heading; `listed` (default: count) says whether there
-// are rows to show — the calendar's heading counts only what is still open
-// while its done entries are listed after them.
-function RundownList({ title, sub, empty, children, count, listed = count, testId, href }: { title: string; sub?: string; empty: string; children: React.ReactNode; count: number; listed?: number; testId: string; href?: string }) {
+// are rows to show.
+function RundownList({
+  title,
+  sub,
+  empty,
+  children,
+  count,
+  listed = count,
+  testId,
+  href,
+  hrefLabel = "See all",
+  className = "",
+  after,
+}: {
+  title: string;
+  sub?: string;
+  empty: string;
+  children: React.ReactNode;
+  count: number;
+  listed?: number;
+  testId: string;
+  href?: string;
+  hrefLabel?: string;
+  className?: string;
+  after?: React.ReactNode;
+}) {
   return (
-    <Panel title={`${title}${count ? ` · ${count}` : ""}`} sub={sub} testId={testId}>
+    <Panel title={`${title}${count ? ` · ${count}` : ""}`} sub={sub} testId={testId} className={className}>
       {listed === 0 ? <p className="faint text-sm">{empty}</p> : <ul className="divide-y divide-[var(--hairline-3)] text-sm">{children}</ul>}
-      {href && listed > 0 && (
-        <Link href={href} className="link mt-2 inline-block text-xs">
-          See all
+      {after}
+      {href && (listed > 0 || count > 0) && (
+        <Link href={href} className="link mt-2 inline-flex min-h-11 items-center text-xs sm:min-h-0" data-testid={`${testId}-all`}>
+          {hrefLabel}
         </Link>
       )}
     </Panel>
   );
 }
 
+// A row's person (or company) as a link, and a Call button when there is a
+// number (BDR redesign, Round 2: every Rundown row leads to someone).
+function Who({ contactId, companyId, name, sub }: { contactId: string | null; companyId?: string | null; name: string | null; sub?: string | null }) {
+  if (!name) return null;
+  const href = contactId ? `/dashboard/contacts/${contactId}` : companyId ? `/dashboard/companies/${companyId}` : null;
+  return (
+    <>
+      {href ? (
+        <Link href={href} className="link" data-testid="rundown-person">
+          {name}
+        </Link>
+      ) : (
+        name
+      )}
+      {sub ? <span className="faint"> · {sub}</span> : null}
+    </>
+  );
+}
+
+function CallButton({ phone, name, contactId }: { phone: string | null; name: string | null; contactId: string | null }) {
+  if (!phone) return null;
+  return (
+    <a
+      href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+      className="btn btn-ghost btn-sm min-h-11 shrink-0 sm:min-h-0"
+      aria-label={`Call ${name ?? ""}`}
+      data-contact-id={contactId ?? undefined}
+      data-testid="rundown-call"
+    >
+      Call
+    </a>
+  );
+}
+
 function DailyView({ report }: { report: DailyReport }) {
+  const open = report.calendar.items.filter((item) => !item.done);
+  const done = report.calendar.doneItems;
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <RundownList
@@ -157,35 +218,76 @@ function DailyView({ report }: { report: DailyReport }) {
             : undefined
         }
         count={report.calendar.open}
-        listed={report.calendar.count}
-        empty="Nothing on the calendar today."
+        listed={open.length}
+        empty={report.calendar.count ? "Everything on today is done." : "Nothing on the calendar today."}
         testId="rundown-calendar"
         href="/dashboard/calendar"
+        after={
+          done.length > 0 && (
+            <details className="mt-2" data-testid="rundown-done">
+              <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">
+                Done today ({report.calendar.count - report.calendar.open})
+              </summary>
+              <ul className="mt-1 divide-y divide-[var(--hairline-3)] text-sm">
+                {done.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-done="true">
+                    <span className="min-w-0 truncate">
+                      <span className="line-through">{item.title}</span>
+                      <span className="faint block text-[0.7rem]">
+                        {item.type} · {item.owner}
+                        {item.who ? " · " : ""}
+                        <Who contactId={item.contactId} companyId={item.companyId} name={item.who} />
+                      </span>
+                    </span>
+                    <span className="num faint shrink-0 text-xs">{item.time ?? "No time set"}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )
+        }
       >
-        {report.calendar.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2" data-done={item.done ? "true" : undefined}>
-            <span className={`min-w-0 truncate ${item.done ? "line-through" : ""}`}>
+        {open.map((item) => (
+          <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-testid="rundown-row">
+            <span className="min-w-0 truncate">
               {item.title}
-              <span className="faint block text-[0.7rem]">
+              <span className="faint block truncate text-[0.7rem]">
                 {item.type} · {item.owner}
-                {item.who ? ` · ${item.who}` : ""}
+                {item.who ? " · " : ""}
+                <Who contactId={item.contactId} companyId={item.companyId} name={item.who} />
               </span>
             </span>
-            <span className="num faint shrink-0 text-xs">{item.time ?? "No time set"}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="num faint text-xs">{item.time ?? "No time set"}</span>
+              <CallButton phone={item.phone} name={item.who} contactId={item.contactId} />
+            </span>
           </li>
         ))}
       </RundownList>
-      <RundownList title="Overdue follow-ups" count={report.overdue.count} empty="Nothing overdue. Nice." testId="rundown-overdue" href="/dashboard/calendar">
+      {/* On a phone Overdue comes first (BDR redesign, Round 2). */}
+      <RundownList
+        title="Overdue follow-ups"
+        count={report.overdue.count}
+        empty="Nothing overdue. Nice."
+        testId="rundown-overdue"
+        href="/dashboard/calendar?view=agenda"
+        hrefLabel={report.overdue.count > report.overdue.items.length ? `See all ${report.overdue.count}` : "See all"}
+        className="max-md:-order-1"
+      >
         {report.overdue.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2">
+          <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-testid="rundown-row">
             <span className="min-w-0 truncate">
               {item.title}
-              <span className="faint block text-[0.7rem]">
+              <span className="faint block truncate text-[0.7rem]">
                 {item.owner}
-                {item.who ? ` · ${item.who}` : ""} · due {formatIsoDay(item.on)}
+                {item.who ? " · " : ""}
+                <Who contactId={item.contactId} companyId={item.companyId} name={item.who} /> · due {formatIsoDay(item.on)}
               </span>
             </span>
-            <span className="num shrink-0 text-xs text-[var(--danger)]">{item.days}d late</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="num text-xs text-[var(--danger)]">{item.days}d late</span>
+              <CallButton phone={item.phone} name={item.who} contactId={item.contactId} />
+            </span>
           </li>
         ))}
       </RundownList>
@@ -195,15 +297,20 @@ function DailyView({ report }: { report: DailyReport }) {
         count={report.quiet.count}
         empty="Every open opportunity has been touched recently."
         testId="rundown-quiet"
-        href="/dashboard/deals"
+        href="/dashboard/deals?quiet=1"
       >
         {report.quiet.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 py-2">
+          <li key={item.id} className="flex items-center justify-between gap-3 py-2" data-testid="rundown-row">
             <span className="min-w-0 truncate">
-              {item.title}
-              <span className="faint block text-[0.7rem]">{item.owner}</span>
+              {item.person ? <Who contactId={item.person.id} name={item.person.name} /> : <Link href={pipelineHref(item.id)} className="link">{item.title}</Link>}
+              <span className="faint block truncate text-[0.7rem]" data-testid="rundown-quiet-sub">
+                {[item.company, item.owner].filter(Boolean).join(" · ")}
+              </span>
             </span>
-            <span className="num faint shrink-0 text-xs">{item.days} days</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="num faint text-xs">{item.days} days</span>
+              <CallButton phone={item.person?.phone ?? null} name={item.person?.name ?? null} contactId={item.person?.id ?? null} />
+            </span>
           </li>
         ))}
       </RundownList>

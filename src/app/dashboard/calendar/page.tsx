@@ -58,14 +58,12 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   const member = role !== "OWNER" && role !== "ADMIN";
 
   const bare = !params.view && !params.on && !params.layout;
-  const view =
-    params.view === "week"
-      ? "week"
-      : params.view === "team"
-        ? "team"
-        : params.view === "agenda" || (bare && member)
-          ? "agenda"
-          : "month";
+  // A bare address opens the view the person last picked (uiPrefs
+  // calendar.view, Round 2), else the Agenda for a Member and the Month for
+  // an Owner or Admin (a phone swaps a bare Month for the Agenda).
+  const rememberedView = prefChoice(prefs, "calendar", "view", ["agenda", "week", "month"] as const);
+  const wanted = bare ? (rememberedView ?? (member ? "agenda" : "month")) : params.view;
+  const view = wanted === "week" ? "week" : wanted === "team" ? "team" : wanted === "agenda" ? "agenda" : "month";
   const layout = view === "agenda" ? "calendar" : readLayout(params.layout);
   // Anything that is not a real day falls back to today rather than
   // taking the page down with it.
@@ -186,7 +184,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         }
       />
 
-      {bare && view !== "agenda" && <PhoneAgenda />}
+      {bare && !rememberedView && view !== "agenda" && <PhoneAgenda />}
       <CalendarToolbar
         view={view}
         scope={scope}

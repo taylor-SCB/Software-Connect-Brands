@@ -9,6 +9,8 @@ import { Ring } from "./rings";
 import { UpNextList } from "./up-next";
 import { MeetingsCard } from "./meetings";
 import { MemberJumpIn } from "./jump-in";
+import { Greeting } from "./greeting";
+import { RememberedDetails } from "./remembered-details";
 
 // My day (BDR redesign, Nov 11, 2026; decision 9): a Member's first
 // Overview tab. Top to bottom, and the same order on a phone: the greeting
@@ -24,9 +26,15 @@ export function MyDayView({
   day,
   readOnly,
   teamMoney,
+  ai = false,
+  teamMoneyOpen = false,
 }: {
   day: MyDay;
   readOnly: boolean;
+  // AI is switched on: the greeting offers Rewrite.
+  ai?: boolean;
+  // "Team & money" was left open last time (uiPrefs myday.teamMoney).
+  teamMoneyOpen?: boolean;
   // The money tiles and Recent activity, rendered by the page.
   teamMoney: React.ReactNode;
 }) {
@@ -36,9 +44,7 @@ export function MyDayView({
     <div className="space-y-5 pb-24 lg:pb-0" data-testid="my-day" data-rep={day.rep.id} data-readonly={readOnly ? "" : undefined}>
       <div>
         <p className="faint text-xs">{readOnly ? `${day.rep.name}'s day · read-only` : "My day"}</p>
-        <h1 className="mt-1 text-xl font-semibold leading-snug sm:text-2xl" data-testid="my-day-greeting">
-          {day.greeting}
-        </h1>
+        <Greeting text={day.greeting} ai={ai && !readOnly} />
       </div>
 
       <Card lit className="min-w-0">
@@ -99,13 +105,21 @@ export function MyDayView({
         </Card>
       )}
 
-      <details className="card min-w-0" data-testid="team-money">
-        <summary className="flex cursor-pointer items-center justify-between px-5 py-3.5 text-sm font-semibold pointer-coarse:min-h-11">
-          <span>Team &amp; money</span>
-          <span className="faint text-xs font-normal">Show</span>
-        </summary>
+      <RememberedDetails
+        namespace="myday"
+        prefKey="teamMoney"
+        initialOpen={teamMoneyOpen}
+        className="card min-w-0"
+        testId="team-money"
+        summary={
+          <summary className="flex cursor-pointer items-center justify-between px-5 py-3.5 text-sm font-semibold pointer-coarse:min-h-11">
+            <span>Team &amp; money</span>
+            <span className="faint text-xs font-normal">Show</span>
+          </summary>
+        }
+      >
         <div className="border-t border-[var(--hairline-3)] p-4 sm:p-5">{teamMoney}</div>
-      </details>
+      </RememberedDetails>
 
       <details className="card min-w-0" data-testid="reports-fold">
         <summary className="flex cursor-pointer items-center justify-between px-5 py-3.5 text-sm font-semibold pointer-coarse:min-h-11">

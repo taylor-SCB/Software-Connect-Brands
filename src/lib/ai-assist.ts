@@ -17,6 +17,8 @@ export const AI_DAILY_CAPS = {
   QUOTE_DRAFT: 100,
   IMPORT_HEADERS: 50,
   LEAD_LABEL: 200,
+  // My day's greeting, reworded on request (BDR redesign, Round 2).
+  MY_DAY_GREETING: 200,
 } as const;
 
 // How much meeting text one request carries at most.
