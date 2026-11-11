@@ -177,11 +177,11 @@ async function followUps(org) {
   await statusOption("Interested").click();
   await page.waitForURL(/status=INTERESTED/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 1, "one interested contact");
-  assert.deepEqual(await page.locator("[data-testid=contact-row] td:nth-child(4) a").allTextContents(), ["Eli Park"]);
+  assert.deepEqual(await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents(), ["Eli Park"]);
   await statusOption("Meeting Set").click();
   await page.waitForURL(/status=INTERESTED&status=MEETING_SET/);
   await until(async () => (await page.locator("[data-testid=contact-row]").count()) === 2, "two contacts");
-  const twoNames = (await page.locator("[data-testid=contact-row] td:nth-child(4) a").allTextContents()).sort();
+  const twoNames = (await page.locator("[data-testid=contact-row] td:nth-child(2) a.link").allTextContents()).sort();
   assert.deepEqual(twoNames, ["Eli Park", "Faye Chen"]);
   const chips = page.locator("[data-testid=active-filters]");
   assert.match(await chips.textContent(), /Status: Interested/);

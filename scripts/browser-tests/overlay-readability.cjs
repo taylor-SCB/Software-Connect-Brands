@@ -380,8 +380,10 @@ async function withOldGlass(page, selector, body) {
   log("filter menus on the Contacts list, both the checklist and the search kind");
   await page.goto(`${BASE}/dashboard/contacts`);
 
-  await page.locator('[data-testid="filter-state"]').click();
-  const statePanel = page.locator(".popover").first();
+  await openFilters(page);
+
+  await page.locator('[data-testid=\"filter-state\"]').click();
+  const statePanel = page.getByTestId("filter-state-menu");
   await statePanel.getByText("TX").first().waitFor();
   await assertOpaqueSurface(statePanel, "State filter menu");
   const stateBleed = await bleedThrough(page, statePanel, "04-state-filter");
@@ -390,8 +392,9 @@ async function withOldGlass(page, selector, body) {
   await page.keyboard.press("Escape");
 
   // The one with a search box inside it — the shape that was reported.
-  await page.locator('[data-testid="filter-company"]').click();
-  const companyFilter = page.locator(".popover").first();
+  await openFilters(page);
+  await page.locator('[data-testid=\"filter-company\"]').click();
+  const companyFilter = page.getByTestId("filter-company-menu");
   await companyFilter.getByPlaceholder("Search companies…").fill("a");
   await companyFilter.getByText("Asset Living").waitFor();
   await assertOpaqueSurface(companyFilter, "Company filter menu");
@@ -504,15 +507,17 @@ async function withOldGlass(page, selector, body) {
     assert.equal(await bleedThrough(page, dealPanel, `${look}-03-deal-picker`), 0, `${look}: deal picker is see-through`);
 
     await page.goto(`${BASE}/dashboard/contacts`);
-    await page.locator('[data-testid="filter-state"]').click();
-    const lookState = page.locator(".popover").first();
+    await openFilters(page);
+    await page.locator('[data-testid=\"filter-state\"]').click();
+    const lookState = page.getByTestId("filter-state-menu");
     await lookState.getByText("TX").first().waitFor();
     await assertOpaqueSurface(lookState, `${look} State filter menu`);
     assert.equal(await bleedThrough(page, lookState, `${look}-04-state-filter`), 0, `${look}: State filter menu is see-through`);
     await shot(page, `${look}-05-state-filter-open`);
     await page.keyboard.press("Escape");
-    await page.locator('[data-testid="filter-company"]').click();
-    const lookCompany = page.locator(".popover").first();
+    await openFilters(page);
+    await page.locator('[data-testid=\"filter-company\"]').click();
+    const lookCompany = page.getByTestId("filter-company-menu");
     await lookCompany.getByPlaceholder("Search companies…").fill("a");
     await lookCompany.getByText("Asset Living").waitFor();
     await assertOpaqueSurface(lookCompany, `${look} Company filter menu`);
@@ -654,4 +659,13 @@ async function fromCleanUp(p, item) {
   const entry = p.getByTestId(`cleanup-${item}`);
   await entry.waitFor();
   return entry;
+}
+
+// The list filters sit in the Filters panel since Nov 11, 2026.
+async function openFilters(p) {
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
 }

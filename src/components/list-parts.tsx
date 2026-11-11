@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, useContext, useRef, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { IconChevronDown, IconMerge, IconUpload, IconMail, IconSparkles, IconNote } from "@/components/icons";
 import { FloatingMenu } from "@/components/floating-menu";
 import { ImportCsvButton } from "@/components/import-csv-button";
@@ -145,4 +145,20 @@ export function RowExpand({ target, label }: { target: string; label: string }) 
       <IconChevronDown size={13} className={`transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
     </button>
   );
+}
+
+// The phone card list or the desktop table: only one is ever in the page,
+// so a name is on it once. The server picks by the browser's own word for
+// itself (a phone's user agent); once the page has loaded, the screen's
+// width decides, so a narrow desktop window still gets cards.
+export function ResponsiveList({ phone, desktop, initialPhone }: { phone: React.ReactNode; desktop: React.ReactNode; initialPhone: boolean }) {
+  const [isPhone, setIsPhone] = useState(initialPhone);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsPhone(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return <>{isPhone ? phone : desktop}</>;
 }

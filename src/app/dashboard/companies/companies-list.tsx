@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Prisma } from "@/generated/prisma/client";
+import { headers } from "next/headers";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatCents, formatDate } from "@/lib/format";
@@ -27,7 +28,7 @@ import { loadLeadLabelChoices } from "@/lib/crm-labels";
 import { healthSettings, loadCompanyHealth, loadContactHealth } from "@/lib/health-load";
 import { warmth } from "@/lib/health";
 import { CardActions, CardTitle, NextStepCell, PhoneLink, PulseCell, bestPhone, lastTouchText } from "@/components/list-cells";
-import { CleanUpMenu, ListLogProvider, LogButton, RowExpand } from "@/components/list-parts";
+import { CleanUpMenu, ListLogProvider, LogButton, ResponsiveList, RowExpand } from "@/components/list-parts";
 import { LifecycleMeter } from "@/components/lifecycle-meter";
 import { setCompanyFavorite } from "./actions";
 
@@ -74,6 +75,8 @@ export async function CompaniesList({
     loadLeadLabelChoices(organizationId),
   ]);
   const timeZone = settings.timeZone;
+  // Cards for a phone, the table for anything else (ResponsiveList).
+  const initialPhone = /Mobi|Android|iPhone/i.test((await headers()).get("user-agent") ?? "");
   const window = pageWindow(total, params.per, params.page);
 
   const ids = await listPageIds("companies", organizationId, where, params, window);
@@ -207,8 +210,10 @@ export async function CompaniesList({
               />
             ) : (
               <>
-                {/* Phone: a card list. */}
-                <div className="md:hidden">
+                <ResponsiveList
+                  initialPhone={initialPhone}
+                  phone={
+                <div>
                   <ul className="divide-y divide-[var(--hairline-3)]">
                     {companies.map((company) => {
                       const h = health.get(company.id);
@@ -234,8 +239,9 @@ export async function CompaniesList({
                   </ul>
                 </div>
 
-                {/* Desktop: the table. */}
-                <div className="hidden overflow-x-auto md:block">
+                  }
+                  desktop={
+                <div className="overflow-x-auto">
                   <table className="table table-hover">
                     <thead>
                       <tr>
@@ -385,6 +391,8 @@ export async function CompaniesList({
                     </tbody>
                   </table>
                 </div>
+                  }
+                />
               </>
             )}
             <Pagination

@@ -524,7 +524,8 @@ async function signAs(browser, token, name) {
   await ppage.click("button[type=submit]");
   await ppage.waitForURL(/\/dashboard$/);
   await ppage.goto(`${BASE}/dashboard/companies`);
-  await ppage.locator("[data-testid=company-row]").first().waitFor();
+  // A card list on a phone since Nov 11, 2026.
+  await ppage.locator("[data-testid=company-card]").first().waitFor();
   assert.ok(
     await ppage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
     "the page itself does not scroll sideways on a phone",

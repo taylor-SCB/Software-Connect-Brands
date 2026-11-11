@@ -195,9 +195,11 @@ async function runImport(page, rows) {
   await page.locator("[data-testid=contact-row]", { hasText: "Ann Real" }).waitFor();
   assert.equal(await page.locator("[data-testid=contact-row]").count(), 1);
 
-  log("the Contacts list shows Mobile in its own column, just left of Phone");
+  // Since Nov 11, 2026 the list's Best phone column is the mobile first; the
+  // other numbers are the Phone 2 column, from Columns.
+  log("the Contacts list calls the mobile first, in Best phone");
   const listHeaders = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-  assert.equal(listHeaders.indexOf("Mobile") + 1, listHeaders.indexOf("Phone"), listHeaders.join(" | "));
+  assert.ok(listHeaders.includes("Best phone"), listHeaders.join(" | "));
   const annRow = page.locator("[data-testid=contact-row]", { hasText: "Ann Real" });
   assert.equal(await annRow.locator("[data-testid=contact-row-mobile]").textContent(), "512-555-0111");
   await shot(page, "05-list");
@@ -208,7 +210,7 @@ async function runImport(page, rows) {
   for (const sub of ["favorites", "interested", "with-deals"]) {
     await page.goto(`${BASE}/dashboard/contacts/${sub}`);
     const heads = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-    assert.equal(heads.indexOf("Mobile") + 1, heads.indexOf("Phone"), `${sub}: ${heads.join(" | ")}`);
+    assert.ok(heads.includes("Best phone"), `${sub}: ${heads.join(" | ")}`);
     const row = page.locator("[data-testid=contact-row]", { hasText: "Ann Real" });
     assert.equal(await row.locator("[data-testid=contact-row-mobile]").textContent(), "512-555-0111", sub);
   }

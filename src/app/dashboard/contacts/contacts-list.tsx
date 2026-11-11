@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, EmptyState, StatusBadge } from "@/components/ui";
@@ -23,7 +24,7 @@ import { loadLeadLabelChoices } from "@/lib/crm-labels";
 import { healthSettings, loadContactHealth } from "@/lib/health-load";
 import { formatDate } from "@/lib/format";
 import { CardActions, CardTitle, NextStepCell, PhoneLink, PulseCell, bestPhone, cardCaption, otherPhones } from "@/components/list-cells";
-import { CleanUpMenu, ListLogProvider, LogButton } from "@/components/list-parts";
+import { CleanUpMenu, ListLogProvider, LogButton, ResponsiveList } from "@/components/list-parts";
 import { LifecycleMeter } from "@/components/lifecycle-meter";
 import { setContactFavorite } from "./actions";
 
@@ -71,6 +72,8 @@ export async function ContactsList({
     loadLeadLabelChoices(organizationId),
   ]);
   const timeZone = settings.timeZone;
+  // Cards for a phone, the table for anything else (ResponsiveList).
+  const initialPhone = /Mobi|Android|iPhone/i.test((await headers()).get("user-agent") ?? "");
   const window = pageWindow(total, params.per, params.page);
 
   const ids = await listPageIds("contacts", organizationId, where, params, window);
@@ -190,8 +193,10 @@ export async function ContactsList({
               />
             ) : (
               <>
-                {/* Phone: a card list. */}
-                <div className="md:hidden">
+                <ResponsiveList
+                  initialPhone={initialPhone}
+                  phone={
+                <div>
                   <ul className="divide-y divide-[var(--hairline-3)]">
                     {contacts.map((contact) => {
                       const h = health.get(contact.id);
@@ -221,8 +226,9 @@ export async function ContactsList({
                   </ul>
                 </div>
 
-                {/* Desktop: the table. */}
-                <div className="hidden overflow-x-auto md:block">
+                  }
+                  desktop={
+                <div className="overflow-x-auto">
                   <table className="table table-hover">
                     <thead>
                       <tr>
@@ -381,6 +387,8 @@ export async function ContactsList({
                     </tbody>
                   </table>
                 </div>
+                  }
+                />
               </>
             )}
             <Pagination

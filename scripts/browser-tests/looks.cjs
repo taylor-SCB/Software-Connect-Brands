@@ -1034,6 +1034,8 @@ async function textContrast(locator) {
       ]);
     }
     const brand = [parseInt(BRAND.slice(1, 3), 16), parseInt(BRAND.slice(3, 5), 16), parseInt(BRAND.slice(5, 7), 16)];
+    // The Status pill is a Columns-menu column on the list since Nov 11, 2026.
+    await sql(`UPDATE "User" SET "uiPrefs" = '{"contacts.columns":["status"]}'::jsonb WHERE email = $1`, [EMAIL]);
     for (const look of LOOKS) {
       await sql(`UPDATE "User" SET theme = $2 WHERE email = $1`, [EMAIL, look]);
       await page.goto(`${BASE}/dashboard/contacts`);

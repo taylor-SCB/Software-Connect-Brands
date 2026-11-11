@@ -762,6 +762,7 @@ async function assertMenuInside(page, menu, what) {
   }
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto(`${BASE}/dashboard/companies`);
+  await page.locator("[data-testid=company-card]").first().waitFor();
   const calls = await page.locator("[data-testid=company-card] [data-testid=card-call]").evaluateAll((links) =>
     links.map((a) => ({ height: a.getBoundingClientRect().height, right: a.getBoundingClientRect().right })),
   );

@@ -224,6 +224,9 @@ async function company(org, name) {
   assert.equal(distributor, 1, "Service Provider / Distributor added to the pick lists once");
 
   log("Companies list shows the marks; Industry filter; Auto-filled toggle; chips + Clear all; Contacts list marks the tags");
+  // Industry, Phone and Website (where the marks sit) are Columns-menu
+  // columns since Nov 11, 2026.
+  await sql(`UPDATE "User" SET "uiPrefs" = '{"companies.columns":["phone","website","industry"],"contacts.columns":["industry"]}'::jsonb WHERE email = $1`, [EMAIL]);
   await page.goto(`${BASE}/dashboard/companies`);
   assert.equal(await pageSummary(page), "Showing 1–7 of 7 companies");
   const acmeRow = page.locator("tr", { hasText: "Acme Electric LLC" });
@@ -248,6 +251,7 @@ async function company(org, name) {
   await page.getByRole("checkbox", { name: "Distributor" }).check();
   await page.waitForURL(/type=Distributor/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies", "the new Distributor type is in the pick list and finds the supplier");
+  await page.keyboard.press("Escape");
   await openFilters(page); await page.getByTestId("filter-auto").click();
   await page.waitForURL(/auto=1/);
   assert.equal(await pageSummary(page), "Showing 1–1 of 1 companies", "filters stack");
