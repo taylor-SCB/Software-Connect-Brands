@@ -251,6 +251,27 @@ const ago = (days) => `now() - interval '${days} days'`;
   await page.locator("[data-testid=how-did-it-go]").waitFor({ state: "detached" });
   assert.equal(await page.locator("[data-testid=jump-add-contact]").getAttribute("href"), "/dashboard/contacts/new");
 
+  log("Sprint (integration): Import my list opens Import CSV straight away on the Contacts list, and closing it leaves the list's own address");
+  const myDayUrl = page.url();
+  assert.equal(await page.locator("[data-testid=jump-import]").getAttribute("href"), "/dashboard/contacts?import=1");
+  await page.locator("[data-testid=jump-import]").click();
+  await page.waitForURL(/\/dashboard\/contacts\?import=1$/);
+  const importDialog = page.locator("[role=dialog][aria-label='Import CSV']");
+  await importDialog.waitFor();
+  await importDialog.locator("[data-testid=import-file]").waitFor();
+  await importDialog.locator("button[aria-label=Close]").click();
+  await importDialog.waitFor({ state: "detached" });
+  await until(async () => !/import=1/.test(page.url()), "?import=1 taken off");
+  await page.reload();
+  await page.locator("[data-testid=cleanup]").waitFor();
+  assert.equal(await importDialog.count(), 0, "a refresh doesn't open it again");
+  await page.locator("[data-testid=cleanup]").click();
+  await page.locator("[data-testid=cleanup-import]").click();
+  await importDialog.waitFor();
+  await importDialog.locator("button[aria-label=Close]").click();
+  await page.goto(myDayUrl);
+  await page.locator("[data-testid=jump-in-member]").waitFor();
+
   log("the Member's Daily Rundown tab names itself and keeps BDR shortcuts in Jump in");
   assert.match(await page.locator("[data-testid=report-tab][data-report=daily]").getAttribute("href"), /report=daily/);
   await page.locator("[data-testid=report-tab][data-report=daily]").click();

@@ -117,7 +117,7 @@ export async function ContactsList({
             <span className="hidden md:contents">
               <EmailButton />
             </span>
-            <CleanUpMenu kind="contacts" reps={reps} />
+            <CleanUpMenu kind="contacts" reps={reps} openImport={searchParams.import === "1"} />
             <Link href="/dashboard/contacts/new" className="btn btn-primary btn-sm min-h-[44px] md:min-h-0">
               <IconPlus size={14} />
               Add contact

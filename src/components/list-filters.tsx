@@ -28,7 +28,7 @@ import {
 } from "@/lib/list-params";
 import { NO_LEAD_LABEL } from "@/lib/lead-labels";
 import { COLUMN_LABELS, columnsFor } from "@/lib/list-columns";
-import { saveListPrefs } from "@/app/dashboard/user-prefs-actions";
+import { saveUiPref } from "@/app/dashboard/prefs-actions";
 import { SelectToggle } from "@/components/bulk-assign";
 import { useSearch } from "@/lib/use-search";
 import { FloatingMenu } from "@/components/floating-menu";
@@ -60,7 +60,8 @@ function useIsPhone() {
 // Data quality in the Filters panel (a bottom sheet on a phone). Every
 // change is a navigation to a new address, so the server does the
 // filtering and the view is bookmarkable; scope, preset, sort and columns
-// are also remembered for the person (saveListPrefs).
+// are also remembered for the person (uiPrefs contacts.* / companies.*,
+// through saveUiPref; read back by resolveListView).
 export function ListFilters({
   basePath,
   params: current,
@@ -107,10 +108,12 @@ export function ListFilters({
       router.push(listHref(basePath, next, {}, lock));
     });
   const remember = (patch: { scope?: ListScope; preset?: string; sort?: ListSort | null; columns?: string[] }) => {
-    return saveListPrefs({ kind, ...patch } as Parameters<typeof saveListPrefs>[0]).then(
-      () => undefined,
-      () => undefined,
-    );
+    // One key at a time, in turn, so each merge sees the one before.
+    return (async () => {
+      for (const [key, value] of Object.entries(patch)) {
+        if (value !== undefined) await saveUiPref(kind, key, value);
+      }
+    })().catch(() => undefined);
   };
 
   const industryNames = options.industries.map((industry) => industry.name);

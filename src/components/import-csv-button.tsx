@@ -25,15 +25,37 @@ import { ImportCleanup } from "@/components/import-cleanup";
 // batches of a few hundred with a running count. Closing the tab stops
 // it; re-uploading the same file carries on without doubling anything,
 // because rows that already exist are updated, not added again.
-export function ImportCsvButton({ kind, reps = [] }: { kind: "contacts" | "companies"; reps?: { id: string; name: string; removed?: boolean }[] }) {
-  const [open, setOpen] = useState(false);
+// `startOpen` opens the dialog on arrival (the Contacts list's ?import=1,
+// which My day's "Import my list" links to); closing it takes ?import=1
+// off the address, so a refresh doesn't open it again.
+export function ImportCsvButton({
+  kind,
+  reps = [],
+  startOpen = false,
+}: {
+  kind: "contacts" | "companies";
+  reps?: { id: string; name: string; removed?: boolean }[];
+  startOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(startOpen);
+  const close = () => {
+    setOpen(false);
+    if (startOpen) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("import")) {
+        url.searchParams.delete("import");
+        // null, not history.state: Next's own state makes its router skip the sync.
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }
+  };
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost btn-sm" data-testid="import-csv">
         <IconUpload size={14} />
         Import CSV
       </button>
-      {open && <ImportDialog kind={kind} reps={reps} onClose={() => setOpen(false)} />}
+      {open && <ImportDialog kind={kind} reps={reps} onClose={close} />}
     </>
   );
 }

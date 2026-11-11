@@ -45,7 +45,7 @@ export function MemberJumpIn({ today }: { today: string }) {
         <IconCalendar size={15} className="opacity-70" />
         Book a meeting
       </button>
-      <Link href="/dashboard/contacts" className="nav-item pointer-coarse:min-h-11" data-testid="jump-import" title="Import CSV is at the top of your Contacts list">
+      <Link href="/dashboard/contacts?import=1" className="nav-item pointer-coarse:min-h-11" data-testid="jump-import">
         <IconUpload size={15} className="opacity-70" />
         Import my list
       </Link>

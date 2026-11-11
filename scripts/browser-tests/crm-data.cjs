@@ -948,8 +948,8 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await page.waitForURL(/scope=mine/);
   await page.locator("[data-testid=page-summary]", { hasText: "of 6 contacts" }).waitFor();
   assert.equal(await page.locator("thead th", { hasText: /^Rep$/ }).count(), 0, "no Rep column on Mine");
-  for (let i = 0; i < 20 && !(await sql(`SELECT "uiPrefs"->>'contacts.scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s; i++) await page.waitForTimeout(100);
-  assert.equal((await sql(`SELECT "uiPrefs"->>'contacts.scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s, "mine");
+  for (let i = 0; i < 20 && !(await sql(`SELECT "uiPrefs"->'contacts'->>'scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s; i++) await page.waitForTimeout(100);
+  assert.equal((await sql(`SELECT "uiPrefs"->'contacts'->>'scope' AS s FROM "User" WHERE id=$1`, [taylor.id])).rows[0].s, "mine");
   await page.goto(`${BASE}/dashboard/contacts`);
   assert.equal(await page.getByTestId("scope-mine").getAttribute("aria-pressed"), "true", "a bare address opens on the saved scope");
   assert.deepEqual(await inOrder(page, "q=Spr&scope=unowned"), ["Spr Nobody"]);
@@ -1008,7 +1008,8 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   assert.equal(await page.getByTestId("sort").inputValue(), "name", "the sort is remembered");
   await page.locator("thead th", { hasText: /^Email$/ }).waitFor();
   const sprPrefs = (await sql(`SELECT "uiPrefs" AS p FROM "User" WHERE id=$1`, [taylor.id])).rows[0].p;
-  assert.deepEqual([sprPrefs["contacts.sort"], sprPrefs["contacts.columns"]], ["name", ["email", "marketing"]]);
+  assert.deepEqual([sprPrefs.contacts.sort, sprPrefs.contacts.columns], ["name", ["email", "marketing"]], "kept in the contacts namespace");
+  assert.equal(sprPrefs["contacts.sort"], undefined, "nothing written at the top level");
   await page.getByTestId("columns").click();
   await page.getByTestId("column-email").uncheck();
   await page.keyboard.press("Escape");

@@ -22,9 +22,12 @@ import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
 export function CleanUpMenu({
   kind,
   reps,
+  openImport = false,
 }: {
   kind: "contacts" | "companies";
   reps: { id: string; name: string; removed?: boolean }[];
+  // Open Import CSV on arrival (?import=1).
+  openImport?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -41,7 +44,7 @@ export function CleanUpMenu({
       {/* The real buttons, hidden; their dialogs are their siblings and show. */}
       <span ref={host} className="contents">
         <span className="contents [&>button]:hidden">
-          <ImportCsvButton kind={kind} reps={reps} />
+          <ImportCsvButton kind={kind} reps={reps} startOpen={openImport} />
         </span>
         <span className="contents [&>button]:hidden">
           <MergeButton kind={kind} />

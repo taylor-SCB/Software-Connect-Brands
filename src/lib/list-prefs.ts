@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { readUiPrefsWithLegacy } from "@/lib/user-prefs";
 import {
   LIST_SCOPES,
   LIST_SORTS,
@@ -14,18 +14,24 @@ import { CONTACT_COLUMNS, COMPANY_COLUMNS, DEFAULT_COLUMNS, type ListKind } from
 // What each person last chose on the Contacts and Companies lists (BDR
 // redesign, Nov 11, 2026): scope (Mine / Everyone / Unowned), preset, sort
 // and the extra columns. Kept in User.uiPrefs under namespaced keys —
-// "contacts.scope", "companies.columns" — the same shape as the My day
-// and calendar choices (src/lib/user-prefs.ts on the today branch), written
-// one key at a time with jsonb || (saveListPrefs in
-// src/app/dashboard/user-prefs-actions.ts) and checked when read: anything
-// malformed reads as "not set", so the role's default applies.
+// the "contacts" and "companies" namespaces — contacts.scope,
+// companies.columns — the same shape as the My day, calendar and Stats
+// choices (src/lib/user-prefs.ts), written one key at a time with
+// saveUiPref and checked when read: anything malformed reads as "not set",
+// so the role's default applies. The lists' first build stored them at the
+// top level under dotted keys ("contacts.scope"); those are read when the
+// namespaced key isn't there, so nobody loses a saved choice.
 
 type Prefs = Record<string, unknown>;
 
-async function readPrefs(userId: string): Promise<Prefs> {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } });
-  const value = user?.uiPrefs;
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Prefs) : {};
+async function readPrefs(userId: string, kind: ListKind): Promise<Prefs> {
+  const { prefs, legacy } = await readUiPrefsWithLegacy(userId);
+  const out: Prefs = {};
+  const section = prefs[kind] ?? {};
+  for (const key of ["scope", "preset", "sort", "columns"]) {
+    out[`${kind}.${key}`] = key in section ? section[key] : legacy[`${kind}.${key}`];
+  }
+  return out;
 }
 
 function choice<T extends string>(prefs: Prefs, key: string, allowed: readonly T[]): T | null {
@@ -53,7 +59,7 @@ export async function resolveListView(
   viewer: { userId: string; role: string },
   lock: ListLock = {},
 ): Promise<ListView> {
-  const prefs = await readPrefs(viewer.userId);
+  const prefs = await readPrefs(viewer.userId, kind);
   const member = viewer.role === "MEMBER";
   const bare = !VIEW_KEYS.some((key) => raw[key] !== undefined);
   const locked = Boolean(lock.fav || lock.deals || lock.interested);
