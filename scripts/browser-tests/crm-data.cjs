@@ -723,7 +723,16 @@ const rowOf = (page, name) => page.locator("[data-testid=contact-row]", { has: p
   await dialog.getByTestId("merge-go").click();
   await dialog.getByTestId("merge-yes").click();
   await dialog.waitFor({ state: "detached" });
-  await groupFor("seven@dupe.example.com").locator("[data-testid=dup-record]").nth(2).waitFor();
+  // The group still has its old seven records drawn until the merge's
+  // refresh lands, so wait for three rather than for a third row.
+  await page.waitForFunction(
+    () => {
+      const group = [...document.querySelectorAll("[data-testid=dup-group]")].find((el) => el.querySelector("[data-testid=dup-key]")?.textContent === "seven@dupe.example.com");
+      return group && group.querySelectorAll("[data-testid=dup-record]").length === 3;
+    },
+    null,
+    { timeout: 15000 },
+  );
   assert.equal(await groupFor("seven@dupe.example.com").locator("[data-testid=dup-record]").count(), 3);
   await groupFor("seven@dupe.example.com").getByTestId("duplicate-merge").click();
   const pickedNow = (await dialog.locator("[data-testid=merge-picked] li .font-medium").allTextContents()).map((t) => t.trim());

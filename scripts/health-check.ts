@@ -27,6 +27,7 @@ import {
   bandOf,
   leadHealth,
   pulseCaption,
+  reasonWords,
   recentPoints,
   rollUpCompany,
   talkPoints,
@@ -202,7 +203,7 @@ const PEOPLE = {
     lastConnectAt: ago(8),
     changes: [
       { to: "CONTACTED", on: ago(9), by: null, auto: true, reason: null },
-      { to: "NOT_INTERESTED", on: ago(8), by: "Marcus Lee", auto: false, reason: "Price" },
+      { to: "NOT_INTERESTED", on: ago(8), by: "Marcus Lee", auto: false, reason: "PRICE" },
     ],
   }),
 };
@@ -379,6 +380,12 @@ function pure() {
     const parked = leadHealth(input({ status: "CONTACTED", tries: 6, lastTouchAt: ago(1), companyName: "Ridgeline" }), CTX);
     assert.equal(parked.park, true);
     assert.equal(parked.reason, "6 tries, never reached — try a text or someone else at Ridgeline");
+    const parkedAlready = leadHealth(
+      input({ status: "CONTACTED", tries: 6, lastTouchAt: ago(1), next: { on: "2026-12-11", time: null, kind: "call" } }),
+      CTX,
+    );
+    assert.equal(parkedAlready.park, false, "parked (a try booked 30 days out): the offer doesn't come back");
+    assert.equal(parkedAlready.reasonKey, "trying");
     assert.equal(leadHealth(input({ status: "CONTACTED", tries: 5, lastTouchAt: ago(1) }), CTX).park, false);
     assert.equal(leadHealth(input({ status: "CONTACTED", tries: 3, lastTouchAt: ago(1) }), { ...CTX, parkAfterTries: 3 }).park, true, "the workspace's own limit");
     for (const days of [0, 5, 9, 40, 400]) {
@@ -428,6 +435,10 @@ function pure() {
     assert.equal(H.nora.reason, "Not interested · Price");
     assert.equal(H.nora.meter.closed?.at, 1);
     assert.equal(H.nora.meter.closed?.reason, "Price");
+    // StatusChange.reason holds the key the data side stores (PRICE …);
+    // older free text shows as written.
+    assert.equal(reasonWords("HAS_VENDOR"), "Has a vendor");
+    assert.equal(reasonWords("Moved out of state"), "Moved out of state");
     assert.deepEqual(
       H.nora.meter.steps.map((step) => step.state),
       ["closed", "closed", "todo", "todo", "todo", "todo", "todo"],
@@ -438,7 +449,7 @@ function pure() {
         changes: [
           { to: "MEETING_SET", on: ago(30), by: null, auto: true, reason: null },
           { to: "QUOTE_SENT", on: ago(20), by: null, auto: true, reason: null },
-          { to: "LOST", on: ago(2), by: "Marcus Lee", auto: false, reason: "Timing" },
+          { to: "LOST", on: ago(2), by: "Marcus Lee", auto: false, reason: "TIMING" },
         ],
       }),
       CTX,

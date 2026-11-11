@@ -77,7 +77,7 @@ async function OverviewSummary({
     activeProjects,
   ] = await Promise.all([
     prisma.contact.count({ where: { organizationId, ...mine } }),
-    prisma.contact.count({ where: { organizationId, ...mine, status: { in: ["NOT_ACTIONED", "CONTACTED", "INTERESTED"] } } }),
+    prisma.contact.count({ where: { organizationId, ...mine, status: { in: ["NOT_ACTIONED", "CONTACTED", "CONNECTED", "INTERESTED"] } } }),
     prisma.deal.findMany({
       where: { organizationId, ...mine, stage: { in: [...OPEN_DEAL_STAGES] } },
       select: { valueCents: true, quotes: QUOTES_FOR_VALUE },

@@ -239,7 +239,12 @@ export function parseStatus(raw: string): { status: ContactStatusValue | null; n
   if (/archiv|inactive|dead|old|former|churn/.test(value)) return { status: "ARCHIVED" };
   if (/lost|closed.?lost/.test(value)) return { status: "LOST" };
   if (/interested|warm|hot/.test(value)) return { status: "INTERESTED" };
-  if (/contacted|reached|touched/.test(value)) return { status: "CONTACTED" };
+  // Connected (Nov 11, 2026): a talk, not a try. "Not connected",
+  // "disconnected", "not reached" and "reached out" are tries, so they are
+  // checked before the words they contain.
+  if (/not.?(connected|reached)|dis.?connected|un.?reached|reached.?out|no.?answer|voice.?mail/.test(value)) return { status: "CONTACTED" };
+  if (/connected|talked|spoke|spoken|reached/.test(value)) return { status: "CONNECTED" };
+  if (/contacted|attempt|touched/.test(value)) return { status: "CONTACTED" };
   if (/customer|client|won|signed|active|current/.test(value)) return { status: "WON" };
   if (/lead|prospect|new|open|cold|not.?actioned/.test(value)) return { status: "NOT_ACTIONED" };
   return { status: null, note: `Unknown status "${raw.trim()}" — used Not Actioned` };

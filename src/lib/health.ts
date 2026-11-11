@@ -1,4 +1,5 @@
 import { daysSince } from "@/lib/format";
+import { STATUS_REASON_LABELS } from "@/lib/constants";
 
 // Lead health (BDR redesign, Nov 11, 2026; Taylor approved the plan's
 // healthScore section as written). How warm a relationship is, kept apart
@@ -432,7 +433,7 @@ function buildMeter(
   if (closedLabel) {
     const at = status === "NOT_INTERESTED" ? Math.max(1, furthest) : Math.max(0, furthest);
     let reason: string | null = null;
-    for (const change of input.changes) if (change.to === status && change.reason) reason = change.reason;
+    for (const change of input.changes) if (change.to === status && change.reason) reason = reasonWords(change.reason);
     closed = { at, label: closedLabel, reason };
     step = at;
   } else {
@@ -490,6 +491,13 @@ function buildMeter(
   }
 
   return { step, interested: status === "INTERESTED", won, closed, steps, current, nextStep, action };
+}
+
+// StatusChange.reason holds a key (PRICE, HAS_VENDOR … from
+// STATUS_REASONS); show its words. Anything else (older free text) shows
+// as written.
+export function reasonWords(reason: string): string {
+  return (STATUS_REASON_LABELS as Record<string, string | undefined>)[reason] ?? reason;
 }
 
 export function meterLabel(meter: MeterState, word: string, reason: string) {
@@ -635,7 +643,9 @@ export function leadHealth(input: HealthInput, ctx: HealthContext): LeadHealth {
     }
   } else if (state === "TRYING") {
     word = "Trying";
-    park = input.tries >= Math.max(1, ctx.parkAfterTries || 6);
+    // Once a try is booked (parking writes "Try again · Name" 30 days out,
+    // logActivity next=park), the offer stops until that day passes.
+    park = input.tries >= Math.max(1, ctx.parkAfterTries || 6) && next === null;
     stalled = late !== null || (!booked && lastTouchDays !== null && lastTouchDays > Q);
     tone = stalled ? "warn" : "none";
     if (owes) {
@@ -691,7 +701,7 @@ export function leadHealth(input: HealthInput, ctx: HealthContext): LeadHealth {
     word = "Closed";
     const label = CLOSED_LABELS[status] ?? "Closed";
     let why: string | null = null;
-    for (const change of input.changes) if (change.to === status && change.reason) why = change.reason;
+    for (const change of input.changes) if (change.to === status && change.reason) why = reasonWords(change.reason);
     if (owes) {
       reason = owes.text;
       reasonKey = "owes";

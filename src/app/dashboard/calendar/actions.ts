@@ -13,6 +13,7 @@ import { ensureEventType } from "@/lib/event-types";
 import { ACTIVITY_TYPES, INSTALL_EVENT_TYPE } from "@/lib/constants";
 import { logEventDone, unlogEventDone } from "@/lib/calendar-auto";
 import { markMeetingSet } from "@/lib/status";
+import { markSchema, nextStepSchema, outcomeProblem, outcomeSchema, reasonSchema } from "@/lib/outcomes";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a day");
@@ -276,16 +277,40 @@ export async function setEventDone(eventId: string, done: boolean): Promise<Acti
 
 // "How did it go?": ticks the entry done and writes what happened into
 // the history of whoever it was with, so a scheduled call becomes a
-// logged call in one step.
+// logged call in one step. Since Nov 11, 2026 it also takes how it went
+// (`outcome`), an Interested / Not interested `mark` with its `reason`,
+// the next step (`next`, the same shape as logActivity's), and `early` to
+// say a meeting still ahead happened early. A meeting still ahead marked
+// Held without `early` comes back as { confirmEarly: "yyyy-mm-dd" } and
+// nothing is written. `batchId` is what undoLog takes back.
 export async function completeEventWithLog(
   eventId: string,
-  input: { activityType: string; note: string },
-): Promise<ActionState> {
+  input: {
+    activityType: string;
+    note: string;
+    outcome?: string | null;
+    mark?: string | null;
+    reason?: string | null;
+    next?: unknown;
+    early?: boolean;
+  },
+): Promise<ActionState & { batchId?: string; confirmEarly?: string; notices?: string[] }> {
   const { organizationId, userId } = await requireSession();
   const parsed = z
-    .object({ eventId: idSchema, activityType: z.enum(ACTIVITY_TYPES), note: z.string().trim().max(5000) })
+    .object({
+      eventId: idSchema,
+      activityType: z.enum(ACTIVITY_TYPES),
+      note: z.string().trim().max(5000),
+      outcome: outcomeSchema.nullish(),
+      mark: markSchema.nullish(),
+      reason: reasonSchema.nullish(),
+      next: nextStepSchema.optional(),
+      early: z.boolean().optional(),
+    })
     .safeParse({ eventId, ...input });
   if (!parsed.success) return { error: "Pick what kind of touch it was" };
+  const problem = outcomeProblem(parsed.data.activityType, parsed.data.outcome);
+  if (problem) return { error: problem };
 
   const result = await logEventDone({
     organizationId,
@@ -293,8 +318,13 @@ export async function completeEventWithLog(
     eventId: parsed.data.eventId,
     activityType: parsed.data.activityType,
     note: parsed.data.note,
+    outcome: parsed.data.outcome ?? null,
+    mark: parsed.data.mark ?? null,
+    reason: parsed.data.mark === "NOT_INTERESTED" ? (parsed.data.reason ?? null) : null,
+    next: parsed.data.next,
+    early: parsed.data.early,
   });
-  if ("error" in result) return { error: result.error };
+  if ("error" in result) return { error: result.error, ...(result.confirmEarly ? { confirmEarly: result.confirmEarly } : {}) };
 
   const event = await prisma.calendarEvent.findFirst({
     where: { id: parsed.data.eventId, organizationId },
@@ -303,7 +333,8 @@ export async function completeEventWithLog(
   revalidateCalendar(event?.projectId);
   for (const contactId of result.contactIds) revalidatePath(`/dashboard/contacts/${contactId}`);
   if (result.companyId) revalidatePath(`/dashboard/companies/${result.companyId}`);
-  return { success: "Done and logged" };
+  if (result.opportunityId) revalidatePath("/dashboard/deals");
+  return { success: ["Done and logged", ...result.notices].join(" · "), batchId: result.batchId, notices: result.notices };
 }
 
 // Dragging is a mouse gesture a phone cannot do, so moving a day is a

@@ -10,13 +10,26 @@
 // again and re-dated, and it is why nothing here ever touches an event
 // somebody typed by hand — those have auto false and are never matched.
 
-import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { ensureEventType } from "@/lib/event-types";
 import { DEFAULT_TIME_ZONE } from "@/lib/format";
 import { addDays, isoToDate, todayIso } from "@/lib/payments";
-import { ACTIVITY_EVENT_TYPE, FOLLOW_UP_DAYS, type ActivityTypeValue } from "@/lib/constants";
-import { markContacted, markMeetingSet } from "@/lib/status";
+import {
+  ACTIVITY_EVENT_TYPE,
+  ACTIVITY_LABELS,
+  CONNECT_OUTCOMES,
+  FOLLOW_UP_DAYS,
+  OUTCOMES_BY_TYPE,
+  PARK_DAYS,
+  type ActivityOutcomeValue,
+  type ActivityTypeValue,
+  type StatusReasonValue,
+} from "@/lib/constants";
+import { cleanTime, isRealDay } from "@/lib/calendar";
+import { formatDay } from "@/lib/format";
+import { markByHand, markConnected, markContacted, markMeetingSet } from "@/lib/status";
+import { outcomeNote, type LogMark, type NextStep } from "@/lib/outcomes";
+import { newBatchId } from "@/lib/undo-log";
 
 // The workspace's clock, read from its row rather than the session: the
 // customer signing at /c/<token> has no session, and getTimeZone() would
@@ -443,6 +456,7 @@ export async function recordActivityEvent(input: {
   contactIds: string[];
   companyId: string | null;
   primaryName: string;
+  batchId?: string | null;
 }) {
   const timeZone = await zoneOf(input.organizationId);
   const type = (await ensureEventType(input.organizationId, ACTIVITY_EVENT_TYPE[input.type])) ?? ACTIVITY_EVENT_TYPE[input.type];
@@ -451,6 +465,7 @@ export async function recordActivityEvent(input: {
     data: {
       organizationId: input.organizationId,
       auto: true,
+      batchId: input.batchId ?? null,
       activityId: input.activityId,
       ownerId: input.userId,
       type,
@@ -481,12 +496,14 @@ export async function scheduleActivityEvent(input: {
   contactIds: string[];
   companyId: string | null;
   primaryName: string;
+  batchId?: string | null;
 }) {
   const type = (await ensureEventType(input.organizationId, ACTIVITY_EVENT_TYPE[input.type])) ?? ACTIVITY_EVENT_TYPE[input.type];
   const [first, ...rest] = input.contactIds;
   const created = await prisma.calendarEvent.create({
     data: {
       organizationId: input.organizationId,
+      batchId: input.batchId ?? null,
       ownerId: input.userId,
       type,
       title: `${type} · ${input.primaryName}`,
@@ -511,13 +528,16 @@ export async function scheduleActivityEvent(input: {
 export async function scheduleFollowUpEvents(input: {
   organizationId: string;
   userId: string;
-  items: { type: ActivityTypeValue; startOn: string; startTime: string | null }[];
+  // `title` names a reminder that isn't a plain follow-up ("Try to book
+  // a meeting · Dana", "Try again · Dana").
+  items: { type: ActivityTypeValue; startOn: string; startTime: string | null; title?: string }[];
   contactIds: string[];
   companyId: string | null;
   primaryName: string;
   // What it follows up on, for the entry's notes: "Follow up on the call
   // logged Oct 4: left a voicemail…".
   about: string;
+  batchId?: string | null;
 }) {
   const [first, ...rest] = input.contactIds;
   const ids: string[] = [];
@@ -527,8 +547,9 @@ export async function scheduleFollowUpEvents(input: {
       data: {
         organizationId: input.organizationId,
         ownerId: input.userId,
+        batchId: input.batchId ?? null,
         type,
-        title: `Follow up · ${input.primaryName}`,
+        title: item.title ?? `Follow up · ${input.primaryName}`,
         startOn: isoToDate(item.startOn)!,
         startTime: item.startTime,
         notes: input.about,
@@ -541,6 +562,82 @@ export async function scheduleFollowUpEvents(input: {
     ids.push(created.id);
   }
   return ids;
+}
+
+/* -------------------------------- Next step -------------------------------- */
+
+// The next step picked in "How did it go?", checked before anything is
+// written so a bad day refuses the whole save. Follow-ups, "Try to book a
+// meeting" and "Try again in 30 days" are calendar entries like the
+// follow-up box writes; a meeting is booked by the caller.
+export type PlannedNextStep =
+  | { kind: "follow" | "book" | "park"; type: ActivityTypeValue; startOn: string; startTime: string | null }
+  | { kind: "meeting"; on: string; time: string | null; withContactIds: string[]; where: string | null; note: string | null; opportunity: string | null };
+
+export function planNextStep(next: NextStep | undefined, today: string): PlannedNextStep | { error: string } | null {
+  if (!next) return null;
+  const time = cleanTime(next.time);
+  const on = next.on || "";
+  if (on && !isRealDay(on)) return { error: "That day isn't a real date" };
+  if (next.kind === "park") return { kind: "park", type: "PHONE_CALL", startOn: addDays(today, PARK_DAYS), startTime: null };
+  if (next.kind === "book") {
+    const day = on || addDays(today, FOLLOW_UP_DAYS);
+    if (day < today) return { error: "Pick today or a day ahead for the reminder" };
+    return { kind: "book", type: "PHONE_CALL", startOn: day, startTime: time };
+  }
+  if (!on) return { error: next.kind === "meeting" ? "Pick the day of the meeting" : "Pick the day for the follow-up" };
+  if (on < today) {
+    return { error: next.kind === "meeting" ? "Pick today or a day ahead for the meeting" : `A follow-up has to be today or later (it's dated ${formatDay(`${on}T12:00:00Z`)})` };
+  }
+  if (next.kind === "meeting") {
+    return {
+      kind: "meeting",
+      on,
+      time,
+      withContactIds: next.withContactIds,
+      where: next.where?.trim() || null,
+      note: next.note?.trim() || null,
+      opportunity: next.opportunity?.trim() || null,
+    };
+  }
+  return { kind: "follow", type: next.type ?? "PHONE_CALL", startOn: on, startTime: time };
+}
+
+// Writes a planned follow-up / reminder / park, tagged with the save.
+export async function writeNextStep(input: {
+  organizationId: string;
+  userId: string;
+  batchId: string;
+  plan: Extract<PlannedNextStep, { kind: "follow" | "book" | "park" }>;
+  contactIds: string[];
+  companyId: string | null;
+  primaryName: string;
+  about: string;
+}) {
+  const title =
+    input.plan.kind === "book"
+      ? `Try to book a meeting · ${input.primaryName}`
+      : input.plan.kind === "park"
+        ? `Try again · ${input.primaryName}`
+        : undefined;
+  const [eventId] = await scheduleFollowUpEvents({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    items: [{ type: input.plan.type, startOn: input.plan.startOn, startTime: input.plan.startTime, title }],
+    contactIds: input.contactIds,
+    companyId: input.companyId,
+    primaryName: input.primaryName,
+    about: input.about,
+    batchId: input.batchId,
+  });
+  const day = formatDay(`${input.plan.startOn}T12:00:00Z`);
+  const words =
+    input.plan.kind === "book"
+      ? `“Try to book a meeting” on the calendar for ${day}`
+      : input.plan.kind === "park"
+        ? `Parked: “Try again” on the calendar for ${day}`
+        : `${ACTIVITY_LABELS[input.plan.type]} follow-up on the calendar for ${day}`;
+  return { eventId, words };
 }
 
 /* ---------------------------- Marketing sends ---------------------------- */
@@ -603,13 +700,31 @@ export function canLogOnDone(event: { contactId: string | null; companyId: strin
 // lines are written (one per contact — the one it was with plus anyone
 // expected — sharing a batch), the first is linked to the entry, and the
 // entry is done as of the day and time it was for.
+//
+// "How did it go?" (Nov 11, 2026) adds the outcome, an Interested / Not
+// interested mark with its reason, and the next step, so the chain of
+// follow-ups never ends here. A meeting ticked done that has happened is
+// Held (decision 4): HELD on the line, Connected, and the tile and its
+// people at Meeting Completed; one whose day is still ahead is handed back
+// as { confirmEarly } unless `early` says it happened early. A no-show is
+// written NO_SHOW (not a touch) and keeps Meeting Set. Any other outcome
+// on an entry dated later today or ahead means it happened now. Every row
+// the save writes carries its batchId, for undoLog.
 export async function logEventDone(input: {
   organizationId: string;
   userId: string;
   eventId: string;
   activityType: ActivityTypeValue;
   note: string;
-}) {
+  outcome?: ActivityOutcomeValue | null;
+  mark?: LogMark | null;
+  reason?: StatusReasonValue | null;
+  next?: NextStep;
+  early?: boolean;
+}): Promise<
+  | { ok: true; contactIds: string[]; companyId: string | null; batchId: string; notices: string[]; opportunityId: string | null }
+  | { error: string; confirmEarly?: string }
+> {
   const event = await prisma.calendarEvent.findFirst({
     where: { id: input.eventId, organizationId: input.organizationId },
     select: {
@@ -631,20 +746,42 @@ export async function logEventDone(input: {
   const timeZone = await zoneOf(input.organizationId);
   const day = event.startOn.toISOString().slice(0, 10);
   const today = todayIso(timeZone);
+  const now = new Date();
   // When it happened: the time it was booked for, else now if it was
   // today, else midday on its day.
-  const occurredAt = event.startTime
+  let occurredAt = event.startTime
     ? zonedMoment(day, event.startTime, timeZone)
     : day === today
       ? new Date()
       : zonedMoment(day, "12:00", timeZone);
-  const body = input.note.trim() || event.notes.trim() || event.title;
+
+  const meeting = input.activityType === "MEETING";
+  let outcome: ActivityOutcomeValue | null = input.outcome ?? null;
+  if (outcome && !OUTCOMES_BY_TYPE[input.activityType].includes(outcome)) {
+    return { error: "That outcome doesn't fit that kind of touch" };
+  }
+  if (meeting && outcome === "HELD" && day > today && !input.early) {
+    return { error: `This meeting is ${formatDay(`${day}T12:00:00Z`)}. Did it happen early?`, confirmEarly: day };
+  }
+  // A meeting ticked done that has happened was held.
+  if (meeting && !outcome && occurredAt <= now) outcome = "HELD";
+  // Saying how it went means it happened: an entry for later is now.
+  if (outcome && occurredAt > now) occurredAt = now;
+  const plan = planNextStep(input.next, today);
+  if (plan && "error" in plan) return { error: plan.error };
+
+  const said = Boolean(input.outcome || input.mark);
+  const body =
+    input.note.trim() ||
+    (said ? outcomeNote({ outcome: input.outcome, mark: input.mark, reason: input.reason }) : "") ||
+    event.notes.trim() ||
+    event.title;
 
   const contactIds = [...new Set([event.contactId, ...event.attendees.map((row) => row.id)].filter((id): id is string => Boolean(id)))];
   const rows = contactIds.length
     ? contactIds.map((contactId) => ({ contactId, companyId: null as string | null }))
     : [{ contactId: null as string | null, companyId: event.companyId }];
-  const batchId = rows.length > 1 ? randomUUID() : null;
+  const batchId = newBatchId();
 
   const written = await prisma.$transaction(
     rows.map((row) =>
@@ -656,6 +793,7 @@ export async function logEventDone(input: {
           projectId: event.projectId,
           userId: input.userId,
           type: input.activityType,
+          outcome,
           body,
           batchId,
           occurredAt,
@@ -666,14 +804,72 @@ export async function logEventDone(input: {
   );
   await prisma.calendarEvent.update({
     where: { id: event.id },
-    data: { doneAt: occurredAt > new Date() ? new Date() : occurredAt, activityId: written[0].id },
+    data: { doneAt: occurredAt > now ? now : occurredAt, activityId: written[0].id },
   });
-  const who = { organizationId: input.organizationId, userId: input.userId };
-  await markContacted(who, { contactIds, companyId: contactIds.length ? null : event.companyId }, occurredAt);
-  if (input.activityType === "MEETING") {
-    await markMeetingSet(who, contactIds, occurredAt, { activityId: written[0].id, eventId: event.id });
+  const who = { organizationId: input.organizationId, userId: input.userId, batchId };
+  const companyOnly = contactIds.length ? null : event.companyId;
+  const notices: string[] = [];
+  let opportunityId: string | null = null;
+
+  if (outcome !== "NO_SHOW") await markContacted(who, { contactIds, companyId: companyOnly }, occurredAt);
+  if (outcome && CONNECT_OUTCOMES.includes(outcome) && occurredAt <= now) {
+    await markConnected(who, { contactIds, companyId: companyOnly }, occurredAt);
   }
-  return { ok: true as const, contactIds, companyId: event.companyId };
+  const { meetingFor, recordMeetingHeld, recordMeetingNoShow, bookMeetingCore } = await import("@/lib/meetings");
+  if (meeting && outcome !== "NO_SHOW") {
+    opportunityId = await markMeetingSet(who, contactIds, occurredAt, { activityId: written[0].id, eventId: event.id });
+    if (outcome === "HELD" && occurredAt <= now) {
+      const meetingId = await meetingFor(input.organizationId, opportunityId, written[0].id);
+      if (meetingId) await recordMeetingHeld(who, meetingId, { early: true });
+    }
+  }
+  if (meeting && outcome === "NO_SHOW") {
+    const row = await prisma.opportunityMeeting.findFirst({
+      where: { eventId: event.id, opportunity: { organizationId: input.organizationId } },
+      select: { id: true, opportunityId: true },
+    });
+    if (row) {
+      await prisma.opportunityMeeting.update({ where: { id: row.id }, data: { activityId: written[0].id } });
+      await recordMeetingNoShow(who, row.id);
+      opportunityId = row.opportunityId;
+    }
+  }
+  if (input.mark) await markByHand(who, { contactIds, companyId: companyOnly }, input.mark, occurredAt, input.reason ?? null);
+
+  if (plan && plan.kind === "meeting") {
+    const booked = await bookMeetingCore(who, {
+      contactIds: [...new Set([...contactIds, ...plan.withContactIds])],
+      companyId: event.companyId,
+      on: plan.on,
+      time: plan.time,
+      where: plan.where,
+      note: plan.note,
+      opportunity: plan.opportunity,
+    });
+    if ("error" in booked) notices.push(booked.error ?? "The meeting couldn't be booked");
+    else {
+      notices.push(booked.message);
+      opportunityId = booked.opportunityId ?? opportunityId;
+    }
+  } else if (plan) {
+    const primary = contactIds.length
+      ? await prisma.contact.findFirst({ where: { id: contactIds[0], organizationId: input.organizationId }, select: { name: true } })
+      : event.companyId
+        ? await prisma.company.findFirst({ where: { id: event.companyId, organizationId: input.organizationId }, select: { name: true } })
+        : null;
+    const step = await writeNextStep({
+      organizationId: input.organizationId,
+      userId: input.userId,
+      batchId,
+      plan,
+      contactIds,
+      companyId: event.companyId,
+      primaryName: primary?.name ?? "",
+      about: `Follow up on the ${ACTIVITY_LABELS[input.activityType].toLowerCase()} logged ${formatDay(`${dayInZone(occurredAt, timeZone)}T12:00:00Z`)}: ${body}`,
+    });
+    notices.push(step.words);
+  }
+  return { ok: true as const, contactIds, companyId: event.companyId, batchId, notices, opportunityId };
 }
 
 // Unticking an entry that was logged from the calendar takes that

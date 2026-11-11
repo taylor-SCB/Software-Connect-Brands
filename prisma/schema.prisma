@@ -175,7 +175,9 @@ model Organization {
   weeklyTalkGoal    Int?
   weeklyMeetingGoal Int?
   parkAfterTries    Int       @default(6)
-  outcomesSince     DateTime?
+  // Set to the migration day for workspaces that existed before outcomes,
+  // and to the day a new workspace is made.
+  outcomesSince     DateTime? @default(now())
 
   @@index([status])
   @@index([accountType, status])
@@ -566,11 +568,15 @@ model StatusChange {
 
   // The one-tap reason for Not interested, Lost or a no-show.
   reason String?
+  // The log (or meeting action) that wrote it, so "Undo" can take exactly
+  // that save back (undoLog in contacts/actions.ts).
+  batchId String?
 
   @@index([organizationId, on])
   @@index([contactId])
   @@index([companyId])
   @@index([dealId])
+  @@index([batchId])
 }
 
 // "+ Additional Account" (Sept 30, 2026): one person linked to more
@@ -2374,10 +2380,14 @@ model CalendarEvent {
   contract       Contract?     @relation(fields: [contractId], references: [id], onDelete: Cascade)
   // Ticked off when the day is done, so a week reads at a glance.
   doneAt         DateTime?
+  // The log that wrote it (its calendar copy, a follow-up or a meeting
+  // booked in the same save), for "Undo".
+  batchId        String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
   @@index([organizationId, startOn])
+  @@index([batchId])
   @@index([projectId])
   @@index([crewId, startOn])
   @@index([contactId])

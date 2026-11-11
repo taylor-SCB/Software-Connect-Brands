@@ -4,7 +4,14 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
-import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, PIPELINE_STEPS, type ContactStatusValue } from "@/lib/constants";
+import {
+  CONTACT_STATUSES,
+  CONTACT_STATUS_LABELS,
+  PASS_THROUGH_CONNECTED,
+  PIPELINE_STEPS,
+  STATUS_REASONS,
+  type ContactStatusValue,
+} from "@/lib/constants";
 import { isRealDay } from "@/lib/calendar";
 import { getTimeZone } from "@/lib/organization";
 import { todayIso } from "@/lib/payments";
@@ -18,6 +25,8 @@ const schema = z.object({
   target: z.enum(CONTACT_STATUSES),
   // yyyy-mm-dd per pipeline step being passed through, the target included.
   dates: z.record(z.string(), z.string()).default({}),
+  // The optional one-tap reason for Not Interested or Lost (decision 14).
+  reason: z.enum(STATUS_REASONS).nullish(),
 });
 
 export type StatusResult = { error?: string; success?: string };
@@ -26,17 +35,23 @@ export type StatusResult = { error?: string; success?: string };
 // pipeline past steps never recorded (Meeting Set straight to Quote Sent)
 // needs the day each of those steps happened — Stats measures the time
 // between them — so each is written with its own date. Anything else is
-// written as happening today.
+// written as happening today. Interested, Not Interested or Meeting Set
+// (on its own or passed through) from Not Actioned or Attempted writes
+// Connected first, on the same day (Nov 11, 2026). Not Interested and Lost
+// keep the reason picked, if one was (Price, Timing, Has a vendor, No
+// budget, Other), on their StatusChange row.
 export async function setRecordStatus(input: {
   kind: "contact" | "company";
   id: string;
   target: string;
   dates?: Record<string, string>;
+  reason?: string | null;
 }): Promise<StatusResult> {
   const { organizationId, userId } = await requireSession();
   const parsed = schema.safeParse(input);
   if (!parsed.success) return { error: "That status isn't one of the choices" };
   const { kind, id, target, dates } = parsed.data;
+  const reason = target === "NOT_INTERESTED" || target === "LOST" ? (parsed.data.reason ?? null) : null;
 
   const record =
     kind === "contact"
@@ -66,6 +81,16 @@ export async function setRecordStatus(input: {
     }
   }
 
+  // Connected first, the same day as the first step that needs it.
+  const needsConnect =
+    (record.status === "NOT_ACTIONED" || record.status === "CONTACTED") &&
+    steps.findIndex((step) => PASS_THROUGH_CONNECTED.includes(step)) >= 0;
+  if (needsConnect) {
+    const at = steps.findIndex((step) => PASS_THROUGH_CONNECTED.includes(step));
+    steps.splice(at, 0, "CONNECTED");
+    days.splice(at, 0, days[at]);
+  }
+
   const scope = kind === "contact" ? { contactId: id } : { companyId: id };
   let from: string = record.status;
   const writes = steps.map((step, index) => {
@@ -78,7 +103,9 @@ export async function setRecordStatus(input: {
         toStatus: step,
         // A date typed for today is now; an earlier one is its midday.
         on: days[index] === today ? new Date() : zonedNoon(days[index], timeZone),
-        auto: false,
+        // The pass-through is the app's step, not the person's pick.
+        auto: needsConnect && step === "CONNECTED",
+        reason: index === steps.length - 1 ? reason : null,
       },
     });
     from = step;
