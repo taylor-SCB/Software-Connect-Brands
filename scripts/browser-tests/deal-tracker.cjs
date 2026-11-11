@@ -656,6 +656,9 @@ async function anonymousStatus(browser, url) {
     await phone.goto(`${BASE}/dashboard/contracts/${a.id}`);
     const summary = phone.getByTestId("deal-journey-summary");
     await summary.waitFor();
+    // The page fades in on a transform, which places a pinned button
+    // against the page until it ends.
+    await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
     assert.match(await summary.textContent(), /Step 5 of 5 · /);
     assert.equal(await summary.locator(".health-dot").count(), 5);
     const next = await phone.getByTestId("deal-journey").getByTestId("journey-next").boundingBox();

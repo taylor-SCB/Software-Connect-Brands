@@ -1065,10 +1065,10 @@ let context;
   assert.equal(await uxCustomer.getByTestId("document-total").textContent(), "$23,200.00", "the customer's link shows the saved line");
   await uxCustomer.close();
 
-  log("Sprint: the quote page's DealJourney strip; Send quote's Copy link copies the customer's link, marks it sent and moves a deal still at Meeting Completed to Quote Sent");
+  log("Sprint: the quote page's DealJourney strip; Send quote's Copy link copies the customer's link, marks it sent and moves a deal still behind it to Quote Sent");
   await sql(
     `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"updatedAt")
-     VALUES ('deal_qi_sq','${org}','ctc_qi','Lobby cameras','MEETING_COMPLETED',now())`,
+     VALUES ('deal_qi_sq','${org}','ctc_qi','Lobby cameras','LEAD',now())`,
   );
   await sql(
     `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt")

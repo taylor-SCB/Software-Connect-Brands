@@ -119,7 +119,7 @@ export default async function ContractDetailPage({
       <form action={setContractStatus} className="max-sm:w-full">
         <input type="hidden" name="contractId" value={contract.id} />
         <input type="hidden" name="status" value="SENT" />
-        <button type="submit" className="btn btn-primary btn-sm max-sm:w-full" data-testid="journey-next">
+        <button type="submit" className="btn btn-primary btn-sm max-sm:min-h-11 max-sm:w-full" data-testid="journey-next">
           <IconSend size={13} />
           Send for signature
         </button>

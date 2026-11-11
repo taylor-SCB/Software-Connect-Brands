@@ -43,7 +43,7 @@ export function SendQuoteButton({
   quoteLabel,
   publicPath,
   contact,
-  className = "btn btn-primary btn-sm max-sm:w-full",
+  className = "btn btn-primary btn-sm max-sm:min-h-11 max-sm:w-full",
 }: {
   quoteId: string;
   // "QUO-1001 Kitchen remodel"

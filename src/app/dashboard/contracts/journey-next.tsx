@@ -19,7 +19,7 @@ import { sendInvoice } from "./payment-actions";
 export type JourneyPage = "quote" | "coordinator" | "contract";
 
 // Full width on a phone, where the strip pins Next to the foot.
-export const NEXT = "btn btn-primary btn-sm max-sm:w-full";
+export const NEXT = "btn btn-primary btn-sm max-sm:min-h-11 max-sm:w-full";
 
 export function JourneyNext({
   next,
