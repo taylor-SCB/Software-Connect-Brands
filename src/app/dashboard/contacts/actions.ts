@@ -23,6 +23,8 @@ import {
   scheduleFollowUpEvents,
   writeNextStep,
   zonedMoment,
+  dayInZone,
+  timeInZone,
 } from "@/lib/calendar-auto";
 import { markByHand, markConnected, markContacted, markMeetingSet } from "@/lib/status";
 import { ensureOpportunityForDeal, OPEN_OPPORTUNITY } from "@/lib/opportunities";
@@ -838,6 +840,91 @@ export async function undoLog(batchId: string): Promise<ActionState> {
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard");
   return { success: "Undone" };
+}
+
+// Edit on a history line (round 2, Nov 11, 2026; the plan's "Your own
+// lines get Edit / Delete"). Changes what was said, how it went and when
+// it happened — on every copy of the line when it was logged on several
+// people at once (one batch), and on its own calendar copy. Only whoever
+// logged it, or an Owner or Admin, the same as Delete (undoLog). A line
+// can't be moved into the future (that would be a plan, not history), a
+// marketing send can't be edited (it went out), and an outcome must fit
+// the kind of touch. Statuses the original save moved stay where they are:
+// an edit corrects the record, it doesn't replay the save. Returns what it
+// was before, so "Saved · Undo" can put it back through this same action.
+export type ActivityEditValues = { activityId: string; body: string; outcome: string; on: string; time: string };
+export type UpdateActivityResult = { success?: string; error?: string; previous?: ActivityEditValues };
+
+export async function updateActivity(input: ActivityEditValues): Promise<UpdateActivityResult> {
+  const session = await requireAdminSession();
+  const { organizationId, userId } = session;
+  const parsed = z
+    .object({
+      activityId: idSchema,
+      body: z.string().trim().max(5000, "That summary is too long"),
+      outcome: z.union([z.literal(""), outcomeSchema]),
+      on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day"),
+      time: z.string().max(8),
+    })
+    .safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the fields" };
+  const { activityId, on } = parsed.data;
+  const row = await prisma.activity.findFirst({
+    where: { id: activityId, organizationId },
+    select: { id: true, userId: true, type: true, body: true, outcome: true, occurredAt: true, batchId: true, marketing: true, contactId: true, companyId: true },
+  });
+  if (!row) return { error: "That line is gone" };
+  if (row.marketing) return { error: "A marketing email can't be edited. It went out." };
+  if (row.userId !== userId && !session.allowed) return { error: "Only whoever logged it, or an Owner or Admin, can edit it" };
+
+  const type = row.type as (typeof ACTIVITY_TYPES)[number];
+  const outcome = parsed.data.outcome || null;
+  const problem = outcomeProblem(type, outcome);
+  if (problem) return { error: problem };
+  const body = parsed.data.body || outcomeNote({ outcome, mark: null, reason: null, booked: false });
+  if (!body) return { error: "Add a short summary" };
+  if (!isRealDay(on)) return { error: "That day isn't a real date" };
+
+  const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  const time = cleanTime(parsed.data.time);
+  const wasOn = dayInZone(row.occurredAt, timeZone);
+  const wasTime = timeInZone(row.occurredAt, timeZone);
+  const occurredAt =
+    on === wasOn && (time ?? "") === (wasTime ?? "") ? row.occurredAt : time ? zonedMoment(on, time, timeZone) : zonedNoon(on, timeZone);
+  if (on > today || occurredAt.getTime() > Date.now() + 60_000) {
+    return { error: "A line in the history has happened. To plan something ahead, put it on the calendar." };
+  }
+
+  const ids = row.batchId
+    ? (await prisma.activity.findMany({ where: { organizationId, batchId: row.batchId }, select: { id: true, contactId: true, companyId: true } }))
+    : [{ id: row.id, contactId: row.contactId, companyId: row.companyId }];
+  const lineIds = ids.map((line) => line.id);
+  await prisma.$transaction([
+    prisma.activity.updateMany({ where: { organizationId, id: { in: lineIds } }, data: { body, outcome, occurredAt } }),
+    // Its own calendar copy follows; a booked meeting this line ticked done
+    // (auto: false) keeps its own day and words.
+    prisma.calendarEvent.updateMany({
+      where: { organizationId, activityId: { in: lineIds }, auto: true },
+      data: {
+        notes: body,
+        doneAt: occurredAt,
+        ...(occurredAt !== row.occurredAt
+          ? { startOn: isoToDate(dayInZone(occurredAt, timeZone))!, startTime: time ?? (wasTime && on === wasOn ? wasTime : null) }
+          : {}),
+      },
+    }),
+  ]);
+
+  for (const line of ids) {
+    if (line.contactId) revalidatePath(`/dashboard/contacts/${line.contactId}`);
+    if (line.companyId) revalidatePath(`/dashboard/companies/${line.companyId}`);
+  }
+  revalidatePath("/dashboard/calendar");
+  return {
+    success: lineIds.length > 1 ? `Saved on all ${lineIds.length} people` : "Saved",
+    previous: { activityId: row.id, body: row.body, outcome: row.outcome ?? "", on: wasOn, time: wasTime ?? "" },
+  };
 }
 
 export async function createDealForContact(

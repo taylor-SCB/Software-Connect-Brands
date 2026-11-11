@@ -11,6 +11,7 @@ import type { LeadHealth } from "@/lib/health";
 import { markMeetingHeld, markMeetingNoShow, rescheduleMeeting } from "@/app/dashboard/deals/opportunity-actions";
 import { completeEventWithLog } from "@/app/dashboard/calendar/actions";
 import { useCompanyShell } from "./company-shell";
+import { StatusPicker } from "@/components/status-picker";
 
 // What the one filled button does on a company page, worked out on the
 // server from the meter's next step (meter.action) and the person it is
@@ -291,4 +292,13 @@ function Reschedule({ meetingId, on }: { meetingId: string; on: string }) {
       </FloatingMenu>
     </>
   );
+}
+
+// "Set status by hand" in the company's ⋯ More, with Meeting Set offering
+// "Book it" first (round 2): booking goes to the warmest person here, as
+// the main button's Book meeting does.
+export function CompanyStatusPicker(props: { id: string; status: string; meetingSetOn: string | null; today: string; bookFor: string | null }) {
+  const shell = useCompanyShell();
+  const { bookFor, ...rest } = props;
+  return <StatusPicker kind="company" {...rest} onBook={() => shell.book(bookFor)} />;
 }

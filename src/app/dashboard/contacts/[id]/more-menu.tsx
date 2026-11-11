@@ -10,6 +10,7 @@ import { AdditionalAccountButton } from "@/components/additional-account-button"
 import { IconEdit, IconFileText, IconPlus, IconSignature } from "@/components/icons";
 import { deleteContact } from "../actions";
 import { AddDealForm } from "./forms";
+import { useContactPage } from "./contact-shell";
 
 const ITEM = "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--hover)] focus-visible:bg-[var(--hover)] pointer-coarse:min-h-11";
 
@@ -45,6 +46,7 @@ export function MoreMenu({
   buttonClassName?: string;
   label?: React.ReactNode;
 }) {
+  const page = useContactPage();
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"menu" | "status" | "deal">("menu");
@@ -101,7 +103,7 @@ export function MoreMenu({
             <button type="button" className="link px-3 pt-2 text-xs" onClick={() => setView("menu")}>
               ← More
             </button>
-            <StatusPanel key={round} kind="contact" id={contactId} status={status} meetingSetOn={meetingSetOn} today={today} onDone={close} />
+            <StatusPanel key={round} kind="contact" id={contactId} status={status} meetingSetOn={meetingSetOn} today={today} onDone={close} onBook={page.openBook} />
           </div>
         ) : (
           <div className="py-1">

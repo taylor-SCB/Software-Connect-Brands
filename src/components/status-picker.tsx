@@ -49,6 +49,7 @@ export function StatusPanel({
   meetingSetOn,
   today,
   onDone,
+  onBook,
 }: {
   kind: "contact" | "company";
   id: string;
@@ -58,11 +59,17 @@ export function StatusPanel({
   today: string;
   // After a save (and on "nothing changed").
   onDone: () => void;
+  // Opens the Book meeting sheet. Given, picking Meeting Set offers
+  // "Book it" first (round 2, the plan's Book meeting sheet): a status
+  // set by hand books nothing, so the meeting itself is the better move.
+  // "Just set the status" is still there.
+  onBook?: () => void;
 }) {
   const router = useRouter();
   const [target, setTarget] = useState<ContactStatusValue | null>(null);
   const [dates, setDates] = useState<Record<string, string>>({});
   const [reason, setReason] = useState<StatusReasonValue | null>(null);
+  const [offerBook, setOfferBook] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
 
@@ -80,7 +87,12 @@ export function StatusPanel({
     });
   }
 
-  function choose(next: ContactStatusValue) {
+  function choose(next: ContactStatusValue, asked = false) {
+    if (next === "MEETING_SET" && onBook && !asked) {
+      setOfferBook(true);
+      return;
+    }
+    setOfferBook(false);
     if (ASKS_REASON.has(next)) {
       setTarget(next);
       setReason(null);
@@ -97,6 +109,36 @@ export function StatusPanel({
   }
 
   const steps = target ? stepsFor(status, target) : [];
+
+  if (offerBook && onBook && !target) {
+    return (
+      <div className="space-y-2.5 p-3" data-testid="status-book-offer">
+        <p className="text-xs">
+          <strong>Book the meeting?</strong> Booking it sets Meeting Set, puts it on the calendar and on the Pipeline.
+        </p>
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm pointer-coarse:min-h-11"
+            onClick={() => {
+              setOfferBook(false);
+              onDone();
+              onBook();
+            }}
+            data-testid="status-book-it"
+          >
+            Book it
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm pointer-coarse:min-h-11" disabled={pending} onClick={() => choose("MEETING_SET", true)} data-testid="status-set-anyway">
+            Just set the status
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm pointer-coarse:min-h-11" onClick={() => setOfferBook(false)}>
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (target && ASKS_REASON.has(target)) {
     return (
@@ -215,6 +257,7 @@ export function StatusPicker({
   status,
   meetingSetOn,
   today,
+  onBook,
 }: {
   kind: "contact" | "company";
   id: string;
@@ -222,6 +265,8 @@ export function StatusPicker({
   // yyyy-mm-dd, or null when no meeting has been set.
   meetingSetOn: string | null;
   today: string;
+  // See StatusPanel.
+  onBook?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // Re-mounted on each open so a half-finished pick starts over.
@@ -249,7 +294,7 @@ export function StatusPicker({
       {/* Floats over the page (Oct 27, 2026): drawn inside the page it was
           cut off by a narrow column or the sidebar. */}
       <FloatingMenu anchor={button} open={open} onClose={() => setOpen(false)} testId="status-menu" label="Status">
-        <StatusPanel key={round} kind={kind} id={id} status={status} meetingSetOn={meetingSetOn} today={today} onDone={() => setOpen(false)} />
+        <StatusPanel key={round} kind={kind} id={id} status={status} meetingSetOn={meetingSetOn} today={today} onDone={() => setOpen(false)} onBook={onBook} />
       </FloatingMenu>
     </div>
   );

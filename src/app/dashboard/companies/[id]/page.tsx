@@ -13,7 +13,6 @@ import { AutoPill } from "@/components/auto-pill";
 import { TagCell } from "../../contacts/contacts-list";
 import { deleteCompany, setCompanyFavorite } from "../actions";
 import { HeaderDeleteButton } from "@/components/header-delete-button";
-import { StatusPicker } from "@/components/status-picker";
 import { meetingSetDay } from "@/lib/status";
 import { dayInZone } from "@/lib/calendar-auto";
 import { AddPersonSearch } from "@/components/add-person-search";
@@ -23,6 +22,7 @@ import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
 import { ProjectsCard } from "@/components/projects-card";
 import { UpcomingCard } from "@/components/upcoming-card";
+import { salesFirst } from "@/lib/event-order";
 import { loadEventChoices, upcomingFor } from "@/lib/calendar-data";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
@@ -40,10 +40,10 @@ import { HealthWord } from "@/components/health-word";
 import { companyHealth, healthSettings, loadContactHealth } from "@/lib/health-load";
 import { aheadDay, isoDiff, pastDay, shortDay, time12, warmth, wholeDollars, zoneDay, zoneTime, type LeadHealth } from "@/lib/health";
 import { CompanyShell } from "./company-shell";
-import { HeaderActions, type MainAction } from "./header-actions";
+import { CompanyStatusPicker, HeaderActions, type MainAction } from "./header-actions";
 import { WhoToCall, type CallRow } from "./who-to-call";
 import { FoldCard, HistoryChunk, HistoryShell, LogTouch, NextStepStrip, PhoneBar, ShowCounts } from "./sections";
-import { lastTouchLines, mainContactIds, meetingFor, openOpportunities, stageOrder, whoToCallPage } from "./load";
+import { bookingTiles, lastTouchLines, mainContactIds, meetingFor, openOpportunities, stageOrder, whoToCallPage } from "./load";
 
 // A company can have thousands of people and years of activity, so the
 // page shows the people fifty at a time and the latest slice of every
@@ -71,7 +71,8 @@ export default async function CompanyDetailPage({
 }) {
   const { id } = await params;
   const { people: peopleParam } = await searchParams;
-  const { organizationId, userId, name: userName } = await requireSession();
+  const { organizationId, userId, name: userName, role } = await requireSession();
+  const canManage = role === "OWNER" || role === "ADMIN";
 
   const settings = await healthSettings(organizationId);
   const timeZone = settings.timeZone;
@@ -252,6 +253,9 @@ export default async function CompanyDetailPage({
   // on file has that one.
   const companyPeople = people.map((person) => ({ id: person.id, name: person.name, email: person.email, phone: person.phone ?? person.mobile }));
 
+  // Which tile each person's Book meeting / Reschedule is offered on first.
+  const tiles = await bookingTiles(organizationId, rows.map((row) => row.id), now, timeZone);
+
   /* ------------------------------ Main action ------------------------------ */
 
   // The company wears the meter of its person furthest along; the main
@@ -346,6 +350,9 @@ export default async function CompanyDetailPage({
       via: activity.people.length ? activity.people : null,
       bypassedBy: activity.contact ? null : activity.user.name,
       marketing: activity.marketing,
+      outcome: activity.outcome,
+      // Edit on your own lines (round 2), as on a contact's page.
+      edit: !activity.marketing && (activity.userId === userId || canManage) ? { on: day, time: zoneTime(activity.occurredAt, timeZone), today } : null,
     };
     const last = blocks[blocks.length - 1];
     if (last && last.tier === tier && last.day === day) last.items.push(item);
@@ -403,7 +410,7 @@ export default async function CompanyDetailPage({
       <CompanyShell
         companyId={company.id}
         companyName={company.name}
-        people={rows.map((row) => ({ id: row.id, name: row.name, title: row.title }))}
+        people={rows.map((row) => ({ id: row.id, name: row.name, title: row.title, opportunityId: tiles.get(row.id) ?? null }))}
         companyPeople={companyPeople}
         userName={userName}
         today={today}
@@ -462,12 +469,12 @@ export default async function CompanyDetailPage({
                   <MergeButton kind="companies" initial={[{ id: company.id, name: company.name, city: company.city, state: company.state }]} label="Merge" />
                   <span className="inline-flex items-center gap-1.5 text-xs">
                     <span className="faint">Set status by hand</span>
-                    <StatusPicker
-                      kind="company"
+                    <CompanyStatusPicker
                       id={company.id}
                       status={company.status}
                       meetingSetOn={meetingSet ? dayInZone(meetingSet, timeZone) : null}
                       today={today}
+                      bookFor={(warmest ?? about)?.id ?? null}
                     />
                   </span>
                   <span className="ml-auto">
@@ -673,7 +680,20 @@ export default async function CompanyDetailPage({
               </Card>
             )}
 
-            <UpcomingCard events={upcoming} choices={eventChoices} defaults={{ companyId: company.id, startOn: today }} label={company.name} />
+            <UpcomingCard
+              events={upcoming}
+              choices={eventChoices}
+              // A lead's company books a sales touch: sales types first,
+              // starting on Call while its next step is to reach someone,
+              // Meeting after (round 2).
+              typeOrder={salesFirst(eventChoices.eventTypes)}
+              defaults={{
+                companyId: company.id,
+                startOn: today,
+                type: eventChoices.eventTypes.find((name) => name.toLowerCase() === (health.meter.action?.key === "call" ? "call" : "meeting")),
+              }}
+              label={company.name}
+            />
 
             {hasPaperwork && (
               <FoldCard

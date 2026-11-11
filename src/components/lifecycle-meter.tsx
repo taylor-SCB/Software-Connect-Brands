@@ -6,6 +6,7 @@ import { METER_STEPS, type LeadHealth, type MeterStep } from "@/lib/health";
 import { FloatingMenu } from "@/components/floating-menu";
 import { HealthDot } from "@/components/health-marks";
 import { HealthDetails, useHoverPopover } from "@/components/health-popover";
+import { Sheet } from "@/components/how-did-it-go/sheet";
 
 // One lifecycle meter for every BDR screen (BDR redesign, Nov 11, 2026).
 // Seven steps — Attempted, Connected, Meeting Set, Meeting Completed,
@@ -194,6 +195,9 @@ function HeaderMeter({
 }) {
   const meter = health.meter;
   const [shown, setShown] = useState<{ index: number; element: HTMLElement } | null>(null);
+  // On a phone the step names are hidden; "All steps" opens every step
+  // with its date in a bottom sheet (round 2, Nov 11, 2026).
+  const [sheet, setSheet] = useState(false);
   // FloatingMenu places itself against a ref; one per opened step.
   const anchorRef = useMemo(() => ({ current: shown?.element ?? null }), [shown]);
 
@@ -242,9 +246,66 @@ function HeaderMeter({
           </li>
         ))}
       </ol>
-      <p className="lm-phone" data-testid="lifecycle-phone">
-        {phone}
-      </p>
+      <div className="lm-phone">
+        <div className="flex flex-wrap items-center justify-between gap-x-3">
+          <p data-testid="lifecycle-phone">{phone}</p>
+          {interactive && (
+            <button
+              type="button"
+              className="link min-h-11 text-xs"
+              aria-haspopup="dialog"
+              aria-expanded={sheet}
+              onClick={() => setSheet(true)}
+              data-testid="lifecycle-steps-open"
+            >
+              All steps
+            </button>
+          )}
+        </div>
+      </div>
+      <Sheet open={sheet} onClose={() => setSheet(false)} title="All steps" testId="lifecycle-steps-sheet">
+        <div data-health={health.tone}>
+        <ol className="space-y-1" aria-label="Steps">
+          {meter.steps.map((step, index) => {
+            const reached = step.state === "done" || step.state === "current" || step.state === "closed";
+            return (
+              <li
+                key={step.name}
+                className="flex min-h-11 items-start gap-3 border-b border-[var(--hairline-3)] py-2 last:border-b-0"
+                data-testid="lifecycle-sheet-step"
+                data-state={step.state}
+                data-step={index}
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full border border-[var(--border-strong)]"
+                  style={reached ? { background: "var(--hc)", borderColor: "transparent" } : undefined}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold">
+                    {index === 6 && meter.won ? "✓ " : ""}
+                    {step.name}
+                    {index === 1 && meter.interested ? " · Interested" : ""}
+                    {step.state === "current" && <span className="faint font-normal"> · now</span>}
+                    {step.state === "next" && <span className="faint font-normal"> · next</span>}
+                  </span>
+                  <span className="block text-xs text-[var(--text-dim)]" data-testid="lifecycle-sheet-date">
+                    {reached
+                      ? `${step.date ? `Reached ${step.date}` : "Reached"}${step.by === "auto" ? " · moved on its own" : step.by ? ` · by ${step.by}` : ""}`
+                      : (step.hint ?? "Not yet")}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+        {showReason && (
+          <p className="mt-3 text-sm" data-testid="lifecycle-sheet-reason">
+            {health.reason}
+          </p>
+        )}
+        </div>
+      </Sheet>
       {meter.closed && !showReason && (
         <p className="lm-closed" data-testid="lifecycle-closed">
           <span className="lm-closed-mark" aria-hidden="true">

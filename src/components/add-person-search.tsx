@@ -6,6 +6,7 @@ import Link from "next/link";
 import { IconPlus, IconSearch, IconUserPlus } from "@/components/icons";
 import { FormError } from "@/components/ui";
 import { FloatingMenu } from "@/components/floating-menu";
+import { Sheet } from "@/components/how-did-it-go/sheet";
 import { useSearch } from "@/lib/use-search";
 import { addExistingPersonToCompany } from "@/app/dashboard/contacts/account-actions";
 
@@ -27,7 +28,21 @@ export type PersonHit = {
 // The panel is a FloatingMenu (Nov 10, 2026): it was drawn right-aligned
 // to the button, 22rem wide, so on a phone, where the button sits mid-row,
 // it ran 72px off the left edge. Drawn on the page and placed against the
-// window, it stays on screen at any width.
+// window, it stays on screen at any width. On a phone (round 2, the plan's
+// "Add person opens as a sheet") it is a bottom sheet instead, the same
+// one the log and Book meeting use, with the same search inside.
+function usePhone() {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 639px)");
+    const update = () => setPhone(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return phone;
+}
+
 export function AddPersonSearch({ companyId, companyName, compact = false }: { companyId: string; companyName: string; compact?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -36,6 +51,7 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
   const [pending, start] = useTransition();
   const button = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const phone = usePhone();
 
   // Straight into the search box. The panel is hidden for the moment it
   // takes to place it, and a hidden box can't take focus, so this waits a
@@ -65,21 +81,8 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
     });
   }
 
-  return (
+  const body = (
     <>
-      <button
-        ref={button}
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
-        aria-expanded={open}
-        data-testid={compact ? "add-person-compact" : "add-person"}
-      >
-        {compact ? <IconPlus size={12} /> : <IconUserPlus size={13} />}
-        {compact ? "Add" : "Add person"}
-      </button>
-
-      <FloatingMenu anchor={button} open={open} onClose={() => setOpen(false)} width={352} testId="add-person-panel" label="Add person">
         <div className="border-b border-[var(--hairline-3)] p-2.5">
           <label className="faint mb-1 block text-[0.7rem]" htmlFor={`add-person-${companyId}`}>
             Contact name — checks who&apos;s already in your contacts
@@ -93,6 +96,7 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Name, email or phone…"
               ref={input}
+              data-autofocus
               autoComplete="off"
               className="input input-sm pl-8"
               data-testid="add-person-input"
@@ -138,7 +142,32 @@ export function AddPersonSearch({ companyId, companyName, compact = false }: { c
           </Link>
           <FormError message={message.error} />
         </div>
-      </FloatingMenu>
+    </>
+  );
+
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="btn btn-ghost btn-sm pointer-coarse:min-h-11"
+        aria-expanded={open}
+        data-testid={compact ? "add-person-compact" : "add-person"}
+      >
+        {compact ? <IconPlus size={12} /> : <IconUserPlus size={13} />}
+        {compact ? "Add" : "Add person"}
+      </button>
+
+      {phone ? (
+        <Sheet open={open} onClose={() => setOpen(false)} title="Add person" eyebrow={companyName} testId="add-person-panel">
+          <div className="-mx-4 -my-4 sm:-mx-5">{body}</div>
+        </Sheet>
+      ) : (
+        <FloatingMenu anchor={button} open={open} onClose={() => setOpen(false)} width={352} testId="add-person-panel" label="Add person">
+          {body}
+        </FloatingMenu>
+      )}
     </>
   );
 }

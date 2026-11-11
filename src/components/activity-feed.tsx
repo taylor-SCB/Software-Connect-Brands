@@ -14,6 +14,7 @@ import {
 } from "@/components/icons";
 import { MarketingBadge } from "@/components/crm-cells";
 import { ActivityDelete } from "@/components/activity-delete";
+import { ActivityEdit } from "@/components/activity-edit";
 import {
   ACTIVITY_LABELS,
   ACTIVITY_OUTCOME_LABELS,
@@ -77,6 +78,10 @@ export type ActivityItem = {
   // Your own line (or any, for an Owner or Admin): Delete takes back the
   // save it came from.
   undoBatchId?: string | null;
+  // Your own line (or any, for an Owner or Admin), not a marketing send:
+  // Edit opens under it (round 2). The day and "HH:MM" it happened on the
+  // workspace's clock, and today there, so the day box can't go ahead.
+  edit?: { on: string; time: string | null; today: string } | null;
 };
 
 // "● Talked" in the health colour, the word in text colour.
@@ -224,9 +229,20 @@ export function ActivityFeed({ items }: { items: ActivityItem[] }) {
                 {activity.others > 0 &&
                   ` · also on ${activity.others} ${activity.others === 1 ? "other" : "others"}`}
               </p>
-              {activity.undoBatchId && (
-                <div className="mt-1">
-                  <ActivityDelete batchId={activity.undoBatchId} others={activity.others} />
+              {(activity.undoBatchId || activity.edit) && (
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {activity.edit && (
+                    <ActivityEdit
+                      activityId={activity.id}
+                      type={activity.type}
+                      body={activity.body}
+                      outcome={activity.outcome ?? null}
+                      on={activity.edit.on}
+                      time={activity.edit.time}
+                      today={activity.edit.today}
+                    />
+                  )}
+                  {activity.undoBatchId && <ActivityDelete batchId={activity.undoBatchId} others={activity.others} />}
                 </div>
               )}
             </div>

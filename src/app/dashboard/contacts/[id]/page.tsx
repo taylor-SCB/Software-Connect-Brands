@@ -24,7 +24,6 @@ import { batchOthers } from "@/lib/logging";
 import { BackLink, StatusBadge, DealStageBadge } from "@/components/ui";
 import { IconGlobe, IconPlus, IconBuilding, IconMessage, IconPhone } from "@/components/icons";
 import { ActivityOverview } from "@/components/activity-overview";
-import { UpcomingCard } from "@/components/upcoming-card";
 import { loadEventChoices, upcomingFor } from "@/lib/calendar-data";
 import { loadBalance } from "@/lib/money";
 import { todayIso } from "@/lib/payments";
@@ -38,7 +37,9 @@ import { HealthRing } from "@/components/health-marks";
 import { HealthWord } from "@/components/health-word";
 import { contactHealth, healthSettings } from "@/lib/health-load";
 import { nextKindOf, shortDay, stepOfStatus, time12, zoneDay, zoneTime } from "@/lib/health";
-import { loadContactMeetings } from "./contact-data";
+import { loadContactMeetings, loadUpcomingActions } from "./contact-data";
+import { ContactUpcoming } from "./contact-upcoming";
+import { salesFirst } from "@/lib/event-order";
 import { ContactShell } from "./contact-shell";
 import { CallButton, MainAction, TextButton, type MainActionData, type PhoneRow } from "./action-bar";
 import { MoreMenu } from "./more-menu";
@@ -145,6 +146,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     loadRepChoices(organizationId),
   ]);
   if (!health) notFound();
+  const upcomingActions = await loadUpcomingActions(organizationId, upcoming, today);
   const meetingSetOn = meetingSet ? dayInZone(meetingSet, timeZone) : null;
   const canManage = role === "OWNER" || role === "ADMIN";
 
@@ -236,6 +238,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
           outcome: activity.outcome,
           connect: activity.marketing ? undefined : isConnect(activity, now),
           undoBatchId: activity.batchId && !activity.marketing && (activity.userId === userId || canManage) ? activity.batchId : null,
+          edit: !activity.marketing && (activity.userId === userId || canManage) ? { on: day, time: zoneTime(activity.occurredAt, timeZone), today } : null,
           day,
           dayLabel: dayLabel(day),
           channel: activity.marketing ? null : CHANNEL[activity.type as ActivityTypeValue],
@@ -536,19 +539,20 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             </div>
 
             <div className="order-5 min-w-0 lg:order-none">
-              <UpcomingCard
+              <ContactUpcoming
                 events={upcoming}
                 choices={eventChoices}
-                phoneFold
-                // What gets booked from a person's page is a meeting with them,
-                // and only a Meeting sets Meeting Set, so the form starts on the
-                // workspace's Meeting rather than the first type on its list
-                // (Install).
+                meetings={upcomingActions}
+                // A lead's page books a sales touch: the sales types come
+                // first, and "+ Event" starts on Call while the next step
+                // is still to reach them, Meeting after that (round 2;
+                // before, Meeting always, and Install before that).
+                typeOrder={salesFirst(eventChoices.eventTypes)}
                 defaults={{
                   contactId: contact.id,
                   companyId: contact.companyId ?? undefined,
                   startOn: today,
-                  type: eventChoices.eventTypes.find((name) => name.toLowerCase() === "meeting"),
+                  type: eventChoices.eventTypes.find((name) => name.toLowerCase() === (actionKey === "call" ? "call" : "meeting")),
                 }}
                 label={contact.name}
               />
