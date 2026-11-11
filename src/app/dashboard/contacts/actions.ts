@@ -4,6 +4,7 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { requireAdminSession, requireSession } from "@/lib/session";
 import { keepFields, parseForm, type ActionState } from "@/lib/forms";
 import { dollarsToCents } from "@/lib/format";
@@ -391,6 +392,9 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
   const problem = outcomeProblem(type, outcome);
   if (problem) return { error: problem, kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
   const body = parsed.data.body || outcomeNote({ outcome, mark, reason, booked: next?.kind === "meeting" });
+  // A meeting logged from a tile's panel lands on that tile (an open one in
+  // this workspace; attachMeeting checks), not whichever they are on.
+  const meetingOpportunity = type === "MEETING" ? idSchema.safeParse(formData.get("meetingOpportunity")).data ?? null : null;
   if (!body) return { error: "Add a short summary", kept: keepFields(formData, ["body", "occurredOn", "atTime"]) };
 
   const targets = await resolveTargets(parsed.data.target, organizationId);
@@ -453,6 +457,7 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
       opportunityId = await markMeetingSet(who, contactIds, new Date(), {
         on: atTime ? zonedMoment(on, atTime, timeZone) : zonedNoon(on, timeZone),
         eventId: scheduledId,
+        opportunity: meetingOpportunity,
       });
     }
     revalidateTarget(targets.primary);
@@ -539,7 +544,7 @@ export async function logActivity(_prev: LogActivityState, formData: FormData): 
     await markConnected(who, { contactIds, companyId }, occurredAt);
   }
   if (type === "MEETING" && outcome !== "NO_SHOW") {
-    opportunityId = await markMeetingSet(who, contactIds, occurredAt, { activityId: rows[0].id, eventId: booked?.id ?? null });
+    opportunityId = await markMeetingSet(who, contactIds, occurredAt, { activityId: rows[0].id, eventId: booked?.id ?? null, opportunity: meetingOpportunity });
     if (outcome === "HELD") {
       const meetingId = await meetingFor(organizationId, opportunityId, rows[0].id);
       if (meetingId) await recordMeetingHeld(who, meetingId, { early: true });
@@ -716,7 +721,7 @@ const bookSchema = z.object({
 // kept on the meeting — the same path as every meeting. Today or later.
 export async function bookMeeting(
   input: z.input<typeof bookSchema>,
-): Promise<ActionState & { batchId?: string; opportunityId?: string | null; eventId?: string }> {
+): Promise<ActionState & { batchId?: string; opportunityId?: string | null; eventId?: string; yours?: boolean }> {
   const { organizationId, userId } = await requireSession();
   const parsed = bookSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the meeting and try again" };
@@ -746,13 +751,16 @@ export async function bookMeeting(
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/deals");
   revalidatePath("/dashboard");
-  return { success: booked.message, batchId, opportunityId: booked.opportunityId, eventId: booked.eventId };
+  return { success: booked.message, batchId, opportunityId: booked.opportunityId, eventId: booked.eventId, yours: booked.yours };
 }
 
 // What the Book meeting sheet offers: the other people at the person's
 // company (for "Who else"), and the company's open opportunities (for "Add
 // to the open Ironwood opportunity with Chase?"), each with its Primary.
-export async function bookingOptions(contactId: string): Promise<
+// `includesThem` means they are on it as Primary or Associated (Do Not
+// List is not on it). `include` (the Pipeline panel's tile) is listed even
+// when it isn't among the company's newest ten.
+export async function bookingOptions(contactId: string, include?: string | null): Promise<
   | {
       people: { id: string; name: string; title: string | null }[];
       opportunities: { id: string; title: string; primaryName: string | null; ownerName: string | null; includesThem: boolean }[];
@@ -784,13 +792,13 @@ export async function bookingOptions(contactId: string): Promise<
     },
     orderBy: { updatedAt: "desc" },
     take: 10,
-    select: {
-      id: true,
-      title: true,
-      owner: { select: { name: true } },
-      contacts: { select: { contactId: true, role: true, contact: { select: { name: true } } } },
-    },
+    select: OPTION_SELECT,
   });
+  const wanted = include ? idSchema.safeParse(include).data : undefined;
+  if (wanted && !opportunities.some((row) => row.id === wanted)) {
+    const extra = await prisma.opportunity.findFirst({ where: { id: wanted, organizationId, ...OPEN_OPPORTUNITY }, select: OPTION_SELECT });
+    if (extra) opportunities.unshift(extra);
+  }
   return {
     people,
     opportunities: opportunities.map((row) => ({
@@ -798,10 +806,17 @@ export async function bookingOptions(contactId: string): Promise<
       title: row.title,
       primaryName: row.contacts.find((person) => person.role === "PRIMARY")?.contact.name ?? null,
       ownerName: row.owner?.name ?? null,
-      includesThem: row.contacts.some((person) => person.contactId === contact.id),
+      includesThem: row.contacts.some((person) => person.contactId === contact.id && person.role !== "HIDDEN"),
     })),
   };
 }
+
+const OPTION_SELECT = {
+  id: true,
+  title: true,
+  owner: { select: { name: true } },
+  contacts: { select: { contactId: true, role: true, contact: { select: { name: true } } } },
+} satisfies Prisma.OpportunitySelect;
 
 // "Saved · Undo" and Delete on your own line (Nov 11, 2026): takes one
 // save back in a single transaction — its activity rows, the calendar

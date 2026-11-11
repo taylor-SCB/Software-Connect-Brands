@@ -12,7 +12,8 @@ import { loadWorkspaceUsers } from "@/lib/workspace-users";
 import { todayIso } from "@/lib/payments";
 import { zonedNoon } from "@/lib/money";
 import { cleanTime, isRealDay } from "@/lib/calendar";
-import { meetingHeldAnswer, meetingNoShowAnswer, meetingRescheduleAnswer } from "@/lib/meetings";
+import { meetingHeldAnswer, meetingNoShowAnswer, meetingRescheduleAnswer, waitingMeetings } from "@/lib/meetings";
+import { waitingOf } from "@/lib/meeting-rule";
 import { healthSettings, opportunityHealth } from "@/lib/health-load";
 import { zoneDay, type LeadHealth } from "@/lib/health";
 import { loadDealJourney, type JourneyRefs } from "@/lib/deal-journey-load";
@@ -76,6 +77,10 @@ export type OpportunityDetail = {
   } | null;
   people: OpportunityPerson[];
   meetings: PanelMeeting[];
+  // The meeting "Mark held" answers: the latest one gone by with nobody
+  // saying how it went and nothing booked ahead (the shared rule,
+  // src/lib/meeting-rule.ts; health's "Did the Nov 6 meeting happen?").
+  dueMeetingId: string | null;
   users: { id: string; name: string }[];
   customLabels: string[];
   // The full meter and its reason (src/lib/health.ts); null if it could
@@ -90,28 +95,14 @@ export type OpportunityDetail = {
   timeZone: string;
 };
 
-// The meeting a "it happened" answer is about: the latest one that has
-// passed with nobody saying how it went, else the soonest one still ahead
-// (held early, after asking). None when every meeting is answered.
+// The meeting a move out of Meeting Set says happened: the shared rule's
+// toAnswer (src/lib/meeting-rule.ts) — the latest one that has passed
+// when nobody said how it went, else the soonest one still ahead (held
+// early, after asking), else the no-show it turns out did happen. None
+// when the tile has no meeting to answer.
 async function meetingToHold(organizationId: string, opportunityId: string, now: Date) {
-  const meetings = await prisma.opportunityMeeting.findMany({
-    where: { opportunityId, opportunity: { organizationId } },
-    select: { id: true, on: true, outcome: true, activityId: true },
-  });
-  const activityIds = meetings.map((row) => row.activityId).filter((id): id is string => Boolean(id));
-  const logged = activityIds.length
-    ? new Map(
-        (await prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, outcome: true } })).map((row) => [row.id, row.outcome]),
-      )
-    : new Map<string, string | null>();
-  const open = meetings.filter((row) => {
-    const outcome = row.outcome ?? (row.activityId ? logged.get(row.activityId) : null);
-    return outcome !== "HELD" && outcome !== "NO_SHOW";
-  });
-  const past = open.filter((row) => row.on <= now).sort((a, b) => b.on.getTime() - a.on.getTime());
-  if (past[0]) return past[0].id;
-  const ahead = open.filter((row) => row.on > now).sort((a, b) => a.on.getTime() - b.on.getTime());
-  return ahead[0]?.id ?? null;
+  const waiting = (await waitingMeetings(organizationId, { opportunityIds: [opportunityId] }, { now })).get(opportunityId);
+  return waiting?.toAnswer?.id ?? null;
 }
 
 export async function loadOpportunity(id: string): Promise<OpportunityDetail | { error: string }> {
@@ -198,13 +189,18 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
     if (a.ahead !== b.ahead) return a.ahead ? -1 : 1;
     return a.ahead ? Date.parse(a.at) - Date.parse(b.at) : Date.parse(b.at) - Date.parse(a.at);
   });
+  const column = opportunityColumn(opportunity);
+  const waiting = waitingOf(
+    meetings.map((row) => ({ item: row, at: Date.parse(row.at), outcome: row.outcome, meetingSet: column === "MEETING_SET" })),
+    now.getTime(),
+  );
 
   return {
     id: opportunity.id,
     title: opportunity.title,
     leadLabel: opportunity.leadLabel,
     ownerId: opportunity.ownerId,
-    column: opportunityColumn(opportunity),
+    column,
     deal: deal
       ? {
           id: deal.id,
@@ -224,6 +220,7 @@ export async function loadOpportunity(id: string): Promise<OpportunityDetail | {
       fromMeeting: row.fromMeeting,
     })),
     meetings,
+    dueMeetingId: waiting.due?.id ?? null,
     users: users.map((user) => ({ id: user.id, name: user.name })),
     customLabels: labels.map((row) => row.name),
     health,
@@ -589,7 +586,7 @@ export async function markMeetingNoShow(meetingId: string): Promise<Result & { b
 export async function rescheduleMeeting(
   meetingId: string,
   input: { on: string; time?: string | null },
-): Promise<Result & { meetingId?: string; batchId?: string }> {
+): Promise<Result & { meetingId?: string; batchId?: string; opportunityId?: string }> {
   const { organizationId, userId } = await requireSession();
   const parsed = z
     .object({ meetingId: idSchema, on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the new day"), time: z.string().max(8).nullish() })

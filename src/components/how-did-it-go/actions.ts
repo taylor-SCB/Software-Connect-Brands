@@ -11,7 +11,7 @@ import { todayIso, isoToDate } from "@/lib/payments";
 import { cleanTime, formatTime, isRealDay } from "@/lib/calendar";
 import { formatDay } from "@/lib/format";
 import { dayInZone, planNextStep, writeNextStep } from "@/lib/calendar-auto";
-import { bookMeetingCore } from "@/lib/meetings";
+import { bookMeetingCore, waitingMeetings } from "@/lib/meetings";
 import { markByHand } from "@/lib/status";
 import { stampLostReason } from "@/lib/opportunities";
 import { convertOpportunity, moveOpportunity } from "@/app/dashboard/deals/opportunity-actions";
@@ -36,10 +36,17 @@ function firstName(name: string) {
 }
 
 // What the sheet reads when it opens. One record, a handful of statements.
-export async function logContext(input: { contactId?: string | null; companyId?: string | null; eventId?: string | null }): Promise<LogContext | { error: string }> {
+// `opportunityId` (the Pipeline panel's tile): a Meeting outcome answers
+// that tile's meeting, not whichever of the person's tiles comes first.
+export async function logContext(input: {
+  contactId?: string | null;
+  companyId?: string | null;
+  eventId?: string | null;
+  opportunityId?: string | null;
+}): Promise<LogContext | { error: string }> {
   const { organizationId } = await requireSession();
   const parsed = z
-    .object({ contactId: idSchema.nullish(), companyId: idSchema.nullish(), eventId: idSchema.nullish() })
+    .object({ contactId: idSchema.nullish(), companyId: idSchema.nullish(), eventId: idSchema.nullish(), opportunityId: idSchema.nullish() })
     .safeParse(input);
   if (!parsed.success) return { error: "Missing record reference" };
   const settings = await healthSettings(organizationId);
@@ -76,7 +83,7 @@ export async function logContext(input: { contactId?: string | null; companyId?:
       const day = event.startOn.toISOString().slice(0, 10);
       meeting = eventMeeting ? { id: eventMeeting.id, eventId: event.id, on: day, time: event.startTime, ahead: day > today } : null;
     } else {
-      meeting = await meetingToAnswer(organizationId, contact.id, today, settings.timeZone);
+      meeting = await meetingToAnswer(organizationId, contact.id, parsed.data.opportunityId ?? null, settings.timeZone);
     }
     return {
       today,
@@ -111,33 +118,35 @@ export async function logContext(input: { contactId?: string | null; companyId?:
   return { error: "Missing record reference" };
 }
 
-// The meeting a Meeting outcome on a contact's page answers: the latest
-// one booked with them that has come (today or before) and nobody marked,
-// else the soonest one still ahead (for Rescheduled).
-async function meetingToAnswer(organizationId: string, contactId: string, today: string, timeZone: string): Promise<LogContext["meeting"]> {
-  const rows = await prisma.opportunityMeeting.findMany({
-    where: {
-      outcome: null,
-      opportunity: { organizationId, stage: { not: "LOST" }, contacts: { some: { contactId, role: { not: "HIDDEN" } } } },
-    },
-    orderBy: { on: "asc" },
-    take: 30,
-    select: { id: true, on: true, eventId: true },
-  });
-  if (!rows.length) return null;
-  const eventIds = rows.map((row) => row.eventId).filter((id): id is string => Boolean(id));
-  const events = eventIds.length
-    ? await prisma.calendarEvent.findMany({ where: { id: { in: eventIds }, organizationId }, select: { id: true, startOn: true, startTime: true } })
-    : [];
-  const byId = new Map(events.map((row) => [row.id, row]));
-  const dated = rows.map((row) => {
-    const event = row.eventId ? byId.get(row.eventId) : undefined;
-    const on = event ? event.startOn.toISOString().slice(0, 10) : dayInZone(row.on, timeZone);
-    return { id: row.id, eventId: row.eventId, on, time: event?.startTime ?? null, ahead: on > today };
-  });
-  const past = dated.filter((row) => !row.ahead);
-  if (past.length) return past[past.length - 1];
-  return dated[0];
+// The meeting a Meeting outcome answers, by the one rule every screen
+// shares (waitingMeetings → toAnswer, src/lib/meeting-rule.ts): the latest
+// one booked with them that has come and nobody marked; else the soonest
+// one still ahead (Held asks "Did it happen early?", Rescheduled moves
+// it); else the latest no-show with nothing booked since, which Held
+// says did happen after all (as the Pipeline tile's "It did happen") —
+// never a second meeting written beside it. Only tiles they are on as
+// Primary or Associated; only the named tile when there is one.
+async function meetingToAnswer(organizationId: string, contactId: string, opportunityId: string | null, timeZone: string): Promise<LogContext["meeting"]> {
+  let key = contactId;
+  let by: { contactIds: string[] } | { opportunityIds: string[] } = { contactIds: [contactId] };
+  if (opportunityId) {
+    const tile = await prisma.opportunity.findFirst({ where: { id: opportunityId, organizationId, contacts: { some: { contactId } } }, select: { id: true } });
+    if (tile) {
+      key = tile.id;
+      by = { opportunityIds: [tile.id] };
+    }
+  }
+  const waiting = (await waitingMeetings(organizationId, by, { timeZone })).get(key);
+  const pick = waiting?.toAnswer ?? null;
+  if (!pick) return null;
+  return {
+    id: pick.id,
+    eventId: pick.eventId,
+    on: pick.day,
+    time: pick.time,
+    ahead: pick === waiting?.ahead,
+    noShow: pick.outcome === "NO_SHOW",
+  };
 }
 
 // A save this person may add to: one of theirs (or any, for an Owner or
@@ -347,8 +356,9 @@ export async function rescheduleEntry(eventId: string, input: { on: string; time
 
 // What the Book meeting sheet offers (bookingOptions: who else at the
 // company, the company's open opportunities) plus the workspace's today
-// and the person's name, in one call.
-export async function bookingChoices(contactId: string): Promise<
+// and the person's name, in one call. `opportunityId`: the tile the sheet
+// was opened from, always among the choices.
+export async function bookingChoices(contactId: string, opportunityId?: string | null): Promise<
   | {
       today: string;
       name: string;
@@ -361,7 +371,7 @@ export async function bookingChoices(contactId: string): Promise<
   const id = idSchema.safeParse(contactId);
   if (!id.success) return { error: "Missing contact reference" };
   const [options, contact, settings] = await Promise.all([
-    bookingOptions(id.data),
+    bookingOptions(id.data, opportunityId ?? null),
     prisma.contact.findFirst({ where: { id: id.data, organizationId }, select: { name: true } }),
     healthSettings(organizationId),
   ]);

@@ -82,12 +82,15 @@ export function Chip({
   children,
   testId,
   disabled,
+  title,
 }: {
   on: boolean;
   onClick: () => void;
   children: React.ReactNode;
   testId?: string;
   disabled?: boolean;
+  // The date under a day chip ("Fri Nov 20"), on hover.
+  title?: string;
 }) {
   return (
     <button
@@ -95,6 +98,7 @@ export function Chip({
       aria-pressed={on}
       disabled={disabled}
       onClick={onClick}
+      title={title}
       className={`btn btn-sm pointer-coarse:min-h-11 ${on ? "btn-primary" : "btn-ghost"}`}
       data-testid={testId}
     >

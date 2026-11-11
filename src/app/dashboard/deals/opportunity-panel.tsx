@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import type { PipelineColumn } from "@/lib/constants";
@@ -25,8 +25,9 @@ import {
 } from "@/components/icons";
 import { JourneyNext, NEXT } from "@/app/dashboard/contracts/journey-next";
 import { setQuoteStatus } from "@/app/dashboard/quotes/actions";
-import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
-import { useBookMeeting } from "@/components/book-meeting/book-meeting";
+import type { HowDidItGoOptions } from "@/components/how-did-it-go/how-did-it-go";
+import type { BookTarget } from "@/components/book-meeting/book-meeting";
+import { dayChips, TIME_CHIPS } from "@/components/how-did-it-go/dates";
 import {
   loadOpportunity,
   markMeetingHeld,
@@ -39,7 +40,6 @@ import {
 } from "./opportunity-actions";
 import { MoveMenu } from "./move-menu";
 import { FollowUpButton, MeetingSuggest, QuietBadge, SuggestedLabel } from "./ai-assist-ui";
-import { dayChips, TIMES, timeWords } from "./tile-line";
 
 type Role = OpportunityPerson["role"];
 const ROLES: { role: Role; label: string }[] = [
@@ -83,18 +83,30 @@ function usePhone() {
 // written until Save, which shows only once something changed; the Stage
 // menu saves first. Logging, booking and the meeting answers save on
 // their own, each with Undo.
+//
+// Log and Book open the shared sheets ("How did it go?" and Book meeting,
+// docs/bdr-sprint-kit/api-log-sheet.md), which live on the board so their
+// "Saved · Undo" (the board's one toast) outlives the panel. Each is told
+// this tile (opportunityId): a meeting answered, logged or booked from
+// here is this tile's. Anything they write bumps `reload`.
 export function OpportunityPanel({
   id,
   timeZone,
   onClose,
   onMove,
   onSaved,
+  sheets,
+  reload = 0,
   ai = false,
   quietDays = null,
   suggestedLabel = null,
 }: {
   id: string;
   timeZone: string;
+  // The board's shared sheets.
+  sheets: { log: (options: HowDidItGoOptions) => void; book: (target: BookTarget) => void };
+  // Bumped by the board when a sheet saved, or its Undo ran: read again.
+  reload?: number;
   // The AI helpers and the gone-quiet badge (Nov 10, 2026).
   ai?: boolean;
   quietDays?: number | null;
@@ -118,6 +130,8 @@ export function OpportunityPanel({
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
 
+  // The tile whose name, label, rep, value and people fill the form.
+  const seeded = useRef<string | null>(null);
   useEffect(() => {
     let live = true;
     loadOpportunity(id).then((result) => {
@@ -128,7 +142,8 @@ export function OpportunityPanel({
       }
       setDetail(result);
       // A reload after a log or a meeting answer keeps what is being typed.
-      if (version > 0) return;
+      if (seeded.current === id) return;
+      seeded.current = id;
       setTitle(result.title);
       setLeadLabel(result.leadLabel);
       setOwnerId(result.ownerId ?? "");
@@ -138,7 +153,7 @@ export function OpportunityPanel({
     return () => {
       live = false;
     };
-  }, [id, version]);
+  }, [id, version, reload]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -149,25 +164,20 @@ export function OpportunityPanel({
   }, [onClose]);
 
   // Something saved from inside: tell the board (with Undo), refresh both.
-  // An empty text: the sheet showed its own "Saved · Undo".
   function saved(text: string, batchId?: string) {
-    if (text) onSaved?.(text, batchId);
+    onSaved?.(text, batchId);
     router.refresh();
     setVersion((n) => n + 1);
   }
 
-  // Log and Book open the shared sheets ("How did it go?" and Book
-  // meeting, docs/bdr-sprint-kit/api-log-sheet.md), drawn above the panel
-  // with their own "Saved · Undo"; a save reloads the panel and the board.
-  // A Call or Text tapped in a person's row opens "How did it go?" on its
-  // own when the tab comes back (dial: true reads data-contact-id).
-  const how = useHowDidItGo({ dial: true });
-  const book = useBookMeeting({ onBooked: () => saved("") });
-  function logWith(contactId: string, name: string) {
-    how.open({ target: { contactId }, type: "PHONE_CALL", name, today: detail?.today, onSaved: () => saved("") });
+  // The shared sheets, about this tile. A Call or Text tapped in a
+  // person's row opens "How did it go?" on its own when the tab comes back
+  // (the board's sheet reads data-contact-id, and this tile as the open one).
+  function logWith(contactId: string, name: string, type: "PHONE_CALL" | "MEETING" = "PHONE_CALL") {
+    sheets.log({ target: { contactId }, type, name, today: detail?.today, opportunityId: id });
   }
   function bookWith(contactId: string, name: string) {
-    book.open({ contactId, name, today: detail?.today });
+    sheets.book({ contactId, name, today: detail?.today, opportunityId: id });
   }
 
   // Ticking one of a person's three boxes greys the other two; unticking
@@ -250,10 +260,11 @@ export function OpportunityPanel({
   const meterAction = health?.meter.action ?? null;
   const action = meterAction && !(journeyNext && PAPERWORK_ACTIONS.has(meterAction.key)) ? meterAction : null;
   const phone = usePhone();
-  // The meeting "Mark held" means: the latest one gone by with no answer,
-  // else the soonest still ahead.
-  const toHold =
-    detail?.meetings.filter((row) => !row.ahead && !row.outcome)[0] ?? detail?.meetings.find((row) => row.ahead) ?? null;
+  // The meeting "Mark held" answers (the shared rule, as health's "Did the
+  // Nov 6 meeting happen?"). With none — a tile at Meeting Set with no
+  // meeting known — Mark held opens How did it go? on Meeting for the
+  // Primary, which answers this tile's meeting or logs one on it.
+  const toHold = detail?.dueMeetingId ?? null;
   const latestQuote = detail?.deal?.quotes[0] ?? null;
   const nextHref =
     action?.key === "quote-yes" && latestQuote
@@ -261,14 +272,23 @@ export function OpportunityPanel({
       : (action?.key === "signing-link" || action?.key === "deposit") && detail?.deal
         ? `/dashboard/deals/tracker?dealId=${detail.deal.id}`
         : undefined;
+  // The one next step, and whether this panel can run it: a button is
+  // drawn only for an action that does something here.
   function runNext() {
     if (!detail || !action) return;
     if (action.key === "call" && primary) logWith(primary.contactId, primary.name);
     else if (action.key === "book" && primary) bookWith(primary.contactId, primary.name);
-    else if (action.key === "mark-held" && toHold) answerHeld(toHold.id);
+    else if (action.key === "mark-held" && toHold) answerHeld(toHold);
+    else if (action.key === "mark-held" && primary) logWith(primary.contactId, primary.name, "MEETING");
     else if (action.key === "start-quote") moveFromPanel("QUOTE_SENT");
   }
-  const runnable = action && (["call", "book", "mark-held", "start-quote"].includes(action.key) || nextHref);
+  const runnable = Boolean(
+    action &&
+      (nextHref ||
+        action.key === "start-quote" ||
+        ((action.key === "call" || action.key === "book") && primary) ||
+        (action.key === "mark-held" && (toHold || primary))),
+  );
 
   const [early, setEarly] = useState<{ meetingId: string; text: string } | null>(null);
   function answerHeld(meetingId: string, isEarly = false) {
@@ -641,8 +661,6 @@ export function OpportunityPanel({
     </div>,
     document.body,
       )}
-      {how.element}
-      {book.element}
     </>
   );
 }
@@ -774,6 +792,7 @@ function DayTimePicker({
   onSave: (on: string, time: string | null) => Promise<string | null>;
   onCancel: () => void;
 }) {
+  // The same day and time chips as the sheets (@/components/how-did-it-go/dates).
   const chips = dayChips(today);
   const [on, setOn] = useState(chips[0].on);
   const [time, setTime] = useState<string | null>(initialTime ?? "10:00");
@@ -787,7 +806,7 @@ function DayTimePicker({
     <div className="mt-2 space-y-2" data-testid="day-time-picker">
       <div className="flex flex-wrap gap-1.5">
         {chips.map((row) => (
-          <button key={row.label} type="button" onClick={() => setOn(row.on)} className={chip(on === row.on)} data-testid="picker-day">
+          <button key={row.key} type="button" onClick={() => setOn(row.on)} className={chip(on === row.on)} title={row.sub} data-testid="picker-day" data-on={row.on}>
             {row.label}
           </button>
         ))}
@@ -802,12 +821,12 @@ function DayTimePicker({
         />
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {TIMES.map((value) => (
-          <button key={value} type="button" onClick={() => setTime(value)} className={chip(time === value)} data-testid="picker-time">
-            {timeWords(value)}
+        {TIME_CHIPS.map((row) => (
+          <button key={row.value} type="button" onClick={() => setTime(row.value)} className={chip(time === row.value)} data-testid="picker-time">
+            {row.label}
           </button>
         ))}
-        <button type="button" onClick={() => setTime(null)} className={chip(time === null)}>
+        <button type="button" onClick={() => setTime(null)} className={chip(time === null)} data-testid="picker-time-none">
           No time
         </button>
       </div>

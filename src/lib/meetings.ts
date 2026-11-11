@@ -7,7 +7,8 @@ import { ensureEventType } from "@/lib/event-types";
 import { ACTIVITY_EVENT_TYPE } from "@/lib/constants";
 import { dayInZone, zonedMoment } from "@/lib/calendar-auto";
 import { markConnected, markContacted, markMeetingSet, type Who } from "@/lib/status";
-import { CONVERTED_STAGES, syncOpportunity } from "@/lib/opportunities";
+import { CONVERTED_STAGES, opportunityColumn, syncOpportunity } from "@/lib/opportunities";
+import { answerOf, waitingOf, type MeetingAnswer, type MeetingFact } from "@/lib/meeting-rule";
 
 // Meetings on the Pipeline (BDR redesign, Nov 11, 2026): Held, No-show,
 // Reschedule and Book, the rules every screen shares. Not "use server":
@@ -279,12 +280,28 @@ export async function bookMeetingCore(
   const meetingAt = input.time ? zonedMoment(input.on, input.time, timeZone) : zonedNoon(input.on, timeZone);
   const opportunityId = await markMeetingSet(who, contactIds, new Date(), { on: meetingAt, eventId: event.id, opportunity: input.opportunity ?? null });
   const when = `${formatDay(`${input.on}T12:00:00Z`)}${input.time ? `, ${formatTime(input.time)}` : ""}`;
+  // "your Pipeline" only when the tile is the booker's (Mine shows it): a
+  // meeting added to a teammate's open opportunity keeps their rep.
+  const yours = await isTheirTile(organizationId, opportunityId, who.userId);
   return {
     eventId: event.id,
     opportunityId,
     contactIds,
-    message: `Booked ${when} · ${first.name} is on your Pipeline in Meeting Set`,
+    yours,
+    message: `Booked ${when} · ${first.name} is on ${yours ? "your" : "the"} Pipeline in Meeting Set`,
   };
+}
+
+// Whether the tile is this user's, as the Pipeline's Mine reads it (the
+// deal's rep once there is a deal, else the opportunity's).
+async function isTheirTile(organizationId: string, opportunityId: string | null, userId: string) {
+  if (!opportunityId) return true;
+  const tile = await prisma.opportunity.findFirst({
+    where: { id: opportunityId, organizationId },
+    select: { ownerId: true, deal: { select: { ownerId: true } } },
+  });
+  if (!tile) return true;
+  return (tile.deal ? tile.deal.ownerId : tile.ownerId) === userId;
 }
 
 // Reschedule. A meeting still to come (and not a no-show) moves: its
@@ -352,6 +369,124 @@ export async function rescheduleMeetingCore(
   };
 }
 
+/* ---------------------- Which meeting is waiting ---------------------- */
+
+export type WaitingMeeting = {
+  // The OpportunityMeeting, the tile it is on, and its calendar entry.
+  id: string;
+  opportunityId: string;
+  title: string;
+  eventId: string | null;
+  at: Date;
+  // The workspace's day and "HH:MM", from the calendar entry when it has
+  // one (a booked meeting with no time stays untimed).
+  day: string;
+  time: string | null;
+  outcome: MeetingAnswer;
+};
+
+export type Waiting = {
+  ahead: WaitingMeeting | null;
+  last: WaitingMeeting | null;
+  due: WaitingMeeting | null;
+  missed: WaitingMeeting | null;
+  toAnswer: WaitingMeeting | null;
+};
+
+// The meetings waiting for an answer, per person or per tile, by the one
+// rule in src/lib/meeting-rule.ts. A person's are the meetings on every
+// tile they are on as Primary or Associated (Do Not List is not on it);
+// a tile's are its own. Three statements for the whole batch, scoped to
+// the workspace. Every key asked for comes back (empty when it has none).
+export async function waitingMeetings(
+  organizationId: string,
+  by: { contactIds: string[] } | { opportunityIds: string[] },
+  options: { now?: Date; timeZone?: string } = {},
+): Promise<Map<string, Waiting>> {
+  const byContact = "contactIds" in by;
+  const keys = Array.from(new Set(byContact ? by.contactIds : by.opportunityIds)).filter(Boolean);
+  const result = new Map<string, Waiting>();
+  const empty: Waiting = { ahead: null, last: null, due: null, missed: null, toAnswer: null };
+  for (const key of keys) result.set(key, empty);
+  if (!keys.length) return result;
+  const now = options.now ?? new Date();
+  const [timeZone, rows] = await Promise.all([
+    options.timeZone ?? zoneOf(organizationId),
+    prisma.opportunityMeeting.findMany({
+      where: byContact
+        ? { opportunity: { organizationId, contacts: { some: { contactId: { in: keys }, role: { not: "HIDDEN" } } } } }
+        : { opportunityId: { in: keys }, opportunity: { organizationId } },
+      select: {
+        id: true,
+        on: true,
+        outcome: true,
+        activityId: true,
+        eventId: true,
+        opportunityId: true,
+        opportunity: {
+          select: {
+            title: true,
+            stage: true,
+            deal: { select: { stage: true } },
+            // The people asked about who are on it (none when asking by tile).
+            contacts: { where: { contactId: { in: byContact ? keys : [] }, role: { not: "HIDDEN" } }, select: { contactId: true } },
+          },
+        },
+      },
+    }),
+  ]);
+  if (!rows.length) return result;
+  const activityIds = [...new Set(rows.map((row) => row.activityId).filter((id): id is string => Boolean(id)))];
+  const eventIds = [...new Set(rows.map((row) => row.eventId).filter((id): id is string => Boolean(id)))];
+  const [lines, events] = await Promise.all([
+    activityIds.length
+      ? prisma.activity.findMany({ where: { organizationId, id: { in: activityIds } }, select: { id: true, outcome: true } })
+      : Promise.resolve([]),
+    eventIds.length
+      ? prisma.calendarEvent.findMany({ where: { organizationId, id: { in: eventIds } }, select: { id: true, startOn: true, startTime: true } })
+      : Promise.resolve([]),
+  ]);
+  const loggedAs = new Map(lines.map((row) => [row.id, row.outcome]));
+  const eventById = new Map(events.map((row) => [row.id, row]));
+
+  const facts = new Map<string, MeetingFact<WaitingMeeting>[]>();
+  for (const row of rows) {
+    const event = row.eventId ? eventById.get(row.eventId) : undefined;
+    const outcome = answerOf(row.outcome, row.activityId ? loggedAs.get(row.activityId) : null);
+    const meeting: WaitingMeeting = {
+      id: row.id,
+      opportunityId: row.opportunityId,
+      title: row.opportunity.title,
+      eventId: row.eventId,
+      at: row.on,
+      day: event ? event.startOn.toISOString().slice(0, 10) : dayInZone(row.on, timeZone),
+      time: event?.startTime ?? null,
+      outcome,
+    };
+    const column = opportunityColumn(row.opportunity);
+    const fact = {
+      item: meeting,
+      at: row.on.getTime(),
+      outcome,
+      meetingSet: column === "MEETING_SET",
+      // Asking about one tile, it is the one; a person's Won or Lost tiles
+      // are history.
+      open: !byContact || (column !== "WON" && column !== "LOST"),
+    };
+    const owners = byContact ? row.opportunity.contacts.map((link) => link.contactId) : [row.opportunityId];
+    for (const key of owners) {
+      const list = facts.get(key) ?? [];
+      list.push(fact);
+      facts.set(key, list);
+    }
+  }
+  for (const [key, list] of facts) {
+    const waiting = waitingOf(list, now.getTime());
+    result.set(key, { ...waiting, last: waiting.last?.item ?? null });
+  }
+  return result;
+}
+
 // The meeting row a logged or ticked meeting landed on, for Held.
 export async function meetingFor(organizationId: string, opportunityId: string | null, activityId: string) {
   if (!opportunityId) return null;
@@ -405,10 +540,15 @@ export async function meetingRescheduleAnswer(
   actor: { organizationId: string; userId: string },
   meetingId: string,
   input: { on: string; time: string | null },
-): Promise<{ error?: string; success?: string; meetingId?: string; batchId?: string }> {
+): Promise<{ error?: string; success?: string; meetingId?: string; batchId?: string; opportunityId?: string }> {
   const { meetingBatchId } = await import("@/lib/undo-log");
   const batchId = meetingBatchId(meetingId);
   const result = await rescheduleMeetingCore({ ...actor, batchId }, meetingId, input);
   if ("error" in result) return { error: result.error };
-  return { success: result.message, meetingId: result.meetingId, ...(result.meetingId !== meetingId ? { batchId } : {}) };
+  return {
+    success: result.message,
+    meetingId: result.meetingId,
+    opportunityId: result.opportunityId,
+    ...(result.meetingId !== meetingId ? { batchId } : {}),
+  };
 }

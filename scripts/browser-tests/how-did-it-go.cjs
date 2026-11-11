@@ -197,7 +197,7 @@ const ladder = async (contactId) =>
   await toast.waitFor();
   await toast.getByText(/is on your Pipeline in Meeting Set/).waitFor();
   assert.match(await toast.textContent(), /Talked · Booked \w{3}, \w{3} \d+, 10:00 AM · Kristen is on your Pipeline in Meeting Set/);
-  assert.equal(await toast.locator("[data-testid=log-toast-link]").getAttribute("href"), "/dashboard/deals");
+  const pipelineLink = await toast.locator("[data-testid=log-toast-link]").getAttribute("href");
   assert.equal(await status("Contact", "ctc_hd_kris"), "MEETING_SET");
   assert.deepEqual(await ladder("ctc_hd_kris"), ["NOT_ACTIONED>CONTACTED", "CONTACTED>CONNECTED", "CONNECTED>MEETING_SET"]);
   const talk = await one(`SELECT outcome, "batchId" FROM "Activity" WHERE "contactId"='ctc_hd_kris'`);
@@ -210,6 +210,7 @@ const ladder = async (contactId) =>
   assert.deepEqual({ time: krisMeeting.startTime, batch: krisMeeting.batchId === talk.batchId, chase: krisMeeting.chase }, { time: "10:00", batch: true, chase: 1 });
   const krisOm = await one(`SELECT id, "bookedById", "opportunityId" FROM "OpportunityMeeting" WHERE "eventId"=$1`, [krisMeeting.id]);
   assert.equal(krisOm.bookedById, taylor.id, "the booker is kept");
+  assert.equal(pipelineLink, `/dashboard/deals?open=${krisOm.opportunityId}`, "Pipeline → opens the tile");
 
   log("Sprint: 'Meeting booked' on a call with Dana asks 'Add to the open … opportunity with Kristen Vaughn?' — Yes joins it");
   await page.goto(`${BASE}/dashboard/contacts/ctc_hd_dana`);

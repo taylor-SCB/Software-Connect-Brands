@@ -93,9 +93,9 @@ export type HealthInput = {
   next: { on: string; time: string | null; kind: NextKind } | null;
   // Open follow-ups whose day has gone by unticked.
   overdue: { count: number; oldestOn: string } | null;
-  // The latest meeting dated now or earlier, and whether anyone marked it
-  // Held or No-show.
-  lastMeeting: { at: Date; marked: boolean } | null;
+  // The latest meeting dated now or earlier, whether anyone marked it
+  // Held or No-show, and whether that was a no-show.
+  lastMeeting: { at: Date; marked: boolean; noShow?: boolean } | null;
   // Quotes and contracts out for an answer (status Sent).
   paperwork: { kind: "quote" | "contract"; sentAt: Date }[];
   // Signed Money-in paperwork (owedRowsSql): billed, received, and what is
@@ -401,7 +401,15 @@ export function stepOfStatus(status: string): number {
 function buildMeter(
   input: HealthInput,
   ctx: HealthContext,
-  flags: { hasTouch: boolean; hasConnect: boolean; meetingDue: boolean; nextText: string | null; owedOpen: boolean },
+  flags: {
+    hasTouch: boolean;
+    hasConnect: boolean;
+    meetingDue: boolean;
+    nextText: string | null;
+    owedOpen: boolean;
+    // The latest meeting is answered and nothing is booked: "noshow" or "held".
+    answered: "noshow" | "held" | null;
+  },
 ): MeterState {
   const status = input.status;
   const closedLabel = CLOSED_LABELS[status] ?? null;
@@ -479,11 +487,20 @@ function buildMeter(
     if (step <= 0) action = { key: "call", label: "Call" };
     else if (step === 1) action = { key: "book", label: "Book meeting" };
     else if (step === 2) {
+      // Meeting Set: the meeting gone by unanswered is marked; one booked
+      // shows its day; the latest one already answered (a no-show, or held
+      // with the stage moved back) has nothing to mark, so the next step is
+      // booking again. Mark held with no meeting known at all (a status set
+      // by hand) logs one: every screen opens How did it go? on Meeting.
       action = flags.meetingDue
         ? { key: "mark-held", label: "Mark held" }
         : flags.nextText && flags.nextText.startsWith("meeting")
           ? { key: "meeting", label: `Meeting ${flags.nextText.slice("meeting ".length)}` }
-          : { key: "mark-held", label: "Mark held" };
+          : flags.answered === "noshow"
+            ? { key: "book", label: "Reschedule" }
+            : flags.answered === "held"
+              ? { key: "book", label: "Book meeting" }
+              : { key: "mark-held", label: "Mark held" };
     } else if (step === 3) action = { key: "start-quote", label: "Start a quote" };
     else if (step === 4) action = { key: "quote-yes", label: "Customer said yes" };
     else if (step === 5) action = { key: "signing-link", label: "Copy signing link" };
@@ -711,7 +728,13 @@ export function leadHealth(input: HealthInput, ctx: HealthContext): LeadHealth {
     }
   }
 
-  const meter = buildMeter(input, ctx, { hasTouch, hasConnect, meetingDue, nextText, owedOpen });
+  const answered =
+    input.lastMeeting && input.lastMeeting.marked && input.lastMeeting.at.getTime() <= now.getTime()
+      ? input.lastMeeting.noShow
+        ? "noshow"
+        : "held"
+      : null;
+  const meter = buildMeter(input, ctx, { hasTouch, hasConnect, meetingDue, nextText, owedOpen, answered });
 
   // The caption: counts that are zero draw nothing.
   const countBits: string[] = [];

@@ -126,7 +126,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const [meetingSet, health, meetings, noteOthers, activityOthers, balance, projects, upcoming, eventChoices, reps] = await Promise.all([
     meetingSetDay(organizationId, { contactId: contact.id }),
     contactHealth(organizationId, contact.id, { settings, now }),
-    loadContactMeetings(organizationId, contact.id, timeZone, now),
+    loadContactMeetings(organizationId, contact.id, timeZone, now, { meetingSet: contact.status === "MEETING_SET" }),
     batchOthers("note", contact.notes.map((note) => note.batchId)),
     batchOthers("activity", contact.activities.map((activity) => activity.batchId)),
     // A homeowner's own balance. Someone at a company is billed through
@@ -182,7 +182,9 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const actionKey = health.meter.action?.key;
   const main: MainActionData = {
     action: health.meter.action,
-    meeting: actionKey === "mark-held" ? (meetings.due ?? meetings.next) : actionKey === "meeting" ? meetings.next : null,
+    // Mark held answers the meeting waiting for it; with none (a status
+    // set by hand) the button opens How did it go? on Meeting.
+    meeting: actionKey === "mark-held" ? meetings.due : actionKey === "meeting" ? meetings.next : null,
     draftQuoteId: draftQuote?.id ?? null,
     sentQuoteId: sentQuote?.id ?? null,
     signingPath: sentContract ? `/c/${sentContract.publicToken}` : null,
@@ -317,7 +319,14 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const moreProps = { contactId: contact.id, contactName: contact.name, linkedIds, status: contact.status, meetingSetOn, today, addDeal: !canAddDeal };
 
   return (
-    <ContactShell contactId={contact.id} name={contact.name} companyId={contact.companyId} companyName={contact.company?.name ?? null} today={today}>
+    <ContactShell
+      contactId={contact.id}
+      name={contact.name}
+      companyId={contact.companyId}
+      companyName={contact.company?.name ?? null}
+      today={today}
+      bookOpportunityId={meetings.missed?.opportunityId ?? null}
+    >
       <div className="pb-20 sm:pb-0">
         <BackLink href="/dashboard/contacts" label="Contacts" current={contact.name} />
 

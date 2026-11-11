@@ -39,6 +39,7 @@ import {
   type LeadHealth,
 } from "../src/lib/health";
 import { dealJourney } from "../src/lib/health-journey";
+import { waitingOf } from "../src/lib/meeting-rule";
 import { LifecycleMeter } from "../src/components/lifecycle-meter";
 import { HealthDot, HealthRing, HealthWordStatic } from "../src/components/health-marks";
 import { HealthWord } from "../src/components/health-word";
@@ -485,6 +486,40 @@ function pure() {
     assert.equal(leadHealth(input({ status: "INTERESTED" }), CTX).meter.action?.label, "Book meeting");
     assert.ok(H.gregory.meter.steps.slice(4).every((step) => step.readOnly), "Quote, Contract and Won move with the paperwork");
     assert.equal(H.gregory.meter.steps[6].hint, "Moves when the contract is signed");
+  });
+
+  check("Meeting Set: Mark held only for a meeting nobody answered; after a no-show Reschedule, after a held one Book meeting", () => {
+    const at = (lastMeeting: HealthInput["lastMeeting"]) => leadHealth(input({ status: "MEETING_SET", lastMeeting }), CTX).meter.action;
+    assert.deepEqual(at({ at: ago(2), marked: false }), { key: "mark-held", label: "Mark held" });
+    assert.deepEqual(at({ at: ago(2), marked: true, noShow: true }), { key: "book", label: "Reschedule" });
+    assert.deepEqual(at({ at: ago(2), marked: true, noShow: false }), { key: "book", label: "Book meeting" });
+    // No meeting known at all (a status set by hand): every screen opens
+    // How did it go? on Meeting for it.
+    assert.deepEqual(at(null), { key: "mark-held", label: "Mark held" });
+  });
+
+  check("the waiting-meeting rule: due only with nothing ahead and only on a Meeting Set tile; toAnswer never none while one exists", () => {
+    const now = NOW.getTime();
+    const fact = (item: string, daysAgo: number, outcome: "HELD" | "NO_SHOW" | null, meetingSet = true) => ({
+      item,
+      at: now - daysAgo * 86400000,
+      outcome,
+      meetingSet,
+    });
+    let w = waitingOf([fact("mon", 2, null), fact("tue", -1, null)], now);
+    assert.deepEqual([w.due, w.ahead, w.missed, w.toAnswer], [null, "tue", null, "mon"], "booked ahead: nothing asked, but Held answers the one that happened");
+    w = waitingOf([fact("mon", 2, null)], now);
+    assert.deepEqual([w.due, w.toAnswer], ["mon", "mon"]);
+    w = waitingOf([fact("ns", 2, "NO_SHOW")], now);
+    assert.deepEqual([w.due, w.missed, w.toAnswer], [null, "ns", "ns"], "the latest is a no-show: Reschedule, and Held says it did happen");
+    w = waitingOf([fact("old", 5, null), fact("ns", 2, "NO_SHOW")], now);
+    assert.deepEqual([w.due, w.missed, w.toAnswer], [null, "ns", "old"], "nothing asked, but a tap answers the one nobody answered");
+    w = waitingOf([{ ...fact("lost", 2, null, false), open: false }], now);
+    assert.deepEqual([w.due, w.toAnswer], [null, null], "a Lost tile's meetings are history");
+    w = waitingOf([fact("done", 2, null, false)], now);
+    assert.deepEqual([w.due, w.last, w.toAnswer], [null, null, "done"], "a tile past Meeting Set asks nothing, but its meeting is still the one Held answers");
+    w = waitingOf([fact("tick", 3, null)], now);
+    assert.equal(w.due, "tick", "a calendar tick answers nothing");
   });
 
   check("the Pulse caption names who touched last when it isn't the rep", () => {

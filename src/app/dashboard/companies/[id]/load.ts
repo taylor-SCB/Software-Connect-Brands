@@ -4,6 +4,7 @@ import { OPEN_OPPORTUNITY, opportunityColumn } from "@/lib/opportunities";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { PIPELINE_COLUMN_LABELS, type PipelineColumn } from "@/lib/constants";
 import { isoDiff, zoneDay, type LeadHealth } from "@/lib/health";
+import { waitingMeetings } from "@/lib/meetings";
 
 // The company page's own reads (BDR redesign, Nov 11, 2026). Every one is
 // scoped to the workspace and batched over the page's people: never one
@@ -174,23 +175,18 @@ export async function openOpportunities(organizationId: string, companyId: strin
   };
 }
 
-// The meeting the main button means, for one person: the latest one gone
-// by with no Held / No-show yet ("Mark held"), or the next one still to
-// come ("Meeting Tue 10:00 AM" with Reschedule). A Pipeline meeting row
-// when there is one, else a calendar meeting entry not ticked done.
-export async function meetingFor(organizationId: string, contactId: string, now: Date, today: string) {
-  const [past, ahead, entry] = await Promise.all([
-    prisma.opportunityMeeting.findFirst({
-      where: { outcome: null, on: { lte: now }, opportunity: { organizationId, contacts: { some: { contactId } } } },
-      orderBy: { on: "desc" },
-      select: { id: true, on: true },
-    }),
-    prisma.opportunityMeeting.findFirst({
-      where: { outcome: null, on: { gt: now }, opportunity: { organizationId, contacts: { some: { contactId } } } },
-      orderBy: { on: "asc" },
-      select: { id: true, on: true },
-    }),
-    prisma.calendarEvent.findFirst({
+// The meeting the main button means, for one person, by the one rule
+// every screen shares (waitingMeetings, src/lib/meeting-rule.ts: only
+// tiles they are on as Primary or Associated, the latest one gone by when
+// nobody said how it went and nothing is booked ahead — "Mark held" — or
+// the next one still to come — "Meeting Tue 10:00 AM" with Reschedule).
+// A calendar meeting entry no Pipeline meeting stands behind (from before
+// every meeting landed on one), not ticked done, stands in when there is
+// no Pipeline meeting either way.
+export async function meetingFor(organizationId: string, contactId: string, now: Date, today: string, timeZone?: string) {
+  const [waitingMap, entries] = await Promise.all([
+    waitingMeetings(organizationId, { contactIds: [contactId] }, { now, timeZone }),
+    prisma.calendarEvent.findMany({
       where: {
         organizationId,
         doneAt: null,
@@ -200,8 +196,26 @@ export async function meetingFor(organizationId: string, contactId: string, now:
         OR: [{ contactId }, { attendees: { some: { id: contactId } } }],
       },
       orderBy: { startOn: "desc" },
+      take: 10,
       select: { id: true },
     }),
   ]);
-  return { pastMeetingId: past?.id ?? null, aheadMeetingId: ahead?.id ?? null, entryId: entry?.id ?? null };
+  const waiting = waitingMap.get(contactId);
+  const covered = entries.length
+    ? new Set(
+        (
+          await prisma.opportunityMeeting.findMany({
+            where: { eventId: { in: entries.map((row) => row.id) }, opportunity: { organizationId } },
+            select: { eventId: true },
+          })
+        ).map((row) => row.eventId),
+      )
+    : new Set<string | null>();
+  const entry = waiting?.ahead || waiting?.last ? null : (entries.find((row) => !covered.has(row.id)) ?? null);
+  return {
+    pastMeetingId: waiting?.due?.id ?? null,
+    aheadMeetingId: waiting?.ahead?.id ?? null,
+    aheadOn: waiting?.ahead?.day ?? null,
+    entryId: entry?.id ?? null,
+  };
 }

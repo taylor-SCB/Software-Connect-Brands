@@ -16,6 +16,7 @@ import { goneQuietOpportunities } from "@/lib/gone-quiet";
 import { ruleLeadLabels } from "@/lib/ai-assist";
 import { aiConfigured } from "@/lib/ai";
 import { healthSettings, loadOpportunityHealth } from "@/lib/health-load";
+import { waitingMeetings } from "@/lib/meetings";
 import { zoneDay } from "@/lib/health";
 import { prefChoice, readUiPrefsWithLegacy, type UiPrefs } from "@/lib/user-prefs";
 import { Prisma } from "@/generated/prisma/client";
@@ -53,26 +54,22 @@ function scopeFrom(param: string | undefined, saved: { prefs: UiPrefs; legacy: R
 }
 
 // Meeting Set tiles whose meeting has passed with nothing ahead: the
-// "Happened — how did it go?" group and the Needs a decision filter, the
-// same rule as meetingFocus() in tile-line.ts, counted for the whole
-// scope (search and labels don't change the count, as with Gone quiet).
-async function decisionOpportunityIds(organizationId: string, mineOf: string | null) {
-  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-    SELECT o.id
-      FROM "Opportunity" o
-      LEFT JOIN "Deal" d ON d.id = o."dealId"
-     WHERE o."organizationId" = ${organizationId}
-       AND o.stage = 'MEETING_SET'
-       AND (d.id IS NULL OR d.stage NOT IN ('QUOTE_SENT', 'CONTRACT_SENT', 'WON', 'LOST', 'ARCHIVED'))
-       ${mineOf ? Prisma.sql`AND (CASE WHEN d.id IS NULL THEN o."ownerId" ELSE d."ownerId" END) = ${mineOf}` : Prisma.empty}
-       AND EXISTS (SELECT 1 FROM "OpportunityMeeting" m WHERE m."opportunityId" = o.id AND m."on" <= now())
-       AND NOT EXISTS (
-         SELECT 1 FROM "OpportunityMeeting" m
-           LEFT JOIN "Activity" a ON a.id = m."activityId"
-          WHERE m."opportunityId" = o.id AND m."on" > now()
-            AND m.outcome IS NULL AND (a.outcome IS NULL OR a.outcome NOT IN ('HELD', 'NO_SHOW'))
-       )`);
-  return new Set(rows.map((row) => row.id));
+// "Happened — how did it go?" group and the Needs a decision filter, by
+// the shared rule (waitingMeetings, src/lib/meeting-rule.ts; the tiles'
+// meetingFocus reads the same), counted for the whole scope (search and
+// labels don't change the count, as with Gone quiet).
+async function decisionOpportunityIds(organizationId: string, mineOf: string | null, timeZone: string, now: Date) {
+  const tiles = await prisma.opportunity.findMany({
+    where: {
+      organizationId,
+      stage: "MEETING_SET",
+      OR: [{ dealId: null }, { deal: { stage: { notIn: ["QUOTE_SENT", "CONTRACT_SENT", "WON", "LOST", "ARCHIVED"] } } }],
+      ...(mineOf ? { AND: [{ OR: [{ dealId: null, ownerId: mineOf }, { deal: { ownerId: mineOf } }] }] } : {}),
+    },
+    select: { id: true },
+  });
+  const waiting = await waitingMeetings(organizationId, { opportunityIds: tiles.map((row) => row.id) }, { now, timeZone });
+  return new Set([...waiting].filter(([, row]) => !row.ahead && row.last).map(([id]) => id));
 }
 
 function initialsOf(name: string | null) {
@@ -148,6 +145,7 @@ export default async function DealsPage({
   const scope = scopeFrom(params.scope, saved, role);
   const timeZone = settings.timeZone;
   const today = todayIso(timeZone);
+  const now = new Date();
 
   // The app's own clock for the 90 / 180-day contract rule, then the
   // board's repair: every deal and everyone in the pipeline by status
@@ -160,7 +158,7 @@ export default async function DealsPage({
   };
   const [quiet, decision] = await Promise.all([
     goneQuietOpportunities(organizationId, { limit: 1000 }),
-    decisionOpportunityIds(organizationId, scope === "mine" ? userId : null),
+    decisionOpportunityIds(organizationId, scope === "mine" ? userId : null, timeZone, now),
   ]);
   const quietById = new Map(quiet.opportunities.map((row) => [row.id, row.days]));
   // Gone quiet's count is goneQuietOpportunities' own list, inside Mine
@@ -246,7 +244,6 @@ export default async function DealsPage({
   const eventById = new Map(events.map((row) => [row.id, row]));
   const outcomeOfActivity = new Map(activities.map((row) => [row.id, row.outcome]));
 
-  const now = new Date();
   const tiles: BoardTile[] = opportunities.map((row) => {
     const people = row.contacts
       .map((link) => ({
