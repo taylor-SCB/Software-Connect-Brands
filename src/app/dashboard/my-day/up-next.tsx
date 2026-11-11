@@ -135,7 +135,7 @@ export function UpNextList({
       {!readOnly && unowned.count > 0 && <TakeUnowned count={unowned.count} ids={unowned.ids} />}
       {next && (
         <div
-          className="fixed inset-x-0 z-30 border-t border-[var(--hairline-3)] bg-[var(--surface)] px-4 py-2 lg:hidden"
+          className="fixed inset-x-0 z-30 border-t border-[var(--hairline-3)] bg-[var(--overlay)] px-4 py-2 lg:hidden"
           style={{ bottom: "calc(56px + env(safe-area-inset-bottom, 0px))" }}
           data-contact-id={next.id}
           data-testid="next-bar"
