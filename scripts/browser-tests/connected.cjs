@@ -390,10 +390,11 @@ async function logWith(page, fields, { body = "", type } = {}) {
     { title: booked.title, day: booked.day, time: booked.startTime, where: booked.location, batch: booked.batchId === call.batchId },
     { title: "Meeting · Chase Hill", day: meetDay, time: "10:00", where: "Their office", batch: true },
   );
-  const om = await one(
-    `SELECT m."bookedById", m."eventId", o.stage, o.id AS opp FROM "OpportunityMeeting" m JOIN "Opportunity" o ON o.id=m."opportunityId" WHERE m."eventId"=$1`,
-    [booked.id],
-  );
+  // The status is written before the meeting row, inside the same save:
+  // wait for the save to finish rather than reading it half-way.
+  const omSql = `SELECT m."bookedById", m."eventId", o.stage, o.id AS opp FROM "OpportunityMeeting" m JOIN "Opportunity" o ON o.id=m."opportunityId" WHERE m."eventId"=$1`;
+  await until(async () => Boolean(await one(omSql, [booked.id])), "Chase's meeting on the Pipeline");
+  const om = await one(omSql, [booked.id]);
   assert.deepEqual({ by: om.bookedById, stage: om.stage }, { by: taylor.id, stage: "MEETING_SET" });
   assert.equal(await page.locator("[data-testid=follow-up-prompt]").count(), 0, "the next step was picked, so no follow-up box");
   await shot(page, "01-meeting-booked");
