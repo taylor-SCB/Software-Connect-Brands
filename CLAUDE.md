@@ -1265,10 +1265,11 @@ are all blocking before the first paying customer.
   opened.** A workspace nobody opens for a month catches up on the next
   visit, all at once.
 - **An import never unassigns, and an explicit assignee takes everyone in
-  the file** (Nov 10, 2026, Claude's call, to check with Taylor): with a
-  teammate picked, a person already owned by someone else is handed over;
-  a company already owned keeps its rep. Unassigned leaves every existing
-  rep alone.
+  the file** (Nov 10, 2026; Taylor confirmed Nov 11: "you can takeover
+  people and also fill people with no rep"): with a teammate picked, a
+  person already owned by someone else is handed over and an unowned one
+  is filled; a company already owned keeps its rep. Unassigned leaves
+  every existing rep alone.
 - **Bulk "all matching" takes 1,000 at a go, in list order, of the ones
   that don't already have that rep.** Past that the bar says how many are
   left; running it again does the next 1,000 (before the Nov 10 audit it
