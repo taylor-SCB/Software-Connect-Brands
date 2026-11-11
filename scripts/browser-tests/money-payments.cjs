@@ -416,7 +416,9 @@ async function signAs(browser, token, name) {
   await page.goto(`${BASE}/dashboard`);
   const tile = page.locator("text=Owed to you").locator("xpath=ancestor::*[self::a or self::div][1]");
   // $1,800 from Harbor plus $750 from the homeowner.
-  assert.match(await tile.textContent(), /\$2,550\.00/);
+  // The Overview tiles read whole dollars since round 2 of the BDR sprint.
+  // Value then hint: "$2,550" and "2 to chase" (Harbor and the homeowner).
+  assert.match(await tile.textContent(), /Owed to you\$2,5502 to chase/);
 
   log("the numbers on the page agree with the database");
   const truth = (await sql(
