@@ -21,7 +21,7 @@ export function TeamGoalsCard({ goals, canEdit }: { goals: Goals; canEdit: boole
   // After a refusal, what was typed (an emptied box stays empty).
   const value = (name: keyof Goals) => (state.kept ? (state.kept[name] ?? "") : goals[name] === null ? "" : String(goals[name]));
   return (
-    <form action={action} className="space-y-3 px-5 pb-5" data-testid="team-goals-form">
+    <form action={action} className="space-y-3 px-5 pb-5" data-testid="team-goals-form" noValidate>
       <p className="faint text-sm">Each rep&apos;s week, Monday to Sunday. Leave a box empty for no goal.</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {FIELDS.map((field) => (

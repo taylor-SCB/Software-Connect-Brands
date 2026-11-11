@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/avatar";
 import { HealthRing } from "@/components/health-marks";
@@ -134,6 +135,7 @@ export function UpNextList({
       )}
       {!readOnly && unowned.count > 0 && <TakeUnowned count={unowned.count} ids={unowned.ids} />}
       {next && (
+        <OnBody>
         <div
           className="fixed inset-x-0 z-30 border-t border-[var(--hairline-3)] bg-[var(--overlay)] px-4 py-2 lg:hidden"
           style={{ bottom: "calc(56px + env(safe-area-inset-bottom, 0px))" }}
@@ -159,6 +161,7 @@ export function UpNextList({
             )}
           </div>
         </div>
+        </OnBody>
       )}
       {how.element}
     </div>
@@ -255,3 +258,16 @@ function TakeToast({ toast, onDone }: { toast: { ids: string[]; at: number } | n
   );
 }
 
+
+// Drawn on document.body: the list sits in a .card, whose backdrop blur
+// would make the card, not the screen, what position:fixed is placed in.
+// It carries the tenant's brand colour along, which is set on the
+// dashboard's shell rather than on the page.
+function OnBody({ children }: { children: React.ReactNode }) {
+  const [brand, setBrand] = useState<string | null>(null);
+  useEffect(() => {
+    const shell = document.querySelector<HTMLElement>("[data-theme]");
+    setBrand((shell ? getComputedStyle(shell).getPropertyValue("--brand").trim() : "") || "var(--brand)");
+  }, []);
+  return brand ? createPortal(<div style={{ ["--brand" as string]: brand }}>{children}</div>, document.body) : null;
+}

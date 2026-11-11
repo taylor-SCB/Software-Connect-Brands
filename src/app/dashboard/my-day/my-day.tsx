@@ -181,7 +181,8 @@ export function TeamTodayStrip({ team, now }: { team: TeamToday; now: Date }) {
                 <span className="col-span-2 flex min-w-0 flex-wrap gap-x-4 text-xs md:col-span-1" data-testid="team-today-numbers">
                   <span>
                     <span className="faint">Today </span>
-                    <b className="num">{today.tries}</b> tries · <b className="num">{today.talks}</b> talks
+                    <b className="num">{today.tries}</b> {today.tries === 1 ? "try" : "tries"} · <b className="num">{today.talks}</b>{" "}
+                    {today.talks === 1 ? "talk" : "talks"}
                     {today.rate !== null && <span className="faint"> ({today.rate}%)</span>} · <b className="num">{today.booked}</b> booked
                   </span>
                 </span>

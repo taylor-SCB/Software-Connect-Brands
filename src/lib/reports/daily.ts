@@ -250,7 +250,7 @@ async function quietFor(organizationId: string, repId: string | null) {
 // try). A talk is a try with an outcome of Talked / They replied / Held,
 // or a meeting with no outcome (old meetings count as held). A meeting
 // booked is an OpportunityMeeting the rep booked (bookedById), by when it
-// was booked. "This week" is the report bar's This week; "last week" is
+// went on the calendar. "This week" is the report bar's This week; "last week" is
 // the same days of the week before.
 
 export type RepCounts = { tries: number; talks: number; booked: number };
@@ -291,15 +291,24 @@ export async function repNumbers(organizationId: string, repIds: string[], timeZ
              COUNT(*) FILTER (WHERE at >= ${week.previous.from} AND at < ${week.previous.to} AND connect)::int AS p_talks
         FROM t
        GROUP BY user_id`,
+    // Dated by when the meeting went on the calendar: a meeting first tied
+    // to an opportunity when it was marked Held (a calendar entry nobody
+    // booked through the sheet) was booked when the entry was made, not
+    // the day it was held.
     prisma.$queryRaw<{ user_id: string; t: number; w: number; p: number }[]>`
-      SELECT om."bookedById" AS user_id,
-             COUNT(*) FILTER (WHERE om."createdAt" >= ${today.from})::int AS t,
-             COUNT(*) FILTER (WHERE om."createdAt" >= ${week.from})::int AS w,
-             COUNT(*) FILTER (WHERE om."createdAt" >= ${week.previous.from} AND om."createdAt" < ${week.previous.to})::int AS p
-        FROM "OpportunityMeeting" om
-        JOIN "Opportunity" o ON o.id = om."opportunityId"
-       WHERE o."organizationId" = ${organizationId} AND om."bookedById" = ANY(${repIds})
-         AND om."createdAt" >= ${since} AND om."createdAt" <= ${now}
+      WITH b AS (
+        SELECT om."bookedById" AS user_id, LEAST(om."createdAt", COALESCE(e."createdAt", om."createdAt")) AS at
+          FROM "OpportunityMeeting" om
+          JOIN "Opportunity" o ON o.id = om."opportunityId"
+          LEFT JOIN "CalendarEvent" e ON e.id = om."eventId" AND e."organizationId" = ${organizationId}
+         WHERE o."organizationId" = ${organizationId} AND om."bookedById" = ANY(${repIds})
+           AND om."createdAt" >= ${since}
+      )
+      SELECT user_id,
+             COUNT(*) FILTER (WHERE at >= ${today.from} AND at <= ${now})::int AS t,
+             COUNT(*) FILTER (WHERE at >= ${week.from} AND at <= ${now})::int AS w,
+             COUNT(*) FILTER (WHERE at >= ${week.previous.from} AND at < ${week.previous.to})::int AS p
+        FROM b
        GROUP BY 1`,
     prisma.$queryRaw<{ user_id: string; at: Date }[]>`
       SELECT a."userId" AS user_id, MAX(a."createdAt") AS at

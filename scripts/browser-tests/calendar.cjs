@@ -385,6 +385,11 @@ function daysAgo(n) {
   // into the current month lands on today).
   assert.match(new URL(page.url()).searchParams.get("on"), /^2027-08-\d\d$/, "still August");
   assert.ok(new URL(page.url()).searchParams.get("users"), "Just me survived the pending month change");
+  // Mine is remembered per person now (BDR redesign, Nov 11, 2026): put
+  // Everyone back so the rest of the suite sees the whole team's days.
+  await page.locator("[data-testid=cal-everyone]").click();
+  await page.locator("[data-testid=cal-everyone][aria-pressed=true]").waitFor();
+  await page.waitForURL((url) => !url.searchParams.has("users"));
 
   log("the week view lists the days in full");
   await page.goto(`${BASE}/dashboard/calendar?view=week&on=${day(3)}`);
