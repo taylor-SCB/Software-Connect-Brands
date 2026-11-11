@@ -1656,6 +1656,57 @@ built. What the fixes taught:
 - A component that copies a prop into state (OwnerSelect, RepField) is
   keyed by that prop wherever something else can save it.
 
+**The BDR redesign: Taylor approved every recommendation (Nov 11, 2026).**
+The plan is the "BDR Flow Redesign" page (claude.ai artifact
+YTVnpnoQPVMcUeE4cKseiW, source in that session's scratchpad). What he
+said yes to, so later work doesn't ask again:
+1. Connected = a live talk, a reply by text or email, a held meeting, or
+   booking one. Voicemail, no answer, busy, front desk, wrong number, an
+   unanswered text or email and a no-show are attempts. One-tap outcome
+   chips; old history is never guessed (old calls are attempts, old
+   meetings held; Stats says "Talks counted from <launch day>").
+2. Connected becomes a real status (CONNECTED between CONTACTED and
+   INTERESTED), in its own small release after the outcome chips ship.
+3. "Contacted" is shown as "Attempted" (label only; the value and CSV
+   import stay CONTACTED).
+4. Meeting Completed is set automatically when a meeting is logged Held or
+   ticked done (asking first when the date is still ahead).
+5. The follow-up box's "Meeting" tick becomes "Try to book a meeting", a
+   reminder that moves no status; booking goes through a Book meeting sheet.
+   (This replaces the Oct 4 rule.)
+6. Health shows as a word and colour; the 0–100 number only on hover or
+   long-press, as a breakdown.
+7. Health colours are fixed on every tenant (teal / amber / rose / grey),
+   not the partner's brand.
+8. People never reached are "Trying": grey, amber when stalled, never red,
+   no number.
+9. Members land on a new "My day" tab; Owners and Admins keep Daily
+   Rundown with a Team today strip on top.
+10. Old activities stay "not recorded"; the voicemail-labelling script runs
+    on the demo only.
+11. Optional team goals (tries, talks, meetings booked) set by Owners and
+    Admins in Settings → General; until set, the rings show "vs last week".
+12. Suggest parking a lead after 6 tries with no connect; parking only books
+    "Try again in 30 days".
+13. The rep who booked a meeting gets credit for it being held (needs a
+    bookedById on the meeting); the deal and its money stay with the deal's
+    rep.
+14. Not interested and Lost ask for an optional one-tap reason (Price ·
+    Timing · Has a vendor · No budget · Other).
+15. A Member can bulk "Assign to me" a teammate's records, with a confirm
+    naming the owner and an Undo.
+16. The Email button on one contact's page becomes a one-to-one send that
+    counts as a touch (no template, no unsubscribe footer, not in the 40-a-day
+    limit); the marketing sender stays exactly as it is.
+17. Members open lists, the Pipeline and the Calendar on "Mine", with
+    Everyone one tap away; everyone still sees everyone.
+18. Up next offers unowned leads ("43 new leads nobody owns · Take 10"):
+    a manual claim with confirm and Undo, never automatic.
+19. Build Quote leaves the deal at Meeting Completed until the quote is
+    sent; Manual Input still moves it straight away.
+The renames and moves listed per release in the plan are approved with
+it. Each release still goes live only after his "Ready to go live?" yes.
+
 **Anything that floats over other content must be opaque.** The app's
 look is glass — `.card` is about 4% white with a blur behind it — which
 is right for a panel sitting on the page background and wrong for
