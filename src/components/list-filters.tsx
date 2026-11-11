@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { IconSearch, IconChevronDown, IconX, IconStar, IconTrending, IconFilter, IconCheck, IconBuilding, IconSparkles, IconFileText } from "@/components/icons";
 import { CONTACT_STATUSES, CONTACT_STATUS_LABELS, INDIVIDUAL_COMPANY_TYPE, PAGE_SIZES, type ContactStatusValue } from "@/lib/constants";
@@ -15,7 +16,19 @@ import {
   type ListParams,
   type ListLock,
   type Presence,
+  type ListScope,
+  type ListSort,
+  LIST_SCOPES,
+  LIST_SORTS,
+  SCOPE_LABELS,
+  SORT_LABELS,
+  PRESET_LABELS,
+  presetsFor,
+  effectiveSort,
 } from "@/lib/list-params";
+import { NO_LEAD_LABEL } from "@/lib/lead-labels";
+import { COLUMN_LABELS, columnsFor } from "@/lib/list-columns";
+import { saveListPrefs } from "@/app/dashboard/user-prefs-actions";
 import { useSearch } from "@/lib/use-search";
 import { FloatingMenu } from "@/components/floating-menu";
 
@@ -24,11 +37,29 @@ export type FilterBarOptions = {
   industries: { name: string; types: string[] }[];
 };
 
-// The bar above the Contacts and Companies tables: the search box, the
-// multi-select dropdowns (State, Industry, Company Type, and Company on
-// contacts), the Favorites / With deals / Needs attention toggles, and
-// the per-page choice. Every change is a navigation to a new address, so
-// the server does the filtering and the view is bookmarkable.
+// Below this the list is a card list and the Filters panel a bottom sheet.
+const PHONE_QUERY = "(max-width: 767px)";
+function useIsPhone() {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia(PHONE_QUERY);
+    const update = () => setPhone(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return phone;
+}
+
+// The bar above the Contacts and Companies lists (BDR redesign, Nov 11,
+// 2026): [Mine | Everyone | Unowned], the search box, Filters (n), Sort,
+// Columns and rows per page on one line, the one-tap presets under it, and
+// the active filters as chips that come off with a tap. Every filter there
+// was before is still here, one tap deeper, grouped Who / Stage / Where /
+// Data quality in the Filters panel (a bottom sheet on a phone). Every
+// change is a navigation to a new address, so the server does the
+// filtering and the view is bookmarkable; scope, preset, sort and columns
+// are also remembered for the person (saveListPrefs).
 export function ListFilters({
   basePath,
   params: current,
@@ -39,6 +70,8 @@ export function ListFilters({
   placeholder,
   reps = [],
   leadLabels = [],
+  total = 0,
+  columns,
 }: {
   basePath: string;
   params: ListParams;
@@ -51,8 +84,14 @@ export function ListFilters({
   // and Added by, and the Lead Labels on offer.
   reps?: { id: string; name: string }[];
   leadLabels?: string[];
+  // How many match, for the phone sheet's "Show 27 people".
+  total?: number;
+  // The extra columns showing now; the Columns menu is left out without it.
+  columns?: string[];
 }) {
   const router = useRouter();
+  const phone = useIsPhone();
+  const [panelOpen, setPanelOpen] = useState(false);
   // The bar shows the new choice the instant it is clicked and holds it
   // until the server has answered with the matching rows.
   const [, startTransition] = useTransition();
@@ -66,6 +105,12 @@ export function ListFilters({
       setShown(next);
       router.push(listHref(basePath, next, {}, lock));
     });
+  const remember = (patch: { scope?: ListScope; preset?: string; sort?: ListSort | null; columns?: string[] }) => {
+    return saveListPrefs({ kind, ...patch } as Parameters<typeof saveListPrefs>[0]).then(
+      () => undefined,
+      () => undefined,
+    );
+  };
 
   const industryNames = options.industries.map((industry) => industry.name);
   // Company types on offer: those under the industries picked, or all of
@@ -79,37 +124,103 @@ export function ListFilters({
   const active = activeFilterCount(params, lock);
   const repNames: Record<string, string> = Object.fromEntries(reps.map((rep) => [rep.id, rep.name]));
   const repLabels: Record<string, string> = { [UNASSIGNED]: "Unassigned", ...repNames };
+  if (params.me && repNames[params.me]) repLabels[params.me] = `Me (${repNames[params.me]})`;
+  // "Me" first on the Rep filter, then Unassigned, then everyone else.
+  const repChoices = [
+    ...(params.me && repNames[params.me] ? [params.me] : []),
+    UNASSIGNED,
+    ...reps.map((rep) => rep.id).filter((id) => id !== params.me),
+  ];
+  const labelNames: Record<string, string> = { [NO_LEAD_LABEL]: "On a deal, no label yet" };
   const presenceLabel = (field: string, value: Presence) => `${value === "yes" ? "Has" : "No"} ${field}`;
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  const presets = presetsFor(kind);
+  const sort = effectiveSort(params);
+  const noun = kind === "contacts" ? (total === 1 ? "person" : "people") : total === 1 ? "company" : "companies";
 
-  return (
-    <div className="mb-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const input = event.currentTarget.elements.namedItem("q") as HTMLInputElement;
-            go({ q: input.value.trim() });
-          }}
-          className="relative"
-          role="search"
-        >
-          <IconSearch
-            size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
-          />
-          <input
-            key={params.q}
-            type="search"
-            name="q"
-            defaultValue={params.q}
-            placeholder={placeholder}
-            aria-label={placeholder}
-            className="input input-sm w-60 pl-8"
-          />
-        </form>
+  function pickScope(scope: ListScope) {
+    // My accounts is Mine by definition; leaving Mine leaves it.
+    const preset = params.preset === "accounts" && scope !== "mine" ? "" : params.preset;
+    go({ scope, preset });
+    remember(preset !== params.preset ? { scope, preset: "none" } : { scope });
+  }
+  function pickPreset(preset: string) {
+    const next = params.preset === preset ? "" : preset;
+    // "My call list" and "My accounts" are a person's own: picked from
+    // Everyone they switch to Mine. From Unowned the call list stays on
+    // the leads nobody owns.
+    const scope: ListScope | "" =
+      next === "accounts" || (next === "call" && params.scope === "all") ? "mine" : params.scope;
+    go({ preset: next, sort: "", scope });
+    remember({ preset: next || "none", sort: null, ...(scope && scope !== params.scope ? { scope } : {}) });
+  }
 
+  const groups = (
+    <div className="space-y-3" data-testid="filters-panel">
+      <FilterGroup title="Who">
+        <MultiSelect
+          label="Rep"
+          values={params.reps}
+          choices={repChoices}
+          labels={repLabels}
+          onToggle={(value) => go({ reps: toggle(params.reps, value) })}
+          onClear={() => go({ reps: [] })}
+          empty="No teammates."
+        />
+        <MultiSelect
+          label="Added by"
+          values={params.addedBy}
+          choices={reps.map((rep) => rep.id)}
+          labels={repNames}
+          onToggle={(value) => go({ addedBy: toggle(params.addedBy, value) })}
+          onClear={() => go({ addedBy: [] })}
+          empty="No teammates."
+        />
+      </FilterGroup>
+      <FilterGroup title="Stage">
+        {/* The status ladder, in its own order rather than alphabetical,
+            so Not Actioned reads above Attempted above Interested. The
+            Interested sub-panes hold the status already and hide this. */}
+        {!lock.interested && (
+          <MultiSelect
+            label="Status"
+            values={params.statuses}
+            choices={[...CONTACT_STATUSES]}
+            labels={CONTACT_STATUS_LABELS}
+            onToggle={(value) => go({ statuses: toggle(params.statuses, value as ContactStatusValue) as ContactStatusValue[] })}
+            onClear={() => go({ statuses: [] })}
+            empty="No statuses."
+          />
+        )}
+        <ActivitySelect value={params.act} onPick={(act) => go({ act })} />
+        <MultiSelect
+          label="Lead Label"
+          values={params.labels}
+          choices={leadLabels}
+          labels={labelNames}
+          onToggle={(value) => go({ labels: toggle(params.labels, value) })}
+          onClear={() => go({ labels: [] })}
+          empty="No lead labels yet."
+        />
+        {!lock.deals && (
+          <Toggle on={params.deals} onClick={() => go({ deals: !params.deals })} testId="filter-deals">
+            <IconTrending size={13} />
+            With deals
+          </Toggle>
+        )}
+        {!lock.fav && (
+          <Toggle on={params.fav} onClick={() => go({ fav: !params.fav })} testId="filter-fav">
+            <IconStar size={13} filled={params.fav} className={params.fav ? "text-[var(--warn)]" : ""} />
+            Favorites
+          </Toggle>
+        )}
+        <Toggle on={params.owed} onClick={() => go({ owed: !params.owed })} testId="filter-owed">
+          <IconFileText size={13} />
+          Owes money
+        </Toggle>
+      </FilterGroup>
+      <FilterGroup title="Where">
         <MultiSelect
           label="State"
           values={params.states}
@@ -118,6 +229,14 @@ export function ListFilters({
           onClear={() => go({ states: [] })}
           empty="No states on file yet."
         />
+        {kind === "contacts" && (
+          <CompanySelect
+            selected={selectedCompanies}
+            selectedIds={params.companies}
+            onToggle={(id) => go({ companies: toggle(params.companies, id) })}
+            onClear={() => go({ companies: [] })}
+          />
+        )}
         <MultiSelect
           label="Industry"
           values={params.industries}
@@ -135,30 +254,6 @@ export function ListFilters({
           empty="Pick an industry to see its company types."
         />
         {kind === "contacts" && (
-          <CompanySelect
-            selected={selectedCompanies}
-            selectedIds={params.companies}
-            onToggle={(id) => go({ companies: toggle(params.companies, id) })}
-            onClear={() => go({ companies: [] })}
-          />
-        )}
-        {/* The status ladder, in its own order rather than alphabetical,
-            so Not Actioned reads above Contacted above Interested. The
-            Interested sub-panes hold the status already and hide this. */}
-        {!lock.interested && (
-          <MultiSelect
-            label="Status"
-            values={params.statuses}
-            choices={[...CONTACT_STATUSES]}
-            labels={CONTACT_STATUS_LABELS}
-            onToggle={(value) => go({ statuses: toggle(params.statuses, value as ContactStatusValue) as ContactStatusValue[] })}
-            onClear={() => go({ statuses: [] })}
-            empty="No statuses."
-          />
-        )}
-
-        <ActivitySelect value={params.act} onPick={(act) => go({ act })} />
-        {kind === "contacts" && (
           <TitleSelect
             values={params.titles}
             onToggle={(title) =>
@@ -167,73 +262,115 @@ export function ListFilters({
             onClear={() => go({ titles: [] })}
           />
         )}
-        <MultiSelect
-          label="Rep"
-          values={params.reps}
-          choices={[UNASSIGNED, ...reps.map((rep) => rep.id)]}
-          labels={repLabels}
-          onToggle={(value) => go({ reps: toggle(params.reps, value) })}
-          onClear={() => go({ reps: [] })}
-          empty="No teammates."
-        />
-        <MultiSelect
-          label="Added by"
-          values={params.addedBy}
-          choices={reps.map((rep) => rep.id)}
-          labels={repNames}
-          onToggle={(value) => go({ addedBy: toggle(params.addedBy, value) })}
-          onClear={() => go({ addedBy: [] })}
-          empty="No teammates."
-        />
-        <AddedSelect from={params.from} to={params.to} onApply={(from, to) => go({ from, to })} />
+      </FilterGroup>
+      <FilterGroup title="Data quality">
         <PresenceSelect
           fields={kind === "contacts" ? (["mobile", "email"] as const) : (["email", "phone"] as const)}
           params={params}
           onPick={(field, value) => go({ [field]: value })}
         />
-        <MultiSelect
-          label="Lead Label"
-          values={params.labels}
-          choices={leadLabels}
-          onToggle={(value) => go({ labels: toggle(params.labels, value) })}
-          onClear={() => go({ labels: [] })}
-          empty="No lead labels yet."
-        />
-
-        {!lock.fav && (
-          <Toggle on={params.fav} onClick={() => go({ fav: !params.fav })} testId="filter-fav">
-            <IconStar size={13} filled={params.fav} className={params.fav ? "text-[var(--warn)]" : ""} />
-            Favorites
-          </Toggle>
-        )}
-        {!lock.deals && (
-          <Toggle on={params.deals} onClick={() => go({ deals: !params.deals })} testId="filter-deals">
-            <IconTrending size={13} />
-            With deals
-          </Toggle>
-        )}
+        {/* "Needs attention" until Nov 11, 2026: it means the data is
+            missing, not that the account is going cold. */}
         <Toggle on={params.attn} onClick={() => go({ attn: !params.attn })} testId="filter-attn">
           <IconFilter size={13} />
-          Needs attention
+          Missing info
         </Toggle>
-        <Toggle on={params.owed} onClick={() => go({ owed: !params.owed })} testId="filter-owed">
-          <IconFileText size={13} />
-          Owes money
-        </Toggle>
+        <AddedSelect from={params.from} to={params.to} onApply={(from, to) => go({ from, to })} />
         {kind === "companies" && (
           <Toggle on={params.auto} onClick={() => go({ auto: !params.auto })} testId="filter-auto">
             <IconSparkles size={13} />
             Auto-filled
           </Toggle>
         )}
+      </FilterGroup>
+    </div>
+  );
 
-        <label className="ml-auto flex items-center gap-1.5 text-xs">
+  return (
+    <div className="mb-4 min-w-0 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex gap-1" role="group" aria-label="Whose records" data-testid="scope">
+          {LIST_SCOPES.map((scope) => (
+            <button
+              key={scope}
+              type="button"
+              aria-pressed={params.scope === scope}
+              onClick={() => pickScope(scope)}
+              data-testid={`scope-${scope}`}
+              className={`btn btn-sm min-h-[44px] md:min-h-0 ${params.scope === scope ? "btn-primary" : "btn-ghost"}`}
+            >
+              {SCOPE_LABELS[scope]}
+            </button>
+          ))}
+        </div>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            const input = event.currentTarget.elements.namedItem("q") as HTMLInputElement;
+            go({ q: input.value.trim() });
+          }}
+          className="relative order-first w-full md:order-none md:w-auto"
+          role="search"
+        >
+          <IconSearch
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-faint)]"
+          />
+          <input
+            key={params.q}
+            type="search"
+            name="q"
+            defaultValue={params.q}
+            placeholder={placeholder}
+            aria-label={placeholder}
+            className="input input-sm w-full pl-8 md:w-60"
+          />
+        </form>
+
+        <button
+          type="button"
+          onClick={() => setPanelOpen(!panelOpen)}
+          aria-expanded={panelOpen}
+          data-testid="filters-toggle"
+          className={`btn btn-sm min-h-[44px] md:min-h-0 ${active > 0 ? "btn-primary" : "btn-ghost"}`}
+        >
+          <IconFilter size={13} />
+          Filters{active > 0 ? ` (${active})` : ""}
+          <IconChevronDown size={12} className={`opacity-70 transition-transform ${panelOpen ? "rotate-180" : ""}`} />
+        </button>
+
+        <label className="flex items-center gap-1.5 text-xs">
+          <span className="faint">Sort</span>
+          <select
+            value={sort}
+            onChange={(event) => {
+              const value = event.target.value as ListSort | "meeting";
+              const next = value === "meeting" ? "" : value;
+              go({ sort: next });
+              remember({ sort: next || null });
+            }}
+            aria-label="Sort"
+            data-testid="sort"
+            className="select input-sm min-h-[44px] w-[11.5rem] py-1 pr-7 md:min-h-0"
+          >
+            {sort === "meeting" && <option value="meeting">Meeting time</option>}
+            {LIST_SORTS.map((key) => (
+              <option key={key} value={key}>
+                {SORT_LABELS[key]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {columns && <ColumnsMenu kind={kind} columns={columns} onSave={(next) => remember({ columns: next })} />}
+
+        <label className="flex items-center gap-1.5 text-xs md:ml-auto">
           <span className="faint">Per page</span>
           <select
             value={params.per}
             onChange={(event) => go({ per: Number(event.target.value) })}
             aria-label="Rows per page"
-            className="select input-sm w-[4.75rem] py-1 pr-7"
+            className="select input-sm min-h-[44px] w-[4.75rem] py-1 pr-7 md:min-h-0"
           >
             {PAGE_SIZES.map((size) => (
               <option key={size} value={size}>
@@ -243,6 +380,30 @@ export function ListFilters({
           </select>
         </label>
       </div>
+
+      {!lock.fav && !lock.deals && !lock.interested && (
+        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0" role="group" aria-label="Presets" data-testid="presets">
+          {presets.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              aria-pressed={params.preset === preset}
+              onClick={() => pickPreset(preset)}
+              data-testid={`preset-${preset}`}
+              className={`btn btn-sm min-h-[44px] shrink-0 whitespace-nowrap md:min-h-0 ${params.preset === preset ? "btn-primary" : "btn-ghost"}`}
+            >
+              {PRESET_LABELS[kind][preset]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {panelOpen && !phone && <div className="card popover p-3">{groups}</div>}
+      {panelOpen && phone && (
+        <PhoneSheet title="Filters" onClose={() => setPanelOpen(false)} showLabel={`Show ${total.toLocaleString()} ${noun}`}>
+          {groups}
+        </PhoneSheet>
+      )}
 
       {(active > 0 || params.q) && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="active-filters">
@@ -275,7 +436,7 @@ export function ListFilters({
             ))}
           {params.fav && !lock.fav && <Chip onRemove={() => go({ fav: false })}>Favorites</Chip>}
           {params.deals && !lock.deals && <Chip onRemove={() => go({ deals: false })}>With deals</Chip>}
-          {params.attn && <Chip onRemove={() => go({ attn: false })}>Needs attention</Chip>}
+          {params.attn && <Chip onRemove={() => go({ attn: false })}>Missing info</Chip>}
           {params.owed && <Chip onRemove={() => go({ owed: false })}>Owes money</Chip>}
           {kind === "companies" && params.auto && <Chip onRemove={() => go({ auto: false })}>Auto-filled</Chip>}
           {params.act && <Chip onRemove={() => go({ act: "" })}>{ACTIVITY_WINDOW_LABELS[params.act]}</Chip>}
@@ -304,7 +465,7 @@ export function ListFilters({
           {params.phone && <Chip onRemove={() => go({ phone: "" })}>{presenceLabel("phone", params.phone)}</Chip>}
           {params.labels.map((label) => (
             <Chip key={`l-${label}`} onRemove={() => go({ labels: toggle(params.labels, label) })}>
-              Lead Label: {label}
+              Lead Label: {labelNames[label] ?? label}
             </Chip>
           ))}
           <button
@@ -317,6 +478,94 @@ export function ListFilters({
         </div>
       )}
     </div>
+  );
+}
+
+function FilterGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-3">
+      <p className="eyebrow w-28 shrink-0">{title}</p>
+      <div className="flex flex-wrap items-center gap-2 [&_.btn]:max-md:min-h-[44px]">{children}</div>
+    </div>
+  );
+}
+
+// The Filters panel on a phone: a sheet from the bottom, drawn on the page
+// body, with "Show 27 people" pinned at its foot. The dropdowns inside it
+// float above it (FloatingMenu sits higher).
+function PhoneSheet({ title, onClose, showLabel, children }: { title: string; onClose: () => void; showLabel: string; children: React.ReactNode }) {
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-end bg-[var(--scrim)]" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+        className="popover flex max-h-[85vh] w-full flex-col rounded-t-2xl border-t border-[var(--hairline-3)]"
+        data-testid="filters-sheet"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--hairline-3)] px-4 py-2">
+          <h2 className="text-base font-semibold">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-sm h-11 w-11 !px-0">
+            <IconX size={16} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
+        <div className="border-t border-[var(--hairline-3)] p-3">
+          <button type="button" onClick={onClose} className="btn btn-primary h-12 w-full" data-testid="filters-show">
+            {showLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Columns: the extra columns a person brings back, remembered for them.
+// Ticks show at once (the page is redrawn with the server's columns once
+// the choice is saved).
+function ColumnsMenu({ kind, columns, onSave }: { kind: "contacts" | "companies"; columns: string[]; onSave: (next: string[]) => Promise<void> | void }) {
+  const router = useRouter();
+  const [shown, setShown] = useState(columns);
+  const [, start] = useTransition();
+  useEffect(() => setShown(columns), [columns]);
+  const all = columnsFor(kind);
+  return (
+    <Dropdown label="Columns" count={shown.length} testId="columns">
+      {() => (
+        <ul aria-label="Columns" className="max-h-72 overflow-y-auto">
+          {all.map((key) => (
+            <li key={key}>
+              <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-[var(--hover)]">
+                <input
+                  type="checkbox"
+                  checked={shown.includes(key)}
+                  data-testid={`column-${key}`}
+                  onChange={() => {
+                    const next = shown.includes(key) ? shown.filter((k) => k !== key) : all.filter((k) => k === key || shown.includes(k));
+                    setShown(next);
+                    start(async () => {
+                      await onSave(next);
+                      router.refresh();
+                    });
+                  }}
+                  className="h-3.5 w-3.5 accent-[var(--brand)]"
+                />
+                <span>{COLUMN_LABELS[key]}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Dropdown>
   );
 }
 
