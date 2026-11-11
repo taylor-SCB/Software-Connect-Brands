@@ -1967,6 +1967,21 @@ what is still open is in Known gaps. Lessons worth keeping:
   Mine, so a shared link means the same thing to everyone.
 - **A "Search people and companies" button is on every page**, so
   `getByLabel("Search people…")` needs `{ exact: true }`.
+- **The Agenda draws at most 60 entries a day** (`loadAgenda` in
+  `src/lib/calendar-data.ts`), with "Showing 60 of N · Show all" opening
+  that day in Week, and folds done entries behind "n done". Drawing every
+  entry of a busy team day (2,204 rows, 4 MB of HTML) took 3 s in the
+  browser at 200,000 contacts.
+- **A CTE the planner sizes at 1 row is read with `IN` / `NOT IN`, not
+  `EXISTS` / `NOT EXISTS`** (`my-day/load.ts`, 3.8 s → 0.13 s), or
+  aggregated once with a UNION ALL (`gone-quiet.ts`). Otherwise every join
+  onto it becomes a per-row loop.
+- **pipeline-opportunities step 19 (a drag to Quote Sent) can time out once**
+  with "element is not stable": the board scrolls sideways under the
+  drag. It passes when run again; a person's drag isn't affected.
+- **A fresh machine:** `bash scripts/browser-tests/setup-db.sh <db name>`
+  starts Postgres on 5433, makes the database, writes `.env` if it's
+  missing, generates Prisma and applies every migration.
 - **After a merge, check the suites both sides edited.** Run `node --check`
   on every suite and look for a helper defined twice in one scope. The same
   name inside separate `page.evaluate` bodies is fine (`looks.cjs`' colour

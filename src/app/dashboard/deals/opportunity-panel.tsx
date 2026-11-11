@@ -86,7 +86,7 @@ function usePhone() {
 // their own, each with Undo.
 //
 // Log and Book open the shared sheets ("How did it go?" and Book meeting,
-// docs/bdr-sprint-kit/api-log-sheet.md), which live on the board so their
+// see "The BDR redesign, built" in CLAUDE.md), which live on the board so their
 // "Saved · Undo" (the board's one toast) outlives the panel. Each is told
 // this tile (opportunityId): a meeting answered, logged or booked from
 // here is this tile's. Anything they write bumps `reload`.

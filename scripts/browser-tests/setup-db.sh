@@ -1,10 +1,10 @@
 #!/bin/bash
-# One-time setup on a fresh cloud machine for the BDR sprint.
-# Usage: bash docs/bdr-sprint-kit/setup.sh <database_name>
+# One-time setup on a fresh machine for the browser suites.
+# Usage: bash scripts/browser-tests/setup-db.sh <database_name>
 # Starts Postgres on port 5433, makes the database, writes .env if missing,
 # then generates the Prisma client and applies every migration.
 set -e
-DBN=${1:?usage: setup.sh <database_name>}
+DBN=${1:?usage: setup-db.sh <database_name>}
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 [ -d node_modules/next ] || npm ci --no-audit --no-fund
@@ -27,4 +27,4 @@ fi
 npx prisma generate >/dev/null
 DATABASE_URL=$URL npx prisma migrate deploy | tail -1
 echo "ready: database $DBN at $URL"
-echo "next: npx next build, then: DB=$URL bash docs/bdr-sprint-kit/run-suites.sh plain:<suite,suite>"
+echo "next: npx next build, then: DB=$URL bash scripts/browser-tests/run-suites.sh plain:<suite,suite>"
