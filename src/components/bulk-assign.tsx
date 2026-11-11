@@ -262,7 +262,7 @@ export function RowCheck({ id, label }: { id: string; label: string }) {
       type="checkbox"
       checked={selection.ids.has(id)}
       onChange={() => selection.toggle(id)}
-      aria-label={`Select ${label}`}
+      aria-label="Select this row"
       title={label}
       data-testid="row-check"
       data-shown={shown ? "1" : undefined}

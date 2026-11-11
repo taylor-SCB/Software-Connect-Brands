@@ -472,9 +472,11 @@ export function ListFilters({
         </PhoneSheet>
       )}
 
-      {(active > 0 || params.q) && (
+      {/* On a phone the search box itself shows what was typed (and clears
+          it), so a search alone adds no row above the cards (round 2). */}
+      {(active > 0 || (params.q && !phone)) && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="active-filters">
-          {params.q && <Chip onRemove={() => go({ q: "" })}>“{params.q}”</Chip>}
+          {params.q && !phone && <Chip onRemove={() => go({ q: "" })}>“{params.q}”</Chip>}
           {params.states.map((state) => (
             <Chip key={`s-${state}`} onRemove={() => go({ states: toggle(params.states, state) })}>
               State: {state}
