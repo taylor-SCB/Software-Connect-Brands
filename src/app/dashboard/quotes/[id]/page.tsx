@@ -14,11 +14,15 @@ import {
   CardHeader,
   BackLink,
   StatusBadge,
+  DealStageBadge,
 } from "@/components/ui";
 import { IconExternal, IconDownload, IconClock } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { LineItemsEditor } from "./line-items-editor";
-import { MarkSentButton, QuoteUnsavedProvider } from "./mark-sent";
+import { SendQuoteButton, QuoteUnsavedProvider } from "./mark-sent";
+import { DealJourney } from "@/components/deal-journey";
+import { loadDealJourney } from "@/lib/deal-journey-load";
+import { JourneyNext } from "@/app/dashboard/contracts/journey-next";
 import { DeleteQuoteButton } from "./delete-quote";
 import { loadPlatformSuppliers } from "@/lib/platform-suppliers";
 import { QuotePaymentTable } from "./quote-payment-table";
@@ -56,7 +60,7 @@ export default async function QuoteBuilderPage({
     prisma.quote.findFirst({
       where: { id, organizationId },
       include: {
-        contact: { select: { id: true, name: true, company: { select: { name: true } } } },
+        contact: { select: { id: true, name: true, email: true, phone: true, mobile: true, company: { select: { name: true } } } },
         deal: { select: { id: true, title: true, stage: true } },
         lineItems: {
           orderBy: { position: "asc" },
@@ -71,9 +75,12 @@ export default async function QuoteBuilderPage({
     getServiceTypes(organizationId),
   ]);
 
-  const users = await loadWorkspaceUsers(organizationId);
-
   if (!quote) notFound();
+
+  const [users, journey] = await Promise.all([
+    loadWorkspaceUsers(organizationId),
+    loadDealJourney(organizationId, timeZone, { dealId: quote.dealId, quoteId: quote.id, page: "quote" }),
+  ]);
 
   // "Draft lines from the meeting" (Nov 10, 2026): AI on, a draft, and a
   // deal that came from a Pipeline opportunity. Build Quote can ask for it
@@ -110,10 +117,18 @@ export default async function QuoteBuilderPage({
   const publicPath = `/q/${quote.publicToken}`;
   const today = todayIso(timeZone);
   const quoteTotalCents = computeQuoteTotals(quote.lineItems, quote).totalCents;
+  const sendQuote = (
+    <SendQuoteButton
+      quoteId={quote.id}
+      quoteLabel={`QUO-${quote.number} ${quote.title}`}
+      publicPath={publicPath}
+      contact={{ name: quote.contact.name, email: quote.contact.email, phone: quote.contact.mobile || quote.contact.phone }}
+    />
+  );
 
   return (
-    // Mark as sent (header) waits while the Line items card has unsaved
-    // edits, so the provider holds both.
+    // Send quote (under the strip) waits while the Line items card has
+    // unsaved edits, so the provider holds both.
     <QuoteUnsavedProvider>
       <BackLink href="/dashboard/quotes" label="Quotes" current={`QUO-${quote.number} ${quote.title}`} />
 
@@ -122,7 +137,6 @@ export default async function QuoteBuilderPage({
         title={quote.title}
         actions={
           <>
-            <StatusBadge status={quote.status} />
             <Link
               href={publicPath}
               target="_blank"
@@ -145,7 +159,9 @@ export default async function QuoteBuilderPage({
               Split into contracts
             </Link>
             {quote.status === "DRAFT" ? (
-              <MarkSentButton quoteId={quote.id} />
+              // The strip's Next is Send quote while this is the step; on
+              // a later quote of a deal further along, it sits here.
+              journey?.journey.next?.key !== "send-quote" && sendQuote
             ) : (
               <form action={setQuoteStatus}>
                 <input type="hidden" name="quoteId" value={quote.id} />
@@ -158,6 +174,24 @@ export default async function QuoteBuilderPage({
           </>
         }
       />
+
+      {journey && (
+        <div className="mb-5">
+          <DealJourney
+            journey={journey.journey}
+            stickyNext
+            next={<JourneyNext next={journey.journey.next} refs={journey.refs} page="quote" here={{ "send-quote": sendQuote }} />}
+            details={
+              <>
+                <StatusBadge status={quote.status} />
+                <span className="faint text-xs">Deal</span>
+                <DealStageBadge stage={quote.deal.stage} />
+                {quote.sentAt && <span className="faint text-xs">Sent {formatDate(quote.sentAt, timeZone)}</span>}
+              </>
+            }
+          />
+        </div>
+      )}
 
       {quote.status !== "DRAFT" && (
         <Card className="mb-5 p-4">

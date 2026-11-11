@@ -13,8 +13,10 @@
  * step: Mark signed (signed on paper) on a contract made from a sent quote
  * accepts that quote, dated the day it was signed, and takes its open
  * follow-up off the calendar; and a contract signed before that fix, its
- * quote still Sent, is caught up by `scripts/accept-signed-quotes.ts`
- * (--check lists it and changes nothing; a second run finds nothing).
+ * quote still Sent, is caught up by the migration
+ * 20261111140000_paperwork_accept_signed_quotes (a sent contract, a
+ * purchase order and another workspace's contract are left alone; a
+ * second run changes nothing).
  *
  * Runs against a built app (`npm run build:app && npx next start`) and a
  * local Postgres that has had `prisma migrate deploy` run against it. It
@@ -28,7 +30,6 @@
  */
 /* eslint-disable @typescript-eslint/no-require-imports -- CommonJS on purpose: NODE_PATH only resolves the global playwright for require() */
 const os = require("node:os");
-const { execFileSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const { Client } = require("pg");
 const fs = require("node:fs");
@@ -345,34 +346,54 @@ async function previewChips(page) {
   await page.goto(`${BASE}/dashboard/quotes/quo_ct`);
   await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
 
-  log("audit fixes (UX review): a contract signed before the fix is caught up by scripts/accept-signed-quotes.ts, once");
+  log("Sprint: a contract signed before the fix is caught up by the paperwork_accept_signed_quotes migration, safely twice");
   // The state the review found in the live data: the contract signed, its
   // quote still Sent with its follow-up open. The quote goes out again
-  // from its page while the contract stays signed.
+  // from its page while the contract stays signed. The catch-up used to be
+  // scripts/accept-signed-quotes.ts, run by hand; it is a migration now,
+  // so it runs on release. Its SQL is run here straight from the file.
   await page.getByRole("button", { name: "Back to draft" }).click();
-  await page.getByTestId("mark-sent").click();
+  await page.getByTestId("send-quote").click();
+  await page.getByTestId("send-quote-mark").click();
   await page.getByRole("button", { name: "Back to draft" }).waitFor();
   assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT");
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [contractId])).rows[0].status, "SIGNED");
   assert.ok((await openFollowUps()) > 0, "the quote's follow-up is back on the calendar");
-  const backfill = (...flags) =>
-    execFileSync("npx", ["tsx", "scripts/accept-signed-quotes.ts", `--org=${org}`, ...flags], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, DATABASE_URL: DB },
-    });
-  const checked = backfill("--check");
-  assert.match(checked, /would accept QUO-\d+ \(Danny Ortiz\), signed on CON-\d+ 2026-11-09/, checked);
-  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "--check changed the quote");
-  const caughtUp = backfill();
-  assert.match(caughtUp, /1 quote accepted\./, caughtUp);
+  const migrationSql = fs.readFileSync(
+    path.join(process.cwd(), "prisma/migrations/20261111140000_paperwork_accept_signed_quotes/migration.sql"),
+    "utf8",
+  );
+  const catchUp = () => sql(migrationSql);
+  // Left alone: the contract only sent, not signed.
+  await sql(`UPDATE "Contract" SET status='SENT' WHERE id=$1`, [contractId]);
+  await catchUp();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "an unsigned contract accepted its quote");
+  // Left alone: a signed purchase order is not the customer saying yes.
+  await sql(`UPDATE "Contract" SET status='SIGNED', payable=true WHERE id=$1`, [contractId]);
+  await catchUp();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "a signed purchase order accepted its quote");
+  // Left alone: a contract in another workspace pointing at this quote.
+  const foreignOrg = `test-foreign-${Date.now()}`;
+  await sql(`INSERT INTO "Organization" (id, name, slug, "updatedAt") VALUES ($1, 'Foreign', $1, now())`, [foreignOrg]);
+  await sql(`UPDATE "Contract" SET payable=false, "organizationId"=$2 WHERE id=$1`, [contractId, foreignOrg]);
+  await catchUp();
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_ct'`)).rows[0].status, "SENT", "another workspace's contract accepted this quote");
+  await sql(`UPDATE "Contract" SET "organizationId"=$2 WHERE id=$1`, [contractId, org]);
+  await sql(`DELETE FROM "Organization" WHERE id=$1`, [foreignOrg]);
+  // Caught up: the quote is Accepted, dated the day the contract was signed.
+  await catchUp();
   const backfilled = (await sql(`SELECT status, "respondedAt"::date::text AS day FROM "Quote" WHERE id='quo_ct'`)).rows[0];
   assert.deepEqual(backfilled, { status: "ACCEPTED", day: "2026-11-09" }, "accepted, dated the day the contract was signed");
   assert.equal(await openFollowUps(), 0, "the follow-up is still on the calendar after the catch-up");
+  const quoteSentKept = (await sql(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "quoteId"='quo_ct' AND type='Quote sent'`)).rows[0].n;
+  assert.ok(quoteSentKept > 0, "the Quote sent history line was taken off too");
+  // A second run changes nothing.
+  const before = (await sql(`SELECT "respondedAt"::text AS r, "updatedAt"::text AS u FROM "Quote" WHERE id='quo_ct'`)).rows[0];
+  await catchUp();
+  const after = (await sql(`SELECT "respondedAt"::text AS r, "updatedAt"::text AS u FROM "Quote" WHERE id='quo_ct'`)).rows[0];
+  assert.deepEqual(after, before, "a second run touched the quote again");
   await page.reload();
   await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
-  // A second run finds nothing to do.
-  assert.match(backfill(), /already answered/);
 
   log("New contract: same two columns, template dropdown, preview, residential customer with no deal");
   await page.goto(`${BASE}/dashboard/contracts/new`);

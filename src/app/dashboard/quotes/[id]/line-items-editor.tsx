@@ -328,7 +328,7 @@ export function LineItemsEditor({
   // Saved with the lines, and worked out on the server against them.
   const [quoteDiscount, setQuoteDiscount] = useState<DiscountState>(() => discountStateOf(initialDiscount));
   const [dirty, setDirty] = useState(false);
-  // Mark as sent in the header holds off while this is set.
+  // Send quote (under the DealJourney strip) holds off while this is set.
   useReportUnsavedLines(dirty);
   const [state, setState] = useState<{ error?: string; success?: string }>({});
   const [pending, startTransition] = useTransition();

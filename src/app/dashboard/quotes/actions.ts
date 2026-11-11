@@ -822,7 +822,8 @@ export async function setQuoteStatus(formData: FormData) {
   await changeQuoteStatus(formData);
 }
 
-// Mark as sent, with the reason on screen when it won't (no saved lines).
+// Send quote's share sheet, with the reason on screen when it won't (no
+// saved lines).
 export async function markQuoteSent(_prev: ActionState, formData: FormData): Promise<ActionState> {
   formData.set("status", "SENT");
   return changeQuoteStatus(formData);
@@ -879,6 +880,8 @@ async function changeQuoteStatus(formData: FormData): Promise<ActionState> {
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard/deals");
+  revalidatePath("/dashboard/deals/tracker");
+  revalidatePath("/dashboard/contracts/tracker");
   revalidatePath("/dashboard/calendar");
   revalidatePath(`/dashboard/contacts/${quote.contactId}`);
   revalidatePath("/dashboard");
