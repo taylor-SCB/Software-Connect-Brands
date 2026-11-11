@@ -30,7 +30,7 @@ Branch `claude/sprint-numbers`. Stats funnel and leaderboard, the Overview Activ
 - It sends a plain email with no template, no merge fields, no unsubscribe footer and no List-Unsubscribe header. It writes no `EmailSend` row, so it isn't in the 40-a-day allowance. From reads "<Rep> · <Business>", and replies go to the rep.
 - After the send it logs through `logActivity` as EMAIL, outcome SENT, marketing false. So it lands on the calendar, makes the person Attempted, sets lastTouchAt, and offers "Want to set a follow-up?" when `today` is passed.
 - With no address the button becomes a link, "No email on file · Add one", to the edit form.
-- A person unsubscribed from marketing gets a plain note, and the send is still allowed (see below).
+- A person who unsubscribed can't be emailed: the window says to call or text instead, and the server refuses too (see Follow-up).
 - "Use a marketing template instead" opens the unchanged marketing window with them on the To line.
 - New page `/dashboard/email/to/<contactId>` opens the same window directly. It's a link-anywhere "Email this person", and it's where the suite tests the sender without touching the contact page.
 - The marketing window (`EmailButton` / `EmailComposer`) is unchanged apart from now drawing through a portal on `document.body`.
@@ -94,7 +94,7 @@ Production build, `npx tsc --noEmit -p .` clean (apart from `LayoutProps`, which
 - `email:email-marketing-users`: **PASS, 28 steps.** New Sprint steps:
   - one-to-one at 40 of 40, with no footer, merge, header or EmailSend row
   - logged as EMAIL / SENT / not marketing, with Attempted, lastTouchAt and the follow-up box
-  - the unsubscribed note, and "No email on file · Add one"
+  - no send to anyone unsubscribed, on screen and on the server (see Follow-up), and "No email on file · Add one"
   - "Use a marketing template instead"
 
 ## Files touched outside yours
