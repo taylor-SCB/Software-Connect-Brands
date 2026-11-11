@@ -132,3 +132,20 @@ export function QuoteSaveBar() {
     </div>
   );
 }
+
+// On a phone (audit, Nov 11, 2026): the bar above is hidden there, and the
+// Line items card's pinned Save is only on screen while that card is, so a
+// card further down that joined the one Save gets this button of its own
+// whenever it has unsaved edits. It runs the same Save as everywhere else.
+export function PhoneSaveHere({ dirty, testId }: { dirty: boolean; testId: string }) {
+  const { enabled, unsaved, pending, problem, saveAll } = useQuoteSaveAll();
+  if (!enabled || !dirty) return null;
+  return (
+    <div className="flex flex-col gap-1.5 sm:hidden">
+      {problem && <p className="text-xs text-[var(--danger)]">{problem}</p>}
+      <button type="button" onClick={saveAll} disabled={pending || unsaved.length === 0} className="btn btn-primary min-h-11 w-full" data-testid={testId}>
+        {pending ? "Saving…" : "Save"}
+      </button>
+    </div>
+  );
+}

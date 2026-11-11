@@ -518,6 +518,72 @@ async function login(page, who) {
   assert.equal(await page.locator('[data-testid="one-to-one-use-marketing"]').count(), 0);
   await page.keyboard.press("Escape");
 
+  log("audit fixes: /dashboard/email/to/<id> loads straight from the server (no document on the server), and a contact with only a second email isn't offered the marketing window");
+  {
+    const res = await page.request.get(`${BASE}/dashboard/email/to/${aliceId}`);
+    assert.equal(res.status(), 200, `the page answered ${res.status()}`);
+    assert.doesNotMatch(await res.text(), /document is not defined/);
+    const fayId = (
+      await db.query(
+        `INSERT INTO "Contact" (id, "organizationId", name, email2, "updatedAt") VALUES ('c' || md5(random()::text), $1, 'Fay Second', 'fay2@mailtest.example.com', now()) RETURNING id`,
+        [org.id],
+      )
+    ).rows[0].id;
+    await page.goto(`${BASE}/dashboard/email/to/${fayId}`);
+    await page.waitForSelector('[data-testid="one-to-one-email"]', { timeout: 20000 });
+    assert.match(await page.textContent('[data-testid="one-to-one-to"]'), /fay2@mailtest\.example\.com/);
+    assert.equal(await page.locator('[data-testid="one-to-one-use-marketing"]').count(), 0, "offered a marketing send it would refuse");
+    await page.keyboard.press("Escape");
+    await db.query(`DELETE FROM "Contact" WHERE id=$1`, [fayId]);
+  }
+
+  log("audit fixes: Escape while the marketing window (opened from the one-to-one one) is sending leaves it open with its result");
+  {
+    // Room in today's allowance for one send, put back afterwards.
+    const stepStart = new Date();
+    const moved = (await db.query(`UPDATE "EmailSend" SET "createdAt" = "createdAt" - interval '2 days' WHERE "userId"=$1 AND "createdAt" > now() - interval '1 day' RETURNING id`, [ownerRow.id])).rows.map((r) => r.id);
+    await page.route("**/dashboard/email/to/**", async (route) => {
+      if (route.request().method() === "POST") await new Promise((r) => setTimeout(r, 2500));
+      await route.continue();
+    });
+    // Alice: Ben and Cara unsubscribed earlier in the suite.
+    await page.goto(`${BASE}/dashboard/email/to/${aliceId}`);
+    await page.waitForSelector('[data-testid="one-to-one-email"]');
+    await page.click('[data-testid="one-to-one-use-marketing"]');
+    await page.waitForSelector('[data-testid="email-counter"]', { timeout: 20000 });
+    await page.selectOption("#email-template", { label: "Spring promo" });
+    const mailBeforeEsc = inbox.length;
+    await page.click('[role="dialog"] button:has-text("Send")');
+    await page.waitForSelector('[role="dialog"] button:has-text("Sending…")');
+    await page.keyboard.press("Escape");
+    await page.waitForSelector('[data-testid="email-outcome"]:has-text("Sent to 1 person")', { timeout: 30000 });
+    await page.unroute("**/dashboard/email/to/**");
+    await waitForMail(mailBeforeEsc + 1);
+    await page.keyboard.press("Escape");
+    await db.query(`DELETE FROM "EmailSend" WHERE "userId"=$1 AND "createdAt" >= $2`, [ownerRow.id, stepStart]);
+    await db.query(`UPDATE "EmailSend" SET "createdAt" = "createdAt" + interval '2 days' WHERE id = ANY($1)`, [moved]);
+  }
+
+  log("audit fixes: when the answer is lost after the server sent it, the window never says nothing was sent");
+  {
+    await page.route("**/dashboard/email/to/**", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await route.fetch();
+      await route.abort("connectionreset");
+    });
+    await page.goto(`${BASE}/dashboard/email/to/${aliceId}`);
+    await page.waitForSelector('[data-testid="one-to-one-email"]');
+    await page.fill('[data-testid="one-to-one-subject"]', "Lost answer");
+    await page.fill('[data-testid="one-to-one-body"]', "Hi Alice, one more thing.");
+    const mailBeforeLost = inbox.length;
+    await page.click('[data-testid="one-to-one-send"]');
+    await page.waitForSelector('[data-testid="one-to-one-email"] :text("may or may not have been sent")', { timeout: 20000 });
+    assert.equal(await page.locator('[data-testid="one-to-one-email"] :text("Nothing was sent")').count(), 0);
+    await waitForMail(mailBeforeLost + 1);
+    await page.unroute("**/dashboard/email/to/**");
+    await page.keyboard.press("Escape");
+  }
+
   log("the member has their own allowance, and Company Users shows each count");
   await m.goto(`${BASE}/dashboard/contacts`);
   await m.click('button:has-text("Email")');

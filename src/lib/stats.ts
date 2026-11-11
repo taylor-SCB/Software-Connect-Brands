@@ -10,15 +10,14 @@ import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 //
 // Counting rules, written once so every tile agrees:
 // - A funnel step counts PEOPLE: distinct contacts who reached that status
-//   inside the period (the contact rows of StatusChange; a deal's move
-//   writes one for its contact too).
+//   or a later one inside the period (the contact rows of StatusChange; a
+//   deal's move writes one for its contact too). See rollUpReached.
 // - A step that came with a deal (quote out, contract out, won, lost) is
 //   credited to the deal's rep; any other step to whoever made the move.
 // - Money is DEALS: the value of deals that reached Won in the period,
 //   credited to the deal's rep.
-// - Conversion rates compare two counts over the same period, so a quick
-//   month can read above 100% when last month's meetings complete in this
-//   one. Close rate is Won / (Won + Lost).
+// - Funnel and conversion rates compare two of those counts, so they
+//   never read above 100%. Close rate is Won / (Won + Lost).
 
 // Connected (Nov 11, 2026) sits between Attempted (CONTACTED) and
 // Interested; Interested is a side step a person may skip.
@@ -157,11 +156,18 @@ type MeetingRow = { user_id: string | null; booked: number; due: number; held: n
 // before outcomes were recorded ("old meetings count as held").
 export async function loadMeetingCredit(organizationId: string, from: Date, to: Date, outcomesSince: Date | null) {
   const since = outcomesSince ?? new Date(0);
+  // Audit (Nov 11, 2026): a meeting is booked when it was first put down —
+  // the earliest of the row, the meeting line it came from, and the day it
+  // was for — not when its row was written. The Pipeline writes rows for
+  // old meetings when it opens (reconcileOpportunities), which counted
+  // them as booked that day. And one meeting is counted once however many
+  // tiles carry it (the line, or the save it was part of).
   return prisma.$queryRaw<MeetingRow[]>`
-    WITH m AS (
-      SELECT COALESCE(om."bookedById", a."userId", o."ownerId") AS user_id,
-             (om."createdAt" >= ${from} AND om."createdAt" < ${to}) AS booked,
-             (om."on" >= ${from} AND om."on" < ${to} AND om."on" <= now()) AS due,
+    WITH rows AS (
+      SELECT DISTINCT ON (COALESCE(a."batchId", a.id, om.id))
+             COALESCE(om."bookedById", a."userId", o."ownerId") AS user_id,
+             LEAST(om."createdAt", COALESCE(a."createdAt", om."createdAt"), om."on") AS booked_at,
+             om."on",
              (om.outcome = 'HELD'
                OR (om.outcome IS NULL AND (
                     a.outcome = 'HELD'
@@ -170,8 +176,14 @@ export async function loadMeetingCredit(organizationId: string, from: Date, to: 
         FROM "OpportunityMeeting" om
         JOIN "Opportunity" o ON o.id = om."opportunityId" AND o."organizationId" = ${organizationId}
         LEFT JOIN "Activity" a ON a.id = om."activityId" AND a."organizationId" = ${organizationId}
-       WHERE (om."createdAt" >= ${from} AND om."createdAt" < ${to})
-          OR (om."on" >= ${from} AND om."on" < ${to})
+       WHERE om."createdAt" >= ${from} OR (om."on" >= ${from} AND om."on" < ${to})
+       ORDER BY COALESCE(a."batchId", a.id, om.id), om."bookedById" IS NULL, om."createdAt"
+    ), m AS (
+      SELECT user_id,
+             (booked_at >= ${from} AND booked_at < ${to}) AS booked,
+             ("on" >= ${from} AND "on" < ${to} AND "on" <= now()) AS due,
+             held
+        FROM rows
     )
     SELECT user_id, COUNT(*) FILTER (WHERE booked)::int AS booked, COUNT(*) FILTER (WHERE due)::int AS due,
            COUNT(*) FILTER (WHERE due AND held)::int AS held
@@ -221,7 +233,28 @@ async function production(organizationId: string, from: Date, to: Date) {
       }
     }
   }
+  for (const steps of people.values()) rollUpReached(steps);
   return { people, won };
+}
+
+// "Reached a step" means got to it or past it (audit, Nov 11, 2026): a
+// person booked straight from a first call reached Attempted and Connected
+// on the way to Meeting Set even though no move into those two was ever
+// written in the period. So each ladder step counts the people moved into
+// it or any later step, which keeps every funnel step at or under the one
+// before and every step rate at or under 100% (it read "120% from
+// Attempted" when it counted only moves into each step). Interested is a
+// side step: it implies Attempted and Connected, but nothing later implies
+// it. Lost is a side exit and implies nothing.
+const LADDER = FUNNEL.filter((step) => step !== "INTERESTED");
+function rollUpReached(steps: Map<string, Set<string>>) {
+  const later = new Set<string>();
+  for (let index = LADDER.length - 1; index >= 0; index -= 1) {
+    const step = LADDER[index];
+    for (const id of steps.get(step) ?? []) later.add(id);
+    if (step === "CONNECTED") for (const id of steps.get("INTERESTED") ?? []) later.add(id);
+    if (later.size) steps.set(step, new Set(later));
+  }
 }
 
 export async function loadStats(

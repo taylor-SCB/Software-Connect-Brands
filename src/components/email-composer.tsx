@@ -691,7 +691,16 @@ function OneToOneDialog({
     const frame = requestAnimationFrame(() => subjectRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, []);
+  // Opened straight away on /dashboard/email/to, this renders on the
+  // server too, where there is no document.body to portal into (audit,
+  // Nov 11, 2026): draw it once the page is in the browser.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   useEffect(() => {
+    // Once switched to the marketing window, that window owns Escape
+    // (audit, Nov 11, 2026): this listener, in the capture phase, closed it
+    // mid-send and threw away what it had sent.
+    if (marketing) return;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape" && !sending) {
         event.stopPropagation();
@@ -700,16 +709,21 @@ function OneToOneDialog({
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [onClose, sending]);
+  }, [onClose, sending, marketing]);
 
+  // The marketing sender emails Contact.email only, so that is the address
+  // it is handed (audit, Nov 11, 2026): a contact with only a second email
+  // was shown as sendable there and then refused.
+  const marketingEmail = contact.email?.trim() || null;
   if (marketing) {
     return (
       <EmailComposer
-        initialRecipients={[{ id: contact.id, name: contact.name, company: null, email: addresses[0], optedOut: Boolean(contact.optedOutOn) }]}
+        initialRecipients={[{ id: contact.id, name: contact.name, company: null, email: marketingEmail, optedOut: Boolean(contact.optedOutOn) }]}
         onClose={onClose}
       />
     );
   }
+  if (!mounted) return null;
 
   async function send() {
     if (sending) return;
@@ -725,7 +739,11 @@ function OneToOneDialog({
       onSent?.({ message: result.success, batchId: result.batchId });
       router.refresh();
     } catch {
-      setError("Couldn't reach the server. Nothing was sent; check your connection and try again.");
+      // The answer was lost, not necessarily the email (audit, Nov 11,
+      // 2026): it may have gone and been logged before the connection
+      // dropped, so never say nothing was sent.
+      setError(`Couldn't hear back from the server, so this may or may not have been sent. Check ${contact.name}'s activity before sending again.`);
+      router.refresh();
     } finally {
       setSending(false);
     }
@@ -823,7 +841,7 @@ function OneToOneDialog({
               <FormError message={error ?? undefined} />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
-              {optedOut ? (
+              {optedOut || !marketingEmail ? (
                 <span />
               ) : (
                 <button

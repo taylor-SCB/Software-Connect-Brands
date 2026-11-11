@@ -1422,6 +1422,98 @@ let context;
   assert.ok(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 200), "the page is taller than the window");
   await page.setViewportSize({ width: 1440, height: 900 });
 
+  log("audit fixes: a quote past its Valid until day can't be accepted online, on the page or from a tab opened before it lapsed");
+  await sql(
+    `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","sentAt","validUntil","updatedAt")
+     VALUES ('quo_qi_exp','${org}','ctc_qi','deal_qi_sq',1904,'Lobby cameras D','SENT','tok_quo_qi_exp_0123456789',now(),'2026-01-10T12:00:00Z',now()),
+            ('quo_qi_lapse','${org}','ctc_qi','deal_qi_sq',1905,'Lobby cameras E','SENT','tok_quo_qi_lapse_0123456789',now(),now() + interval '20 days',now())`,
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position)
+     VALUES ('qli_qi_exp','quo_qi_exp','Dome camera',1,25000,'MATERIALS',0),
+            ('qli_qi_lapse','quo_qi_lapse','Dome camera',1,25000,'MATERIALS',0)`,
+  );
+  {
+    const customerCtx = await browser.newContext();
+    const tab = await customerCtx.newPage();
+    await tab.goto(`${BASE}/q/tok_quo_qi_exp_0123456789`);
+    await tab.getByTestId("quote-expired").filter({ hasText: /expired on Jan 10, 2026/ }).waitFor();
+    assert.equal(await tab.getByTestId("accept-quote").count(), 0, "an expired quote offers Accept");
+    await tab.goto(`${BASE}/q/tok_quo_qi_lapse_0123456789`);
+    await tab.getByTestId("accept-quote").waitFor();
+    await sql(`UPDATE "Quote" SET "validUntil"='2026-01-10T12:00:00Z' WHERE id='quo_qi_lapse'`);
+    await tab.getByTestId("accept-quote-name").fill("Quinn Ito");
+    await tab.getByTestId("accept-quote-submit").click();
+    // Refused, and the page redraws as expired in place of the form.
+    await tab.getByTestId("quote-expired").waitFor();
+    assert.equal(await tab.getByTestId("accept-quote").count(), 0);
+    assert.equal((await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_lapse'`)).rows[0].status, "SENT", "a lapsed quote was accepted");
+    // Still good on its last day.
+    await sql(`UPDATE "Quote" SET "validUntil"=now() WHERE id='quo_qi_lapse'`);
+    await tab.reload();
+    await tab.getByTestId("accept-quote").waitFor();
+    await customerCtx.close();
+  }
+
+  log("audit fixes: the name a customer accepted under online goes once the quote is answered another way");
+  await page.goto(`${BASE}/dashboard/quotes/quo_qi_acc`);
+  await page.getByTestId("quote-accepted-by").waitFor();
+  await page.getByRole("button", { name: "Mark declined" }).click();
+  await until(async () => (await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].status === "DECLINED", "declined");
+  await page.getByRole("button", { name: "Mark accepted" }).click();
+  await until(async () => (await sql(`SELECT status FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].status === "ACCEPTED", "accepted by the team");
+  assert.equal((await sql(`SELECT "acceptedByName" FROM "Quote" WHERE id='quo_qi_acc'`)).rows[0].acceptedByName, null, "the old online name was kept");
+  await page.reload();
+  assert.equal(await page.getByTestId("quote-accepted-by").count(), 0, "still says Accepted online by Quinn Ito");
+  {
+    const customerCtx = await browser.newContext();
+    const tab = await customerCtx.newPage();
+    await tab.goto(`${BASE}/q/tok_quo_qi_acc_0123456789`);
+    const line = await tab.getByTestId("quote-accepted").textContent();
+    assert.doesNotMatch(line, /Quinn/, line);
+    await customerCtx.close();
+  }
+
+  log("audit fixes: on a phone, Quote details and Payment table edits each get a Save in reach (the foot bar is hidden there)");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/quotes/${oneId}`);
+    await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
+    assert.equal(await phone.getByTestId("quote-details-phone-save").count(), 0, "a Save before anything changed");
+    await phone.getByLabel("Quote title").fill("Saved from a phone");
+    const detailsSave = phone.getByTestId("quote-details-phone-save");
+    await detailsSave.waitFor();
+    assert.ok(await detailsSave.isVisible());
+    await detailsSave.click();
+    await until(async () => (await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title === "Saved from a phone", "the title saved");
+    await detailsSave.waitFor({ state: "detached" });
+    await phone.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — phone");
+    const tableSave = phone.getByTestId("payment-table-phone-save");
+    await tableSave.waitFor();
+    await tableSave.click();
+    await until(async () => (await sql(`SELECT label FROM "QuotePayment" WHERE "quoteId"=$1 ORDER BY position LIMIT 1`, [oneId])).rows[0]?.label === "Deposit — phone", "the payment label saved");
+    assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the quote page scrolls sideways on a phone");
+    await phoneCtx.close();
+  }
+
+  log("audit fixes: Send quote waits for an unsaved payment table or Quote details too, not just the lines");
+  await sql(`UPDATE "Quote" SET status='DRAFT' WHERE id=$1`, [oneId]);
+  await page.goto(`${BASE}/dashboard/quotes/${oneId}`);
+  await page.getByTestId("quote-save-bar").waitFor();
+  await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — not saved");
+  await until(async () => /Payment table/.test(await page.getByTestId("quote-save-status").textContent()), "the table listed as unsaved");
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-error").filter({ hasText: "Save your changes to the payment table first" }).waitFor();
+  assert.equal(await page.getByTestId("send-quote-sheet").count(), 0, "the share sheet opened over an unsaved table");
+  assert.equal((await sql(`SELECT status FROM "Quote" WHERE id=$1`, [oneId])).rows[0].status, "DRAFT");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "saved");
+  await page.getByTestId("send-quote-error").waitFor({ state: "detached" });
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-sheet").waitFor();
+  await page.keyboard.press("Escape");
+
   console.log("\nAll steps passed.");
   await context.close();
   await browser.close();

@@ -78,7 +78,7 @@ export default async function PublicContractPage({
 
       {canSign && (
         <div id="sign" className="no-print mx-auto mt-5 max-w-3xl scroll-mt-6">
-          <SignForm token={token} contactName={contract.contact.name} />
+          <SignForm token={token} contactName={contract.contact.name} sentAt={contract.sentAt?.toISOString() ?? ""} />
         </div>
       )}
 

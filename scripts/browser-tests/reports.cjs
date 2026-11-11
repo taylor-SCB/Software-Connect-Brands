@@ -1205,6 +1205,15 @@ async function narrativeText(page) {
     await sql(`UPDATE "Organization" SET "outcomesSince" = now() - interval '1 hour' WHERE id=$1`, [org]);
     await open(page, `${BASE}/dashboard?report=activity`, "activity");
     assert.match(await page.locator("[data-testid=activity-talks-since]").textContent(), /^Talks counted from [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+
+    log("audit fixes: 'Talks counted from' is the day in the workspace's zone, as Stats says it, not the UTC day");
+    {
+      // 8pm on Jan 1 in Chicago is 2am on Jan 2 in UTC.
+      const year = Number(localIso(new Date()).slice(0, 4));
+      await sql(`UPDATE "Organization" SET "outcomesSince" = $2 WHERE id=$1`, [org, `${year}-01-02T02:00:00Z`]);
+      await open(page, `${BASE}/dashboard?report=activity&period=this-year`, "activity");
+      assert.match(await page.locator("[data-testid=activity-talks-since]").textContent(), new RegExp(`^Talks counted from Jan 1, ${year}`));
+    }
     await sql(`UPDATE "Organization" SET "outcomesSince" = $2 WHERE id=$1`, [org, since]);
 
     log("Sprint: a chart's duplicate table is behind Show numbers");

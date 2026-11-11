@@ -13,7 +13,7 @@ import {
   type ReportParams,
   type SummaryTable,
 } from "@/lib/reports/common";
-import { addDaysIso } from "@/lib/reports/period";
+import { addDaysIso, localIso } from "@/lib/reports/period";
 import { sellingReps } from "@/lib/reports/daily";
 
 // Activity (Nov 10, 2026). Touches — calls, texts, emails and meetings a
@@ -32,8 +32,8 @@ export type ActivityReport = {
   previousTouches: number;
   talks: number;
   previousTalks: number;
-  // "Talks counted from": when outcomes started being recorded, if the
-  // period starts before it.
+  // "Talks counted from": the day (YYYY-MM-DD, in the workspace's zone)
+  // outcomes started being recorded, if the period starts before it.
   talksSince: string | null;
   byType: { type: ActivityTypeValue; label: string; count: number; previous: number }[];
   marketing: number;
@@ -145,7 +145,9 @@ export async function loadActivity(params: ReportParams): Promise<ActivityReport
   const talks = touchRows.reduce((sum, row) => sum + row.cur_talks, 0);
   const previousTalks = touchRows.reduce((sum, row) => sum + row.prev_talks, 0);
   const since = org?.outcomesSince ?? null;
-  const talksSince = since && range.from < since ? since.toISOString() : null;
+  // The day in the workspace's calendar, as Stats shows it (audit, Nov 11,
+  // 2026): the UTC day read a day late for an evening start in the US.
+  const talksSince = since && range.from < since ? localIso(since, timeZone) : null;
   const marketing = totals.filter((row) => row.marketing).reduce((sum, row) => sum + row.cur, 0);
   const previousMarketing = totals.filter((row) => row.marketing).reduce((sum, row) => sum + row.prev, 0);
 

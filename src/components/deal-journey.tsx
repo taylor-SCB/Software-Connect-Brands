@@ -53,7 +53,11 @@ export function DealJourney({
           ))}
           <span>{journey.summary}</span>
         </p>
-        {next && (
+        {/* Only while there is a next step (audit, Nov 11, 2026): the
+            pages pass a <JourneyNext> element even when it renders nothing,
+            and on a phone the empty slot was an opaque bar pinned to the
+            foot. */}
+        {next && journey.next && (
           <div className="dj-next" data-sticky={stickyNext ? "" : undefined}>
             {next}
           </div>
