@@ -1,0 +1,909 @@
+## headline
+Taylor, here is one plan built from three proposals. It starts from the highest-scoring one ("BDR funnel first", 39 and 40 from the two judges) and takes the best ideas from the other two.
+
+Today the app records what a rep did but not how it went. A voicemail and a real conversation both turn a lead "Contacted". In the demo, about 38 of the 46 people marked Contacted have never actually been reached.
+
+The plan does three things:
+1. Make "Connected" real with one-tap call outcomes: No answer, Left voicemail, Talked, Meeting booked.
+2. Show every person as one lifecycle meter. Its length is how far along they are. Its colour is one plain health word: Warm, Cooling or Cold.
+3. Rebuild each BDR screen to answer three questions in the same order: who is next, what happened last time, what is the one next step.
+
+Nothing gets deleted. Anything a rep doesn't need today moves exactly one tap deeper.
+
+The first release is about 4 days of bug fixes that rename and move nothing. Next comes the meter, built from data the app already stores, after you approve a mock.
+
+## bdrFlow
+THE SEVEN STEPS A FIRST-WEEK REP CAN SAY OUT LOUD
+Attempted → Connected → Meeting Set → Meeting Completed → Quote Sent → Contract Sent → Won.
+The BDR owns the first four. The closer usually owns the last three. Both see the whole chain on the same meter.
+
+THE DAY, AS THE BDR LIVES IT
+
+1. Open the app. A Member lands on "My day". Owners and Admins still land on Daily Rundown.
+- One sentence at the top: "Morning, Marcus · 2 follow-ups late · 9 to call · Redbud has gone quiet 17 days."
+- Three rings for the week: Tries 23 · Talks 6 · Meetings booked 2. They fill toward an owner-set goal. With no goal set, they show "vs last week".
+
+2. "Up next": one ranked list with no group headings. Every row says in plain words why it is there, in this order:
+- (a) "Met Nov 6 — how did it go?" The person is at Meeting Set, the date has passed, and nobody marked it Held or No-show. That is 7 of the 13 Meeting Set tiles in the demo today.
+- (b) "Follow-up 4 days late".
+- (c) "Due today".
+- (d) "Talked 6 days ago — ask for the meeting". The person is Connected or Interested with nothing booked.
+- (e) "New lead": mine, never touched.
+- (f) "3 tries, never reached". Oldest try first. From 6 tries on, the row offers "Try again in 30 days".
+
+Each row shows the avatar inside a health ring, the name, the company, the mini meter, the reason, and three buttons: Call · Text · Log. It shows 8 rows, then "Show all 14".
+
+3. Tap Call and the phone dials the mobile first. When the rep comes back to the app, "How did it go?" is already open and set to Call. The choices are No answer · Left voicemail · Talked · Meeting booked · Not interested. "More" holds Busy · Front desk · Wrong number. One tap saves, and "Saved · Undo" shows for 10 seconds. A note is optional.
+
+4. The next step is already picked, so it takes one more tap:
+- No answer or voicemail: "Try again Thu" is ticked. The row drops off Up next until then. A dial with no answer is 3 taps in total.
+- Talked: Book meeting (the main button) · Call back on… · "Interested" (one tap).
+- Meeting booked: opens the Book meeting sheet (day chips, time chips, who else). It writes the calendar entry, sets Meeting Set and puts the person on the Pipeline: "Booked Tue Nov 17, 10:00 AM · Kristen is on your Pipeline →". About 6 taps from dial to booked.
+- Not interested: an optional reason chip (Price · Timing · Has a vendor · No budget · Other) and "Check back in 90 days?".
+
+The row folds into "Done today (n)". On a phone, a sticky bar reading "Next: Kelsey Dawson · Call" moves the rep down the list with one thumb.
+
+5. Texts and emails work the same way: Sent · They replied · Meeting booked · Not interested. An email sent from a contact's own page counts as a Sent touch.
+
+6. When the meeting day passes, the person goes to the top of Up next. Their Pipeline tile moves into "Happened — how did it go?" with three buttons: Held / No-show / Reschedule.
+- Held moves them to Meeting Completed. It writes a Held meeting into their history, which counts as a connect and as a held meeting. That is the same moment the app already writes "Opportunity Created". Then it offers "Start a quote".
+- No-show keeps Meeting Set and offers reschedule chips.
+
+7. The hand-off. The closer moves Quote → Contract → Won by sending paperwork, as today. The BDR's meter on that person keeps filling, so the rep sees how far their lead got. Stats credits held meetings to the rep who booked them.
+
+HOW THE EXISTING LADDER MAPS
+One value is added. Nothing is renamed in the database.
+- Not touched = NOT_ACTIONED. Unchanged.
+- Attempted = CONTACTED. The stored value stays the same, and any logged touch still sets it. The label reads "Attempted" only if you agree.
+- Connected = a new CONNECTED value between CONTACTED and INTERESTED. Talked, They replied or Held sets it. Until you say yes to it as a ladder step (Release 3), Connected appears only on the meter, the filters and Stats, worked out from the outcome data.
+- Interested is a hand-set mark on the Connected step, not a segment of its own. Not Interested greys the track after Connected and adds an ×.
+- Meeting Set is set automatically on booking, as today.
+- Meeting Completed is set automatically on Held, if you agree. Today it is only set by hand.
+- Quote Sent / Contract Sent / Won / Lost / Archived: unchanged. Paperwork drives them, as today.
+- Marking someone Interested, Not interested or Meeting Set when they never reached Connected passes through Connected on the same day. You can't learn interest or book a meeting without talking. Old records are not back-filled.
+
+## connected
+WHAT IT MEANS
+"Connected" means a two-way exchange with that actual person. Logging activity is an attempt. Connecting is the next step. Booking the meeting is the goal.
+
+COUNTS AS CONNECTED:
+- A call where you talked live with them, however short. That includes "not interested" and "call me next week".
+- They replied by text or email. The rep logs it as "They replied", because the app doesn't read inboxes yet.
+- A meeting that was held. Every past-dated meeting already in the system counts.
+- Booking a meeting, or marking someone Interested or Not interested. You had to talk to do that.
+
+DOES NOT COUNT (these are attempts):
+- No answer
+- Voicemail (left or full)
+- Busy
+- Front desk, gatekeeper or "took a message"
+- Wrong number (this also suggests "Fix number")
+- A text or email you sent that got no reply
+- A no-show
+- A call to a company's main line that names no person
+Marketing sends stay what they are today: neither an attempt nor a connect.
+
+HOW IT IS CAPTURED: ONE TAP, NOTHING TYPED
+Outcome chips sit under the type chips, and they open on their own after a tel: or sms: tap.
+- Call: No answer · Left voicemail · Talked · Meeting booked · Not interested. "More" holds Busy · Front desk · Wrong number.
+- Text / Email: Sent · They replied · Meeting booked · Not interested.
+- Meeting: Held · No-show · Rescheduled.
+Tapping a chip saves right away. The chip's words become the note, so the required note never blocks a log. A 10-second Undo follows.
+
+HOW IT IS STORED
+A new field, Activity.outcome:
+- NO_ANSWER: No answer, Busy
+- VOICEMAIL
+- GATEKEEPER: Front desk
+- BAD_NUMBER
+- TALKED: Talked. Also "Not interested" and "Meeting booked" on a call.
+- REPLIED: They replied, and the text/email versions of Meeting booked and Not interested
+- SENT
+- HELD
+- NO_SHOW
+"Rescheduled" writes no activity. It moves the meeting entry.
+
+A connect is an outcome of TALKED, REPLIED or HELD. A MEETING row with no outcome, dated today or earlier, also counts.
+
+RULES
+- The outcome applies to everyone ticked on that log. A group meeting that was held connects every attendee.
+- On a company page, a "Front desk / main line" chip replaces the "I'm choosing not to link a contact" checkbox. It is always an attempt, and it still lands under the unlinked list to be claimed.
+- A touch dated ahead gets no outcome until it happens.
+- History is never rewritten or guessed. Old calls, texts and emails with no outcome count as attempts. Old meetings count as held. Stats says "Talks counted from <launch day>".
+- Contact.lastConnectAt and Company.lastConnectAt are kept by the same database triggers that keep lastTouchAt, with the same "not in the future" rule. A company's value is its own or its people's, whichever is later.
+
+WHAT IT DRIVES
+- The meter's Connected segment
+- The health score
+- The "Talked — no meeting", "Not connected in 7 / 30 days" and "Never connected" filters
+- Up next's "ask for the meeting" rows
+- Tries vs talks on My day, Team today, Stats and the Activity report
+- With your yes (Release 3), the CONNECTED step on the ladder
+
+GONE QUIET IS UNCHANGED
+Any touch still resets it, because a voicemail still means someone is chasing the lead. Health uses talks, so a lead nobody ever reaches still turns amber, and a relationship that stops talking still turns red.
+
+## healthScore
+WHAT HEALTH IS
+Health is how warm the relationship is. It is kept separate from the stage: the meter's length is how far along someone is, and its colour is how warm they are.
+- It comes from one function, leadHealth() in src/lib/health.ts.
+- It is worked out when a page loads and never stored, so it can be tuned without a database change.
+- It has one dial: the "quiet days" setting (Q) already in Settings → General, 8 today. That keeps Gone quiet and health in step.
+- Days are calendar days in the workspace's time zone. This also fixes "Last touch: Today" showing for yesterday.
+
+STEP 1: PICK THE STATE
+The first four states get no score.
+- NEW: never touched. Grey outline and "Not tried yet". A fresh lead is never red.
+- TRYING: touched but never reached (no talk, reply or held meeting, and below Interested).
+  - Normally grey, with the try count: "Tried 3× · last Tue · next try Thu".
+  - It turns AMBER when the lead has stalled: a follow-up is late, or nothing is booked and the last try is more than Q days old. Example: "2 tries, last one 18 days ago — try again".
+  - It never shows red and never shows a number, because a score for someone you've never spoken to is made up.
+  - From 6 tries on: "6 tries, never reached — try a text or someone else at Ridgeline", plus "Try again in 30 days".
+- WON: a green ✓ "Won". After signing, health means money. It shows red "Owes $3,377 · 12 days late" when a payment is past due, read from the same owed rows as the Owed to you tile. That ties the meter to STRATEGY job #1, chasing money.
+- CLOSED: Not Interested, Lost or Archived. Grey ×, plus the reason if one was given.
+- REACHED: talked, replied or met at least once, or at Interested / Meeting Set or later. These get a score.
+
+STEP 2: THE SCORE (Reached only, 0–100)
+Score = Recent touch (up to 40) + Last talk (up to 30) + Next step (up to 30) − Drag.
+
+Recent touch: days since any call, text, email or meeting.
+| Days since | Points |
+|---|---|
+| 0–2 | 40 |
+| up to Q/2 (4) | 25 |
+| up to Q (8) | 10 |
+| more than Q | 0 |
+It reaches 0 on exactly the day "Gone quiet" would fire.
+
+Last talk: days since they last talked, replied or met.
+| Days since | Points |
+|---|---|
+| within Q (8) | 30 |
+| within 2Q (16) | 20 |
+| longer ago | 10 |
+Subtract 10 after 5+ tries since the last talk. The floor is 0.
+
+Next step:
+| What is booked | Points |
+|---|---|
+| A meeting, call or follow-up on the calendar for today or later, or a quote or contract sent within Q days, with nothing late | 30 |
+| Something booked, but something else is late | 15 |
+| Nothing booked, or only late items | 0 |
+
+Drag: subtract 15 when a quote or contract has been out more than Q days with no touch since it went.
+
+Bands:
+- 70+ Warm
+- 40–69 Cooling
+- under 40 Cold
+
+STEP 3: ONE REASON SENTENCE
+The first one that applies wins:
+1. "Owes $3,377 · 12 days late"
+2. "Follow-up 4 days late"
+3. "Did the Nov 6 meeting happen?"
+4. "Contract out 18 days, not signed"
+5. "Quiet 15 days · nothing booked"
+6. "5 tries since you last talked"
+7. "Talked 2 days ago · meeting Thu 10:00 AM"
+8. "Tried 3× · next try Thu"
+9. "Not tried yet"
+
+THE LOOK
+- On lists, tiles, Up next and People rows: an 8px dot in the health colour plus the reason sentence. No number.
+- On the contact, company and opportunity headers: a 3px ring around the avatar plus the word chip ("Warm").
+- The number appears only on hover, long-press or keyboard focus, as a breakdown: "Recent 25 · Talk 30 · Next step 0 = 55". This answers your "not so coded" ask.
+- Colours are new fixed tokens, the same on every tenant and never the partner's brand colour:
+| Token | Colour | Dark | Light |
+|---|---|---|---|
+| --health-good | teal | #0d9488 | #0d9488 |
+| --health-warn | amber | #d97706 | #d97706 |
+| --health-risk | rose | #e11d48 | #be123c |
+| --health-none | grey | #7e889c | #5b6473 |
+- Unfilled track uses the same colour at 16–22%.
+- The palette passes the colour-blind validator in both looks. The app's current --ok/--warn/--danger trio fails it, which is why these are new tokens.
+- Meters sit on card surfaces, because Light amber on the grey page is under 3:1 contrast.
+- Colour is never the only signal. Each state has a mark: ● Warm, ◐ Cooling, ▲ Cold, ○ Trying / New, × Closed, ✓ Won. The word or sentence always sits beside it. Words and numbers use text colours, never the health colour.
+- Health words on screen: New, Trying, Warm, Cooling, Cold. Won and Closed are the stage's own words.
+
+ROLL-UPS
+- A company takes its warmest person's state, plus "2 of 7 reached".
+- A Pipeline tile reads its listed people (not Do Not List), plus the paperwork drag.
+- A rep shows Tries, Talks, Connect rate, Meetings booked, Meetings held and Show rate (held ÷ booked meetings that came due).
+
+TEST RUN ON THE SUMMIT DEMO
+- Read-only. Connects were guessed from note text, because outcomes don't exist yet. Script: /tmp/claude-0/ux-scripts/health-merged.sql.
+- The demo's 140 people come out as 48 New, 15 Trying, 24 Trying-stalled (amber), 22 Warm, 11 Cooling, 10 Cold, 8 Closed and 2 Won.
+- Red lands on 10 people, all relationships that went cold, so red still means "act now". One of the proposals tried scoring never-reached people on the same scale in its first draft, and 43 of 46 Contacted people came out red.
+
+Worked examples:
+| Person | What is going on | Points | Result |
+|---|---|---|---|
+| Kristen Vaughn | talked today, meeting booked | 40+30+30 = 100 | Warm |
+| Rachel Nguyen | quote out, touched 4 days ago, follow-up booked | 25+20+30 = 75 | Warm |
+| Jessica Moreno | Meeting Set, Nov 6 has passed, nothing booked | 25+30+0 = 55 | Cooling, "Did the Nov 6 meeting happen?" |
+| Raymond Ortiz | Nov 19 meeting booked, no touch in 14 days | 0+20+30 = 50 | Cooling |
+| Steven Park | met, then quiet 17 days | 0+10+0 = 10 | Cold |
+| Gregory Shaw | contract out 18 days, no touch since | 0+10+0−15 → 0 | Cold, "Contract out 18 days, not signed" |
+| Olivia Wolfe | one "No answer" 29 days ago | no score | Trying, amber, "1 try, 29 days ago — try again" |
+
+## lifecycleMeter
+ONE COMPONENT USED EVERYWHERE
+<LifecycleMeter> (src/components/lifecycle-meter.tsx), with <HealthRing> and <HealthDot>.
+- It follows the existing Meter in ui.tsx: role="img" and a full aria-label, for example "Stage: Meeting Set, 3 of 7. Health: Cooling. Did the Nov 6 meeting happen?".
+- It uses tokens only, so it reskins for every tenant and works in Dark and Light.
+- In forced-colours mode, reached segments draw as solid fills and the rest as outlines.
+
+SEGMENTS
+Attempted · Connected · Meeting Set · Meeting Completed · Quote Sent · Contract Sent · Won.
+- These are your ladder's own words, so there is no second vocabulary.
+- Attempted reads "Contacted" unless you approve the new label.
+- Interested is a small mark on the Connected segment ("Connected · Interested"). It is hand-set, not a step.
+
+HOW IT FILLS
+- Length = how far along. Every segment up to the current step fills.
+- Colour = health. The fill takes the health colour: teal, amber or rose, or grey for never-reached prospects.
+- Steps not yet reached are a faint track in the same colour.
+- The next step gets a solid 1.5px outline and carries the one action.
+- On the big header size, the current step breathes slowly. That stops under reduced motion.
+- A newly reached segment fills with a 300ms sweep, for example the first time a rep logs "Talked".
+- Not Interested, Lost and Archived: the reached segments turn grey, with an × after the last one and the reason.
+- Won: all seven fill in the Won colour with a ✓. After signing, a thin second line appears: "Collected $0 of $6,754".
+
+HEADER SIZE (contact, company, opportunity panel)
+- Segments up to 640px wide and 10px tall, with a 3px gap.
+- Each step's name sits under it in 12px. Reached steps show their date ("Oct 12", "Nov 2") from StatusChange. Steps the ladder passed through on the same day show no second date.
+- Left side: the avatar in its 3px health ring and the word chip ("Cooling").
+- Under it: the reason sentence, then a one-line caption, "7 tries · 2 talks · 1 meeting · last touch 2d". The caption replaces the six Activity overview tiles; their counts sit behind "Show counts".
+- One next-step button that changes with the step:
+  - Not touched or Attempted: Call
+  - Connected or Interested: Book meeting
+  - Meeting Set, before the date: "Meeting Tue 10:00 AM" with Reschedule
+  - Meeting Set, after the date: Mark held
+  - Meeting Completed: Start a quote
+  - Quote Sent: Send quote / Customer said yes
+  - Contract Sent: Copy signing link
+  - Won with a deposit due: Send deposit invoice
+- Tapping the next segment runs that action. Tapping a reached segment shows who moved it and when.
+- Quote, Contract and Won are read-only on the meter ("Moves when the quote goes out"). That ends the "Contract Sent but No contracts yet" contradictions.
+- The full 11-option status picker stays for corrections under ⋯ More → "Set status by hand", grouped Working it / Pipeline / Closed with small "auto" tags. It keeps the skipped-step date questions.
+
+MINI SIZE (list rows, Up next rows, company People rows, Pipeline tiles)
+- 7 segments of 10×5px with 2px gaps, about 82px wide. The whole cell is the tap target (44px tall on touch).
+- Beside it: the health dot.
+- Under it, in 12px: "4 tries · 1 talk · 6d". No labels.
+- Hovering, or a long-press on a phone, opens all 7 steps with their dates, the counts by type and the score breakdown.
+
+ON A PHONE
+- Card size: the segments run full card width, 8px tall.
+- On a header, only the current step and the next one are named ("Meeting Set → next: Meeting Completed").
+- The next-step button is full width at 48px.
+- All 7 steps and their dates open in a bottom sheet.
+
+PIPELINE AND REPORTS
+- A Pipeline tile gets a 3px top edge in the health colour.
+- Each column header gets a thin 6px bar showing the column's health mix (e.g. 8 Warm · 4 Cooling · 1 Cold), with one shared legend.
+- On Team today, each rep row carries the same thin bar for that rep's book.
+
+THE SAME METER CARRIES ON TO THE MONEY
+On the quote, the Contract Coordinator and the contract, a "DealJourney" version of the meter reads Meeting · Quote · Contract · Signed · Deposit, with one Next button.
+
+WHAT IT REPLACES (all of these stay reachable one tap away)
+- Lists: the Status, Activity (4 count chips), Last Contacted By and Notes columns become one Pulse cell.
+- Contact and company headers: the 23px status pill and the 6-tile Activity overview.
+- Pipeline tiles: the stage chip, the Quiet badge and the "last <date>" meeting line.
+- Status colours: today's rainbow (Contacted and Interested are both yellow; Set and Completed are both cyan) becomes one brand ramp from light to dark wherever a status still shows as text. Amber and red then only ever mean "act now".
+
+## principles
+- Every BDR screen answers three questions in the same order: who is next, what happened last time, and what is the one next step. Everything else stays reachable but quiet.
+- One visual for stage and warmth. The lifecycle meter's length shows how far along someone is; its colour shows how warm they are. The rep learns it once and can read the lists, the record pages, the Pipeline and My day without being taught.
+- Colour means "act now" and nothing else. Amber and red are reserved for health and late money. Stages use one brand ramp. A brand-new lead or a never-reached prospect is never red.
+- Words over numbers. Health shows as a dot or ring with one plain word and one sentence. The 0–100 number appears only on record headers, on hover or long-press. Numbers, dates and phones use the normal font (Geist Sans with even-width digits), relative dates ("3d ago") and one 12-hour time format. Mono stays only for document numbers such as QUO-1000.
+- Chip budget: at most one coloured chip per row, tile or card header. Zero counts, "N/A", "—" and any chip that repeats its column or the viewer's own name draw nothing. Measured targets: Contacts from 168 pills a page to under 20, Pipeline from 34 to under 10, the contact page from 15 cards to 5, the company page from 16 to 6.
+- One action bar on every record. One filled main button follows the stage (Call → Book meeting → Mark held → Start a quote → Send contract → Send deposit invoice), then Call · Text · Email · ⋯ More. Delete only ever sits at the foot of More, behind its existing confirm.
+- Filters are always the same shape: [Mine | Everyone] + search + 3 one-tap presets + "Filters (n)" + Sort. Every choice lives in the address bar and is remembered per person. "My people I haven't reached" goes from 5–11 clicks to 1.
+- Nothing is removed. What a rep doesn't need today sits exactly one tap deeper (More, Columns, Filters, Show counts, Show numbers, row expand). A card appears only once it has something in it.
+- Phone in a truck: 44px tap targets on touch screens, a sticky Call / Text / Log bar, sheets instead of dropdowns, nothing that scrolls sideways, and the after-call sheet opening on its own.
+- Honest data: history is never guessed, talks are counted from launch day ("Talks counted from <date>"), the health score is never stored, and every AI or automatic step is still a suggestion a person accepts.
+- Your rules hold. Nothing is renamed or moved without your yes. Every release goes live on its own after "Ready to go live. Push to production? Yes or No.". Every migration is safe for rows that already exist.
+
+## screens
+### Overview: "My day" (a new first tab for Members) with Up next
+PROBLEM: Members land on Daily Rundown set to Whole team. It opens with a 60-word paragraph, then 7 owner money tiles that mostly read $0.00. "On the calendar today · 12" starts with 8 calls already done and struck through; the 3 still to make are behind See all. Overdue and Gone quiet rows are plain text: no link, no number, no Call. Gone quiet names companies, not people. Jump in offers Change branding. On a phone the page lays out 711–890px wide and Overdue starts about 2,250px down.
+CHANGE: Scoped to me, with Whole team one tap away.
+- A one-sentence greeting in second person ("Morning, Marcus · 2 late · 9 to call · Redbud quiet 17 days"). Rewrite shows only when AI is on.
+- "My week": three rings, Tries · Talks · Meetings booked. They fill toward an owner-set goal, or show "vs last week" until one is set. Each opens the Activity report filtered to me.
+- "Up next": one ranked list. The order is in bdrFlow: meetings to close out first, then late, today, talked with no meeting, new, still trying. Each row has the health-ring avatar, the name, the company, the mini meter, a one-line reason and Call / Text / Log. 8 rows, then "Show all 14".
+- "Meetings": today and the next 7 days, with times. Past ones show Held / No-show.
+- "Done today (8)" is collapsed; the struck-through rows live there now.
+- "Team & money" (the money tiles, Recent activity, the full write-up) and "Reports ▸" are collapsed at the foot, not removed.
+- Jump in for Members: Log a call · Add contact · Book a meeting · Import my list.
+- Daily Rundown is unchanged, one tab over.
+PHONE: One column, nothing sideways.
+- Order: greeting, then three 64px rings in a row, then Up next as 72px cards with 44px Call / Text / Log, then Meetings, then Done today.
+- A sticky bar above the tabs reads "Next: Kelsey Dawson · Call" and moves to the next person after each log.
+- Up next starts about 220px down instead of about 2,250px.
+
+### Overview: Daily Rundown for Owners and Admins, with Team today
+PROBLEM: Per-rep numbers sit one tab and a scroll away. They count voicemails as touches and leave out meetings booked. The owner is listed as a rep with 0, and the write-up calls her "the fewest". Rows can't be tapped. The report tab "Pipeline" shares a name with the Pipeline board. Stats and Overview disagree on the same stage (10 people vs 8 opportunities).
+CHANGE: A "Team today" strip comes first, one row per rep who owns records or logged touches. Someone with neither, like the owner, is left out of the rows and the write-up.
+- Each row: avatar with a "last logged 12 min ago" dot that turns grey after 2 hours; Tries · Talks (with connect rate) · Meetings booked, for today and this week, each with a goal ring once goals are set; and a thin bar of that rep's book health.
+- Clicking a rep opens their My day, read-only.
+- Below it, the existing rundown. Every row is a link with a Call button. Done calendar items fold into "Done today". Gone quiet names the Primary POC with the company under it.
+- The write-up becomes one headline sentence plus "Read more".
+- Four money tiles in whole dollars (Owed to you, Quoted & sent, Awaiting signature, Open pipeline). The rest go behind "More numbers".
+- Units are labelled ("8 opportunities · 10 people").
+PHONE: - Team rows become one compact card per rep: name, three big numbers, a thin health bar.
+- Money tiles go 2×2.
+- Overdue moves above Today.
+- The report tabs become a sideways segmented control with 44px targets.
+
+### Contacts list
+PROBLEM: 14 columns, 1,939px wide inside a 1,134px box. Status is column 14 and off-screen. About 5.5 people fit above the fold. Each 50-row page carries 168 pills and 128 buttons, and 34 controls come before the first name.
+"My people I haven't reached this week" takes 5–11 clicks. It still includes Not Interested people, and a voicemail drops someone off it.
+Rows sort by last edited, so they jump while you work.
+On a phone it is the desktop table: names cut to one letter, numbers 1,000px to the right, the first row about 600px down.
+CHANGE: The filter bar:
+- [Mine | Everyone] [Search], then presets: My call list · Never touched · Talked — no meeting · Meetings this week, then [Filters (n)] and [Sort ▾].
+- My call list = mine, at Not touched / Attempted / Connected / Interested, nothing booked ahead. Late follow-ups first, then never touched, then oldest touch.
+- The Filters panel groups everything: Who (Rep with "Me" first, Added by) · Stage (Status, Activity including "Not connected in 7/30 days" and "Never connected", Lead label, With deals, Favorites) · Where (State, Company, Industry, Company type, Job title) · Data quality (Contact info, Missing info, Added). Active filters show as removable chips.
+
+Six default columns:
+- [☐☆]
+- Person: sticky; bold name with "title · company" under it
+- Pulse: mini meter + "4 tries · 1 talk · 6d" + health dot
+- Next step: "Call Thu", or red "Follow-up 4d late"
+- Best phone: tap to call, mobile first
+- Rep: hidden while on Mine
+
+Also:
+- A Columns menu, remembered per person, brings back Email, Phone 2, Location, Industry·Type, Notes, Marketing, Added, Added by and the Status pill.
+- Sort: Oldest touch first (the call list's default) · Recently touched · Recently added · Name · Recently edited (today's order, kept as an option).
+- Header: + Add contact (main button), Email, Clean up ▾ (Import CSV, Merge, Find duplicates).
+- The Assign bar is sticky at the bottom, with an Undo toast and a confirm before taking a teammate's records.
+- Target: under 20 pills a page and about 12 people above the fold.
+PHONE: Below 768px it becomes a card list.
+- Each card: the name (16px bold) with the health dot; "title · company"; the mini meter + "6d ago · 4 tries"; then a row of 44px Call · Text · Log.
+- Search sits on top, the preset chips scroll sideways, and Filters opens as a bottom sheet with a sticky "Show 27 people".
+- Checkboxes appear only in Select mode (long-press). Header tools go under ⋯.
+- The first card starts about 180px down instead of about 600px.
+
+### Contact page
+PROBLEM: The header has 7 equal buttons and a red Delete, but no Call, Text or Book meeting. The stage is a 23px pill that opens 11 flat options.
+The right column stacks 7 cards; for a new lead, 5 are empty or $0.00, and there are 15 cards in all. Activity overview counts calls but never says whether anyone was reached, and a voicemail looks identical to a real conversation.
+The Deals card invites a "Kitchen remodel" before any meeting.
+On a phone, the number to call is about 1,660px down and buttons are 23–25px tall.
+CHANGE: Header band:
+- Avatar in its health ring · name at 28px · title · company · a Rep chip (moved up from Details) · ☆.
+- Action bar: one filled main button that follows the stage, then Call ▾ (mobile / phone / phone 2) · Text · Email · ⋯ More. More holds New quote, New contract, Edit, Additional Account, Set status by hand, and Delete at the foot.
+- Under it: the full meter with step dates, the health word and the reason sentence.
+
+Left column:
+- A Next step strip: the first Coming up item with Held / No-show / Move, or "Nothing booked · Book meeting · Set follow-up".
+- A "What happened with Kristen?" bar that opens the How did it go? sheet.
+- History, grouped by day. Connects carry a green Talked / Replied / Held tag and attempts are muted. Filter chips: All · Talks · Calls · Texts · Emails · Meetings. Your own lines get Edit / Delete.
+- Notes.
+
+Right column, shown by stage:
+- Reach: Mobile, Phone and Email rows with Call / Text / Copy. "More details" holds website, birthday, city, state and added by.
+- Coming up.
+- Good to know: pinned notes.
+- Paperwork: Deals + Quotes + Contracts + Balance + Projects, appearing only once something exists. The Add-deal form moves into Paperwork's ⋯ from Meeting Completed on.
+
+Targets: 15 cards to 5, 8 header controls to 6, about 28 pills to under 10.
+PHONE: A sticky 56px bottom bar: Call · Text · Log · [main button by stage, e.g. Book] · ⋯.
+- Page order: compact header, then the meter (current step + "next: …" + a full-width button), the reason, Next step, History (the 5 latest), then Reach, Details, Paperwork and Notes collapsed.
+- Coming back from a tel: tap opens How did it go? set to Call.
+- A new lead's page shrinks from about 3,500px to about 1,600px.
+
+### "How did it go?" sheet (one component on the contact page, company page, Up next rows, the calendar's Done box and the opportunity panel)
+PROBLEM: The log form has a type chip, a required note (its placeholder is "Left a voicemail about the kitchen quote…"), When and Time boxes, and a ghost "Log phone call" button styled the same as "+ Include multiple contacts". There is no outcome. The follow-up box's Meeting tick quietly sets Meeting Set. The calendar's Done box asks for no outcome and offers no next follow-up, so the chain of follow-ups ends there.
+CHANGE: Step 1, outcome chips by type. One tap saves, then "Saved · Undo" shows for 10 seconds, and the chip's words become the note.
+- Call: No answer · Left voicemail · Talked · Meeting booked · Not interested. "More" holds Busy · Front desk · Wrong number.
+- Text / Email: Sent · They replied · Meeting booked · Not interested.
+- Meeting: Held · No-show · Rescheduled.
+
+Step 2, the next step, already picked:
+- No answer / voicemail: "Try again Thu".
+- Talked: Book meeting / Call back on… / Interested.
+- Not interested: reason chips + "Check back in 90 days?".
+- Held: Start a quote / Book next meeting / Not moving forward.
+- Dates are chips: Tomorrow · Thu · Next week · Pick.
+- Skip writes nothing.
+
+Always there: an optional "What happened?" note, "Just now ▾" to change the time, and "+ others" to add people.
+
+On a company page it asks "Who?" first: person chips plus a "Front desk / main line" chip.
+
+The follow-up box's Meeting tick splits into "Try to book a meeting" (a reminder that moves no status) and "Book it now" (opens the Book meeting sheet). This needs your OK.
+PHONE: A bottom sheet with 56px chips in a two-column grid, in thumb reach, and Save pinned at the bottom. It opens on its own after a tel: or sms: tap. Date chips replace the phone's date box.
+
+### Book meeting sheet (new; the old four ways stay)
+PROBLEM: There are four ways to book, with four different results:
+1. The follow-up Meeting tick, which ends up titled "Follow up · Name".
+2. Log activity → Meeting dated ahead.
+3. "+ Event": 15 fields, defaulting to "Install", with a date box that shows "11/1".
+4. The status pill's Meeting Set, which books nothing at all.
+The confirmation never mentions the Pipeline. Booking two people at one company makes two identical "Ironwood General Contractors" tiles.
+CHANGE: One "Book meeting" button on the contact header, the company's Who to call rows, Up next rows, How did it go? and the Pipeline panel.
+
+The sheet:
+- Day chips: Tomorrow · Thu · Next week · Pick.
+- Time chips: 9 · 10 · 11 · 1 · 2 · 3 · Pick.
+- Who else: chips for other people at the company.
+- Where and Note behind "+ details".
+
+What it does:
+- Writes "Meeting · Kristen Vaughn" and runs the same steps as today (markMeetingSet / attachMeeting).
+- If the company already has an open opportunity, it asks "Add to the open Ironwood opportunity with Chase?" Yes / New one. New tiles are titled by the person.
+- Confirmation: "Booked Tue Nov 17, 10:00 AM · Kristen is on your Pipeline in Meeting Set →", and the meter's Meeting Set segment fills.
+- Choosing Meeting Set by hand offers "Book it" first.
+- "+ Event" opened from a lead's page defaults to Call or Meeting, with sales types listed first.
+PHONE: A full-height sheet with big chips, times as chips, and a 48px "Book it" pinned at the bottom. About 6 taps from dial to booked.
+
+### Companies list
+PROBLEM: 12 columns, 1,480px inside a 1,134px box. Status and Open pipeline are off-screen, Marketing is cut mid-word, and phone numbers wrap onto 3 lines. 21 controls come before the first row. Rows reorder whenever anyone edits anything. "Needs attention" means missing data, not accounts going cold. On a phone, the first screen shows no company at all.
+CHANGE: Same filter bar as Contacts. Presets: My accounts · Going quiet (no touch in more than quiet days, oldest first) · Talked — no meeting · Never touched.
+
+Six columns:
+- Company: sticky; name with "City · Industry" faint under it, plus the Owes line
+- Pulse: the furthest person's mini meter, coloured by the company's health
+- Reached: "2 of 7 talked to"
+- Last touch: "3d · Marcus"
+- Next step
+- Rep
+
+Also:
+- The Columns menu holds Phone (no wrapping), Website, Industry·Type, Marketing, Open pipeline, Status and Added.
+- Row expand shows the top 3 people with their mini meters and Call buttons, a call list without opening the company.
+- Clean up ▾ holds Import, Merge, Find duplicates and Fill in missing.
+- "Needs attention" becomes "Missing info" under Filters → Data quality (needs your OK).
+PHONE: A card list. Each card: name + health dot, "City · 7 people", the mini meter, "Last touch 3d · Marcus", and a 44px Call button for the main line. Filters open as a bottom sheet.
+
+### Company page
+PROBLEM: The first thing on the page is a 480px Log activity form. The status is a 12px chip.
+Eleven cards contradict each other: Contract Sent next to "No contracts yet"; Meeting Set next to "Nothing booked"; "Nothing open" while the board shows a tile.
+People is the 5th card (10 screens down on a phone), sorted A–Z, with no mobile numbers and no last touch.
+The bypass checkbox is worded like a policy, and the feed shows "Marcus Lee Bypassed". One meeting with two people counts twice.
+The page is 541px wide on a 390px phone.
+CHANGE: Header like a contact's:
+- Logo in a health ring, name, "City · Industry", Rep chip, ☆.
+- Action bar: the main button by stage, Call main line, Email, ⋯ (Add person, Edit, Merge, Delete).
+- Meter at the furthest person, health of the warmest person, and "2 of 7 people reached".
+
+Main column, "Who to call" first:
+- People sorted by stage, then health.
+- Each row: name, title, mini meter, "Last: VM · 3d · 4 tries", a "Main contact" tag on the Pipeline's Primary POC, the mobile shown, and Call / Text / Log.
+- 5 rows, then "Show all 7".
+- At its top, an amber line "1 call not linked to a person yet · Who was it with?" replaces Other Contacts. Claim uses plain chips and has Undo.
+
+Then:
+- Log a touch: collapsed; asks Who? first, with the Front desk chip.
+- History grouped by day, one row per batch, with person and type chips.
+- Notes.
+
+Right column:
+- One Opportunity card (stage, Primary POC, value, label, Open on Pipeline) replaces the empty Deals / Quotes / Contracts cards. Paperwork returns once it exists.
+- Balance shows only when money is owed, and then also as a red "Owes $X" pill in the header.
+- Good to know: the latest 2 pinned notes.
+- Details, collapsed.
+
+Cards go from 16 to 6.
+PHONE: Fits 390px (the min-w-0 fix comes in Release 0).
+- Order: header, meter, Who to call (3 + Show all), Next step, History (5), then Paperwork / Details / Notes collapsed.
+- Sticky bar: Call main line · Log · Book · ⋯.
+- Add person opens as a sheet, not a panel off the left edge.
+
+### Pipeline board, tile and panel
+PROBLEM: There is no "Mine" filter. Meeting Set mixes past meetings (Oct 26, Nov 5, Nov 6) with next week's, in last-edited order; 7 of 13 have already happened.
+A red N/A chip sits on 19 of 23 tiles, and a stage chip repeats the column name. A future meeting can be dragged to Completed, and Completed logs no meeting. A booked meeting reads "last Nov 19".
+The panel hides phone numbers and has no Call or Log.
+The board carries 34 pills and 9 button styles. On a phone, drag doesn't work and the board starts 411px down.
+CHANGE: Bar:
+- [Mine | Everyone] first (Mine for Members), then Search, Gone quiet, Needs a decision (meetings that have passed), Lead label.
+- ⋯ holds Show archived, Contract Coordinator and New quote.
+
+Tile: three lines plus a 3px health-colour top edge.
+1. The person in bold, with the company faint under it.
+2. The mini meter.
+3. One next-step line: "Meeting Tue 10:00 AM" · "Met Nov 6 — how did it go?" · "Quote $11.8k · sent 3d" · "Quiet 14d — call".
+Rep initials and ⋯ (Move to…, Lead label, Draft follow-up, Open). The label chip shows only when one is set ("+ label" on hover).
+
+Meeting Set column:
+- Two groups: "Coming up", sorted by meeting date, and "Happened — how did it go?", where each tile has Held / No-show / Reschedule.
+- Held moves the tile to Meeting Completed and writes a Held meeting.
+- Moving a future meeting to Completed asks "This meeting is Tue Nov 17. Did it happen early?"
+
+Column header: name, one count, and the thin health-mix bar.
+
+Panel:
+- The full meter and reason at the top.
+- People rows with Call / Text / Email / Log and a Primary / Associated / Do Not List switch.
+- Meetings with time and note, upcoming first.
+- Save shows only when something changed; a stage move saves first.
+
+Convert prompt: the words change, your options don't. "What happened after the meeting with Blake Keller (Brazos Bend)?" with four cards: Building them a quote / Sending a contract / They signed (asks the amount, required) / Not moving forward (asks why).
+
+Target: 34 pills down to under 10.
+PHONE: Sticky stage tabs with counts (Set 13 · Met 4 · Quote 3 · Contract 1 · Closed) above one stage's cards.
+- Each card ends with a full-width 44px next-step button ("Mark held", "Move to Quote →"); everything else is under ⋯.
+- Tapping a card opens the panel full screen.
+- Cards start above the fold.
+
+### Calendar
+PROBLEM: It opens on a whole-team month of 147 entries, where done calls show as crossed-out teal chips cut to "8:3…". On a phone, the Log view puts 60 past rows first and Overdue starts about 7,900px down. "Just me" is forgotten on the next visit. The blue "Call" pill does nothing. The trash icon deletes with one tap. The Done box has no outcome and no next follow-up. There are 4 rows of controls.
+CHANGE: Members and phones open on an Agenda for me: Overdue (red), then Today, then the next 7 days.
+- Each row has Call / Text and Done. Done opens How did it go?, with the next follow-up, so the chain never breaks.
+- History is a tab.
+- Toolbar: [Mine | Team] [Agenda · Week · Month] [Filters (n)] [+ New]. Copy this week into next, Calendar+Log and the crew controls move into the View and Filters menus.
+- Month hides logged touches by default: "6 logged" per day, with a Show logged toggle.
+- Week scrolls to today.
+- Call pills become real tap-to-call buttons.
+- Mine / Team is remembered per person.
+- Owners keep Month + Team as their default.
+PHONE: Agenda only by default, with a one-week day strip on top; Month sits behind View.
+- Rows are 56px with 44px Call and Done buttons.
+- A new entry opens as a bottom sheet (Title, Type, Day, Time; the rest under More) and defaults to Call.
+
+### Stats / Reporting and Overview → Activity report
+PROBLEM: The funnel is Contacted → Interested → Meeting Set, with no Connected step. "Phone Call 216" is mostly voicemails. Every tile reads "▲100% vs before" when the period before was zero. The VP / BDR / CRO / AE chips are never explained. The leaderboard is 12 mono columns. Every chart is paired with a table of the same numbers.
+CHANGE: - Funnel: Attempted → Connected → Meeting Set → Meeting Completed → Quote Sent → Contract Sent → Won, with the rate between each step. Periods that start before launch show "Talks counted from <launch day>".
+- Headline tiles: Tries · Talks · Connect rate · Meetings booked · Show rate (held ÷ booked meetings that came due) · Won $.
+- Leaderboard defaults to Rep · Tries · Talks · Connect rate · Meetings booked · Held · Won $; the rest are under Columns. Held meetings are credited to the rep who booked them.
+- The Activity report stacks tries (grey) and talks (green) by day and by rep; marketing sends stay separate.
+- A zero baseline reads "new this period".
+- The persona chips are hidden.
+- Tables go behind "Show numbers".
+- Members default to Me.
+PHONE: - The funnel becomes a vertical list with the number and rate on each step.
+- The leaderboard becomes one card per rep.
+- Wide tables become two-column lists.
+
+### Quote → Contract Coordinator → Contract (the rest of the meter)
+PROBLEM: Getting from a deal to a signed contract takes about 20 taps across five dense screens, and each page shows progress in its own badges. "Mark as sent" sends nothing. The Coordinator's brightest button is "Award without paperwork", and no rows start ticked. After signing, the BDR's contact still shows the quote as Sent with an open follow-up, and the feed never says Quote sent, Contract sent or Signed.
+CHANGE: One DealJourney strip on the quote, the Coordinator, the contract and the panel: Meeting ✓ · Quote ✓ Nov 10 · Contract ● sent Nov 10 · Signed ○ · Deposit ○.
+- One Next button changes per step: Send quote → Customer said yes → Make contract → Send for signature → Send deposit invoice.
+- The existing badges move to a details row under the strip.
+- "Send quote" opens Copy link / Text / Email and marks the quote sent.
+- On a first contract, the Coordinator pre-ticks the open rows onto Contract A with one "Create contract for $6,754 →" button. Award without paperwork becomes a text link.
+- "Quote sent", "Contract sent" and "Signed" lines land on the person's feed (never counted as touches), so the BDR sees the hand-off land.
+PHONE: The strip collapses to 5 dots and "Step 3 of 5 · Contract sent", with a full-width sticky Next button.
+
+### Navigation (desktop sidebar and phone)
+PROBLEM: A BDR sees 12 sidebar links at equal weight. The phone gets one 3,159px sideways strip of 24 links: Pipeline is about 1,600px along and Companies sits at x=860. A stray active bar shows between items, and Log out sits 9px from the Dark/Light switch.
+CHANGE: The desktop sidebar's names, order and groups are unchanged, and no role hides any link. Two additions: a search icon at the top of the sidebar, and a Member's Settings link opens My Account instead of Branding.
+PHONE: A fixed 56px bottom tab bar: Today · Contacts · Companies · Pipeline · More (needs your OK).
+- More opens the whole sidebar tree in today's order and names, then Dark/Light, then Log out (with a confirm).
+- Top bar: workspace, search, avatar.
+- The calendar's daily job lives in Today; Calendar itself is in More.
+
+## dataChanges
+- Activity.outcome: a new optional field (enum ActivityOutcome: NO_ANSWER, VOICEMAIL, GATEKEEPER, BAD_NUMBER, TALKED, REPLIED, SENT, HELD, NO_SHOW). A connect is TALKED, REPLIED or HELD, or a MEETING row with no outcome dated today or earlier.
+Written by:
+- logActivity (contacts/actions.ts)
+- logEventDone (calendar Done box)
+- the gone-quiet "Log as sent" (SENT)
+- the one-to-one header Email (SENT)
+claimActivities and merges carry it, because it lives on the row. Ships in Release 2.
+  MIGRATION: CREATE TYPE "ActivityOutcome" AS ENUM (...); ALTER TABLE "Activity" ADD COLUMN "outcome" "ActivityOutcome" NULL; CREATE INDEX ON "Activity"("contactId", "outcome", "occurredAt").
+No backfill: every existing row stays empty, meaning "not recorded". Empty reads as an attempt, except a past meeting, which reads as held.
+  RISK: Low. Adding an optional column rewrites nothing, and old code ignores it. After an Instant Rollback it sits there harmlessly. Old calls that really were conversations will count as attempts. That is the honest choice, and it is why Stats says "Talks counted from <date>".
+- Contact.lastConnectAt and Company.lastConnectAt: the latest connect, kept the same way as lastTouchAt. A company's value is its own or its people's, whichever is later. Read by the "Not connected in 7/30 days" and "Never connected" filters, by Up next, and by leadHealth(). Ships in Release 2.
+  MIGRATION: ALTER TABLE ADD COLUMN "lastConnectAt" TIMESTAMP(3) NULL on both tables, plus an (organizationId, lastConnectAt) index on each.
+CREATE OR REPLACE crm_touch_contacts / crm_touch_companies so that one UPDATE keeps both columns, with the same "occurredAt <= now()" rule. Extend crm_touch_due so a connect dated ahead lands once its day comes.
+Backfill from past MEETING activities only (marketing = false, occurredAt <= now()), set-based, the same way the 20261110171000_crm_data backfill was done.
+  RISK: Medium. It replaces live trigger functions on the busiest table. Prove it the way lastTouchAt was proved:
+- load-test.cjs at 200,000 contacts / 110,000 activities, compared against the 1,000-record assign and import timings
+- import-slow-db.cjs through the slow proxy
+- merge, claim and delete moving rows, and future-dated rows coming due
+Rollback: put the old function bodies back with CREATE OR REPLACE. The columns can stay, and no data is lost.
+- StatusChange.reason: optional text holding the one-tap reason for Not interested, Lost or No-show (Price · Timing · Has a vendor · No budget · Other). Ships in Release 2.
+There is deliberately NO "implied" column. One proposal wanted invented history rows, and the judges flagged that. Instead the ladder passes through Connected on the same day when someone is marked Interested, Not interested or Meeting Set without it: a real automatic step, because booking or hearing interest takes a conversation. Old records are not back-filled.
+  MIGRATION: ALTER TABLE "StatusChange" ADD COLUMN "reason" TEXT NULL. No backfill.
+  RISK: Low. Existing rows read empty.
+- ContactStatus gains CONNECTED, between CONTACTED and INTERESTED. statusRank becomes:
+- CONTACTED 1
+- CONNECTED 2
+- INTERESTED / NOT_INTERESTED 3
+- MEETING_SET 4 … WON 8
+A new markConnected() in src/lib/status.ts only ever moves forward and rolls up to the company, like advanceContact / advanceCompany.
+Ships in Release 3, and only with your yes.
+  MIGRATION: A migration of its own containing only: ALTER TYPE "ContactStatus" ADD VALUE IF NOT EXISTS 'CONNECTED' AFTER 'CONTACTED'. A new enum value can't be used in the same transaction that adds it; this is the same split as 20260930140000 / 140100.
+No row is moved: existing Contacted people stay Contacted.
+  RISK: Medium, in the code; no existing rows are touched. statusRank is only ever compared (status.ts:55, 56, 92; merge-records.ts:72, 236; checked in the code), so shifting the numbers is safe.
+Every list of statuses must learn the new value in the same release:
+- constants.ts (CONTACT_STATUSES, labels, START_STATUSES, statusRank)
+- ui.tsx STATUS_COLORS and the label map
+- dashboard/page.tsx:80 (the "not yet at a meeting" count must include it)
+- contacts-csv.ts ("connected / talked / spoke")
+- stats.ts FUNNEL and VELOCITY_PAIRS (CONTACTED→CONNECTED and CONNECTED→MEETING_SET replace CONTACTED→MEETING_SET)
+- stats/page.tsx:48 (Meeting Set measured against Connected)
+TypeScript flags each Record<ContactStatusValue,…>.
+A Postgres enum value can't easily be dropped. After an Instant Rollback, a Connected contact shows a title-cased label in the old code. That is why this step waits for your yes. Saved filter links with status=CONTACTED keep working, and the unrelated deal stage CONTACTED is untouched.
+- No stored score. leadHealth() and the Up next ranking are pure functions run per page. Two or three grouped queries per page of rows load what they need: tries and talks by contactId, the next and the overdue open calendar entry, sent paperwork, and owed rows. These replace today's activity groupBy, lastContacted and marketing loads on the lists.
+The Pulse filter / sort uses a SQL twin of the same rules, with a test that the two agree.
+fixed daysSince(date, timeZone) counts calendar days in the workspace's time zone.
+Health colour tokens (--health-good / warn / risk / none) are added to globals.css for both looks.
+Ships in Release 1, with no database change.
+  MIGRATION: None. CSS tokens only, plus a change to the daysSince signature.
+  RISK: Low. Scores drift as days pass with no background job. Load budget: every list preset is timed in load-test.cjs at 200,000 contacts and must stay under the 2-second page budget. If the health sort ever runs slower, it applies inside Mine only. A fixture test keeps the TypeScript function and its SQL twin from drifting apart.
+- Behaviour change: an email sent from a single contact's page is written as a one-to-one touch (marketing = false, type EMAIL, outcome SENT) with no unsubscribe footer. The marketing sender stays as it is for the Contacts list and marketing files. If the contact has no email, the button reads "No email on file · Add one". Ships in Release 2.
+  MIGRATION: None. A code path in email-marketing.ts chooses marketing = false when the window was opened from one contact's page.
+  RISK: Low. These sends now count as touches and move Not Actioned to Attempted, which is the point. Past marketing rows are not rewritten. They still count toward the 40-a-day allowance.
+- Organization team goals and a try limit: weeklyTryGoal Int?, weeklyTalkGoal Int?, weeklyMeetingGoal Int?, parkAfterTries Int @default(6). Owners and Admins set them in Settings → General, beside quiet days. Ships in Release 5, and is optional.
+  MIGRATION: ALTER TABLE "Organization" ADD COLUMN …: three columns that can be empty, and one with a default.
+  RISK: None for existing rows. With no goals set, the rings show "vs last week". A per-rep override can come later if you want it.
+- User.uiPrefs (JSON): each person's list scope (Mine / Everyone), last preset, sort, chosen columns, the calendar's Mine / Team and view, and whether "Team & money" is collapsed. It follows the person to their phone, the way User.theme does. Ships in Release 6.
+  MIGRATION: ALTER TABLE "User" ADD COLUMN "uiPrefs" JSONB NULL. Empty means the role's defaults: Members get Mine + My call list; Owners and Admins get Everyone. It is written only when the person changes something, merged key by key, and checked when read.
+  RISK: Low. A malformed or old value falls back to the defaults rather than throwing an error. Old bookmarks keep working because every new address-bar parameter (scope, sort, preset, act=nc7/nc30) is optional.
+- Optional one-time script, run only if you say yes: scripts/label-old-attempts.cjs. It labels old calls whose note plainly says "No answer", "voicemail", "VM" or "busy" as NO_ANSWER or VOICEMAIL, so history shows the grey attempt tags. It never writes TALKED or REPLIED.
+  MIGRATION: Not a migration. A dry run prints counts per workspace (about 162 of 222 calls in the demo). The write runs per workspace, inside a transaction.
+  RISK: Low. It only adds attempt labels, and empty already reads as an attempt, so skipping it changes no number. The recommendation is to run it on the demo only.
+
+## hiddenNotRemoved
+- Contacts list: the Status, Activity (4 count chips), Last Contacted By and Notes columns fold into one Pulse cell. Its tooltip / long-press and the row expand show the full counts and dates. All of them, plus Industry·Type, Email, Phone 2, Location, Marketing, Added and Added by, come back from a per-person Columns menu.
+- Companies list: Industry·Type, Website, Phone, Marketing, Open pipeline and Status go behind the Columns menu and the row expand.
+- Contacts and Companies filters: the 12 dropdowns plus the Favorites, With deals, Needs attention and Owes money toggles move into one "Filters (n)" panel (a bottom sheet on a phone) grouped Who / Stage / Where / Data quality. Active filters always show as removable chips. Favorites and With deals also stay as sidebar sub-pages. Per page moves to the pagination footer.
+- List header tools: Import CSV, Merge, Find duplicates and Fill in missing move into a "Clean up ▾" menu. Add contact / Add company stays as the main button.
+- Row checkboxes appear on hover, after the first tick, or in Select mode on a phone. The Assign bar becomes sticky at the bottom.
+- Contact and company headers: New quote, New contract, Edit, Additional Account, Merge and Delete move into ⋯ More, with Delete at the foot and its confirm kept. New quote also shows up as the main button from Meeting Completed on.
+- The status pill: forward moves go through the meter. The full 11-option picker, with its skipped-step dates and Archived, stays under ⋯ More → "Set status by hand".
+- The Activity overview's six count tiles and its Last touch / Open pipeline / Quotes out rows: replaced by the meter's caption and reason sentence. The tiles stay behind a "Show counts" link and in the history's filter-chip counts.
+- Contact and company right column: Deals, Quotes, Contracts, Balance and Projects merge into one Paperwork card that appears once something exists. Balance shows only when money is owed. Website, birthday, city, state and added by go behind "More details".
+- The inline Add-deal form moves into the Paperwork card's ⋯ and is offered from Meeting Completed on.
+- Log activity form: When / Time collapse behind "Just now ▾", and "+ Include multiple contacts" behind "+ others". The whole form becomes a collapsed "What happened with Kristen?" bar that opens the How did it go? sheet.
+- Company page: "Other Contacts" becomes a "Not linked to a person yet" nudge inside Who to call (Claim kept, now with Undo). The bypass checkbox becomes the "Front desk / main line" chip, with the same behaviour.
+- Pipeline tile: the stage chip moves into the tile's ⋯ ("Move to…"); drag is unchanged. The N/A chip shows only when a label is set ("+ label" on hover; the picker stays in the panel). The suggested-label chip shows in the panel only. The Quiet badge becomes the health top edge and the reason line; the Gone quiet toggle and its count are unchanged. The rep dropdown becomes initials, edited in the panel. The quote list and the Contract Coordinator link move to the panel and ⋯.
+- Pipeline header: Show archived, Contract Coordinator and New quote move into ⋯. The duplicate "13 opportunities" line becomes the thin health bar.
+- Overview for Members: the money tiles, Recent activity, the full write-up and the report bar sit in collapsed "Team & money" and "Reports ▸" sections. Done calendar rows sit in a collapsed "Done today (n)". Owner chores in Jump in (catalog, templates, branding) are swapped for BDR shortcuts for Members only.
+- Overview for Owners: Active jobs, Signed and Contacts tiles go behind "More numbers". The write-up paragraph goes behind "Read more".
+- Calendar: Calendar / Log / Calendar+Log and "Copy this week into next" move into a View menu. Users / Companies / Contacts / Projects / crew / activity filters move into one Filters sheet. Logged touches in Month view hide behind a per-day "n logged" count and a Show logged toggle.
+- Reports and Stats: the duplicate table under each chart goes behind "Show numbers". The VP / BDR / CRO / AE persona chips are hidden.
+- Paperwork pages: the status badges and stat trios move under the DealJourney strip in a details row. The Coordinator's template, direction, terms and title fold into one summary line with "Change". Award without paperwork becomes a text link.
+- Phone navigation: the 24-link sideways strip is replaced by the bottom tab bar plus a More sheet that keeps every link in today's order and names, along with Dark/Light and Log out.
+- Monospace on dates, phone numbers and counts: switched to Geist Sans with even-width digits. Mono stays for document numbers (QUO- / CON- / INV- / PRJ-).
+- Zero-count chips everywhere (activity "0", Notes "0", $0.00 tag totals, "All Ø" tabs) are simply not drawn.
+
+## renamesOrMovesNeedingTaylor
+- (Release 1) Contact and company headers: the meter replaces the status pill and the Activity overview card. The full status picker moves under ⋯ More → "Set status by hand", and the six count tiles go behind "Show counts". You see a clickable mock in Dark and Light before it is built.
+- (Release 1) Pipeline tiles: the stage chip moves into the tile's ⋯ menu. The N/A chip shows only when a label is set. The Quiet pill becomes the health top edge plus a reason line. The rep dropdown becomes initials, edited in the panel. The quote list and the Contract Coordinator link move to the panel.
+- (Release 1) Health colours (teal / amber / rose) are fixed on every tenant and don't follow a partner's brand colour. This is a white-label exception, so red means the same thing everywhere.
+- (Release 2) The follow-up box becomes "How did it go?" with outcomes first. Its "Meeting" tick becomes "Try to book a meeting", a reminder that no longer sets Meeting Set; real booking moves to the Book meeting sheet. This changes your Oct 4 rule.
+- (Release 2) Company page: the "I'm choosing not to link a contact" checkbox becomes a "Front desk / main line" chip, and "Other Contacts" becomes "Not linked to a person yet", moved to the top of the People card.
+- (Release 3) Add a "Connected" step to the status ladder between Contacted and Interested. It adds a step and renames nothing, but it changes the ladder you defined on Sept 30.
+- (Release 3) Show "Contacted" as "Attempted". This is the label only: the stored value stays CONTACTED, and CSV import still accepts "contacted".
+- (Release 3) Make Meeting Completed automatic when a meeting is logged Held, or ticked done on the calendar or the Pipeline. Today it is set by hand only, and the calendar's Done even sets Meeting Set.
+- (Release 4) Contact header: New quote, New contract, Edit, Additional Account and Delete move into ⋯ More. Add Call, Text and a main button that follows the stage (Book meeting, Mark held, Start a quote…). The Rep picker moves from the Details card to a chip in the header.
+- (Release 4) Contact and company pages: Deals, Quotes, Contracts, Balance and Projects merge into one Paperwork card shown only when it has something. The Details card becomes "Reach" with "More details".
+- (Release 5) Members land on a new first Overview tab, "My day". Daily Rundown moves to second place for Members only; Owners and Admins are unchanged. Members' money tiles, Recent activity and the report bar collapse into "Team & money" / "Reports ▸".
+- (Release 5) Phone: the sideways nav strip becomes a bottom tab bar (Today · Contacts · Companies · Pipeline · More). Calendar, Log out and Dark/Light move under More.
+- (Release 5) Calendar: Members and phones open on an Agenda (Overdue, Today, next 7 days) instead of the Month grid. The Calendar / Log / Calendar+Log picker moves into a View menu.
+- (Release 5) Settings: a Member opens on My Account instead of Company Information → Branding.
+- (Release 6) Contacts and Companies lists: column order changes (Person first and sticky). Status, Activity, Last Contacted By and Notes fold into a new "Pulse" column, and the rest move into a Columns menu. The 12 filter dropdowns move into a "Filters" panel. Preset chips are added. Import / Merge / Find duplicates / Fill in missing move into "Clean up ▾".
+- (Release 6) Rename the "Needs attention" toggle (it really means missing info) to "Missing info" under Filters → Data quality. Add "Going quiet" as a new Companies preset. Lead Label's "N/A" option reads "On a deal, no label yet".
+- (Release 7) Company page: the People card moves to the top and is retitled "Who to call", sorted by stage and health instead of favourite then A–Z. One "Opportunity" card replaces the empty Deals / Quotes / Contracts cards. Delete moves into ⋯.
+- (Release 7) Pipeline: split the Meeting Set column into "Coming up" and "Happened — how did it go?" groups (the column name stays). Tiles are titled by the Primary person, with the company under it. Show archived, Contract Coordinator and New quote move into ⋯. A Mine / Everyone toggle is added.
+- (Release 7) Reword the convert prompt: "Do you want to convert this to a deal?" becomes "What happened after the meeting with <person>?", with four cards. All your options stay; only the words and layout change. A value becomes required on Won.
+- (Release 8) Rename the Overview report tab "Pipeline" to "Pipeline report" so it isn't confused with the Pipeline board. Quote: "Mark as sent" becomes "Send quote" and opens a share sheet. Coordinator: "Award without paperwork" becomes a text link, and the row's "Cancel" becomes "Drop line". Stats: the leaderboard's "Contacted" column becomes Tries / Talks / Connect rate / Meetings booked / Held.
+
+## decisionsForTaylor
+- Q: Do you approve this definition of Connected? It counts a live talk, a reply by text or email, a meeting that was held, or booking a meeting. Voicemail, no answer, busy, front desk, wrong number, an unanswered text or email, and a no-show do NOT count.
+  REC: Yes, approve it as written, along with the one-tap chip words.
+  WHY: Without it the app can't tell dialing from talking. That is exactly the gap you named, and in the demo about 38 of the 46 "Contacted" people were never actually reached.
+- Q: Should Connected become a real step on the status ladder (in the Status filter, the Stats funnel, and rolling up to the company), or live only on the meter?
+  REC: A real step, but ship it as its own small release (Release 3) after the outcome chips have run for a while.
+  WHY: It is the step you asked for, and it adds one value without renaming anything. Shipping it separately keeps the riskiest database change small and lets you see real connects first. A Postgres enum value is hard to take back.
+- Q: Should "Contacted" read "Attempted"?
+  REC: Yes. Only the label changes; the stored value and CSV import stay the same.
+  WHY: Once Connected sits next to it, "Contacted" after a voicemail tells a new rep something untrue.
+- Q: Should Meeting Completed be set automatically when a meeting is logged Held or ticked done? It would check first when the meeting date is still ahead.
+  REC: Yes.
+  WHY: 7 of the 13 Meeting Set tiles in the demo are meetings that already happened and were never closed out. Held meetings are the hand-off to quoting, and today Stats under-counts them.
+- Q: The follow-up box's "Meeting" tick sets Meeting Set today (your Oct 4 rule). Should it become "Try to book a meeting", a reminder that doesn't move the status, with real booking going through the Book meeting sheet?
+  REC: Yes.
+  WHY: A rep who ticks Meeting as a reminder to try for one fills Meeting Set and the Pipeline with meetings that don't exist.
+- Q: How should health show: the word plus a coloured dot or ring, or the 0–100 number everywhere?
+  REC: The word and colour everywhere. The number only on record headers, on hover or long-press, as a breakdown.
+  WHY: Numbers on every row are the "coded" feeling you described. A colour plus one plain sentence needs no explaining. The breakdown still lets you see why a score is what it is.
+- Q: Should the health colours (teal / amber / rose) stay the same on every white-label tenant instead of following the partner's brand colour?
+  REC: Yes, fixed.
+  WHY: Red has to mean "act now" for every customer. These colours are also checked for colour-blind users in both looks, and the app's current green / amber / red trio fails that check.
+- Q: Should people who have never been reached be scored on the same 0–100 scale?
+  REC: No. Show them as "Trying": grey, turning amber when stalled, with no number and never red.
+  WHY: A score for someone nobody has spoken to is made up. One proposal tried it and painted 43 of 46 Contacted people red. In the test run, red lands on just 10 people, all relationships that went cold.
+- Q: What should a Member see first when they open the app: the new "My day" or the Daily Rundown?
+  REC: My day, for Members only. Owners and Admins keep Daily Rundown with a new Team today strip on top.
+  WHY: A BDR's first question is "who do I call now". Today the answer is about 2,250px down a phone screen, under owner money tiles.
+- Q: Should old activities stay "not recorded" (counted as attempts), or should a one-time script label obvious voicemails from their notes?
+  REC: Leave them as they are on real data, and run the script on the demo only. Neither option ever guesses a connect.
+  WHY: A wrong guess on a customer's history is worse than a blank, and Stats says "Talks counted from <date>".
+- Q: Should there be team goals for tries, talks and meetings booked, and who sets them?
+  REC: Per workspace, set by Owners and Admins in Settings → General, and optional. Until set, the rings show "vs last week".
+  WHY: The rings give a rep a scoreboard worth winning without forcing a number on a team that doesn't want one.
+- Q: After how many tries with no connect should the app suggest parking a lead, and what does parking do?
+  REC: 6 tries. Parking only books a "Try again in 30 days" follow-up. There is no new status.
+  WHY: It stops endless redialing without adding a step to the ladder.
+- Q: When a closer runs a meeting a BDR booked, who gets credit for the held meeting?
+  REC: The rep who booked it gets the meetings held and the show rate. The deal and its money stay with the deal's rep, as today.
+  WHY: The BDR's job ends at a held meeting, and their scoreboard should show it.
+- Q: Should Not interested and Lost ask for a one-tap reason?
+  REC: Yes, as optional chips: Price · Timing · Has a vendor · No budget · Other.
+  WHY: It costs one tap, and it tells you why deals die. It is stored on the status change, so nothing else moves.
+- Q: Can a Member "Assign to me" a teammate's records in bulk?
+  REC: Yes, but with a confirm that names the owner ("12 of these belong to Priya. Take them?") and an Undo.
+  WHY: It decides whose call list a lead lands on. Today one mis-click silently takes a teammate's whole territory.
+- Q: Can Release 0 (bug fixes only) start now?
+  REC: Yes. It renames and moves nothing. Each fix gets a browser-test step, and it goes live only after your usual yes / no.
+  WHY: Dialogs opening off-screen, pages wider than the phone and menus running off the edge would undermine every later release, and you'd judge the meter through those bugs.
+
+## releases
+- R0 · Stop the breakage (bug fixes only; nothing renamed, moved or redesigned) [S · about 4 days]: Dialogs:
+- Import CSV, Email, Additional Account and "+ Include multiple contacts" open on screen: render .modal-backdrop through a portal on document.body, or end .fade-up without leaving a transform behind.
+
+Phone width:
+- Pages fit a 390px phone: min-w-0 / grid-cols-1 on Overview (page.tsx:200), the company page (:254) and the Contract Coordinator cards (tracker-grid.tsx:791).
+
+Menus and panels on screen:
+- The Contacts, Companies and Pipeline filter menus use the existing FloatingMenu, so they stay on screen.
+- The Add person panel is anchored on screen.
+
+Search and dates:
+- Search finds a phone number however it is typed (last 10 digits).
+- daysSince counts calendar days in the workspace's time zone, so yesterday reads "Yesterday".
+- A zero "before" reads "new this period" on Stats and report tiles.
+
+Quotes and contracts:
+- Quote Qty / Value / Tag boxes get minimum widths (16 no longer reads "1"), and the customer's quote on a phone gets column spacing.
+- Signing a contract marks its quote Accepted and clears the quote's follow-up, which also fixes the $0 won deal.
+
+Calendar and deletes:
+- The calendar's trash and the ✓ on a done row ask first or offer Undo.
+- Delete quote asks first.
+
+Pipeline:
+- A booked meeting reads "next Nov 19", not "last".
+- A tile's rep updates after a panel save.
+- The panel's Stage menu saves pending edits first.
+
+Small missing links:
+- Daily Rundown rows link to the person (Gone quiet goes to its Primary POC), and See all opens the overdue list.
+- The company People card shows mobile numbers as tap-to-call.
+
+Every fix gets a step in its browser suite, plus a phone-width check in looks.cjs / overlay-readability.cjs.
+- R1 · See it at a glance: the meter and health colour, from data already stored (no database change; needs your OK on a mock first) [S–M · about 5 days]: Building blocks:
+- src/lib/health.ts: leadHealth() plus a batched loader, with unit tests for every state, band and worked example.
+- <LifecycleMeter> at header and mini sizes, <HealthRing> and <HealthDot>.
+- The new health tokens for Dark and Light.
+
+Connected for now is a stand-in built from what is stored: a past meeting, or a move to Interested / Not interested / Meeting Set. Release 2 only ever adds connects on top of it, so meters fill further and never empty.
+
+Screens:
+- Contact header: the meter, reason sentence and one next-step button. The status picker moves under ⋯ More → Set status by hand, and the Activity overview becomes the caption plus "Show counts".
+- Company header: the meter plus "n of m reached".
+- Opportunity panel header.
+- Pipeline tiles: the health top edge, the mini meter and one next-step line. The stage chip moves to ⋯, N/A shows only when set, and each column gets a thin health bar.
+
+The less-coded feel:
+- Numbers, dates and phones in Geist Sans with even-width digits (mono only for QUO / CON / INV / PRJ numbers).
+- Relative dates and one 12-hour time format.
+
+A new health.cjs browser suite checks both looks, the phone, contrast, and that the tile and the contact page agree with goneQuietOpportunities.
+- R2 · "How did it go?": real attempts vs connects (no ladder change; needs your yes on the Connected definition) [M · about 6–7 days]: Database:
+- Activity.outcome, Contact/Company.lastConnectAt (triggers and backfill from past meetings), and StatusChange.reason.
+
+The How did it go? sheet:
+- On the contact log form, the company log form (Who? first, with the Front desk chip replacing the bypass checkbox) and the calendar's Done box.
+- Outcome chips, a next step already picked, date chips, a 10-second Undo, and Edit / Delete on your own lines.
+- The follow-up box's Meeting tick becomes "Try to book a meeting" (if approved).
+
+Feed and touches:
+- Green Talked / Replied / Held tags, with attempts muted.
+- The gone-quiet "Log as sent" writes SENT.
+- The one-to-one Email from a contact page becomes a real touch.
+
+What moves with it:
+- The meter switches from the stand-in to real connects.
+- The lists' Activity filter gains "Not connected in 7/30 days" and "Never connected".
+- The Stats leaderboard and the Activity report split tries from talks, with "Talks counted from <date>".
+
+Tests: a new connected.cjs. load-test.cjs at 200,000 and import-slow-db.cjs run through the slow proxy because of the triggers.
+- R3 · Connected on the ladder (only with your yes) [S · about 2–3 days]: The ladder step:
+- The CONNECTED enum value in its own migration, and statusRank renumbered in code.
+- markConnected, called on Talked / Replied / Held. The ladder also passes through Connected on the same day when someone is marked Interested, Not interested or Meeting Set without it.
+- Every status list updated: constants.ts, the StatusBadge colours and labels in ui.tsx, the dashboard/page.tsx:80 count, the contacts-csv mapping, the Stats FUNNEL / VELOCITY_PAIRS and the stats/page.tsx:48 base.
+- The Status filter gains Connected. The status picker is grouped Working it / Pipeline / Closed with "auto" tags.
+
+If you approve them:
+- "Contacted" shows as "Attempted".
+- Meeting Completed is set automatically on Held, with a check when the date is still ahead.
+
+Tests: crm-pipeline-stats.cjs and follow-ups-status-filter.cjs updated.
+- R4 · Book the meeting: the contact page rebuilt around the next step [M · about 6–7 days]: Action bar:
+- A shared RecordActionBar: a main button that follows the stage, then Call ▾ / Text / Email / ⋯ More, with Delete at the foot.
+
+Book meeting sheet:
+- Day and time chips, Who else, and "Add to the open Ironwood opportunity?".
+- A confirmation that names the Pipeline.
+- "+ Event" from a lead's page defaults to Call or Meeting.
+
+Contact page:
+- Coming up rows get Held / No-show / Move, and a Next step strip sits on top.
+- History filter chips.
+- The right column is shown by stage: Reach with More details, Coming up, Good to know, and the Paperwork card. The Add-deal form moves into Paperwork's ⋯ from Meeting Completed on.
+
+Phone:
+- A sticky Call · Text · Log · Book · ⋯ bar.
+- The How did it go? sheet opens when the rep comes back from a tel: or sms: tap.
+
+Targets: 15 cards to 5, and the first Call on the first phone screen.
+- R5 · My day: the BDR's home, Team today for owners, and the phone tab bar [M · about 6–7 days]: My day (the first tab for Members):
+- The greeting sentence and three week rings: Tries · Talks · Meetings booked.
+- One ranked Up next list with a reason line and Call / Text / Log on each row.
+- A Meetings card with Held / No-show, Done today collapsed, and the sticky "Next: … · Call" bar on phones.
+
+Owners and Admins: a Team today strip with tries / talks / meetings per rep, a last-logged dot, and a thin health bar per rep. The owner is left out when they have no records.
+
+Daily Rundown:
+- Members default to Me, and Jump in changes by role.
+- Gone quiet names the person.
+
+Settings → General: optional goals and the try limit.
+
+Calendar: an Agenda default for Members and phones, with Call and Done on each row. Mine / Team is remembered.
+
+Phone: the bottom tab bar and a More sheet (if approved). A Member's Settings opens My Account.
+
+Tests: reports.cjs extended, and Up next timed at 200,000 contacts.
+- R6 · Lists that read like a call list: Contacts and Companies [L · about 8–10 days]: Filter bar (shared by both lists):
+- [Mine | Everyone], search, the presets (My call list, Never touched, Talked — no meeting, Meetings this week; for Companies: My accounts, Going quiet), "Filters (n)" grouped Who / Stage / Where / Data quality, and Sort with Oldest touch first.
+
+Columns:
+- Six default columns with a sticky Person / Company column, the Pulse cell, Next step and Best phone.
+- A Columns menu and row expand.
+- Companies show "n of m reached".
+
+Tools:
+- A Clean up ▾ menu.
+- A sticky Assign bar with Undo, and a confirm before taking a teammate's records.
+- "Missing info" renamed (if approved).
+
+Phone: a card list below 768px with 44px Call / Text / Log.
+
+User.uiPrefs remembers scope, preset, sort and columns.
+
+Targets: Contacts from 168 pills a page to under 20; the first card about 180px from the top on a phone.
+
+Tests: crm-data.cjs and the companies-contacts suites updated; load-test.cjs times every preset and the health sort at 200,000 contacts.
+- R7 · The Pipeline and the company page speak BDR [M–L · about 7–8 days]: Pipeline:
+- Mine | Everyone.
+- Three-line tiles titled by the person.
+- Meeting Set split into Coming up and Happened, with Held / No-show / Reschedule.
+- A guard on moving a future meeting to Completed; Completed writes a Held meeting.
+- Panel people rows with Call / Text / Email / Log and the role switch; meetings with time and note.
+- The convert prompt reworded (if approved), with a value required on Won.
+- Phone: stage tabs and a full-width next-step button on each card.
+
+Company page:
+- Who to call first, with mobiles, last touch, tries, the Main contact tag and Call / Text.
+- The "Not linked yet" nudge with Claim and Undo.
+- One Opportunity card in place of the empty paperwork cards.
+- Good to know notes, and the feed counted once per batch.
+- Delete moves into ⋯.
+
+Targets: Pipeline from 34 pills to under 10; the company page from 16 cards to 6.
+
+Tests: pipeline-opportunities.cjs and company-bypass.cjs updated.
+- R8 · Carry it to the money, and finish the feel [M · about 6 days]: Paperwork:
+- A DealJourney strip (Meeting · Quote · Contract · Signed · Deposit) with one Next button on the quote, the Coordinator, the contract and the panel.
+- Quote sent / Contract sent / Signed lines on the person's feed (never touches).
+- "Send quote" opens a share sheet (Copy / Text / Email).
+- The Coordinator pre-ticks rows for a first contract, with one Create button.
+- "Send deposit invoice" is the main button on signed contracts.
+
+The feel:
+- Type-size tokens (12 / 14 / 16 / 20 / 28).
+- Status colours move to one brand ramp.
+- Light-mode borders reach 3:1, and the lead label chips pass contrast.
+- Report tables go behind "Show numbers", and the persona chips are hidden.
+
+Tests: the quotes-improvement, deal-tracker and contracts suites updated.

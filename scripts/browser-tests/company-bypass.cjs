@@ -139,10 +139,18 @@ const activity = async (body, org) =>
   const form = page.locator("[data-testid=log-activity-form]");
   const picker = form.locator("[data-testid=company-people-picker]");
   const other = page.locator("[data-testid=other-contacts]");
+  // The log is the How did it go? sheet behind the "What happened?" bar
+  // (Nov 11, 2026); When and Time sit behind "Just now ▾".
+  const openLog = async () => {
+    if (!(await form.isVisible().catch(() => false))) await page.locator("[data-testid=log-bar]").click();
+    await form.waitFor();
+  };
 
   log("nobody ticked: refused, and what was typed is still there");
   await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+  await openLog();
   await form.locator("textarea[name=body]").fill("Spoke to reception about parking");
+  await form.locator("[data-testid=activity-when-toggle]").click();
   await form.locator("[data-testid=activity-time]").fill("10:15");
   await form.locator("[data-testid=activity-submit]").click();
   await form.getByRole("alert").waitFor();
@@ -152,11 +160,11 @@ const activity = async (body, org) =>
   assert.equal((await sql(`SELECT count(*)::int n FROM "Activity" WHERE "organizationId"=$1`, [org])).rows[0].n, 1, "nothing written");
   await shot(page, "01-refused");
 
-  log("ticking the bypass box lets it through; the feed reads 'Taylor Test Bypassed'");
+  log("the Front desk / main line chip (the old bypass box) lets it through; the feed reads 'Taylor Test Bypassed'");
   const bypass = form.locator("[data-testid=company-bypass]");
-  assert.match(await bypass.textContent(), /I'm choosing not to link a contact for these activities/);
+  assert.match(await bypass.textContent(), /Front desk \/ main line/);
   await form.locator("[data-testid=company-bypass-tick]").check();
-  assert.match(await bypass.textContent(), /as “Taylor Test Bypassed” until someone claims it/);
+  assert.match(await form.locator("[data-testid=company-bypass-note]").textContent(), /as “Taylor Test Bypassed” until someone claims it/);
   await form.locator("[data-testid=activity-submit]").click();
   await page.locator("[data-testid=follow-up-prompt]").waitFor();
   const parking = await activity("Spoke to reception about parking", org);
@@ -180,11 +188,17 @@ const activity = async (body, org) =>
   assert.equal(await taylorGroup.locator("[data-testid=claim-all]").count(), 0, "one activity: no Claim all");
   await shot(page, "03-other-contacts");
 
-  log("ticking a person clears the bypass, and the log lands on them as before");
+  log("ticking a person clears Front desk, Front desk unticks people, and the log lands on the person as before");
+  await openLog();
   await form.locator("[data-testid=company-bypass-tick]").check();
   await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
   assert.equal(await form.locator("[data-testid=company-bypass-tick]").isChecked(), false, "bypass unticked by the tick");
-  assert.ok(await form.locator("[data-testid=company-bypass-tick]").isDisabled(), "and disabled while somebody is ticked");
+  await form.locator("[data-testid=company-bypass-tick]").check();
+  assert.equal(await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).getAttribute("aria-checked"), "false", "Front desk unticks Dana");
+  assert.equal(await form.locator("input[name=bypass]").count(), 1, "and posts the bypass");
+  await picker.locator("[data-testid=company-person-chip]", { hasText: "Dana Ruiz" }).click();
+  assert.equal(await form.locator("[data-testid=company-bypass-tick]").isChecked(), false, "never both at once");
+  assert.equal(await form.locator("input[name=bypass]").count(), 0, "no bypass posted with somebody ticked");
   await form.locator("textarea[name=body]").fill("Dana confirmed the appointment");
   await form.locator("[data-testid=activity-submit]").click();
   await page.locator("[data-testid=follow-up-prompt]").waitFor();
@@ -195,6 +209,7 @@ const activity = async (body, org) =>
   log("bypass two more as Taylor, so the group has three and a Claim all");
   for (const body of ["Front desk said call back Monday", "Left a brochure"]) {
     await page.goto(`${BASE}/dashboard/companies/cmp_by_harbor`);
+    await openLog();
     await form.locator("textarea[name=body]").fill(body);
     await form.locator("[data-testid=company-bypass-tick]").check();
     await form.locator("[data-testid=activity-submit]").click();

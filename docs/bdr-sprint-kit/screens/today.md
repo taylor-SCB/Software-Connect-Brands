@@ -1,0 +1,13 @@
+# Screen: today
+
+## What to build (approved)
+
+MY DAY, TEAM TODAY, CALENDAR AGENDA, PHONE NAV, GOALS (plan: Overview My day, Daily Rundown for Owners, Calendar, Navigation; Release 5). Members land on a new first Overview tab "My day" (approved decision 9); Owners and Admins keep Daily Rundown with a "Team today" strip on top (one row per rep who owns records or logged touches: last-logged dot grey after 2h; Tries · Talks (connect rate) · Meetings booked today and this week with goal rings once goals are set; a thin book-health bar; click opens that rep's My day read-only). My day: one greeting sentence ("Morning, Marcus · 2 follow-ups late · 9 to call · Redbud quiet 17 days"), three week rings Tries · Talks · Meetings booked toward the owner's goals or "vs last week" (decision 11), "Up next" one ranked list in the plan's order (meetings to close out, late, due today, talked no meeting, new, still trying, then "43 new leads nobody owns · Take 10" claiming through the existing assignRecords with a confirm and Undo — decision 18), each row health-ring avatar, name, company, mini meter, reason line, Call / Text / Log; 8 rows then Show all; Meetings card (today + 7 days, past ones Held / No-show); Done today collapsed; "Team & money" and "Reports ▸" collapsed at the foot; Jump in for Members: Log a call · Add contact · Book a meeting · Import my list. Write the ranking as a pure src/lib/up-next.ts with a fixture check. Calendar: Members and phones open on an Agenda (Overdue, Today, next 7 days; rows with Call / Text and Done opening the log sheet), Mine / Team remembered per person in User.uiPrefs, Month hides logged touches behind "n logged" with Show logged, Week scrolls to today, Call pills real tel: buttons, Owners keep Month + Team. Phone nav: a fixed 56px bottom tab bar Today · Contacts · Companies · Pipeline · More, where More opens the whole sidebar tree in today's order and names plus Dark/Light and Log out (with a confirm); the 24-link sideways strip goes; desktop sidebar unchanged except a search icon at its top and a Member's Settings opening My Account. Settings → General: the goals and the try limit for Owners and Admins.
+
+## Files you own
+
+src/app/dashboard/page.tsx (except the report bar internals), new src/app/dashboard/my-day/* or components, src/lib/up-next.ts, src/lib/reports/daily.ts (Team today data), src/app/dashboard/calendar/page.tsx and calendar-views.tsx / calendar-toolbar.tsx (agenda, month toggle; the Done box belongs to the log coder), src/components/sidebar-nav.tsx, src/app/dashboard/layout.tsx, src/app/dashboard/settings/general/*
+
+## Suites to run (runner groups)
+
+plain:calendar,calendar-v2,crews-time,looks,overlay-readability,login-case (add scripts/browser-tests/myday.cjs and include it)

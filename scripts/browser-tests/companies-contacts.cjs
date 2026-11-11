@@ -306,7 +306,9 @@ function backLink(page) {
   assert.ok(await page.getByText("$1,250.00").first().isVisible(), "open pipeline on the contact reads the quote");
 
   log("a note with the Birthday label, logged on Danny and Sara at once");
-  const noteForm = page.locator("form", { has: page.locator("textarea[name=body]") }).nth(1);
+  // The activity log is the How did it go? sheet now (Nov 11, 2026), so the
+  // only form on the page itself is the note's.
+  const noteForm = page.locator("#notes form", { has: page.locator("textarea[name=body]") });
   await noteForm.locator("textarea[name=body]").fill("Birthday is March 9 — likes bourbon");
   await noteForm.getByRole("button", { name: "Birthday" }).click();
   await noteForm.getByRole("button", { name: "+ Include multiple contacts" }).click();
@@ -338,9 +340,10 @@ function backLink(page) {
   await shot(page, "08-notes-personal");
 
   log("log a call on Danny and Resi at once; overview shows Calls 1 and Last touch Today");
-  const activityForm = page.locator("form", { has: page.locator("textarea[name=body]") }).nth(0);
+  await page.locator("[data-testid=log-bar]").click();
+  const activityForm = page.locator("[data-testid=log-activity-form]");
   await activityForm.locator("textarea[name=body]").fill("Walked the site, quote by Friday");
-  await activityForm.getByRole("button", { name: "+ Include multiple contacts" }).click();
+  await activityForm.getByRole("button", { name: "+ others" }).click();
   await page.getByRole("dialog").getByPlaceholder("Search contacts…").fill("resi");
   await page.getByRole("dialog").locator("input[type=checkbox]").check();
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
@@ -397,6 +400,7 @@ function backLink(page) {
   const coOverview = page.locator("div.card", { hasText: "Activity overview" });
   const tile = (label) => coOverview.locator("a", { hasText: label }).locator("span.num");
   const callsBefore = Number(await tile("Calls").innerText());
+  await page.locator("[data-testid=log-bar]").click();
   const coForm = page.locator("[data-testid=log-activity-form]");
   const coPicker = coForm.locator("[data-testid=company-people-picker]");
   await coPicker.locator("[data-testid=company-person-chip]", { hasText: "Danny Ortiz" }).click();

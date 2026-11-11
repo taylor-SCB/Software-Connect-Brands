@@ -7,25 +7,35 @@ import { quickAddContactToCompany } from "@/app/dashboard/contacts/account-actio
 
 export type CompanyPerson = { id: string; name: string; email: string | null; phone: string | null };
 
-// Who the activity was with, on a company page. The company's first
-// people are offered as ticks; the box searches the rest of them (its
-// own and anyone linked to it); "+ Add new contact" makes one on the
-// spot and ticks them. Every tick posts as `extraContactIds`, and the
-// entry is logged on each of them. Nobody ticked is refused (Oct 4,
-// 2026) unless "I'm choosing not to link a contact for these
-// activities" is ticked: the entry then sits on the company under
-// "<you> Bypassed" in Other Contacts until somebody claims it.
+// Who the activity was with, on a company page ("Who?" first in How did
+// it go?, Nov 11, 2026). The company's first people are offered as chips;
+// the box searches the rest of them (its own and anyone linked to it);
+// "+ Add new contact" makes one on the spot and ticks them. Every tick
+// posts as `extraContactIds`, and the entry is logged on each of them.
+// Nobody ticked is refused (Oct 4, 2026) unless the "Front desk / main
+// line" chip is on — it replaced the "I'm choosing not to link a contact"
+// box with the same behaviour (`bypass=1`): the entry sits on the company
+// under "<you> Bypassed" in Other Contacts until somebody claims it.
+// Picking a person turns Front desk off, and Front desk unticks people.
 export function CompanyPeoplePicker({
   companyId,
   people,
   userName,
+  initial,
+  onChange,
 }: {
   companyId: string;
   people: CompanyPerson[];
   // Whoever is logging, for the line saying what a bypass will read as.
   userName?: string;
+  // People ticked to start with (a tel: tap on their row).
+  initial?: string[];
+  // Every change: who is ticked, and whether Front desk is on.
+  onChange?: (ids: string[], frontDesk: boolean) => void;
 }) {
-  const [picked, setPicked] = useState<Map<string, CompanyPerson>>(new Map());
+  const [picked, setPicked] = useState<Map<string, CompanyPerson>>(
+    () => new Map(people.filter((person) => initial?.includes(person.id)).map((person) => [person.id, person])),
+  );
   const [bypass, setBypass] = useState(false);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
@@ -38,15 +48,18 @@ export function CompanyPeoplePicker({
   const { results } = useSearch<CompanyPerson>(q ? `/dashboard/contacts/search?companyId=${companyId}&q=${encodeURIComponent(q)}` : null);
   const shown = q ? results : [...made, ...people.filter((person) => !made.some((m) => m.id === person.id))].slice(0, 12);
 
+  function update(next: Map<string, CompanyPerson>, desk: boolean) {
+    setPicked(next);
+    setBypass(desk);
+    onChange?.(Array.from(next.keys()), desk);
+  }
+
   function toggle(person: CompanyPerson) {
-    setPicked((prev) => {
-      const next = new Map(prev);
-      if (next.has(person.id)) next.delete(person.id);
-      else next.set(person.id, person);
-      return next;
-    });
-    // Ticking a person is the opposite of bypassing.
-    setBypass(false);
+    const next = new Map(picked);
+    if (next.has(person.id)) next.delete(person.id);
+    else next.set(person.id, person);
+    // Ticking a person is the opposite of the front desk.
+    update(next, false);
   }
 
   function addNew() {
@@ -59,7 +72,7 @@ export function CompanyPeoplePicker({
       }
       const person = result.contact;
       setMade((prev) => [person, ...prev]);
-      setPicked((prev) => new Map(prev).set(person.id, person));
+      update(new Map(picked).set(person.id, person), false);
       setDraft({ name: "", email: "", phone: "" });
       setAdding(false);
       setQuery("");
@@ -71,40 +84,13 @@ export function CompanyPeoplePicker({
       {Array.from(picked.keys()).map((id) => (
         <input key={id} type="hidden" name="extraContactIds" value={id} />
       ))}
-      {/* The bypass sits above the list, as asked: a deliberate choice,
-          not the default. It posts only while ticked, and only counts
-          when nobody is ticked. */}
-      <label
-        className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-xs transition-colors ${
-          bypass ? "border-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_10%,transparent)]" : "border-[var(--border)]"
-        } ${picked.size > 0 ? "opacity-50" : ""}`}
-        data-testid="company-bypass"
-      >
-        <input
-          type="checkbox"
-          name="bypass"
-          value="1"
-          checked={bypass}
-          disabled={picked.size > 0}
-          onChange={(event) => setBypass(event.target.checked)}
-          className="mt-0.5 h-3.5 w-3.5 accent-[var(--warn)]"
-          data-testid="company-bypass-tick"
-        />
-        <span>
-          <span className="font-medium">I&apos;m choosing not to link a contact for these activities</span>
-          <span className="faint block">
-            {bypass
-              ? `It will sit under Other Contacts as “${userName ?? "you"} Bypassed” until someone claims it for a person.`
-              : "An activity here is with a person at this company. Tick this to log it on the company alone."}
-          </span>
-        </span>
-      </label>
+      {bypass && <input type="hidden" name="bypass" value="1" />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="faint text-xs">
           {picked.size === 0
             ? bypass
               ? "Logged on the company, nobody linked."
-              : "With whom? Tick people below."
+              : "Tap who it was with."
             : `Logged on ${picked.size} ${picked.size === 1 ? "person" : "people"}`}
         </p>
         <div className="relative">
@@ -115,7 +101,7 @@ export function CompanyPeoplePicker({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Find someone here…"
             aria-label="Find someone at this company"
-            className="input input-sm w-48 pl-7"
+            className="input input-sm w-full min-w-0 pl-7 sm:w-48"
           />
         </div>
       </div>
@@ -131,10 +117,10 @@ export function CompanyPeoplePicker({
               aria-checked={on}
               onClick={() => toggle(person)}
               title={[person.email, person.phone].filter(Boolean).join(" · ") || undefined}
-              className={`badge cursor-pointer gap-1 border transition-colors ${
+              className={`badge min-h-11 cursor-pointer gap-1 border transition-colors sm:min-h-0 ${
                 on
                   ? "border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_22%,transparent)] text-[var(--text)]"
-                  : "border-[var(--border)] text-[var(--text-faint)] hover:border-[var(--border-strong)]"
+                  : "border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--border-strong)]"
               }`}
               data-testid="company-person-chip"
             >
@@ -144,6 +130,24 @@ export function CompanyPeoplePicker({
           );
         })}
         {q && results.length === 0 && <span className="faint text-xs">Nobody here by that name.</span>}
+        <span className="contents" data-testid="company-bypass">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={bypass}
+            onClick={() => update(new Map(), !bypass)}
+            title={`Logged on the company alone. It sits under Other Contacts as “${userName ?? "you"} Bypassed” until someone claims it for a person.`}
+            className={`badge min-h-11 cursor-pointer gap-1 border transition-colors sm:min-h-0 ${
+              bypass
+                ? "border-[var(--warn)] bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] text-[var(--text)]"
+                : "border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--border-strong)]"
+            }`}
+            data-testid="company-bypass-tick"
+          >
+            {bypass && <IconCheck size={10} />}
+            Front desk / main line
+          </button>
+        </span>
         {!adding && (
           <button
             type="button"
@@ -151,7 +155,7 @@ export function CompanyPeoplePicker({
               setDraft({ name: q, email: "", phone: "" });
               setAdding(true);
             }}
-            className="btn btn-ghost btn-sm"
+            className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
             data-testid="company-person-add"
           >
             <IconPlus size={11} />
@@ -201,6 +205,11 @@ export function CompanyPeoplePicker({
             <IconX size={12} />
           </button>
         </div>
+      )}
+      {bypass && (
+        <p className="faint text-xs" data-testid="company-bypass-note">
+          Logged on the company alone, as “{userName ?? "you"} Bypassed” until someone claims it for a person.
+        </p>
       )}
       {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
     </div>
