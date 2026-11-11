@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
 import {
   PAYMENT_KIND_LABELS,
@@ -125,6 +125,7 @@ export function PaymentTable({
   saveLabel = "Save schedule",
   above,
   note,
+  join,
 }: {
   totalCents: number;
   paymentTerms: string;
@@ -138,6 +139,14 @@ export function PaymentTable({
   above?: ReactNode;
   // Rendered under the table (the contract's amended-from-quote note).
   note?: ReactNode;
+  // Hands the table to a page-wide Save (the quote's, Nov 11, 2026): it
+  // reports whether its rows or terms differ from what was last saved and
+  // registers its save, and its own button goes. `extraDirty` is anything
+  // the page keeps beside it (the quote's Hide from quote box).
+  join?: {
+    register: (state: { dirty: boolean; pending: boolean; save: () => Promise<boolean> }) => void;
+    extraDirty?: boolean;
+  };
 }) {
   const [terms, setTerms] = useState(paymentTerms);
   const [rows, setRows] = useState<PaymentTableRow[]>(() => initialRows.map(toRow));
@@ -193,7 +202,28 @@ export function PaymentTable({
     setRows((all) => all.filter((row) => row.uid !== target));
   }
 
-  function save() {
+  // What was last saved, to tell whether there is anything to save.
+  const shape = (value: { paymentTerms: string; rows: SaveRow[] }) =>
+    JSON.stringify([value.paymentTerms, value.rows.map(({ label, kind, percent, fixedCents, dueOn, terms: rowTerms }) => [label, kind, percent, fixedCents, dueOn, rowTerms])]);
+  const [savedShape, setSavedShape] = useState(() => shape(currentPayload()));
+  function currentPayload() {
+    return {
+      paymentTerms: terms,
+      rows: rows.map((row) => ({
+        uid: row.uid,
+        id: row.id,
+        label: row.label,
+        kind: row.kind,
+        percent: row.kind === "PERCENT" ? row.percent ?? 0 : null,
+        fixedCents: row.kind === "FIXED" ? dollarsToCents(row.fixedInput) : null,
+        dueOn: row.dueOn,
+        terms: row.terms,
+      })),
+    };
+  }
+  const dirty = shape(currentPayload()) !== savedShape || Boolean(join?.extraDirty);
+
+  function save(): Promise<boolean> {
     setMessage({});
     editedDuringSave.current = false;
     const payload = {
@@ -210,10 +240,14 @@ export function PaymentTable({
       })),
     };
 
-    startTransition(async () => {
-      const result = await onSave(payload);
+    return new Promise<boolean>((resolve) => startTransition(async () => {
+      const result = await onSave(payload).catch(() => ({ error: "Couldn't reach the server. Nothing was saved; try again." }) as SaveResult);
       setMessage({ error: result.error, success: result.success });
-      if (result.error) return;
+      if (result.error) {
+        resolve(false);
+        return;
+      }
+      setSavedShape(shape(payload));
 
       // Same round-trip as the line items: without folding the stored ids
       // back, a second save sends none and every row is deleted and made
@@ -227,8 +261,13 @@ export function PaymentTable({
           }),
         );
       }
-    });
+      resolve(true);
+    }));
   }
+
+  useEffect(() => {
+    join?.register({ dirty, pending, save });
+  });
 
   return (
     <div className="space-y-4 p-5" data-testid="payment-schedule">
@@ -528,15 +567,17 @@ export function PaymentTable({
       <FormError message={message.error} />
       <FormSuccess message={message.success} />
 
-      <button
-        type="button"
-        onClick={save}
-        disabled={pending}
-        className="btn btn-primary btn-sm"
-        data-testid="save-schedule"
-      >
-        {pending ? "Saving…" : saveLabel}
-      </button>
+      {!join && (
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={pending}
+          className="btn btn-primary btn-sm"
+          data-testid="save-schedule"
+        >
+          {pending ? "Saving…" : saveLabel}
+        </button>
+      )}
     </div>
   );
 }

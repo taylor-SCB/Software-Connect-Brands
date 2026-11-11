@@ -444,7 +444,7 @@ async function makePicture(page, color, size = 900, type = "image/png") {
     ).rows;
   const labelSelect = (line, groupName) => page.locator(`select[aria-label="Line ${line} ${groupName}"]`);
   async function saveLines() {
-    await page.getByRole("button", { name: "Save line items" }).click();
+    await page.getByTestId("quote-save").click();
     await page.getByText("Line items saved").waitFor();
   }
 

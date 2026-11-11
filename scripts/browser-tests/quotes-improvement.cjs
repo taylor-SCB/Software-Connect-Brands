@@ -79,7 +79,7 @@ async function login(page) {
 // "Unsaved changes" also contains the word "saved", so the success banner
 // has to be matched on its own text rather than a substring.
 async function saveLines(page) {
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved", { exact: true }).waitFor();
 }
 
@@ -364,7 +364,7 @@ let context;
   assert.equal(await rowTerms[0].inputValue(), "Net 30", "the baseline carries Net 30");
 
   log("save it; the two rows add up to the quote total exactly");
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
 
   const quoteTotal = (
@@ -392,7 +392,7 @@ let context;
 
   log("re-saving without a reload keeps the same payment rows");
   await table.getByTestId("row-terms").first().fill("Upon signature");
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   const resaved = await sql(
     `SELECT id, terms FROM "QuotePayment" WHERE "quoteId"='quo_qi' ORDER BY position`,
@@ -417,7 +417,7 @@ let context;
     "50% + 10% should report the remaining 40% as unscheduled",
   );
   // Advisory, not blocking — a half-built table still has to be savable.
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
 
   log("a dollar amount over the total reports the overage");
@@ -429,7 +429,7 @@ let context;
   log("put it back to the baseline; it ties out exactly again");
   await table.locator("[data-testid=payment-row]").nth(1).locator("select").first().selectOption("BALANCE");
   await table.getByTestId("row-terms").first().fill("Net 30");
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   assert.equal(await page.getByTestId("schedule-difference").count(), 0, "the baseline ties out exactly");
   const restored = await sql(
@@ -472,7 +472,7 @@ let context;
 
   log("Hide from quote keeps it off the customer's copy entirely");
   await page.getByTestId("hide-payment-table").check();
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   await publicPage.reload();
   await publicPage.getByText("Install labor").first().waitFor();
@@ -487,7 +487,7 @@ let context;
 
   log("unhide it again");
   await page.getByTestId("hide-payment-table").uncheck();
-  await page.getByTestId("save-schedule").click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Payment table saved", { exact: true }).waitFor();
   await publicPage.reload();
   await publicPage.getByTestId("document-payments").waitFor();
@@ -507,7 +507,7 @@ let context;
 
   await page.getByTestId("lead-sales-rep").selectOption(me.id);
   await page.getByTestId("contract-signer").selectOption(me.id);
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
 
   const people = await sql(
@@ -530,7 +530,7 @@ let context;
   log("a refused save keeps what was typed, and keeps the rep");
   await page.getByLabel("Quote title").fill("x".repeat(200));
   await page.locator("#terms").fill("Quote valid 30 days.");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText(/at most 160|too big|Too long/i).waitFor();
   assert.equal(
     await page.getByTestId("lead-sales-rep").inputValue(),
@@ -543,7 +543,7 @@ let context;
     "a refused save threw away what was typed in Terms",
   );
   await page.getByLabel("Quote title").fill("Rekey quote");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
   await publicPage.close();
 
@@ -805,11 +805,11 @@ let context;
 
   log("audit fix: a refused Quote details save keeps a field the user cleared");
   await page.locator("#terms").fill("Quote valid 30 days.");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
   await page.locator("#terms").fill("");
   await page.getByLabel("Quote title").fill("y".repeat(200));
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText(/at most 160|too big|Too long/i).waitFor();
   assert.equal(
     await page.locator("#terms").inputValue(),
@@ -817,7 +817,7 @@ let context;
     "a refused save put deleted Terms text back, which the next save would write",
   );
   await page.getByLabel("Quote title").fill("Rekey quote");
-  await page.getByRole("button", { name: "Save details" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Quote details saved", { exact: true }).waitFor();
 
   log("audit fix: a fixed-dollar quote row carries into a smaller contract without going negative");
@@ -1186,7 +1186,7 @@ let context;
     await phone.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => null))));
     const bar = phone.getByTestId("line-items-phone-bar");
     await bar.waitFor();
-    assert.equal(await phone.getByRole("button", { name: "Save line items" }).count(), 1, "one Save on a phone");
+    assert.equal(await phone.getByRole("button", { name: "Save", exact: true }).count(), 1, "one Save on a phone");
     await phone.getByRole("button", { name: "Blank line" }).click();
     await phone.getByLabel("Line 1 product", { exact: true }).fill("Bullet camera");
     await phone.getByLabel("Line 1 quantity", { exact: true }).fill("3");
@@ -1197,7 +1197,7 @@ let context;
     const nextBox = await phone.getByTestId("send-quote").boundingBox();
     assert.ok(barBox.y + barBox.height <= nextBox.y + 1, `the Save bar sits under the pinned Send quote (${barBox.y}+${barBox.height} vs ${nextBox.y})`);
     assert.ok(barBox.y + barBox.height <= 845, "the Save bar is off the screen");
-    await bar.getByRole("button", { name: "Save line items" }).click();
+    await bar.getByTestId("quote-save-phone").click();
     await phone.getByText("Line items saved", { exact: true }).waitFor();
     assert.equal((await sql(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [built[0].id])).rows[0].n, 1);
     assert.ok((await phone.evaluate(() => document.documentElement.scrollWidth)) <= 390, "the quote page scrolls sideways on a phone");
@@ -1357,6 +1357,58 @@ let context;
   await page.getByTestId("delete-quote-yes").click();
   await page.waitForURL(/\/dashboard\/quotes$/);
   assert.equal(await uxCount(), 0, "Yes, delete left the quote");
+
+  log("Sprint: a draft quote has one Save at the foot of the window — lines, payment table and details in one press; a refusal stops it there");
+  const oneId = built[0].id;
+  const until = async (fn, what) => {
+    for (let i = 0; i < 60; i += 1) {
+      if (await fn()) return;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  await sql(`UPDATE "Quote" SET status='DRAFT' WHERE id=$1`, [oneId]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${BASE}/dashboard/quotes/${oneId}`);
+  const saveBar = page.getByTestId("quote-save-bar");
+  await saveBar.waitFor();
+  for (const old of ["Save line items", "Save details", "Save payment table"]) {
+    assert.equal(await page.getByRole("button", { name: old }).count(), 0, `no separate "${old}"`);
+  }
+  assert.equal(await page.getByTestId("save-schedule").count(), 0, "the payment table's own button is gone");
+  const pinned = async () => {
+    const box = await saveBar.boundingBox();
+    return box && box.y + box.height <= 900 + 1 && box.y >= 900 - 120;
+  };
+  await page.evaluate(() => window.scrollTo(0, 0));
+  assert.ok(await pinned(), "the Save bar is at the foot of the window at the top of the page");
+  await page.getByLabel("Line 1 quantity", { exact: true }).fill("4");
+  await page.getByTestId("payment-schedule").getByLabel("Payment label").first().fill("Deposit — one save");
+  await page.getByLabel("Quote title").fill("One save quote");
+  await until(async () => /Line items · Payment table · Quote details/.test(await page.getByTestId("quote-save-status").textContent()), "all three listed");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "everything saved");
+  const oneSaved = (await sql(
+    `SELECT q.title, (SELECT quantity FROM "QuoteLineItem" WHERE "quoteId"=q.id ORDER BY position LIMIT 1) AS qty,
+            (SELECT label FROM "QuotePayment" WHERE "quoteId"=q.id ORDER BY position LIMIT 1) AS label
+       FROM "Quote" q WHERE q.id=$1`,
+    [oneId],
+  )).rows[0];
+  assert.deepEqual([oneSaved.title, Number(oneSaved.qty), oneSaved.label], ["One save quote", 4, "Deposit — one save"]);
+
+  await page.getByLabel("Line 1 product", { exact: true }).fill("");
+  await page.getByLabel("Quote title").fill("Not this title");
+  await page.getByTestId("quote-save").click();
+  await page.getByText("Line 1 needs a product name.").waitFor();
+  assert.match(await page.getByTestId("quote-save-status").textContent(), /Line items wasn't saved/);
+  assert.equal((await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title, "One save quote", "nothing after the refusal was saved");
+  assert.ok(await page.getByTestId("send-quote").first().isVisible());
+  await page.getByLabel("Line 1 product", { exact: true }).fill("Bullet camera");
+  await page.getByTestId("quote-save").click();
+  await until(async () => /All changes saved/.test(await page.getByTestId("quote-save-status").textContent()), "saved after the fix");
+  assert.equal((await sql(`SELECT title FROM "Quote" WHERE id=$1`, [oneId])).rows[0].title, "Not this title");
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+  assert.ok(await pinned(), "still pinned halfway down");
 
   console.log("\nAll steps passed.");
   await context.close();

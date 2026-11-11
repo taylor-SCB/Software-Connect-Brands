@@ -418,7 +418,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
               <ContactHistory items={history} />
             </section>
             <div className="order-9 min-w-0 lg:order-none">
-              <Collapsible id="notes" title="Notes" subtitle={`${contact.notes.length} total`} testId="notes-card">
+              <Collapsible id="notes" title="Notes" subtitle={contact.notes.length ? `${contact.notes.length} total` : "None yet"} testId="notes-card">
                 <AddNoteForm target={{ contactId: contact.id }} current={pickable} />
                 <div className="divider" />
                 <NotesList

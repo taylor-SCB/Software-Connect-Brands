@@ -202,7 +202,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             testId="stats-daily"
           />
           <ShowNumbers testId="stats-daily-numbers">
-            <table className="table text-xs" data-testid="stats-daily-table">
+            <table className="table table-stack text-xs" data-testid="stats-daily-table">
               <thead>
                 <tr>
                   <th>Day</th>
@@ -220,12 +220,12 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
                   .map((day) => (
                     <tr key={day.day}>
                       <td className="whitespace-nowrap">{formatDate(`${day.day}T12:00:00Z`, "UTC")}</td>
-                      <td className="num text-right">{day.total}</td>
-                      <td className="num text-right">{day.talks}</td>
-                      <td className="num text-right">{day.byType.PHONE_CALL}</td>
-                      <td className="num text-right">{day.byType.TEXT}</td>
-                      <td className="num text-right">{day.byType.EMAIL}</td>
-                      <td className="num text-right">{day.byType.MEETING}</td>
+                      <td className="num text-right" data-label="Tries">{day.total}</td>
+                      <td className="num text-right" data-label="Talks">{day.talks}</td>
+                      <td className="num text-right" data-label="Calls">{day.byType.PHONE_CALL}</td>
+                      <td className="num text-right" data-label="Texts">{day.byType.TEXT}</td>
+                      <td className="num text-right" data-label="Emails">{day.byType.EMAIL}</td>
+                      <td className="num text-right" data-label="Meetings">{day.byType.MEETING}</td>
                     </tr>
                   ))}
               </tbody>
@@ -300,7 +300,7 @@ function Panel({ title, sub, className = "", children }: { title: string; sub: s
 }
 
 // The change line follows the reports' rule (changeSize): a rise from 0
-// reads "▲ up from 0", never "▲ 100%" (UX review, Nov 10, 2026); a rate
+// reads "new this period", never "▲ 100%" (UX review, Nov 10, 2026); a rate
 // moves in points.
 function Tile({
   id,

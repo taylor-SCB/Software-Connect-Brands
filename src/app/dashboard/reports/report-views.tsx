@@ -77,7 +77,7 @@ function Table({ table, testId }: { table: SummaryTable; testId?: string }) {
   if (table.rows.length === 0) return <p className="faint text-sm">Nothing here for this period.</p>;
   return (
     <div className="-mx-1 overflow-x-auto">
-      <table className="table text-xs" data-testid={testId}>
+      <table className="table table-stack text-xs" data-testid={testId}>
         <thead>
           <tr>
             {table.columns.map((column, index) => (
@@ -91,7 +91,7 @@ function Table({ table, testId }: { table: SummaryTable; testId?: string }) {
           {table.rows.map((row, r) => (
             <tr key={r} data-testid={testId ? `${testId}-row` : undefined}>
               {row.map((cell, index) => (
-                <td key={index} className={index ? "num text-right" : "font-medium"}>
+                <td key={index} className={index ? "num text-right" : "font-medium"} data-label={table.columns[index]?.label}>
                   {typeof cell === "number" && table.columns[index]?.format !== "text" ? formatValue(cell, table.columns[index].format as Headline["format"]) : cell}
                 </td>
               ))}
@@ -273,7 +273,7 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
       </Panel>
       <Panel title={`What moved · ${range.label.toLowerCase()}`} sub={`Against ${range.compareLabel}. Meetings count people; paperwork counts deals.`} testId="pipeline-moves">
         <div className="-mx-1 overflow-x-auto">
-          <table className="table text-xs" data-testid="pipeline-moves-table">
+          <table className="table table-stack text-xs" data-testid="pipeline-moves-table">
             <thead>
               <tr>
                 <th>Step</th>
@@ -287,12 +287,12 @@ function PipelineView({ report, range, by }: { report: PipelineReport } & ViewPr
               {report.moves.map((move) => (
                 <tr key={move.step} data-step={move.step}>
                   <td className="font-medium">{move.label}</td>
-                  <td className="num text-right">{move.count}</td>
-                  <td className="num text-right">{move.previous}</td>
-                  <td className="num text-right">
+                  <td className="num text-right" data-label="Now">{move.count}</td>
+                  <td className="num text-right" data-label="Before">{move.previous}</td>
+                  <td className="num text-right" data-label="Change">
                     <Delta now={move.count} before={move.previous} />
                   </td>
-                  <td className="num text-right">{move.step === "MEETING_SET" || move.step === "MEETING_COMPLETED" ? "—" : money(move.valueCents)}</td>
+                  <td className="num text-right" data-label="Value">{move.step === "MEETING_SET" || move.step === "MEETING_COMPLETED" ? "—" : money(move.valueCents)}</td>
                 </tr>
               ))}
             </tbody>
@@ -497,7 +497,7 @@ function MoneyView({ report, by }: { report: MoneyReport } & ViewProps) {
           <p className="faint text-sm">Nobody owes anything right now.</p>
         ) : (
           <div className="-mx-1 overflow-x-auto">
-            <table className="table text-xs" data-testid="money-debtor-table">
+            <table className="table table-stack text-xs" data-testid="money-debtor-table">
               <thead>
                 <tr>
                   <th>Customer</th>
@@ -514,9 +514,9 @@ function MoneyView({ report, by }: { report: MoneyReport } & ViewProps) {
                         {row.name}
                       </Link>
                     </td>
-                    <td className="num text-right">{money(row.owedCents)}</td>
-                    <td className={`num text-right ${row.overdueCents ? "text-[var(--danger)]" : ""}`}>{money(row.overdueCents)}</td>
-                    <td className="num text-right">{row.oldestDue ? `${formatIsoDay(row.oldestDue)}${row.daysLate ? ` · ${row.daysLate}d late` : ""}` : "—"}</td>
+                    <td className="num text-right" data-label="Owed">{money(row.owedCents)}</td>
+                    <td className={`num text-right ${row.overdueCents ? "text-[var(--danger)]" : ""}`} data-label="Past due">{money(row.overdueCents)}</td>
+                    <td className="num text-right" data-label="Oldest due">{row.oldestDue ? `${formatIsoDay(row.oldestDue)}${row.daysLate ? ` · ${row.daysLate}d late` : ""}` : "—"}</td>
                   </tr>
                 ))}
               </tbody>

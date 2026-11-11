@@ -445,11 +445,11 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   assert.equal(await page.locator("input[aria-label='Line 1 unit value']").inputValue(), "189.00");
   assert.equal(await page.locator("input[aria-label='Line 1 quantity']").inputValue(), "3");
   assert.equal(await page.getByTestId("line-price-needed").count(), 1);
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line 2 needs a price").waitFor();
   await page.locator("input[aria-label='Line 2 unit value']").fill("150");
   assert.equal(await page.getByTestId("line-price-needed").count(), 0);
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await until(async () => (await one(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId])).n === 2, "lines saved");
   const lines = (await sql(`SELECT name, "productId", quantity, "unitPriceCents", "projectNotes" FROM "QuoteLineItem" WHERE "quoteId"=$1 ORDER BY position`, [quoteId])).rows;
   assert.deepEqual(lines.map((line) => [line.name, line.productId, line.quantity, line.unitPriceCents]), [
@@ -469,7 +469,7 @@ const lastRequest = (kind) => [...requests].reverse().find((row) => row.kind ===
   const quoteAsks = () => requests.filter((row) => row.kind === "QUOTE").length;
   const asked = quoteAsks();
   await page.locator("input[aria-label='Line 1 quantity']").fill("4");
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await until(async () => (await one(`SELECT quantity FROM "QuoteLineItem" WHERE "quoteId"=$1 AND "productId"='aa_cat6'`, [quoteId])).quantity === 4, "saved again");
   await page.waitForTimeout(600);
   assert.ok(!page.url().includes("draft=meeting"), "a save doesn't put ?draft=meeting back in the address bar");

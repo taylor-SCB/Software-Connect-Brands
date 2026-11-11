@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useQuoteSaveSection } from "./quote-save";
 import { PaymentTable, type PaymentTableRowInput } from "@/components/payment-table";
 import { saveQuotePaymentSchedule } from "../actions";
 
@@ -28,7 +29,23 @@ export function QuotePaymentTable({
   unsaved?: boolean;
 }) {
   const [hidden, setHidden] = useState(hidePaymentTable);
+  const [savedHidden, setSavedHidden] = useState(hidePaymentTable);
   const [everSaved, setEverSaved] = useState(!unsaved);
+
+  // Part of the quote's one Save (quote-save.tsx), after the lines.
+  const [status, setStatus] = useState({ dirty: false, pending: false });
+  const saveRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true));
+  const register = useCallback((next: { dirty: boolean; pending: boolean; save: () => Promise<boolean> }) => {
+    saveRef.current = next.save;
+    setStatus((was) => (was.dirty === next.dirty && was.pending === next.pending ? was : { dirty: next.dirty, pending: next.pending }));
+  }, []);
+  const joined = useQuoteSaveSection("payments", {
+    label: "Payment table",
+    order: 1,
+    dirty: status.dirty,
+    pending: status.pending,
+    save: () => saveRef.current(),
+  });
 
   return (
     <PaymentTable
@@ -37,9 +54,16 @@ export function QuotePaymentTable({
       initialRows={initialRows}
       today={today}
       saveLabel="Save payment table"
+      // A suggested table nobody has saved counts as unsaved, so the one
+      // Save stores it as it stands (its own button used to).
+      join={joined ? { register, extraDirty: hidden !== savedHidden || !everSaved } : undefined}
       onSave={async (payload) => {
-        const result = await saveQuotePaymentSchedule({ quoteId, hidePaymentTable: hidden, ...payload });
-        if (!result.error) setEverSaved(true);
+        const sentHidden = hidden;
+        const result = await saveQuotePaymentSchedule({ quoteId, hidePaymentTable: sentHidden, ...payload });
+        if (!result.error) {
+          setEverSaved(true);
+          setSavedHidden(sentHidden);
+        }
         return result;
       }}
       above={

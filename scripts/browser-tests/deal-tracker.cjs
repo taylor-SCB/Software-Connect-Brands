@@ -743,7 +743,7 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.getByLabel("Line 3 discount type").inputValue(), "percent");
   assert.equal(await page.locator("[data-testid=quote-total]").textContent(), "$304.00", "200 + 50 + 54");
   await page.getByLabel("Line 2 quantity").fill("2");
-  await page.getByRole("button", { name: /Save line items/ }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved").waitFor();
   const linked = (await sql(`SELECT count(*)::int AS n FROM "ContractLineItem" WHERE "quoteLineItemId" IS NOT NULL AND "contractId" IN ($1,$2)`, [a.id, b.id])).rows[0].n;
   assert.equal(linked, 3, "all three contract rows still point at their quote rows");

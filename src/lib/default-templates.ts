@@ -117,7 +117,7 @@ above.`,
     name: "Purchase Order",
     type: "Purchase Order",
     description:
-      "Orders materials or services from a supplier or subcontractor. Items and total print from the deal tracker.",
+      "Orders materials or services from a supplier or subcontractor. Items and total print from the Contract Coordinator.",
     body: `PURCHASE ORDER
 
 PO No. {{contract_number}}

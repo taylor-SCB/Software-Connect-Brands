@@ -142,7 +142,7 @@ async function signAs(browser, token, name) {
   await typeSelects.nth(1).selectOption("Smart Locks");
   await typeSelects.nth(2).selectOption("Access Control");
   await typeSelects.nth(3).selectOption("Access Control");
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   // "Unsaved changes" also contains "saved", so wait for the real thing.
   await page.getByText("Line items saved").waitFor();
   const seeded = (await sql(

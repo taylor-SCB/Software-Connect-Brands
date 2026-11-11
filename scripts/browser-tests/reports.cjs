@@ -24,7 +24,7 @@
  * 10, 2026), each an "audit fixes (UX review)" step: the calendar card
  * listing open entries first with the heading counting only those and the
  * write-up starting with the first open one (and the AI told which are
- * done); a rise from 0 reading "▲ up from 0", never "from 0 vs 0"; Owed by
+ * done); a rise from 0 reading "new this period", never "from 0 vs 0"; Owed by
  * rep with nothing in it saying so once; Overview on an isMobile phone
  * staying 390px wide with a long activity line cut with …; and the
  * Activity chart's labels at 11px on a phone and at 1440, bars at most
@@ -561,10 +561,10 @@ async function narrativeText(page) {
     assert.match(words, /3 of 5 people \(60%\) had no touch this week, the most under Nic Rivera \(2\)\./);
     assert.match(words, /3 marketing emails went out as well, counted on their own\./);
     await shot(page, "03-activity");
-    log("audit fixes (UX review): a rise from nothing reads 'up from 0', never '100%' or 'from 0 vs 0'");
+    log("Sprint: a rise from nothing reads 'new this period', never '100%', 'up from 0' or 'from 0 vs 0' (plan R0)");
     const meetingsTile = page.locator("[data-testid=report-tile][data-id=meetings]");
     assert.equal(Number(await meetingsTile.getAttribute("data-value")), 1, "one meeting this week, none the same days last week");
-    assert.equal((await meetingsTile.getByTestId("report-tile-change").textContent()).trim(), "▲ up from 0");
+    assert.equal((await meetingsTile.getByTestId("report-tile-change").textContent()).trim(), "new this period");
     assert.equal(
       (await page.locator("[data-testid=report-tile][data-id=touches]").getByTestId("report-tile-change").textContent()).trim(),
       "▲ 400% vs 1",
@@ -1110,6 +1110,39 @@ async function narrativeText(page) {
       await shot(small, `06-phone-${report}`);
     }
     await phone.close();
+
+    log("Sprint: on a phone every report's numbers table is a two-column list — no header row, each value with its label, nothing sideways");
+    const pocketCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+    const pocket = await pocketCtx.newPage();
+    for (const [report, selector] of [
+      ["pipeline", "[data-testid=pipeline-moves-table]"],
+      ["activity", "[data-testid=report-group-table]"],
+      ["closing", "[data-testid=closing-groups] [data-testid=report-group-table]"],
+    ]) {
+      await pocket.goto(`${BASE}/dashboard?report=${report}&period=this-year`);
+      await pocket.locator(`[data-testid=report][data-report=${report}]`).waitFor();
+      const opener = pocket.locator(`${selector}`).locator("xpath=ancestor::details[1]/summary");
+      if (await opener.count()) await opener.click();
+      await pocket.locator(selector).waitFor();
+      const shape = await pocket.locator(selector).evaluate((table) => {
+        const rows = [...table.querySelectorAll("tbody tr")];
+        const box = table.getBoundingClientRect();
+        return {
+          head: getComputedStyle(table.querySelector("thead")).display,
+          grid: rows.every((row) => getComputedStyle(row).display === "grid"),
+          labels: rows.every((row) => [...row.querySelectorAll("td")].slice(1).every((td) => td.dataset.label && getComputedStyle(td, "::before").content.includes(td.dataset.label))),
+          rows: rows.length,
+          inside: box.right <= window.innerWidth + 0.5 && table.scrollWidth <= table.clientWidth + 1,
+        };
+      });
+      assert.equal(shape.head, "none", `${report}: no header row on a phone`);
+      assert.ok(shape.rows > 0 && shape.grid && shape.labels, `${report}: ${JSON.stringify(shape)}`);
+      assert.ok(shape.inside, `${report}: the list fits the phone`);
+      const overflow = await pocket.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      assert.ok(overflow <= 0, `${report} scrolls sideways by ${overflow}px`);
+    }
+    await shot(pocket, "07-phone-table-as-list");
+    await pocketCtx.close();
 
     log("Sprint: the Activity report splits tries from talks — a meeting that happened is a talk, calls and messages with no outcome are tries");
     await open(page, `${BASE}/dashboard?report=activity`, "activity");

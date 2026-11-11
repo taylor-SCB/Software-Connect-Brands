@@ -532,7 +532,7 @@ async function login(page) {
   await page.getByLabel("Line 1 product", { exact: true }).waitFor();
   assert.equal(await page.getByLabel("Line 1 unit value").inputValue(), "130.00");
   assert.equal(await page.getByLabel("Line 1 tag").inputValue(), "LABOR");
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved").waitFor();
 
   log("cross-tenant product id 404s");

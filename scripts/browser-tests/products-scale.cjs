@@ -255,7 +255,7 @@ async function signAs(browser, token, name) {
   await catalog.fill("widget 011");
   await results.getByRole("option", { name: /Widget 011/ }).waitFor();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved").waitFor();
   const lines = (await sql(`SELECT name, "productId", "unitPriceCents" FROM "QuoteLineItem" WHERE "quoteId"='quo_ps' ORDER BY position`)).rows;
   assert.deepEqual(lines, [

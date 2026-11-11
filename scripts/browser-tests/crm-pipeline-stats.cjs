@@ -384,10 +384,10 @@ async function openMore(p) {
   assert.equal(cells[4], String(nicBooked), "both credited to Nic, who booked them");
   assert.equal(cells[6], "$5,000.00", "Cara's deal is Nic's");
 
-  log("audit fixes (UX review): a tile whose period before had none reads 'up from 0', never '▲ 100% vs before'");
+  log("Sprint: a tile whose period before had none reads 'new this period', never '▲ 100% vs before' (plan R0)");
   const change = async (id) => (await page.locator(`[data-testid=stats-tile][data-id=${id}] [data-testid=stats-tile-change]`).textContent()).trim();
-  assert.equal(await change("booked"), "▲ up from 0", "booked against none in the 30 days before");
-  assert.equal(await change("won"), "▲ up from $0");
+  assert.equal(await change("booked"), "new this period", "booked against none in the 30 days before");
+  assert.equal(await change("won"), "new this period");
   for (const text of await tiles.locator("[data-testid=stats-tile-change]").allTextContents()) assert.doesNotMatch(text, /100%/, text);
 
   log("audit fixes (UX review): at 1440 no Stats label is cut off — each step name, the last day under Touches per day, every rep's name on one line");
@@ -662,12 +662,71 @@ async function openMore(p) {
   assert.match(await cards.filter({ hasText: "Nic Rivera" }).textContent(), /Tries.*Talks.*Connect rate.*Meetings booked.*Held.*Won \$/);
   assert.equal(await pocketPage.locator("[data-testid=funnel-step]").count(), 7);
   assert.ok((await pocketPage.locator("[data-testid=funnel-rate]").count()) >= 1, "each step past the first says its rate");
+  await pocketPage.locator("[data-testid=stats-daily-numbers] summary").click();
+  const dayList = await pocketPage.locator("[data-testid=stats-daily-table]").evaluate((table) => ({
+    head: getComputedStyle(table.querySelector("thead")).display,
+    rows: [...table.querySelectorAll("tbody tr")].map((row) => getComputedStyle(row).display),
+    labels: [...table.querySelectorAll("tbody td[data-label]")].map((td) => td.dataset.label),
+  }));
+  assert.equal(dayList.head, "none", "Sprint: the per-day numbers are a two-column list on a phone");
+  assert.ok(dayList.rows.length > 0 && dayList.rows.every((d) => d === "grid"), JSON.stringify(dayList));
+  assert.deepEqual([...new Set(dayList.labels)], ["Tries", "Talks", "Calls", "Texts", "Emails", "Meetings"]);
   const pocketOverflow = await pocketPage.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(pocketOverflow <= 1, `page scrolls sideways by ${pocketOverflow}px`);
   await shot(pocketPage, "07-stats-phone-cards");
   await pocket.close();
   await sql(`DELETE FROM "Activity" WHERE id LIKE 'a_ps_sprint_%'`);
   await sql(`DELETE FROM "OpportunityMeeting" WHERE id='om_ps_sprint'`);
+
+  log("Sprint: label-old-attempts.cjs — a dry run by default, refuses --apply without --org, labels only plain old voicemail / no-answer calls in the named workspace");
+  const { spawnSync } = require("node:child_process");
+  const script = path.join(__dirname, "..", "label-old-attempts.cjs");
+  const runScript = (...args) => spawnSync(process.execPath, [script, ...args], { env: { ...process.env, DATABASE_URL: DB }, encoding: "utf8" });
+  const slug = (await sql(`SELECT slug FROM "Organization" WHERE id=$1`, [org])).rows[0].slug;
+  const savedSince = (await sql(`SELECT "outcomesSince" FROM "Organization" WHERE id=$1`, [org])).rows[0].outcomesSince;
+  await sql(`UPDATE "Organization" SET "outcomesSince" = now() - interval '1 day' WHERE id=$1`, [org]);
+  const someone = (await sql(`SELECT id FROM "Contact" WHERE "organizationId"=$1 ORDER BY "createdAt" LIMIT 1`, [org])).rows[0].id;
+  await sql(`DELETE FROM "Organization" WHERE slug = 'test-label-other'`);
+  await sql(`INSERT INTO "Organization" (id,name,slug,status,"updatedAt") VALUES ('org_label_other','Test Label Other','test-label-other','ACTIVE',now())`);
+  await sql(`UPDATE "Organization" SET "outcomesSince" = now() WHERE id='org_label_other'`);
+  await sql(
+    `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,outcome,marketing,"occurredAt") VALUES
+       ('lo_1',$1,$2,$3,'PHONE_CALL','No answer',NULL,false,now() - interval '3 days'),
+       ('lo_2',$1,$2,$3,'PHONE_CALL','Left VM about the quote',NULL,false,now() - interval '3 days'),
+       ('lo_3',$1,$2,$3,'PHONE_CALL','Line busy',NULL,false,now() - interval '3 days'),
+       ('lo_4',$1,$2,$3,'PHONE_CALL','No answer, then she called back and we talked',NULL,false,now() - interval '3 days'),
+       ('lo_5',$1,$2,$3,'EMAIL','voicemail',NULL,false,now() - interval '3 days'),
+       ('lo_6',$1,$2,$3,'PHONE_CALL','No answer',NULL,false,now() - interval '1 hour'),
+       ('lo_7',$1,$2,$3,'PHONE_CALL','Voicemail',  'TALKED',false,now() - interval '3 days'),
+       ('lo_8','org_label_other',NULL,$3,'PHONE_CALL','No answer',NULL,false,now() - interval '3 days')`,
+    [org, someone, taylor.id],
+  );
+  const outcomes = async () =>
+    Object.fromEntries((await sql(`SELECT id, outcome FROM "Activity" WHERE id LIKE 'lo\\_%' ORDER BY id`)).rows.map((r) => [r.id, r.outcome]));
+  const untouched = { lo_1: null, lo_2: null, lo_3: null, lo_4: null, lo_5: null, lo_6: null, lo_7: "TALKED", lo_8: null };
+
+  const dry = runScript();
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /Dry run — nothing is written/);
+  assert.match(dry.stdout, new RegExp(`${slug}: 1 voicemail, 2 no answer`));
+  assert.match(dry.stdout, /test-label-other: 0 voicemail, 1 no answer/);
+  assert.deepEqual(await outcomes(), untouched, "a dry run writes nothing");
+
+  const refused = runScript("--apply");
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /needs --org/);
+  assert.deepEqual(await outcomes(), untouched, "refused without --org");
+  assert.equal(runScript("--apply", "--org", "no-such-workspace").status, 2, "an unknown slug is refused");
+  assert.deepEqual(await outcomes(), untouched);
+
+  const applied = runScript("--apply", "--org", slug);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.match(applied.stdout, new RegExp(`${slug}: 1 voicemail, 2 no answer — written`));
+  assert.deepEqual(await outcomes(), { ...untouched, lo_1: "NO_ANSWER", lo_2: "VOICEMAIL", lo_3: "NO_ANSWER" }, "only the plain old calls of the named workspace; never TALKED or REPLIED");
+  assert.match(runScript("--apply", "--org", slug).stdout, /Labelled 0 calls in all/, "a second run finds nothing left");
+  await sql(`DELETE FROM "Activity" WHERE id LIKE 'lo\\_%'`);
+  await sql(`DELETE FROM "Organization" WHERE id='org_label_other'`);
+  await sql(`UPDATE "Organization" SET "outcomesSince" = $2 WHERE id=$1`, [org, savedSince]);
 
   await browser.close();
   console.log(`\nAll ${step} steps passed. Screenshots in ${OUT}`);

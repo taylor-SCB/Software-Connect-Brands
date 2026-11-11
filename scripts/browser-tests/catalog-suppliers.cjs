@@ -368,7 +368,7 @@ async function login(page) {
   assert.equal(await page.getByTestId("line-below-minimum").count(), 0);
   await page.getByLabel("Line 1 discount", { exact: true }).fill("10");
   assert.equal(await page.getByTestId("line-below-minimum").count(), 1, "$170 less 10% is $153 a unit, under $162");
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved").waitFor();
   await page.reload();
   assert.equal(await page.getByTestId("line-below-minimum").innerText(), "Below minimum ($162.00)", "read again when the quote opens");
@@ -668,7 +668,7 @@ async function login(page) {
   await page.getByLabel(`Line ${lineNo + 1} product`, { exact: true }).fill("min test");
   await page.getByLabel(`Line ${lineNo + 1} unit value`).fill("10");
   assert.equal(await flags.count(), baseline);
-  await page.getByRole("button", { name: "Save line items" }).click();
+  await page.getByTestId("quote-save").click();
   await page.getByText("Line items saved").waitFor();
   assert.equal(await flags.count(), baseline + 1, "linked to Min test by name on save, flagged without a reload");
   assert.equal(
