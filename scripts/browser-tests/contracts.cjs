@@ -437,6 +437,58 @@ async function previewChips(page) {
   await page.reload();
   await page.locator("main span.badge", { hasText: "Accepted" }).first().waitFor();
 
+  log("audit fixes: a contract cancelled or declined after the customer opened it can't be signed from that tab");
+  {
+    const seedFrom = (await sql(`SELECT "contactId" FROM "Contract" WHERE id=$1`, [contractId])).rows[0].contactId;
+    await sql(
+      `INSERT INTO "Contract" (id,"organizationId","contactId",number,title,body,status,"publicToken","sentAt","updatedAt") VALUES
+         ('con_ct_au1',$1,$2,9001,'Audit cancelled','Agreement A.','SENT','tok_con_ct_au1_0123456789',now(),now()),
+         ('con_ct_au2',$1,$2,9002,'Audit declined','Agreement A.','SENT','tok_con_ct_au2_0123456789',now(),now()),
+         ('con_ct_au3',$1,$2,9003,'Audit resent','Agreement A: $10,000.','SENT','tok_con_ct_au3_0123456789',now() - interval '1 hour',now())`,
+      [org, seedFrom],
+    );
+    const customerCtx = await browser.newContext();
+    for (const [id, status] of [["con_ct_au1", "CANCELLED"], ["con_ct_au2", "DECLINED"]]) {
+      const tab = await customerCtx.newPage();
+      await tab.goto(`${BASE}/c/tok_${id}_0123456789`);
+      await tab.locator("[name=signerName]").waitFor();
+      await sql(`UPDATE "Contract" SET status=$2 WHERE id=$1`, [id, status]);
+      await tab.locator("[name=signerName]").fill("Danny Ortiz");
+      await tab.locator("[name=agree]").check();
+      await tab.getByRole("button", { name: "Sign contract" }).click();
+      await tab.getByText("This contract can't be signed any more").waitFor();
+      const row = (await sql(`SELECT status, "signerName", "projectId" FROM "Contract" WHERE id=$1`, [id])).rows[0];
+      assert.deepEqual({ ...row }, { status, signerName: null, projectId: null }, `a ${status.toLowerCase()} contract was signed`);
+      await tab.close();
+    }
+
+    log("audit fixes: pulled back, edited and sent again on the same link, the old tab can't sign the new wording; a reload can");
+    const tab = await customerCtx.newPage();
+    await tab.goto(`${BASE}/c/tok_con_ct_au3_0123456789`);
+    await tab.getByText("Agreement A: $10,000.").first().waitFor();
+    // The office pulls it back, changes the price and sends it again.
+    await sql(`UPDATE "Contract" SET status='DRAFT' WHERE id='con_ct_au3'`);
+    await sql(`UPDATE "Contract" SET body='Agreement B: $12,000.', status='SENT', "sentAt"=now() WHERE id='con_ct_au3'`);
+    await tab.locator("[name=signerName]").fill("Danny Ortiz");
+    await tab.locator("[name=agree]").check();
+    await tab.getByRole("button", { name: "Sign contract" }).click();
+    await tab.getByText("This contract was changed and sent again since you opened it").waitFor();
+    assert.equal((await sql(`SELECT status FROM "Contract" WHERE id='con_ct_au3'`)).rows[0].status, "SENT", "signed wording the customer never saw");
+    await tab.reload();
+    await tab.getByText("Agreement B: $12,000.").first().waitFor();
+    await tab.locator("[name=signerName]").fill("Danny Ortiz");
+    await tab.locator("[name=agree]").check();
+    await tab.getByRole("button", { name: "Sign contract" }).click();
+    await tab.getByRole("button", { name: "Sign contract" }).waitFor({ state: "detached" });
+    assert.equal((await sql(`SELECT status FROM "Contract" WHERE id='con_ct_au3'`)).rows[0].status, "SIGNED");
+    // A second tap from a stale copy of the same page writes nothing more.
+    const again = await customerCtx.newPage();
+    await again.goto(`${BASE}/c/tok_con_ct_au3_0123456789`);
+    assert.equal(await again.locator("[name=signerName]").count(), 0, "a signed contract still offers the sign box");
+    await customerCtx.close();
+    // Left in place: the workspace is deleted at the end of the suite.
+  }
+
   log("New contract: same two columns, template dropdown, preview, residential customer with no deal");
   await page.goto(`${BASE}/dashboard/contracts/new`);
   await page.getByRole("heading", { name: "Agreement", exact: true }).waitFor();

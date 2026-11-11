@@ -719,6 +719,41 @@ async function openMore(p) {
   }
   await sql(`DELETE FROM "Contact" WHERE id LIKE 'ctc_ps_jump%'`);
 
+  log("audit fixes: Meetings booked counts a meeting when it was put down, once, not when the Pipeline wrote a row for an old meeting or a second tile carries it");
+  {
+    const bookedNow = async () => {
+      await page.goto(`${BASE}/dashboard/stats?reps=all`);
+      await page.locator("[data-testid=stats-page]").waitFor();
+      return Number((await page.locator("[data-testid=stats-tile][data-id=booked] [data-testid=stats-tile-value]").textContent()).trim());
+    };
+    const dueText = async () => (await page.locator("[data-testid=stats-tile][data-id=show-rate]").textContent()).match(/(\d+) held of (\d+)/).slice(1).map(Number);
+    const bookedBefore = await bookedNow();
+    const [heldBefore, dueBefore] = await dueText();
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,marketing,"occurredAt","createdAt") VALUES
+         ('a_ps_au_old',$1,'ctc_ps_ben',$2,'MEETING','Old site walk',false,now() - interval '70 days',now() - interval '70 days'),
+         ('a_ps_au_new',$1,'ctc_ps_ben',$2,'MEETING','Site walk',false,now() - interval '3 days',now() - interval '5 days')`,
+      [org, taylor.id],
+    );
+    await sql(
+      `INSERT INTO "Opportunity" (id,"organizationId",title,stage,"updatedAt") VALUES
+         ('opp_ps_au1',$1,'Audit tile one','LOST',now()), ('opp_ps_au2',$1,'Audit tile two','MEETING_COMPLETED',now())`,
+      [org],
+    );
+    // The Pipeline's reconcile writes rows today for meetings long past;
+    // the newer meeting sits on two tiles.
+    await sql(
+      `INSERT INTO "OpportunityMeeting" (id,"opportunityId","on","activityId","createdAt") VALUES
+         ('om_ps_au_old','opp_ps_au2',now() - interval '70 days','a_ps_au_old',now()),
+         ('om_ps_au_n1','opp_ps_au1',now() - interval '3 days','a_ps_au_new',now() - interval '5 days'),
+         ('om_ps_au_n2','opp_ps_au2',now() - interval '3 days','a_ps_au_new',now())`,
+    );
+    assert.equal(await bookedNow(), bookedBefore + 1, "only the one new meeting is booked in the period");
+    assert.deepEqual(await dueText(), [heldBefore + 1, dueBefore + 1], "the meeting on two tiles came due and was held once");
+    await sql(`DELETE FROM "Opportunity" WHERE id IN ('opp_ps_au1','opp_ps_au2')`);
+    await sql(`DELETE FROM "Activity" WHERE id IN ('a_ps_au_old','a_ps_au_new')`);
+  }
+
   log("Sprint: label-old-attempts.cjs — a dry run by default, refuses --apply without --org, labels only plain old voicemail / no-answer calls in the named workspace");
   const { spawnSync } = require("node:child_process");
   const script = path.join(__dirname, "..", "label-old-attempts.cjs");

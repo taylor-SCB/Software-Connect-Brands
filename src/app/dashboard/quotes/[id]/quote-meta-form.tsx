@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useQuoteSaveSection } from "./quote-save";
+import { PhoneSaveHere, useQuoteSaveSection } from "./quote-save";
 import {
   Field,
   SelectField,
@@ -232,7 +232,12 @@ export function QuoteMetaForm({
       <FormSuccess message={state?.success} />
 
       {joined ? (
-        dirty && <p className="faint text-xs">Unsaved changes — Save at the foot of the page.</p>
+        dirty && (
+          <>
+            <p className="faint text-xs max-sm:hidden">Unsaved changes — Save at the foot of the page.</p>
+            <PhoneSaveHere dirty={dirty} testId="quote-details-phone-save" />
+          </>
+        )
       ) : (
         <button type="submit" disabled={pending} className="btn btn-ghost btn-sm">
           {pending ? "Saving…" : "Save details"}

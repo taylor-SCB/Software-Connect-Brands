@@ -630,11 +630,16 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
       token: z.string().trim().min(10),
       signerName: z.string().trim().min(2, "Type your full name to sign").max(120),
       agree: z.literal("on", { message: "Tick the box to accept the terms" }),
+      // When the copy they read was sent (audit, Nov 11, 2026): pulled back
+      // to draft, edited and sent again keeps the same link, so a tab left
+      // open on the old wording must not sign the new one.
+      sentAt: z.string().max(40).optional(),
     }),
     {
       token: formData.get("token"),
       signerName: formData.get("signerName"),
       agree: formData.get("agree"),
+      sentAt: formData.get("sentAt") ?? undefined,
     },
   );
   if (!parsed.ok) return { error: parsed.error };
@@ -649,17 +654,28 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
       dealId: true,
       quoteId: true,
       publicToken: true,
+      sentAt: true,
       contact: { select: { email: true } },
     },
   });
 
-  // Only a contract that was actually sent can be signed, and only once.
+  // Only a contract that is out for signature can be signed, and only once
+  // (audit, Nov 11, 2026): a cancelled, declined or pulled-back one is
+  // refused here too, not just hidden on the page, because a tab opened
+  // before the change can still post.
   if (!contract || contract.status === "DRAFT") return { error: "This contract isn't available" };
   if (contract.status === "SIGNED") return { error: "This contract has already been signed" };
+  if (contract.status !== "SENT") return { error: "This contract can't be signed any more. Contact us if that's a mistake." };
+  const sentStamp = contract.sentAt?.toISOString() ?? "";
+  if (parsed.data.sentAt !== undefined && parsed.data.sentAt !== sentStamp) {
+    return { error: "This contract was changed and sent again since you opened it. Reload the page to read the latest version before signing." };
+  }
 
   const signedAt = new Date();
-  await prisma.contract.update({
-    where: { id: contract.id },
+  // Only while still out with them, and only the copy they read: a second
+  // tap or a second tab finds it already signed and writes nothing.
+  const signed = await prisma.contract.updateMany({
+    where: { id: contract.id, status: "SENT", sentAt: contract.sentAt },
     data: {
       status: "SIGNED",
       signedAt,
@@ -667,6 +683,11 @@ export async function signContract(_prev: ActionState, formData: FormData): Prom
       signerEmail: contract.contact.email,
     },
   });
+  if (signed.count === 0) {
+    const now = await prisma.contract.findUnique({ where: { id: contract.id }, select: { status: true } });
+    revalidateContract(contract);
+    return { error: now?.status === "SIGNED" ? "This contract has already been signed" : "This contract changed while you were signing. Reload the page and try again." };
+  }
 
   // A customer's signature is them saying yes: the deal is won. A supplier
   // signing a purchase order (Money out) is not — the deal stays where it is.

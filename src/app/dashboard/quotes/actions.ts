@@ -19,6 +19,7 @@ import {
 import { resolveDeal } from "@/lib/deal-picker-server";
 import { advanceDealStage } from "@/lib/deals";
 import { syncQuoteEvents } from "@/lib/calendar-auto";
+import { quoteExpired } from "@/lib/quote-accept";
 import { computeSchedule, isoToDate } from "@/lib/payments";
 import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
 import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
@@ -868,6 +869,10 @@ async function changeQuoteStatus(formData: FormData): Promise<ActionState> {
       sentAt: status === "SENT" ? new Date() : undefined,
       respondedAt:
         status === "ACCEPTED" || status === "DECLINED" ? new Date() : undefined,
+      // The name a customer accepted under online belongs to that answer
+      // only (audit, Nov 11, 2026): any other move — back to draft,
+      // declined, accepted by the team — must not print it again later.
+      acceptedByName: status !== quote.status ? null : undefined,
     },
   });
 
@@ -922,7 +927,7 @@ export async function acceptQuoteByCustomer(_prev: ActionState, formData: FormDa
 
   const quote = await prisma.quote.findUnique({
     where: { publicToken: parsed.data.token },
-    select: { id: true, status: true, organizationId: true, contactId: true, dealId: true },
+    select: { id: true, status: true, organizationId: true, contactId: true, dealId: true, validUntil: true, organization: { select: { timeZone: true } } },
   });
   if (!quote || quote.status === "DRAFT") return { error: "This quote isn't available" };
   if (quote.status === "ACCEPTED") {
@@ -930,6 +935,12 @@ export async function acceptQuoteByCustomer(_prev: ActionState, formData: FormDa
     return { success: "Accepted" };
   }
   if (quote.status !== "SENT") return { error: "This quote can't be accepted online any more. Reply to us directly." };
+  // Past its Valid until day the prices aren't promised any more (audit,
+  // Nov 11, 2026): the customer asks for an updated quote instead.
+  if (quoteExpired(quote.validUntil, quote.organization.timeZone)) {
+    revalidatePath(`/q/${parsed.data.token}`);
+    return { error: "This quote has expired. Reply to us for an updated one." };
+  }
 
   const accepted = await prisma.quote.updateMany({
     where: { id: quote.id, organizationId: quote.organizationId, status: "SENT" },

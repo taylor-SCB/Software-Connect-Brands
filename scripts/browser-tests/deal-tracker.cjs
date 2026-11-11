@@ -872,6 +872,45 @@ async function anonymousStatus(browser, url) {
   await page.goto(`${BASE}/dashboard/quotes`);
   assert.match(await page.locator("table tbody tr").filter({ hasText: "Kitchen quote" }).textContent(), /\$334\.80/);
 
+  log("audit fixes: a signed contract with nothing to collect finishes the journey; a $0 first row is skipped for the deposit; a finished journey pins no empty bar on a phone");
+  await sql(
+    `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"updatedAt") VALUES
+       ('deal_tr_au1','${org}','ctc_tr','No schedule job','WON',now()),
+       ('deal_tr_au2','${org}','ctc_tr','Zero deposit job','WON',now())`,
+  );
+  await sql(
+    `INSERT INTO "Contract" (id,"organizationId","contactId","dealId",number,title,body,status,"publicToken","sentAt","signedAt","signerName","updatedAt") VALUES
+       ('con_tr_au1','${org}','ctc_tr','deal_tr_au1',9101,'No schedule','Agreement.','SIGNED','tok_con_tr_au1_0123456789',now(),now(),'Danny Ortiz',now()),
+       ('con_tr_au2','${org}','ctc_tr','deal_tr_au2',9102,'Zero deposit','Agreement.','SIGNED','tok_con_tr_au2_0123456789',now(),now(),'Danny Ortiz',now())`,
+  );
+  await sql(
+    `INSERT INTO "ContractPayment" (id,"contractId","organizationId",label,kind,"amountCents",position) VALUES
+       ('cp_tr_au2a','con_tr_au2','${org}','Deposit','FIXED',0,0),
+       ('cp_tr_au2b','con_tr_au2','${org}','Balance','FIXED',10000,1)`,
+  );
+  await page.goto(`${BASE}/dashboard/contracts/con_tr_au1`);
+  const doneStrip = page.getByTestId("deal-journey");
+  await doneStrip.waitFor();
+  assert.match(await doneStrip.locator(".dj-steps").getAttribute("aria-label"), /Deposit done/, "a contract with nothing to collect sits on Deposit for good");
+  assert.equal(await doneStrip.getByTestId("journey-next").count(), 0, "a Next with nothing to do");
+  assert.equal(await doneStrip.locator(".dj-next").count(), 0, "an empty Next slot is drawn");
+  await page.goto(`${BASE}/dashboard/contracts/con_tr_au2`);
+  const zeroStrip = page.getByTestId("deal-journey");
+  assert.equal((await zeroStrip.getByTestId("journey-next").textContent()).trim(), "Send deposit invoice");
+  await zeroStrip.getByTestId("journey-next").click();
+  await zeroStrip.getByTestId("deposit-invoice-link").waitFor();
+  const stamped = (await sql(`SELECT id FROM "ContractPayment" WHERE "contractId"='con_tr_au2' AND "invoiceToken" IS NOT NULL`)).rows.map((r) => r.id);
+  assert.deepEqual(stamped, ["cp_tr_au2b"], "the deposit invoice went on the $0 row");
+  {
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, storageState: await context.storageState() });
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`${BASE}/dashboard/contracts/con_tr_au1`);
+    await phone.getByTestId("deal-journey-summary").waitFor();
+    assert.match(await phone.getByTestId("deal-journey-summary").textContent(), /Step 5 of 5 · Deposit paid/);
+    assert.equal(await phone.locator(".dj-next").count(), 0, "an empty bar is pinned to the foot of the phone");
+    await phoneCtx.close();
+  }
+
   await browser.close();
   console.log(`\nALL ${step} STEPS PASSED · screenshots in ${OUT}`);
 })().catch((error) => {

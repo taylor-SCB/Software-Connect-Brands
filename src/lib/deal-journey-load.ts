@@ -21,7 +21,8 @@ export type JourneyRefs = {
   draftContract: { id: string; number: number } | null;
   sentContract: { id: string; number: number; publicToken: string } | null;
   signedContract: { id: string; number: number } | null;
-  // The first row of the signed contract's payment table, the deposit:
+  // The first row of the signed contract's payment table with money on it,
+  // the deposit:
   // its id for "Send deposit invoice", and its invoice link once sent.
   depositRow: { id: string; invoiceToken: string | null; amountCents: number } | null;
 };
@@ -70,7 +71,10 @@ export async function loadDealJourney(
         updatedAt: true,
         publicToken: true,
         quoteId: true,
+        // The deposit is the first row with money on it (audit, Nov 11,
+        // 2026): a $0 first row can never be invoiced or paid.
         payments: {
+          where: { amountCents: { gt: 0 } },
           orderBy: { position: "asc" },
           take: 1,
           select: { id: true, paidAt: true, invoiceToken: true, amountCents: true },
@@ -102,7 +106,10 @@ export async function loadDealJourney(
     quoteSentAt: quote && quote.status !== "DRAFT" ? quote.sentAt ?? quote.updatedAt : null,
     contractSentAt: earliest([...sent, ...signed].map((contract) => contract.sentAt)) ?? (sent[0] ? sent[0].updatedAt : null),
     signedAt: firstSigned ? firstSigned.signedAt ?? firstSigned.updatedAt : null,
-    depositPaidAt: deposit?.paidAt ?? null,
+    // A signed contract with nothing to collect (no payment rows, or only
+    // $0 ones) has no deposit to wait on: the last step is done when it is
+    // signed, rather than sitting on "Send deposit invoice" for good.
+    depositPaidAt: deposit ? deposit.paidAt : firstSigned ? (firstSigned.signedAt ?? firstSigned.updatedAt) : null,
     quoteDraft: quote?.status === "DRAFT",
     quoteAccepted: quote?.status === "ACCEPTED",
     contractDraft: drafts.length > 0,

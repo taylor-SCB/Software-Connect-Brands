@@ -8,9 +8,12 @@ import type { ActionState } from "@/lib/forms";
 export function SignForm({
   token,
   contactName,
+  sentAt,
 }: {
   token: string;
   contactName: string;
+  // The send this copy belongs to; signContract refuses a stale one.
+  sentAt: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     signContract,
@@ -28,6 +31,7 @@ export function SignForm({
 
       <form action={formAction} className="mt-4 space-y-3">
         <input type="hidden" name="token" value={token} />
+        <input type="hidden" name="sentAt" value={sentAt} />
         <div>
           <label className="label" htmlFor="signerName">
             Full name
