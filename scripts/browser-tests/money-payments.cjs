@@ -414,9 +414,10 @@ async function signAs(browser, token, name) {
 
   log("the dashboard's Owed to you tile adds up every customer");
   await page.goto(`${BASE}/dashboard`);
-  const tile = page.locator("text=Owed to you").locator("xpath=ancestor::*[self::a or self::div][1]");
-  // $1,800 from Harbor plus $750 from the homeowner.
-  assert.match(await tile.textContent(), /\$2,550\.00/);
+  const tile = page.locator('[data-testid=stat-tile][data-label="Owed to you"]');
+  // $1,800 from Harbor plus $750 from the homeowner, in whole dollars as the
+  // money tiles read since the BDR redesign's round 2 (Nov 11, 2026).
+  assert.equal(await tile.locator("p.num").textContent(), "$2,550");
 
   log("the numbers on the page agree with the database");
   const truth = (await sql(

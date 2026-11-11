@@ -957,7 +957,12 @@ let context;
   assert.doesNotMatch(pipelineText, undiscountedTotal, "the undiscounted figure is nowhere on the pipeline");
   await page.goto(`${BASE}/dashboard`);
   await page.getByText(/Welcome back/).waitFor();
-  assert.match(await page.locator("main").textContent(), discountedTotal, "the dashboard's quoted and open-deal figures follow");
+  // The money tiles read whole dollars since the BDR redesign's round 2
+  // (Nov 11, 2026): $13,234.50 shows as $13,235.
+  const whole = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.round(cents / 100));
+  const tile = (label) => page.locator(`[data-testid=stat-tile][data-label="${label}"] p.num`).textContent();
+  assert.equal(await tile("Quoted & sent"), whole(subtotalBefore - tenOff), "the dashboard's Quoted & sent tile follows the discount");
+  assert.equal(await tile("Open pipeline"), whole(subtotalBefore - tenOff), "the dashboard's Open pipeline tile follows the discount");
 
   log("{{quote_total}} merges the discounted total; a money-in contract made from the quote starts with the quote's discount");
   await sql(

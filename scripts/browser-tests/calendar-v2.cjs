@@ -360,8 +360,10 @@ async function closeFilters(page) {
 
   log("changing the quote's valid-until day moves Quote due");
   await page.locator("[name=validUntil]").fill(daysOn(20));
-  await page.locator("[name=validUntil]").locator("xpath=ancestor::form").getByRole("button", { name: /Save/ }).click();
-  await page.getByText("Quote details saved").waitFor();
+  // One Save for the whole quote editor since the BDR redesign's round 2
+  // (Nov 11, 2026): the Quote details card no longer has its own button.
+  await page.getByTestId("quote-save").click();
+  await page.getByText("Quote details saved", { exact: true }).waitFor();
   assert.equal(
     isoOf((await sql(`SELECT "startOn" FROM "CalendarEvent" WHERE "quoteId"='quo_calv2' AND type='Quote due'`)).rows[0].startOn),
     daysOn(20),

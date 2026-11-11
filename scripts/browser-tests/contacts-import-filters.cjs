@@ -62,6 +62,16 @@ function log(msg) {
 async function shot(page, name) {
   await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true });
 }
+// Wait for the page's entrance animations (the dashboard's fade-up moves the
+// page 6px) before measuring anything: a box read mid-transform comes back a
+// hair off (43.99997px for a 44px button). Animations that run forever, like
+// the meter's breathing segment, are left to run.
+async function settle(page) {
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity),
+  );
+}
 async function sql(text, params) {
   const client = new Client({ connectionString: DB });
   await client.connect();
@@ -805,6 +815,7 @@ async function assertMenuInside(page, menu, what) {
   await page.setViewportSize({ width: 390, height: 900 });
   await page.goto(`${BASE}/dashboard/companies`);
   await page.locator("[data-testid=company-card]").first().waitFor();
+  await settle(page);
   const calls = await page.locator("[data-testid=company-card] [data-testid=card-call]").evaluateAll((links) =>
     links.map((a) => ({ height: a.getBoundingClientRect().height, right: a.getBoundingClientRect().right })),
   );
