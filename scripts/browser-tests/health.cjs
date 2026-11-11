@@ -641,6 +641,9 @@ async function contrastReport(page, scope) {
     assert.ok(width <= 390, `${id}: the page is ${width}px wide on a 390px phone`);
   }
   await open(mobile, "hl_many");
+  // Measured once the page's fade-in is over: mid-animation the boxes sit
+  // on a fractional offset and a 48px button reads 47.99997.
+  await settle(mobile);
   const bar = mobile.locator("[data-testid=phone-bar]");
   const barBox = await bar.boundingBox();
   assert.equal(Math.round(barBox.height), 56);

@@ -362,6 +362,9 @@ function backLink(page) {
   await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
   await activityForm.getByRole("button", { name: "Log phone call" }).click();
   await page.locator("#activity").getByText("Walked the site").waitFor();
+  // The sheet moves on to the next step; closing it skips that.
+  await page.keyboard.press("Escape");
+  await activityForm.waitFor({ state: "detached" });
   await page.locator("[data-testid=show-counts]").click();
   const overview = page.locator("[data-testid=activity-overview]");
   assert.ok(await overview.getByText("Today").isVisible());

@@ -406,7 +406,7 @@ async function contrastOf(locator) {
   assert.equal(booked.bookedById, me, "the booker is kept");
   assert.equal(booked.at, `${shift(TODAY, 1)} 14:00`);
   await bookToast.locator("[data-testid=log-toast-undo]").click();
-  await bookToast.getByText("Undone").waitFor();
+  await page.locator("[data-testid=log-toast-words]", { hasText: "Undone" }).waitFor();
   await until(async () => (await status("Contact", "ctc_cp_chase")) === "CONNECTED", "Chase back to Connected");
   assert.equal(await status("Contact", "ctc_cp_olivia"), "CONTACTED", "Olivia back too");
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"='opp_cp_iron'`)).n, 1, "the booked meeting is gone");
