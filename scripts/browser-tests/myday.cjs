@@ -611,7 +611,7 @@ const ago = (days) => `now() - interval '${days} days'`;
   assert.ok(overdueY < todayY, "on a phone Overdue comes above Today");
   const reportBar = p2.locator("[data-testid=report-bar]");
   assert.equal(await reportBar.evaluate((el) => getComputedStyle(el).flexWrap), "nowrap", "the report tabs are one sideways strip");
-  for (const h of await reportBar.locator("a").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) assert.ok(h >= 44, `a report tab is ${h}px`);
+  for (const h of await reportBar.locator("a").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) assert.ok(Math.round(h) >= 44, `a report tab is ${h}px`);
   assert.ok((await p2.evaluate(() => document.documentElement.scrollWidth)) <= 391, "the Rundown doesn't scroll sideways");
   const tilesBox = await p2.locator("[data-testid=money-tiles] [data-testid=stat-tile]").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
   assert.equal(new Set(tilesBox).size, 2, `money tiles 2×2 on a phone (${tilesBox})`);

@@ -124,3 +124,65 @@ Also fixed: the calendar's count line no longer says "with the filters on" when 
 - `scripts/browser-tests/calendar-v2.cjs`, `companies-contacts.cjs` and `load-test.cjs`
 
 **Note for CLAUDE.md:** a calendar filter other than Users ignores the remembered Mine. Adding a type or company filter shows the whole team's matches, so a link someone sends keeps meaning the same thing.
+
+## Round 2
+
+Built on `claude/sprint-today`, after fast-forwarding onto `claude/sprint-final` (c1f64d0) and applying its migrations. The numbers are the sprint lead's.
+
+1. **The one meeting rule.**
+   - Up next asks `waitingMeetings(orgId, {contactIds})`. A row is "Met <day> — how did it go?" only when `due` names a meeting, and anything booked `ahead` takes the row off.
+   - Each row carries `opportunityId` (toAnswer, else ahead, else last), and the log and booking sheets are handed it.
+   - The Meetings card lists the booked meetings (OpportunityMeeting) on the rep's tiles or booked by them. "Held / No-show" shows only on the tile's `toAnswer` (`waitingMeetings({opportunityIds})`) and goes through `markMeetingHeld` / `markMeetingNoShow`. A bare Meeting entry with no booked meeting behind it is still ticked through `completeEventWithLog`.
+   - Every tile link uses `pipelineHref`.
+2. **Book on Up next rows.** Each row has a Book button that opens the shared Book meeting sheet (`useBookMeeting`, offered the row's tile). The Up next action buttons are now Call · Text · Book · Log.
+3. **Daily Rundown rows.**
+   - Every calendar, overdue and gone-quiet row links to its person (or company) and has a Call button (`tel:`, mobile else phone).
+   - Done entries fold into a collapsed "Done today (n)" under the open ones (`DailyReport.calendar.doneItems`).
+   - Gone quiet names the Primary POC, with company · rep under it (`quiet.items[].person/company`). Its "See all" opens `/dashboard/deals?quiet=1`.
+   - Overdue's "See all n" opens the calendar's Agenda (Overdue on top).
+4. **Money tiles.** Four tiles in whole dollars: Owed to you, Quoted & sent, Awaiting signature, Open pipeline. Awaiting signature is now a dollar figure: a contract's own rows, or its quote when it has none; purchase orders are left out. Active jobs, Contacts and Signed sit behind "More numbers". The grid is 2×2 on a phone.
+5. **The Rundown write-up** is one headline sentence plus "Read more" (`NarrativeCard fold`). All the words are still in the page.
+6. **The Rundown on a phone.** Overdue sits above Today (`max-md:-order-1`). The report tabs are one sideways segmented strip with 44px targets.
+7. **A Member's Rundown opens on Me.** "Whole team" is `rep=all` in the address bar (the rep picker's value for Members). Owners and Admins are unchanged.
+8. **Only teammates who sell.** `sellingReps()` in `src/lib/reports/daily.ts` returns those who own records or logged a touch in the last 30 days. Team today and the Activity report's Rep rows use it, so a teammate with neither gets no zero row and the write-up never calls them "the fewest".
+9. **Recent activity is one line per save** (`COALESCE(batchId, id)`, touches dated now or earlier). The line names the people, then the company and who logged it ("Mia Meeting, Tom Talked · Redbud Dental · Marcus Reed"), and the words go under it.
+10. **My day's "Team & money"** holds the Daily Rundown's full write-up (not folded), the tiles and Recent activity.
+11. **Remembered choices.**
+    - `uiPrefs.calendar.view` (agenda / week / month): a bare `/dashboard/calendar` opens on it. The Team week isn't remembered, and a phone only swaps to the Agenda when nothing is remembered.
+    - `uiPrefs.myday.teamMoney`: whether "Team & money" is open (`RememberedDetails`).
+12. **Greeting Rewrite (AI).** Shown only when `ANTHROPIC_API_KEY` is set, on your own My day. It calls `rewriteGreeting()` in `my-day/actions.ts`, which goes through `askClaude` as `MY_DAY_GREETING` (200 a day, added to `AI_DAILY_CAPS`). Claude is given only the facts, as JSON. Any number in the answer that isn't in the facts gets the answer thrown out. The reworded sentence is shown in place, never stored, and "Use the plain one" puts the rule-written sentence back.
+
+**Suites.**
+- `myday.cjs` is 29 steps. The Round 2 steps are titled "Sprint R2: …". Its seed now books Mia's meeting as a real OpportunityMeeting, because the one rule ignores bare calendar entries.
+- `reports.cjs`: the calendar card's done entries are checked under "Done today", and Recent activity is counted per save.
+- `ai-assist.cjs` gains a greeting step: Rewrite, a made-up number refused, the plain one back, and the AI request counter.
+
+**Files touched outside mine:**
+- `src/app/dashboard/reports/report-views.tsx` (the Daily view)
+- `src/app/dashboard/reports/narrative-card.tsx` (`fold`)
+- `src/lib/reports/activity.ts` (rep rows)
+- `src/lib/ai-assist.ts` (one cap)
+- `scripts/browser-tests/reports.cjs` and `ai-assist.cjs`
+
+**Notes for CLAUDE.md:**
+- A Member's Daily Rundown is "Me" unless the address says `rep=all`.
+- "Awaiting signature" is dollars now.
+- `sellingReps()` is the one definition of who counts as a rep on the reports.
+
+**Results** (production build): all pass, and tsc and next build are clean.
+
+| Suite | Result |
+|---|---|
+| myday | 29 steps |
+| calendar | 46 |
+| calendar-v2 | 42 |
+| crews-time | 34 |
+| looks | 31 |
+| overlay-readability | 16 |
+| login-case | passed |
+| companies-contacts | 26 |
+| reports | 47 |
+| ai-assist | 27 |
+| load-test | 11 |
+
+Load test at 200,000 contacts: My day 0.48s, Daily Rundown with Team today 0.39s, Agenda 0.19s. The slowest page in the run was 0.98s, inside the 2s budget.
