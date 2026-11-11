@@ -643,7 +643,7 @@ async function logWith(page, fields, { body = "", type } = {}) {
   assert.equal(connectedRows.length, 2, "Tara and Moe");
   assert.equal(await page.locator("[data-testid=contact-row]").count(), 2, "and only they are listed");
   for (const name of connectedRows) assert.match(connectedNames, new RegExp(name), `${name} is on the Connected filter`);
-  await page.getByTestId("filter-status").click();
+  await openFilters(page); await page.getByTestId("filter-status").click();
   const statusList = page.locator('[role=listbox][aria-label="Status"]');
   await statusList.waitFor();
   const labels = (await statusList.locator("label span").allTextContents()).map((t) => t.trim());
@@ -667,3 +667,20 @@ async function logWith(page, fields, { body = "", type } = {}) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// The list filters sit in the Filters panel since the BDR redesign (Nov 11,
+// 2026): open it when it isn't already.
+async function openFilters(p) {
+  // Only the Contacts and Companies lists have the panel (the Pipeline's
+  // bar keeps its filters on the bar).
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}
+// Import CSV, Merge and Fill in missing sit under "Clean up" (Nov 11, 2026).
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

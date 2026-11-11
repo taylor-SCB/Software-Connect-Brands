@@ -98,7 +98,7 @@ function backLink(page) {
 
   log("Companies is in the sidebar and starts empty");
   await page.locator("aside").getByRole("link", { name: "Companies" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   await page.getByText("No companies yet").waitFor();
 
   log("create a contact, typing a brand-new company into the picker, with title / birthday / city / state");
@@ -171,7 +171,8 @@ function backLink(page) {
   await page.goto(`${BASE}/dashboard/companies`);
   const spiritRow = page.locator("tr", { hasText: "Spirit Communications" });
   await spiritRow.waitFor();
-  assert.ok(await spiritRow.getByRole("link", { name: "1" }).isVisible(), "people count 1");
+  // The people count is the Reached column's "of 1" since Nov 11, 2026.
+  assert.equal((await spiritRow.getByTestId("reached").textContent()).trim(), "0 of 1 talked to", "people count 1");
   await spiritRow.getByRole("link", { name: "Spirit Communications" }).click();
   await page.waitForURL(/\/dashboard\/companies\/[a-z0-9]+$/);
   const spiritUrl = page.url();
@@ -517,7 +518,7 @@ function backLink(page) {
   await page.getByText("already exists").waitFor();
   await page.goto(`${spiritUrl}/edit`);
   await page.getByRole("button", { name: "Delete company" }).click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   await page.goto(dannyUrl);
   await page.getByRole("heading", { name: "Danny Ortiz" }).waitFor();
   assert.equal(await page.locator("dl").first().getByRole("link", { name: "Spirit Communications" }).count(), 0);

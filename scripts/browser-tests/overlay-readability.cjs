@@ -380,8 +380,10 @@ async function withOldGlass(page, selector, body) {
   log("filter menus on the Contacts list, both the checklist and the search kind");
   await page.goto(`${BASE}/dashboard/contacts`);
 
-  await page.locator('[data-testid="filter-state"]').click();
-  const statePanel = page.locator(".popover").first();
+  await openFilters(page);
+
+  await page.locator('[data-testid=\"filter-state\"]').click();
+  const statePanel = page.getByTestId("filter-state-menu");
   await statePanel.getByText("TX").first().waitFor();
   await assertOpaqueSurface(statePanel, "State filter menu");
   const stateBleed = await bleedThrough(page, statePanel, "04-state-filter");
@@ -390,8 +392,9 @@ async function withOldGlass(page, selector, body) {
   await page.keyboard.press("Escape");
 
   // The one with a search box inside it — the shape that was reported.
-  await page.locator('[data-testid="filter-company"]').click();
-  const companyFilter = page.locator(".popover").first();
+  await openFilters(page);
+  await page.locator('[data-testid=\"filter-company\"]').click();
+  const companyFilter = page.getByTestId("filter-company-menu");
   await companyFilter.getByPlaceholder("Search companies…").fill("a");
   await companyFilter.getByText("Asset Living").waitFor();
   await assertOpaqueSurface(companyFilter, "Company filter menu");
@@ -401,7 +404,7 @@ async function withOldGlass(page, selector, body) {
   await page.keyboard.press("Escape");
 
   log("a dialog over the page");
-  await page.getByRole("button", { name: /Import CSV/i }).first().click();
+  await (await fromCleanUp(page, "import")).click();
   const dialog = page.locator('[role="dialog"]');
   await dialog.waitFor();
   await assertOpaqueSurface(dialog, "Import CSV dialog");
@@ -504,21 +507,23 @@ async function withOldGlass(page, selector, body) {
     assert.equal(await bleedThrough(page, dealPanel, `${look}-03-deal-picker`), 0, `${look}: deal picker is see-through`);
 
     await page.goto(`${BASE}/dashboard/contacts`);
-    await page.locator('[data-testid="filter-state"]').click();
-    const lookState = page.locator(".popover").first();
+    await openFilters(page);
+    await page.locator('[data-testid=\"filter-state\"]').click();
+    const lookState = page.getByTestId("filter-state-menu");
     await lookState.getByText("TX").first().waitFor();
     await assertOpaqueSurface(lookState, `${look} State filter menu`);
     assert.equal(await bleedThrough(page, lookState, `${look}-04-state-filter`), 0, `${look}: State filter menu is see-through`);
     await shot(page, `${look}-05-state-filter-open`);
     await page.keyboard.press("Escape");
-    await page.locator('[data-testid="filter-company"]').click();
-    const lookCompany = page.locator(".popover").first();
+    await openFilters(page);
+    await page.locator('[data-testid=\"filter-company\"]').click();
+    const lookCompany = page.getByTestId("filter-company-menu");
     await lookCompany.getByPlaceholder("Search companies…").fill("a");
     await lookCompany.getByText("Asset Living").waitFor();
     await assertOpaqueSurface(lookCompany, `${look} Company filter menu`);
     assert.equal(await bleedThrough(page, lookCompany, `${look}-06-company-filter`), 0, `${look}: Company filter menu is see-through`);
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: /Import CSV/i }).first().click();
+    await (await fromCleanUp(page, "import")).click();
     await dialog.waitFor();
     await assertOpaqueSurface(dialog, `${look} Import CSV dialog`);
     assert.equal(await bleedThrough(page, dialog, `${look}-08-dialog`), 0, `${look}: Import CSV dialog is see-through`);
@@ -559,9 +564,18 @@ async function withOldGlass(page, selector, body) {
   // "+ Include multiple contacts" scrolled the page to find itself. Each
   // window is opened from the top of its page, as a person would.
   const DIALOGS = [
-    ["Import CSV", "/dashboard/contacts", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
-    ["Merge Contacts", "/dashboard/contacts", (p) => p.getByTestId("merge-open").first()],
-    ["Email (Contacts list)", "/dashboard/contacts", (p) => p.getByRole("button", { name: /^Email$/ }).first()],
+    // Import CSV and Merge sit under "Clean up" since Nov 11, 2026; on a
+    // phone the list's Email does too.
+    ["Import CSV", "/dashboard/contacts", (p) => fromCleanUp(p, "import")],
+    ["Merge Contacts", "/dashboard/contacts", (p) => fromCleanUp(p, "merge")],
+    [
+      "Email (Contacts list)",
+      "/dashboard/contacts",
+      async (p) => {
+        const email = p.getByRole("button", { name: /^Email$/ }).first();
+        return (await email.isVisible()) ? email : fromCleanUp(p, "email");
+      },
+    ],
     ["Email (a contact)", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByRole("button", { name: /^Email$/ }).first()],
     ["Additional Account", `/dashboard/contacts/${contactIds[0]}`, (p) => p.getByTestId("additional-account")],
     // Drawn inside the Log activity card: in Dark that card's glass blur
@@ -575,7 +589,7 @@ async function withOldGlass(page, selector, body) {
         return p.getByRole("button", { name: "+ others" });
       },
     ],
-    ["Import CSV (Companies)", "/dashboard/companies", (p) => p.getByRole("button", { name: /Import CSV/i }).first()],
+    ["Import CSV (Companies)", "/dashboard/companies", (p) => fromCleanUp(p, "import")],
   ];
   const openFromTop = async (p, url, button) => {
     await p.goto(`${BASE}${url}`);
@@ -615,7 +629,7 @@ async function withOldGlass(page, selector, body) {
     await page.reload();
     await page.addStyleTag({ content: ".fade-up { animation-fill-mode: both !important; } .fade-up::after { content: ''; display: block; height: 3000px; }" });
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".fade-up")).transform !== "none");
-    await page.getByRole("button", { name: /Import CSV/i }).first().click();
+    await (await fromCleanUp(page, "import")).click();
     await page.locator(".modal-backdrop").waitFor();
     const old = await dialogPlacement(page);
     assert.throws(() => assertOnScreen(old, "old fade-in"), /not the screen|off the screen/, `the check does not catch the old fill mode (${JSON.stringify(old)})`);
@@ -638,3 +652,20 @@ async function withOldGlass(page, selector, body) {
   console.error("\nFAILED:", err.message);
   process.exit(1);
 });
+
+// Opens "Clean up" and hands back one of its items (Nov 11, 2026).
+async function fromCleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  const entry = p.getByTestId(`cleanup-${item}`);
+  await entry.waitFor();
+  return entry;
+}
+
+// The list filters sit in the Filters panel since Nov 11, 2026.
+async function openFilters(p) {
+  if ((await p.getByTestId("filters-toggle").count()) === 0) return;
+  const panel = p.getByTestId("filters-panel");
+  if (await panel.isVisible().catch(() => false)) return;
+  await p.getByTestId("filters-toggle").click();
+  await panel.waitFor();
+}

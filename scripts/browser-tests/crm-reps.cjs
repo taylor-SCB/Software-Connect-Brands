@@ -153,12 +153,14 @@ async function login(page, email) {
   await page.goto(`${BASE}/dashboard/contacts?q=alex.morgan%40gmail`);
   await page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).waitFor();
 
-  log("before anyone reaches out, Last Contacted By is the first column and reads Not yet");
+  // Last Contacted By folded into the Pulse cell, right after the person,
+  // in the BDR redesign (Nov 11, 2026).
+  log("before anyone reaches out, the Pulse sits next to the person and reads Not tried yet");
   await page.goto(`${BASE}/dashboard/contacts`);
   const headers = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-  assert.equal(headers[1], "Last Contacted By", `first column was ${headers[1]}`);
+  assert.deepEqual(headers.slice(1, 3), ["Person", "Pulse"], `first columns were ${headers.slice(1, 3)}`);
   const alexRow = page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" });
-  assert.ok(await alexRow.getByText("Not yet").isVisible());
+  assert.equal((await alexRow.locator("[data-testid=pulse-caption]").textContent()).trim(), "Not tried yet");
 
   // Nic signs in on his own browser and does the work.
   const nicContext = await browser.newContext({ viewport: { width: 1360, height: 900 } });
@@ -177,16 +179,17 @@ async function login(page, email) {
 
   log("Contacts and Companies both say Nic reached out, and when");
   await page.goto(`${BASE}/dashboard/contacts`);
-  const alexCell = page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=last-contacted]");
-  await alexCell.getByText("Nic Rivera").waitFor();
-  assert.match(await alexCell.textContent(), /\d{4}/, "a date under the name");
+  // Alex has no rep, so the Pulse names who touched last, with how long ago.
+  const alexCell = page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=pulse-caption]");
+  await alexCell.getByText(/Nic$/).waitFor();
+  assert.match(await alexCell.textContent(), /^1 try · (0d|today)/i, "how many tries and when, before the name");
   await page.goto(`${BASE}/dashboard/companies`);
   const companyHeaders = (await page.locator("table thead th").allTextContents()).map((t) => t.trim());
-  assert.equal(companyHeaders[1], "Last Contacted By");
+  assert.deepEqual(companyHeaders.slice(1, 6), ["Company", "Pulse", "Reached", "Last touch", "Next step"]);
   await page
     .locator("[data-testid=company-row]", { hasText: "Rivera Ventures" })
-    .locator("[data-testid=last-contacted]")
-    .getByText("Nic Rivera")
+    .locator("[data-testid=last-touch]")
+    .getByText("Today · Nic")
     .waitFor();
   await shot(page, "03-companies-last-contacted");
 
@@ -196,7 +199,7 @@ async function login(page, email) {
     [org, alexId, taylor.id],
   );
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=last-contacted]").getByText("Nic Rivera").waitFor();
+  await page.locator("[data-testid=contact-row]", { hasText: "Alex Morgan" }).locator("[data-testid=pulse-caption]").getByText(/Nic$/).waitFor();
   await sql(`DELETE FROM "Activity" WHERE id = 'act_crmreps_future'`);
 
   log("Nic adds a deal; the pipeline tile names him as the rep");
@@ -250,7 +253,7 @@ async function login(page, email) {
   await page.getByRole("button", { name: "Cancel" }).click();
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
-  await page.waitForURL(/\/dashboard\/contacts$/);
+  await page.waitForURL(/\/dashboard\/contacts(\?scope=\w+)?$/);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Contact" WHERE id = $1`, [throwawayId])).rows[0].n, 0);
 
   log("Delete in the company page header keeps its people");
@@ -260,7 +263,7 @@ async function login(page, email) {
   const companyId = page.url().split("/").pop();
   await page.locator("[data-testid=header-delete]").click();
   await page.locator("[data-testid=header-delete-yes]").click();
-  await page.waitForURL(/\/dashboard\/companies$/);
+  await page.waitForURL(/\/dashboard\/companies(\?scope=\w+)?$/);
   assert.equal((await sql(`SELECT count(*)::int AS n FROM "Company" WHERE id = $1`, [companyId])).rows[0].n, 0);
   assert.equal((await sql(`SELECT "companyId" FROM "Contact" WHERE id = $1`, [alexId])).rows[0].companyId, null, "Alex stays, with no company");
 
