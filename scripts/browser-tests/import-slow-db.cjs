@@ -80,7 +80,7 @@ async function sql(text, params) {
   const csvPath = path.join(OUT, "slow.csv");
   fs.writeFileSync(csvPath, lines.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-start").click();
   const started = Date.now();
@@ -96,7 +96,7 @@ async function sql(text, params) {
 
   log("re-importing the same file updates all of them, still no error");
   await page.getByTestId("import-done").click();
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   await page.getByTestId("import-file").setInputFiles(csvPath);
   const again = Date.now();
   await page.getByTestId("import-start").click();
@@ -112,3 +112,9 @@ async function sql(text, params) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// Import CSV sits under "Clean up" since Nov 11, 2026.
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}

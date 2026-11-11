@@ -401,7 +401,7 @@ async function withOldGlass(page, selector, body) {
   await page.keyboard.press("Escape");
 
   log("a dialog over the page");
-  await page.getByRole("button", { name: /Import CSV/i }).first().click();
+  await (await fromCleanUp(page, "import")).click();
   const dialog = page.locator('[role="dialog"]');
   await dialog.waitFor();
   await assertOpaqueSurface(dialog, "Import CSV dialog");
@@ -518,7 +518,7 @@ async function withOldGlass(page, selector, body) {
     await assertOpaqueSurface(lookCompany, `${look} Company filter menu`);
     assert.equal(await bleedThrough(page, lookCompany, `${look}-06-company-filter`), 0, `${look}: Company filter menu is see-through`);
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: /Import CSV/i }).first().click();
+    await (await fromCleanUp(page, "import")).click();
     await dialog.waitFor();
     await assertOpaqueSurface(dialog, `${look} Import CSV dialog`);
     assert.equal(await bleedThrough(page, dialog, `${look}-08-dialog`), 0, `${look}: Import CSV dialog is see-through`);
@@ -624,7 +624,7 @@ async function withOldGlass(page, selector, body) {
     await page.reload();
     await page.addStyleTag({ content: ".fade-up { animation-fill-mode: both !important; } .fade-up::after { content: ''; display: block; height: 3000px; }" });
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".fade-up")).transform !== "none");
-    await page.getByRole("button", { name: /Import CSV/i }).first().click();
+    await (await fromCleanUp(page, "import")).click();
     await page.locator(".modal-backdrop").waitFor();
     const old = await dialogPlacement(page);
     assert.throws(() => assertOnScreen(old, "old fade-in"), /not the screen|off the screen/, `the check does not catch the old fill mode (${JSON.stringify(old)})`);

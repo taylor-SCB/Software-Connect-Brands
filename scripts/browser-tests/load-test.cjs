@@ -241,6 +241,45 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     console.log(`     ${seconds.toFixed(2)}s  job title choices → ${rows.length} rows`);
     assert.ok(rows.length > 0 && seconds <= 1, `job title choices took ${seconds.toFixed(2)}s`);
   }
+  log("Sprint: the lists' presets, sorts and scopes at 200,000 contacts, with 3,000 calendar entries late, ahead and this week");
+  await sql(
+    `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "contactId", "updatedAt")
+     SELECT 'lev' || lpad(g::text, 8, '0'), $1, 'Seeded', (ARRAY['Call','Meeting','Email'])[1 + g % 3],
+       current_date + ((g % 21) - 10), 'lp' || lpad((g * 61)::text, 8, '0'), now()
+     FROM generate_series(1, 3000) g ON CONFLICT DO NOTHING`,
+    [org],
+  );
+  await sql(`UPDATE "Contact" SET status = (ARRAY['NOT_ACTIONED','CONTACTED','CONNECTED','INTERESTED','MEETING_SET']::"ContactStatus"[])[1 + (right(id, 2)::int % 5)] WHERE "organizationId" = $1`, [org]);
+  await sql(`ANALYZE "CalendarEvent"; ANALYZE "Contact";`);
+  for (const [label, url, ready] of [
+    ["Contacts My call list (Mine)", "/dashboard/contacts?scope=mine&preset=call", "[data-testid=contact-row]"],
+    ["Contacts My call list (Everyone) — the health sort, late follow-ups first", "/dashboard/contacts?scope=all&preset=call", "[data-testid=contact-row]"],
+    ["Contacts My call list, page 50", "/dashboard/contacts?scope=all&preset=call&page=50", "[data-testid=contact-row]"],
+    ["Contacts Never touched", "/dashboard/contacts?scope=all&preset=never", "[data-testid=contact-row]"],
+    ["Contacts Talked — no meeting", "/dashboard/contacts?scope=all&preset=talked", "[data-testid=contact-row]"],
+    ["Contacts Meetings this week", "/dashboard/contacts?scope=all&preset=week", "h1"],
+    ["Contacts Unowned", "/dashboard/contacts?scope=unowned", "[data-testid=contact-row]"],
+    ["Contacts sorted Oldest touch first (late first)", "/dashboard/contacts?scope=all&sort=touch", "[data-testid=contact-row]"],
+    ["Contacts sorted Recently touched", "/dashboard/contacts?scope=all&sort=recent", "[data-testid=contact-row]"],
+    ["Contacts sorted Name", "/dashboard/contacts?scope=all&sort=name", "[data-testid=contact-row]"],
+    ["Contacts sorted Recently edited", "/dashboard/contacts?scope=all&sort=edited", "[data-testid=contact-row]"],
+    ["Contacts Not connected in 30 days", "/dashboard/contacts?scope=all&act=nc30", "[data-testid=contact-row]"],
+    ["Contacts Never connected", "/dashboard/contacts?scope=all&act=nconn", "[data-testid=contact-row]"],
+    ["Contacts with every extra column", "/dashboard/contacts?scope=all&per=100", "[data-testid=contact-row]"],
+    ["Companies My accounts", "/dashboard/companies?scope=mine&preset=accounts", "h1"],
+    ["Companies Going quiet", "/dashboard/companies?scope=all&preset=quiet", "[data-testid=company-row]"],
+    ["Companies Talked — no meeting", "/dashboard/companies?scope=all&preset=talked", "h1"],
+    ["Companies Never touched", "/dashboard/companies?scope=all&preset=never", "h1"],
+    ["Companies sorted Oldest touch first", "/dashboard/companies?scope=all&sort=touch", "[data-testid=company-row]"],
+    ["Companies sorted Name", "/dashboard/companies?scope=all&sort=name", "[data-testid=company-row]"],
+  ]) {
+    if (label === "Contacts with every extra column")
+      await sql(`UPDATE "User" SET "uiPrefs" = $2::jsonb WHERE id = $1`, [ownerId, JSON.stringify({ "contacts.columns": ["email", "phone2", "location", "industry", "notes", "marketing", "added", "addedBy", "status"] })]);
+    await timed(page, label, `${BASE}${url}`, ready);
+  }
+  await sql(`UPDATE "User" SET "uiPrefs" = NULL WHERE id = $1`, [ownerId]);
+  await sql(`DELETE FROM "CalendarEvent" WHERE "organizationId" = $1 AND id LIKE 'lev%'`, [org]);
+
   log("bulk assign the first 1,000 of every Unassigned contact in one go");
   await page.goto(`${BASE}/dashboard/contacts?rep=none`);
   await page.getByTestId("page-check").check();
@@ -337,7 +376,7 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   const csvPath = path.join(OUT, "load-import.csv");
   fs.writeFileSync(csvPath, lines.join("\r\n") + "\r\n");
   await page.goto(`${BASE}/dashboard/contacts`);
-  await page.getByTestId("import-csv").click();
+  await cleanUp(page, "import");
   const readStart = Date.now();
   await page.getByTestId("import-file").setInputFiles(csvPath);
   await page.getByTestId("import-summary").waitFor({ timeout: 120000 });
@@ -365,3 +404,9 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   console.error("\nFAILED at step", step, "\n", err);
   process.exit(1);
 });
+
+// Import CSV sits under "Clean up" since Nov 11, 2026.
+async function cleanUp(p, item) {
+  await p.getByTestId("cleanup").click();
+  await p.getByTestId(`cleanup-${item}`).click();
+}
