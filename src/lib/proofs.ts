@@ -846,9 +846,18 @@ export async function copyEarlierProof(
           select: { id: true },
         });
         await tx.proofPanel.createMany({
-          data: source.panels.map(({ id: _id, versionId: _versionId, placement, ...panel }) => ({
-            ...panel,
-            placement: placement ?? Prisma.JsonNull,
+          data: source.panels.map((panel) => ({
+            position: panel.position,
+            locationOptionId: panel.locationOptionId,
+            locationLabel: panel.locationLabel,
+            artworkId: panel.artworkId,
+            artworkName: panel.artworkName,
+            inkNote: panel.inkNote,
+            baseImageId: panel.baseImageId,
+            baseKind: panel.baseKind,
+            baseColor: panel.baseColor,
+            shownOn: panel.shownOn,
+            placement: panel.placement ?? Prisma.JsonNull,
             versionId: version.id,
           })),
         });
