@@ -12,6 +12,7 @@ import {
   finishProofVersion,
   markProofApproved,
   proofsToSend,
+  nextProofLabel,
   sendProofs,
   setLineProof,
   startProofVersion,
@@ -35,9 +36,11 @@ export async function startProofUpload(quoteId: string, type: string) {
   return startProofVersion(organizationId, userId, parsed.data);
 }
 
+// Ids in a panel may arrive empty (no print location left to pick): the
+// library refuses those in words and deletes the uploaded files.
 const panelSchema = z.object({
-  locationOptionId: id,
-  artworkId: id,
+  locationOptionId: z.string().trim().max(60),
+  artworkId: z.string().trim().max(60),
   baseKind: z.enum(["picture", "plain-front", "plain-back"]),
   baseImageId: id.nullable().optional(),
   baseColor: z.string().max(10).nullable().optional(),
@@ -48,6 +51,8 @@ const finishSchema = z.object({
   quoteId: id,
   proofId: id.nullable(),
   baseVersionId: id.nullable(),
+  baseToken: z.string().max(100).nullable().optional(),
+  expectedNumber: z.number().int().min(1).max(10_000).nullable().optional(),
   productId: id,
   colorOptionId: id.nullable(),
   lineIds: z.array(id).min(1).max(200),
@@ -64,6 +69,12 @@ export async function finishProofUpload(input: z.input<typeof finishSchema>) {
   const result = await finishProofVersion(organizationId, userId, parsed.data as FinishProofInput);
   if ("ok" in result) refreshQuote(parsed.data.quoteId);
   return result;
+}
+
+export async function nextProofLabelAction(quoteId: string, proofId: string | null) {
+  const { organizationId } = await requireSession();
+  if (!id.safeParse(quoteId).success || (proofId !== null && !id.safeParse(proofId).success)) return null;
+  return nextProofLabel(organizationId, quoteId, proofId);
 }
 
 export async function discardProofDraft(versionId: string) {

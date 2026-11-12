@@ -9,6 +9,7 @@ import {
   copyEarlierProofAction,
   earlierProofsAction,
   finishProofUpload,
+  nextProofLabelAction,
   setLineProofAction,
   startProofUpload,
 } from "@/app/dashboard/proofs/actions";
@@ -43,6 +44,8 @@ type PanelState = {
   baseColor: string;
   placement: Placement;
 };
+
+const NO_LOCATIONS = "Every print location is retired. Bring one back on Products → Labels & Units (Print location) first.";
 
 let panelCounter = 0;
 const nextKey = () => `panel-${(panelCounter += 1)}`;
@@ -146,6 +149,9 @@ function PanelPreview({
           role="slider"
           tabIndex={0}
           aria-label="Artwork position. Arrow keys move it, plus and minus size it."
+          aria-valuenow={Math.round(x * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
           aria-valuetext={`${Math.round(x * 100)}% across, ${Math.round(y * 100)}% down, ${Math.round(w * 100)}% wide`}
           className="absolute cursor-move outline outline-1 outline-dashed outline-[rgba(37,99,235,0.8)] focus-visible:outline-2"
           style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` }}
@@ -198,7 +204,7 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
     );
     for (const panel of newest?.panels ?? []) {
       if (panel.baseImageId && panel.baseImageToken && !list.some((picture) => picture.id === panel.baseImageId)) {
-        list.push({ id: panel.baseImageId, token: panel.baseImageToken, colorOptionId: null });
+        list.push({ id: panel.baseImageId, token: panel.baseImageToken, colorOptionId: panel.baseImageColorOptionId });
       }
     }
     return list;
@@ -279,7 +285,6 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
 
   const panel = panels[Math.min(active, panels.length - 1)];
   const nextVersion = newest ? (newest.status === "DRAFT" ? newest.version : newest.version + 1) : 1;
-  const number = proof?.number ?? Math.max(0, ...data.proofs.map((item) => item.number)) + 1;
 
   function update(index: number, patch: Partial<PanelState>) {
     setChanged(true);
@@ -333,7 +338,7 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
       });
       return;
     }
-    if (!on && lineIds.size <= 1 && lineIds.has(lineId) && !changed) {
+    if (!on && lineIds.size <= 1 && lineIds.has(lineId)) {
       setError("A proof needs at least one line. Delete the proof instead.");
       return;
     }
@@ -368,8 +373,16 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
       setError("Pick what to draw it on.");
       return;
     }
+    if (panels.some((item) => !item.locationOptionId)) {
+      setError(NO_LOCATIONS);
+      return;
+    }
     try {
       setBusy("Drawing the proof…");
+      // The number and version written on the picture, read fresh: another
+      // tab may have made a proof since this one opened (audit, Nov 12).
+      const label = await nextProofLabelAction(data.quoteId, proof?.id ?? null);
+      if (!label) throw new Error("This proof is gone. Close it and open it again.");
       const drawPanels = await Promise.all(
         panels.map(async (item) => {
           const picture = item.baseKind === "picture" ? pictures.find((p) => p.id === item.baseImageId) : undefined;
@@ -389,7 +402,7 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
           };
         }),
       );
-      const title = `Proof ${number} · v${nextVersion} · ${product?.name ?? "Product"}${colorLabel ? ` · ${colorLabel}` : ""} · QUO-${data.quoteNumber}`;
+      const title = `Proof ${label.number} · v${label.version} · ${product?.name ?? "Product"}${colorLabel ? ` · ${colorLabel}` : ""} · QUO-${data.quoteNumber}`;
       const copies = await proofCopies(drawProof(title, drawPanels));
       setBusy("Saving…");
       const started = await startProofUpload(data.quoteId, copies.type);
@@ -400,6 +413,8 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
         quoteId: data.quoteId,
         proofId: proof?.id ?? null,
         baseVersionId: newest?.id ?? null,
+        baseToken: newest?.token ?? null,
+        expectedNumber: proof ? null : label.number,
         productId,
         colorOptionId,
         lineIds: [...lineIds],
@@ -492,7 +507,7 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
   const baseToken = panel?.baseKind === "picture" ? (pictures.find((p) => p.id === panel.baseImageId)?.token ?? null) : null;
   const chosenPicture = panel?.baseKind === "picture" ? pictures.find((p) => p.id === panel.baseImageId) : undefined;
   const wrongColor = Boolean(chosenPicture && colorOptionId && chosenPicture.colorOptionId !== colorOptionId);
-  const canSave = changed && !busy && !pending && data.storageOn && artworks.length > 0;
+  const canSave = changed && !busy && !pending && data.storageOn && artworks.length > 0 && liveLocations.length > 0;
 
   return (
     <Sheet
@@ -521,6 +536,11 @@ export function ProofSheet({ data, opened, onClose }: { data: ProofPageData; ope
           </p>
         )}
         {!data.storageOn && <p className="text-sm text-[var(--danger)]">File storage isn&apos;t switched on for this site yet.</p>}
+        {liveLocations.length === 0 && (
+          <p className="text-sm text-[var(--danger)]" data-testid="proof-no-locations">
+            {NO_LOCATIONS}
+          </p>
+        )}
 
         <section>
           <h3 className="label mb-2">Print locations</h3>

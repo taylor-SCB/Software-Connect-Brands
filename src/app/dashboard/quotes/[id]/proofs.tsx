@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui";
 import { IconCheck, IconCopy, IconDownload, IconPlus, IconSend } from "@/components/icons";
 import { Sheet } from "@/components/how-did-it-go/sheet";
 import { dialNumber } from "@/lib/dial";
+import { formatDate } from "@/lib/format";
 import { PROOF_STATUS_TEXT, type ProofStatusValue } from "@/lib/proof-shared";
 import type { ProofView, VersionView } from "@/lib/proofs";
 import type { ArtworkOwner, ArtworkView } from "@/lib/artwork";
@@ -41,6 +42,7 @@ export type ProofPageData = {
   quoteLabel: string;
   contact: { name: string; email: string | null; phone: string | null };
   storageOn: boolean;
+  timeZone: string;
   colorGroupId: string | null;
   proofs: ProofView[];
   lines: ProofLine[];
@@ -136,17 +138,19 @@ export function LineProofChip({
   );
 }
 
-function when(iso: string | null) {
-  if (!iso) return "";
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+// The workspace's own calendar day, the same on the server and in the
+// browser (a browser's own zone or language made the page disagree with
+// itself; audit, Nov 12).
+function when(iso: string | null, timeZone: string) {
+  return iso ? formatDate(iso, timeZone) : "";
 }
 
-function versionWords(version: VersionView) {
+function versionWords(version: VersionView, timeZone: string) {
   if (version.status === "APPROVED") {
-    return `Approved by ${version.approvedByName ?? "them"}${version.approvedOffline ? " (marked by the team)" : ""} · ${when(version.approvedAt)}`;
+    return `Approved by ${version.approvedByName ?? "them"}${version.approvedOffline ? " (marked by the team)" : ""} · ${when(version.approvedAt, timeZone)}`;
   }
   if (version.status === "CHANGES") return `${version.changesByName ?? "They"} asked for changes: ${version.changesNote ?? ""}`;
-  if (version.status === "SENT") return `Sent ${when(version.sentAt)} · waiting for their answer`;
+  if (version.status === "SENT") return `Sent ${when(version.sentAt, timeZone)} · waiting for their answer`;
   if (version.status === "SUPERSEDED") return "Replaced by a newer version";
   return version.copiedFrom ? `Draft · ${version.copiedFrom}` : "Draft · not sent yet";
 }
@@ -247,7 +251,7 @@ export function ProofsCard() {
                     {newest && <ProofStatus status={newest.status} />}
                     {newest && newest.version > 1 && <span className="faint text-xs">v{newest.version}</span>}
                   </p>
-                  {newest && <p className="faint text-xs" data-testid="proof-words">{versionWords(newest)}</p>}
+                  {newest && <p className="faint text-xs" data-testid="proof-words">{versionWords(newest, data.timeZone)}</p>}
                   {shown && newest && shown.id !== newest.id && (
                     <p className="faint text-xs">They still see v{shown.version}: {PROOF_STATUS_TEXT[shown.status].toLowerCase()}.</p>
                   )}
@@ -311,7 +315,7 @@ export function ProofsCard() {
                           <a href={`/files/${version.token}`} target="_blank" rel="noopener noreferrer" className="link">
                             v{version.version}
                           </a>
-                          <span className="faint">{versionWords(version)}</span>
+                          <span className="faint">{versionWords(version, data.timeZone)}</span>
                         </li>
                       ))}
                     </ul>

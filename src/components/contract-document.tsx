@@ -216,7 +216,7 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                     data-testid="document-proof-status"
                   >
                     {proof.status === "APPROVED"
-                      ? `Approved by ${proof.approvedByName ?? "the customer"}${proof.approvedAt ? ` · ${formatDay(new Date(proof.approvedAt))}` : ""}`
+                      ? `Approved by ${proof.approvedByName ?? "the customer"}${proof.approvedAt ? ` · ${formatDate(proof.approvedAt, zone)}` : ""}`
                       : proof.status === "SUPERSEDED"
                         ? proof.approvedAt
                           ? `Approved by ${proof.approvedByName ?? "the customer"}, since replaced by a newer version: check before printing`
@@ -225,7 +225,12 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
                   </p>
                 </div>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={`/files/${proof.token}`} alt="" className="mt-2 h-auto max-h-80 w-auto max-w-full rounded border border-[#f3f4f6] bg-white" />
+                <img
+                  src={`/files/${proof.token}?v=doc`}
+                  alt=""
+                  className="mt-2 h-auto max-h-80 w-auto max-w-full rounded border border-[#f3f4f6] bg-white"
+                  data-testid="document-proof-picture"
+                />
                 {proof.covers && <p className="mt-2 text-[0.75rem] text-[#6b7280]">For {proof.covers}</p>}
                 <ul className="mt-1 space-y-0.5 text-[0.78rem]">
                   {proof.panels.map((panel) => (

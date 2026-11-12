@@ -173,6 +173,7 @@ export default async function QuoteBuilderPage({
         phone: quoteRow.contact.mobile || quoteRow.contact.phone,
       },
       storageOn: storageDriver() !== null,
+      timeZone,
       colorGroupId,
       proofs,
       lines: quoteRow.lineItems.flatMap((item) => {

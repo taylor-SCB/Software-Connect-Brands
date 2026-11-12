@@ -8,6 +8,8 @@ type Choice = {
   versionId: string;
   token: string;
   number: number;
+  version: number;
+  current: boolean;
   productName: string;
   colorLabel: string | null;
   status: string;
@@ -15,7 +17,12 @@ type Choice = {
   held: boolean;
 };
 
-const STATUS: Record<string, string> = { SENT: "waiting for their answer", APPROVED: "approved", CHANGES: "changes asked" };
+const STATUS: Record<string, string> = {
+  SENT: "waiting for their answer",
+  APPROVED: "approved",
+  CHANGES: "changes asked",
+  SUPERSEDED: "replaced by a newer version",
+};
 
 // The apparel pack (Nov 12, 2026): which of the quote's proofs this contract
 // carries. The customer's Sales Order and the printer's order take them;
@@ -50,17 +57,20 @@ export function ContractProofsCard({ contractId, choices, editable }: { contract
                   }}
                   data-testid="contract-proof"
                   data-proof={choice.number}
+                  data-version={choice.version}
                 />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/files/${choice.token}?v=thumb`} alt="" className="h-10 w-14 rounded border border-[var(--hairline-2)] bg-white object-contain" />
                 <span className="min-w-0">
                   <span className="block font-medium">
-                    Proof {choice.number} · {choice.productName}
+                    Proof {choice.number}
+                    {choice.version > 1 || !choice.current ? ` (v${choice.version})` : ""} · {choice.productName}
                     {choice.colorLabel ? ` · ${choice.colorLabel}` : ""}
                   </span>
                   <span className="faint block text-xs">
                     {STATUS[choice.status] ?? choice.status.toLowerCase()}
                     {choice.onRows ? " · on this contract's rows" : ""}
+                    {choice.held && !choice.current ? " · on this contract now" : ""}
                   </span>
                 </span>
               </label>

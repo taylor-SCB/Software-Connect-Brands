@@ -92,6 +92,9 @@ export type PanelView = {
   baseKind: BaseKind;
   baseImageId: string | null;
   baseImageToken: string | null;
+  // The base picture's own Color, so a picture since removed from the
+  // product isn't taken for another colour (audit, Nov 12).
+  baseImageColorOptionId: string | null;
   baseColor: string | null;
   shownOn: string | null;
   placement: Placement;
@@ -140,7 +143,7 @@ const PANEL_SELECT = {
   shownOn: true,
   placement: true,
   artwork: { select: { printKey: true } },
-  baseImage: { select: { publicToken: true } },
+  baseImage: { select: { publicToken: true, colorOptionId: true } },
 } as const;
 
 const VERSION_SELECT = {
@@ -191,6 +194,7 @@ function versionView(row: VersionRow): VersionView {
       baseKind: (BASE_KINDS as readonly string[]).includes(panel.baseKind) ? (panel.baseKind as BaseKind) : "plain-front",
       baseImageId: panel.baseImageId,
       baseImageToken: panel.baseImage?.publicToken ?? null,
+      baseImageColorOptionId: panel.baseImage?.colorOptionId ?? null,
       baseColor: panel.baseColor,
       shownOn: panel.shownOn,
       placement: cleanPlacement(panel.placement) ?? { x: 0.35, y: 0.3, w: 0.3, h: 0.3 },
@@ -271,6 +275,22 @@ export async function refreshProofEvents(organizationId: string, quoteId: string
 }
 
 /* ------------------------------- Uploads --------------------------------- */
+
+// What the sheet writes on the picture before it is saved: the proof's
+// number (the next one for a new proof) and its version.
+export async function nextProofLabel(organizationId: string, quoteId: string, proofId: string | null) {
+  if (proofId) {
+    const newest = await prisma.proofVersion.findFirst({
+      where: { proofId, organizationId, proof: { quoteId } },
+      orderBy: { version: "desc" },
+      select: { version: true, status: true, proof: { select: { number: true } } },
+    });
+    if (!newest) return null;
+    return { number: newest.proof.number, version: newest.status === "DRAFT" ? newest.version : newest.version + 1 };
+  }
+  const last = await prisma.proof.aggregate({ where: { quoteId, organizationId }, _max: { number: true } });
+  return { number: (last._max.number ?? 0) + 1, version: 1 };
+}
 
 export type StartedProof =
   | { error: string }
@@ -374,9 +394,14 @@ export type FinishProofInput = {
   quoteId: string;
   // Null for a new proof.
   proofId: string | null;
-  // The newest version the sheet was opened on, so a second tab's save in
-  // between is never written over.
+  // The newest version the sheet was opened on, and its picture's token
+  // (a draft keeps its id but takes a new token on every save), so a second
+  // tab's save in between is never written over.
   baseVersionId: string | null;
+  baseToken?: string | null;
+  // A new proof's number as drawn on its picture: refused if another proof
+  // took it in between, so the picture never names the wrong one.
+  expectedNumber?: number | null;
   productId: string;
   colorOptionId: string | null;
   lineIds: string[];
@@ -565,7 +590,7 @@ export async function finishProofVersion(
               versions: {
                 orderBy: { version: "desc" },
                 take: 1,
-                select: { id: true, version: true, status: true, displayKey: true, thumbKey: true, docKey: true },
+                select: { id: true, version: true, status: true, displayKey: true, thumbKey: true, docKey: true, publicToken: true },
               },
             },
           });
@@ -574,7 +599,10 @@ export async function finishProofVersion(
             throw new Refusal("This proof is for another product or color. Make a new proof.");
           }
           const newest = proof.versions[0];
-          if ((newest?.id ?? null) !== (input.baseVersionId ?? null)) {
+          if (
+            (newest?.id ?? null) !== (input.baseVersionId ?? null) ||
+            (input.baseToken !== undefined && (newest?.publicToken ?? null) !== (input.baseToken ?? null))
+          ) {
             throw new Refusal("Someone else just changed this proof. Close it and open it again.");
           }
           proofId = proof.id;
@@ -597,6 +625,9 @@ export async function finishProofVersion(
           const count = await tx.proof.count({ where: { quoteId: quote.id } });
           if (count >= MAX_PROOFS_PER_QUOTE) throw new Refusal(`${MAX_PROOFS_PER_QUOTE} proofs is the most one quote holds.`);
           const last = await tx.proof.aggregate({ where: { quoteId: quote.id }, _max: { number: true } });
+          if (input.expectedNumber && input.expectedNumber !== (last._max.number ?? 0) + 1) {
+            throw new Refusal("Someone else just made a proof on this quote. Save again.");
+          }
           const made = await tx.proof.create({
             data: {
               organizationId,
@@ -635,6 +666,9 @@ export async function finishProofVersion(
     throw error;
   }
   if (replaced) await deleteUnheldFiles(driver, [replaced]);
+  // Lines it took from another proof can leave that one with nothing on the
+  // order (audit, Nov 12).
+  await refreshProofEvents(organizationId, quote.id);
   return { ok: true, ...result };
 }
 
@@ -655,6 +689,7 @@ export async function discardDraft(organizationId: string, versionId: string) {
     if (!left) await tx.proof.deleteMany({ where: { id: version.proofId } });
   });
   await deleteUnheldFiles(storageDriver(), [version]);
+  if (quoteId) await refreshProofEvents(organizationId, quoteId);
   return { ok: true as const, quoteId };
 }
 
@@ -676,6 +711,7 @@ export async function setLineProof(organizationId: string, lineId: string, proof
     if (!keyMatches(line, proof, colorGroupId)) return { error: "That proof is for another product or color." };
   }
   await prisma.quoteLineItem.update({ where: { id: line.id }, data: { proofId } });
+  await refreshProofEvents(organizationId, line.quoteId);
   return { ok: true as const, quoteId: line.quoteId };
 }
 
@@ -723,6 +759,10 @@ export async function syncLineProofs(organizationId: string, quoteId: string, to
   for (const [proofId, ids] of join) {
     await prisma.quoteLineItem.updateMany({ where: { quoteId, id: { in: ids } }, data: { proofId } });
   }
+  // A proof left with no line (a line deleted, moved or let go) is off the
+  // order: its open "changes" entry goes, and the rest may now all be
+  // approved (audit, Nov 12). Only quotes with proofs get here.
+  await refreshProofEvents(organizationId, quoteId);
 }
 
 /* -------------------------- From an earlier order -------------------------- */
@@ -1249,7 +1289,10 @@ async function coversText(lineIds: string[]) {
 }
 
 // The quote's proofs a contract can carry: every one with a sent version
-// still on a line, and whether the contract's own rows come from it.
+// still on a line (its current version), whether the contract's own rows
+// come from it, and any older version the contract still carries, shown as
+// it is ("replaced by a newer version") rather than as not carried (audit,
+// Nov 12).
 export async function contractProofChoices(organizationId: string, contractId: string) {
   const contract = await prisma.contract.findFirst({
     where: { id: contractId, organizationId },
@@ -1260,20 +1303,21 @@ export async function contractProofChoices(organizationId: string, contractId: s
   const rows = new Set(contract.lineItems.flatMap((row) => (row.quoteLineItemId ? [row.quoteLineItemId] : [])));
   const held = new Set(contract.proofs.map((row) => row.versionId));
   return proofs.flatMap((proof) => {
-    const version = answerableVersion(proof);
-    if (!version || !proof.lineIds.length) return [];
-    return [
-      {
-        versionId: version.id,
-        token: version.token,
-        number: proof.number,
-        productName: proof.productName,
-        colorLabel: proof.colorLabel,
-        status: version.status,
-        onRows: proof.lineIds.some((id) => rows.has(id)),
-        held: held.has(version.id),
-      },
-    ];
+    const current = proof.lineIds.length ? answerableVersion(proof) : null;
+    const choice = (version: VersionView, isCurrent: boolean) => ({
+      versionId: version.id,
+      token: version.token,
+      number: proof.number,
+      version: version.version,
+      productName: proof.productName,
+      colorLabel: proof.colorLabel,
+      status: version.status,
+      onRows: proof.lineIds.some((id) => rows.has(id)),
+      held: held.has(version.id),
+      current: isCurrent,
+    });
+    const older = proof.versions.filter((version) => held.has(version.id) && version.id !== current?.id).map((version) => choice(version, false));
+    return [...older, ...(current ? [choice(current, true)] : [])];
   });
 }
 
@@ -1290,10 +1334,11 @@ export async function attachContractProofs(organizationId: string, contractId: s
   if (contract.status !== "DRAFT") return { error: "Proofs change only while the contract is a draft. Pull it back to draft first." };
   if (!contract.quoteId) return { error: "This contract wasn't made from a quote, so it has no proofs." };
   const choices = await contractProofChoices(organizationId, contract.id);
+  const currentOnes = choices.filter((choice) => choice.current);
   let picked = versionIds
     ? choices.filter((choice) => versionIds.includes(choice.versionId))
-    : choices.filter((choice) => choice.onRows);
-  if (!versionIds && !picked.length) picked = choices;
+    : currentOnes.filter((choice) => choice.onRows);
+  if (!versionIds && !picked.length) picked = currentOnes;
   if (versionIds && picked.length !== new Set(versionIds).size) return { error: "Those proofs changed. Reload the page." };
   const proofs = await quoteProofs(organizationId, contract.quoteId);
   const proofOf = new Map(proofs.flatMap((proof) => proof.versions.map((version) => [version.id, proof] as const)));

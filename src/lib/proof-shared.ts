@@ -4,7 +4,8 @@
 export const MAX_PANELS = 4;
 export const MAX_PROOFS_PER_QUOTE = 100;
 export const MAX_VERSIONS = 20;
-export const PROOF_MAX_BYTES = { display: 2_500_000, thumb: 300_000, doc: 90_000 } as const;
+// The document copy is an 800 px JPEG for contracts and purchase orders.
+export const PROOF_MAX_BYTES = { display: 2_500_000, thumb: 300_000, doc: 240_000 } as const;
 export const PROOF_TYPES = ["image/webp", "image/jpeg"] as const;
 // Each panel is drawn this many pixels square before the copies are made.
 export const PANEL_PX = 1000;

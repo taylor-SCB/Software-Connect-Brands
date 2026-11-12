@@ -15,7 +15,7 @@
  * Runs against a built app started with STORAGE_DRIVER=local and no
  * BLOB_READ_WRITE_TOKEN, ANTHROPIC_API_KEY=test-key and ANTHROPIC_ENDPOINT
  * pointing at the stand-in Claude this suite starts (FAKE_CLAUDE_PORT,
- * default 3998), and a local Postgres that has had `prisma migrate deploy`
+ * default 3995, the "ai" group of run-suites.sh), and a local Postgres that has had `prisma migrate deploy`
  * run against it. It signs up its own workspace and deletes it again on the
  * next run. Never point it at the live database.
  *
@@ -81,6 +81,14 @@ async function settle(page) {
   );
 }
 
+// The sheet moves focus inside itself a frame after it opens; focusing the
+// logo box before that loses the key press to its first button.
+async function nudge(tab, key) {
+  await tab.waitForFunction(() => document.activeElement?.closest("[data-testid=proof-sheet]"));
+  await tab.getByTestId("proof-sheet").getByTestId("proof-artwork-box").focus();
+  await tab.keyboard.press(key);
+}
+
 // A logo drawn in the page: navy and gold on a transparent background.
 async function drawLogo(page, { type = "image/png", w = 600, h = 400, white = false } = {}) {
   const b64 = await page.evaluate(
@@ -137,7 +145,7 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
 
 (async () => {
   await sql(`DELETE FROM "Organization" WHERE slug LIKE $1`, [SLUG]);
-  const claude = await startFakeClaude({ port: Number(process.env.FAKE_CLAUDE_PORT || 3998) });
+  const claude = await startFakeClaude({ port: Number(process.env.FAKE_CLAUDE_PORT || 3995) });
 
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1360, height: 900 }, acceptDownloads: true });
@@ -460,8 +468,7 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   await page.getByTestId("proof-open").first().click();
   await sheet.waitFor();
   await sheet.getByTestId("proof-new-version-note").waitFor();
-  await sheet.getByTestId("proof-artwork-box").focus();
-  await page.keyboard.press("ArrowUp");
+  await nudge(page, "ArrowUp");
   await sheet.getByTestId("proof-save").click();
   await sheet.waitFor({ state: "detached" });
   const [, v2] = await versionsOf(proof1.id);
@@ -560,8 +567,7 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   log("the rep makes version 2 and marks it approved by hand (approved on the phone); the changes entry goes");
   await page.locator('[data-testid=proof-row][data-proof="2"]').getByTestId("proof-open").click();
   await sheet.waitFor();
-  await sheet.getByTestId("proof-artwork-box").focus();
-  await page.keyboard.press("+");
+  await nudge(page, "+");
   await page.keyboard.press("+");
   await sheet.getByTestId("proof-save").click();
   await sheet.waitFor({ state: "detached" });
@@ -700,8 +706,7 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   await settle(page);
   await page.locator('[data-testid=proof-row][data-proof="1"]').getByTestId("proof-open").click();
   await sheet.waitFor();
-  await sheet.getByTestId("proof-artwork-box").focus();
-  await page.keyboard.press("ArrowDown");
+  await nudge(page, "ArrowDown");
   await sheet.getByTestId("proof-save").click();
   await sheet.waitFor({ state: "detached" });
   await page.getByTestId("send-proofs").click();
@@ -855,6 +860,258 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   await shot(phonePage, "07-phone-sheet");
   await phonePage.keyboard.press("Escape");
   await phone.close();
+
+  /* ------------------------------ Audit fixes ------------------------------ */
+  // Nov 12, 2026: thirteen confirmed in the session audit, each checked here.
+  const consoleErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  const q4 = cuid();
+  await sql(
+    `INSERT INTO "Quote" (id, "organizationId", "contactId", "dealId", number, title, "publicToken", "updatedAt") VALUES ($1,$2,$3,$4,1004,'Audit tees',$5,now())`,
+    [q4, org, contactId, dealId, `q${randomBytes(12).toString("hex")}`],
+  );
+  const q4Lines = {};
+  for (const [index, [key, color, colorName, size]] of [
+    ["s", navy, "Navy", "S"],
+    ["m", navy, "Navy", "M"],
+    ["l", navy, "Navy", "L"],
+    ["g", gold, "Gold", "M"],
+  ].entries()) {
+    q4Lines[key] = cuid();
+    await sql(
+      `INSERT INTO "QuoteLineItem" (id, "quoteId", "productId", name, quantity, "unitPriceCents", tag, variations, "variationText", position)
+       VALUES ($1,$2,$3,'Classic Tee',10,1200,'MATERIALS',$4,$5,$6)`,
+      [q4Lines[key], q4, productId, JSON.stringify(lineVariations(color, colorName, size)), `${colorName} · ${size}`, index],
+    );
+  }
+  const q4Proof = async (lineId) => (await sql(`SELECT "proofId" FROM "QuoteLineItem" WHERE id=$1`, [lineId])).rows[0].proofId;
+  const q4Url = `${BASE}/dashboard/quotes/${q4}`;
+
+  log("audit fixes: a line left off a proof stays off when the quote is saved for something else");
+  await page.goto(q4Url);
+  await settle(page);
+  await page.getByTestId("line-row").nth(0).getByTestId("line-proof-add").click();
+  await sheet.waitFor();
+  await sheet.getByTestId("proof-line").nth(2).uncheck();
+  await sheet.locator('[data-testid=proof-artwork][data-name="Lincoln Lions"]').click();
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  const navyProof = await q4Proof(q4Lines.s);
+  assert.ok(navyProof);
+  assert.equal(await q4Proof(q4Lines.l), null);
+  await page.getByLabel("Line 1 quantity").fill("11");
+  await page.getByTestId("quote-save").click();
+  await page.getByTestId("quote-save-status").filter({ hasText: "All changes saved" }).waitFor();
+  assert.equal(await q4Proof(q4Lines.l), null, "the L line was not put back on the proof");
+
+  log("audit fixes: the customer answers one proof of two and can still answer the other; a contract keeps showing the version it carries");
+  await page.getByTestId("line-row").nth(3).getByTestId("line-proof-add").click();
+  await sheet.waitFor();
+  await sheet.locator('[data-testid=proof-artwork][data-name="Lincoln Lions"]').click();
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  const goldProof = await q4Proof(q4Lines.g);
+  await page.getByTestId("send-proofs").click();
+  await sendSheet.getByTestId("send-proofs-list").waitFor();
+  await sendSheet.getByTestId("send-proofs-mark").click();
+  await sendSheet.waitFor({ state: "detached" });
+  // A draft contract on this quote carrying both proofs as sent.
+  const q4Contract = cuid();
+  await sql(
+    `INSERT INTO "Contract" (id, "organizationId", "contactId", "companyId", "dealId", "quoteId", number, title, body, status, payable, "publicToken", "updatedAt")
+     VALUES ($1,$2,$3,$4,$5,$6,20,'Audit printer order','Terms.','DRAFT',true,$7,now())`,
+    [q4Contract, org, contactId, supplier, dealId, q4, `c${randomBytes(12).toString("hex")}`],
+  );
+  await sql(`INSERT INTO "ContractLineItem" (id, "contractId", "quoteLineItemId", name, quantity, "unitPriceCents", tag) VALUES ($1,$2,NULL,'Printing',1,100,'LABOR')`, [cuid(), q4Contract]);
+  await page.goto(`${BASE}/dashboard/contracts/${q4Contract}`);
+  await settle(page);
+  await page.getByTestId("contract-proof").nth(0).check();
+  await page.getByTestId("contract-proof").nth(1).check();
+  await page.getByTestId("contract-proofs-save").click();
+  await page.getByTestId("contract-proofs").getByText("Saved.").waitFor();
+  const q4Token = (await sql(`SELECT "proofToken" FROM "Quote" WHERE id=$1`, [q4])).rows[0].proofToken;
+  await coachPage.goto(`${BASE}/pf/${q4Token}`);
+  await settle(coachPage);
+  assert.equal(await coachPage.getByTestId("pf-answer").count(), 2);
+  await coachPage.getByTestId("pf-answer").first().getByTestId("pf-approve").click();
+  await coachPage.getByTestId("pf-name").fill("Coach Lee");
+  await coachPage.getByTestId("pf-confirm").check();
+  await coachPage.getByTestId("pf-submit").click();
+  await coachPage.getByTestId("pf-done").waitFor();
+  await coachPage.waitForFunction(() => document.querySelectorAll("[data-testid=pf-answer]").length === 1);
+  assert.equal(await coachPage.getByTestId("pf-answer").first().getByTestId("pf-changes").isVisible(), true, "the other proof still has its buttons");
+  // The coach asks for changes on the Gold proof: the calendar opens one.
+  await coachPage.getByTestId("pf-answer").first().getByTestId("pf-changes").click();
+  await coachPage.getByTestId("pf-note").fill("Bigger please");
+  await coachPage.getByTestId("pf-name").fill("Coach Lee");
+  await coachPage.getByTestId("pf-submit").click();
+  await coachPage.waitForFunction(() => document.querySelectorAll("[data-testid=pf-answer]").length === 0);
+  const q4Events = async (type) =>
+    (await sql(`SELECT id FROM "CalendarEvent" WHERE "organizationId"=$1 AND "quoteId"=$2 AND type=$3 AND "doneAt" IS NULL`, [org, q4, type])).rows;
+  assert.equal((await q4Events("Proof changes")).length, 1);
+  // The shop makes the Navy proof's next version and sends it: the contract
+  // still carries version 1, and its card says so instead of "not carried".
+  await page.goto(q4Url);
+  await settle(page);
+  await page.locator(`[data-testid=proof-row][data-proof="1"]`).getByTestId("proof-open").click();
+  await sheet.waitFor();
+  await nudge(page, "ArrowLeft");
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  await page.getByTestId("send-proofs").click();
+  await sendSheet.getByTestId("send-proofs-list").waitFor();
+  await sendSheet.getByTestId("send-proofs-mark").click();
+  await sendSheet.waitFor({ state: "detached" });
+  await page.goto(`${BASE}/dashboard/contracts/${q4Contract}`);
+  await settle(page);
+  const heldOld = page.locator('[data-testid=contract-proof][data-proof="1"][data-version="1"]');
+  assert.equal(await heldOld.isChecked(), true, "version 1 is on the contract and shown ticked");
+  assert.match(await page.getByTestId("contract-proofs").innerText(), /replaced by a newer version · on this contract now/);
+  assert.equal(await page.locator('[data-testid=contract-proof][data-proof="1"][data-version="2"]').isChecked(), false);
+
+  log("audit fixes: a line taken off the order drops its proof's open 'changes' entry; the last line can't be unticked; dates in the workspace's zone");
+  await page.goto(q4Url);
+  await settle(page);
+  await page.getByRole("button", { name: "Delete line 4" }).click();
+  await page.getByTestId("quote-save").click();
+  await page.getByTestId("quote-save-status").filter({ hasText: "All changes saved" }).waitFor();
+  assert.equal((await q4Events("Proof changes")).length, 0, "the Gold proof is off the order, so its changes entry went");
+  // The Navy proof's only line can't be taken off from the sheet.
+  await sql(`UPDATE "QuoteLineItem" SET "proofId"=NULL WHERE id=$1`, [q4Lines.m]);
+  await page.reload();
+  await settle(page);
+  await page.locator(`[data-testid=proof-row][data-proof="1"]`).getByTestId("proof-open").click();
+  await sheet.waitFor();
+  await nudge(page, "ArrowRight");
+  const onlyLine = sheet.locator("[data-testid=proof-line]:checked");
+  assert.equal(await onlyLine.count(), 1);
+  // A plain click: the box refuses to change, which uncheck() treats as a failure.
+  await onlyLine.click();
+  await sheet.getByTestId("proof-error").filter({ hasText: "A proof needs at least one line" }).waitFor();
+  assert.equal(await sheet.locator("[data-testid=proof-line]:checked").count(), 1);
+  await page.keyboard.press("Escape");
+  assert.equal(await q4Proof(q4Lines.s), navyProof, "still on its proof");
+  // Sent at 9:30pm in Chicago is the 12th there, the 13th in UTC.
+  const navyNewest = (await versionsOf(navyProof))[1];
+  await sql(`UPDATE "ProofVersion" SET "sentAt"='2026-11-13T03:30:00Z' WHERE id=$1`, [navyNewest.id]);
+  await sql(`UPDATE "Organization" SET "timeZone"='America/Chicago' WHERE id=$1`, [org]);
+  consoleErrors.length = 0;
+  await page.reload();
+  await settle(page);
+  assert.match(await page.locator(`[data-testid=proof-row][data-proof="1"] [data-testid=proof-words]`).innerText(), /^Sent Nov 12, 2026/);
+  assert.equal(consoleErrors.filter((text) => /hydrat/i.test(text)).length, 0, "no hydration mismatch");
+
+  log("audit fixes: two tabs saving one draft — the second is refused; a removed picture keeps its colour; no print locations left is said up front");
+  // Version 3 of the Navy proof, a draft, opened in two tabs.
+  await page.locator(`[data-testid=proof-row][data-proof="1"]`).getByTestId("proof-open").click();
+  await sheet.waitFor();
+  await nudge(page, "ArrowUp");
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  const tabB = await context.newPage();
+  await tabB.goto(q4Url);
+  await settle(tabB);
+  await page.reload();
+  await settle(page);
+  for (const tab of [page, tabB]) {
+    await tab.locator(`[data-testid=proof-row][data-proof="1"]`).getByTestId("proof-open").click();
+    await tab.getByTestId("proof-sheet").waitFor();
+    await nudge(tab, "ArrowDown");
+  }
+  await page.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  await tabB.getByTestId("proof-save").click();
+  await tabB.getByTestId("proof-error").filter({ hasText: "Someone else just changed this proof" }).waitFor();
+  await tabB.close();
+  // The Navy picture is taken off the product but a proof still holds it.
+  const navyPicture = (await sql(`SELECT id, position FROM "ProductImage" WHERE "productId"=$1`, [productId])).rows[0];
+  await sql(`UPDATE "ProductImage" SET position=NULL, "removedAt"=now() WHERE id=$1`, [navyPicture.id]);
+  await page.reload();
+  await settle(page);
+  await page.locator(`[data-testid=proof-row][data-proof="1"]`).getByTestId("proof-open").click();
+  await sheet.waitFor();
+  assert.equal(await sheet.getByTestId("proof-wrong-color").count(), 0, "the Navy picture is still the Navy picture");
+  await page.keyboard.press("Escape");
+  await sql(`UPDATE "ProductImage" SET position=$2, "removedAt"=NULL WHERE id=$1`, [navyPicture.id, navyPicture.position]);
+  // Every print location retired.
+  await sql(`UPDATE "VariationOption" SET "archivedAt"=now() WHERE "groupId"=$1`, [turnedOn.printLocationGroupId]);
+  await page.reload();
+  await settle(page);
+  await page.getByTestId("line-row").nth(1).getByTestId("line-proof-add").click();
+  await sheet.waitFor();
+  const stageNew = sheet.getByTestId("proof-make-new");
+  if (await stageNew.count()) await stageNew.click();
+  await sheet.getByTestId("proof-no-locations").waitFor();
+  assert.equal(await sheet.getByTestId("proof-save").isDisabled(), true);
+  await page.keyboard.press("Escape");
+  await sql(`UPDATE "VariationOption" SET "archivedAt"=NULL WHERE "groupId"=$1`, [turnedOn.printLocationGroupId]);
+
+  log("audit fixes: a tab opened before another proof was made still numbers its new proof right");
+  const staleTab = await context.newPage();
+  await staleTab.goto(q4Url);
+  await settle(staleTab);
+  const numberSeen = [];
+  staleTab.on("request", (request) => {
+    // The label the sheet asks for just before drawing.
+    if (request.method() === "POST" && (request.postData() ?? "").includes(q4)) numberSeen.push(request.postData());
+  });
+  // Meanwhile this tab makes Proof 3 on the M line.
+  await page.goto(q4Url);
+  await settle(page);
+  await page.getByTestId("line-row").nth(1).getByTestId("line-proof-add").click();
+  await sheet.waitFor();
+  await sheet.getByTestId("proof-make-new").click();
+  await sheet.locator('[data-testid=proof-artwork][data-name="Lincoln Lions"]').click();
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  // The stale tab still thinks Proof 2 is the last; it makes another.
+  await staleTab.getByTestId("line-row").nth(2).getByTestId("line-proof-add").click();
+  const staleSheet = staleTab.getByTestId("proof-sheet");
+  await staleSheet.waitFor();
+  const makeNew = staleSheet.getByTestId("proof-make-new");
+  if (await makeNew.count()) await makeNew.click();
+  await staleSheet.locator('[data-testid=proof-artwork][data-name="Lincoln Lions"]').click();
+  await staleSheet.getByTestId("proof-save").click();
+  await staleSheet.waitFor({ state: "detached" });
+  const q4Numbers = (await sql(`SELECT number FROM "Proof" WHERE "quoteId"=$1 ORDER BY number`, [q4])).rows.map((row) => row.number);
+  assert.deepEqual(q4Numbers, [1, 2, 3, 4]);
+  await staleTab.close();
+
+  log("audit fixes: a contract's PDF with proofs downloads (the document copy is a small JPEG), and its approval date is the workspace's day");
+  await sql(`UPDATE "ProofVersion" SET status='APPROVED', "approvedByName"='Coach Lee', "approvedAt"='2026-11-13T01:30:00Z' WHERE id=$1`, [
+    (await versionsOf(navyProof))[0].id,
+  ]);
+  await sql(`UPDATE "Contract" SET status='SENT', "sentAt"=now() WHERE id=$1`, [q4Contract]);
+  const q4ContractToken = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [q4Contract])).rows[0].publicToken;
+  await coachPage.goto(`${BASE}/c/${q4ContractToken}`);
+  await settle(coachPage);
+  const docPicture = coachPage.getByTestId("document-proof-picture").first();
+  assert.match(await docPicture.getAttribute("src"), /\?v=doc$/);
+  const docSize = await docPicture.evaluate((img) => [img.naturalWidth, img.naturalHeight]);
+  assert.ok(Math.max(...docSize) <= 800 && Math.max(...docSize) >= 400, `document copy ${docSize}`);
+  assert.match(await coachPage.getByTestId("document-proof-status").first().innerText(), /Nov 12, 2026/);
+  const pdf = await coachPage.request.get(`${BASE}/c/${q4ContractToken}/pdf`);
+  assert.equal(pdf.status(), 200);
+  assert.ok((await pdf.body()).length < 4 * 1024 * 1024);
+
+  log("audit fixes: turning apparel on with 20 label groups already still makes Print location");
+  await sql(`UPDATE "Organization" SET "apparelOn"=false, "printLocationGroupId"=NULL WHERE id=$1`, [org]);
+  await sql(`UPDATE "VariationGroup" SET name='Old print spots' WHERE id=$1`, [turnedOn.printLocationGroupId]);
+  const customCount = Number((await sql(`SELECT count(*) FROM "VariationGroup" WHERE "organizationId"=$1 AND kind='CUSTOM'`, [org])).rows[0].count);
+  for (let i = customCount; i < 20; i += 1) {
+    await sql(`INSERT INTO "VariationGroup" (id, "organizationId", kind, name, position, "updatedAt") VALUES ($1,$2,'CUSTOM',$3,$4,now())`, [cuid(), org, `Group ${i}`, 20 + i]);
+  }
+  await page.goto(`${BASE}/dashboard/settings/general#apparel`);
+  await settle(page);
+  await page.getByTestId("apparel-switch").click();
+  await page.getByTestId("apparel-save").click();
+  await page.getByText("Apparel is on.").waitFor();
+  const reOn = await orgRow();
+  assert.equal(reOn.apparelOn, true);
+  assert.ok(reOn.printLocationGroupId && reOn.printLocationGroupId !== turnedOn.printLocationGroupId);
+  assert.equal(Number((await sql(`SELECT count(*) FROM "VariationOption" WHERE "groupId"=$1`, [reOn.printLocationGroupId])).rows[0].count), 7);
 
   console.log(`\nAll ${step} steps passed.`);
   if (pageErrors.length) throw new Error(`page errors: ${pageErrors.join(" | ")}`);

@@ -551,7 +551,14 @@ export async function saveLineItems(
   const touched = lines
     .filter((line) => {
       const before = existingById.get(line.id);
-      return !before || before.productId !== line.productId || JSON.stringify(before.variations ?? []) !== JSON.stringify(line.variations);
+      // Both read back through readSnapshot: the stored jsonb hands its keys
+      // back in its own order, so a raw comparison called every labelled
+      // line changed and re-joined lines taken off a proof (audit, Nov 12).
+      return (
+        !before ||
+        before.productId !== line.productId ||
+        JSON.stringify(readSnapshot(before.variations)) !== JSON.stringify(line.variations)
+      );
     })
     .map((line) => line.id);
   await syncLineProofs(organizationId, quote.id, touched);

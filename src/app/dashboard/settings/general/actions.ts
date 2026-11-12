@@ -178,7 +178,8 @@ export async function updateApparel(_prev: ActionState, formData: FormData): Pro
   const session = await requireAdminSession();
   if (!session.allowed) return { error: "Only owners and admins can change this." };
   const wanted = formData.get("apparelOn") === "true";
-  await setApparel(session.organizationId, wanted);
+  const result = await setApparel(session.organizationId, wanted);
+  if ("error" in result) return { error: result.error };
   revalidatePath(PATH);
   revalidatePath("/dashboard", "layout");
   return { success: wanted ? "Apparel is on." : "Apparel is off. Nothing was deleted." };

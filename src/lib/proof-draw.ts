@@ -5,7 +5,7 @@
 // sit side by side (four as two rows) under a header naming the proof, and
 // the one picture is made into the same three copies a product picture has.
 
-import { PANEL_PX, panelGrid, type BaseKind, type Placement } from "@/lib/proof-shared";
+import { PANEL_PX, PROOF_MAX_BYTES, panelGrid, type BaseKind, type Placement } from "@/lib/proof-shared";
 import { resizePicture, type ResizedPicture } from "@/lib/image-resize";
 
 const HEADER_PX = 76;
@@ -119,11 +119,36 @@ export function drawProof(title: string, panels: DrawPanel[]): HTMLCanvasElement
   return canvas;
 }
 
-// The proof's three copies, made the way a product picture's are.
+// The proof's three copies: display and thumb made the way a product
+// picture's are, and a document copy of its own — a JPEG up to 800 px, big
+// enough to read on a contract or purchase order and small enough that a
+// PDF carrying several stays under its 4 MB (audit, Nov 12: the display
+// WebP was re-encoded losslessly by the PDF printer).
 export async function proofCopies(canvas: HTMLCanvasElement): Promise<ResizedPicture> {
+  let doc: Blob | null = null;
+  for (const side of [800, 640, 520]) {
+    const scale = Math.min(1, side / Math.max(canvas.width, canvas.height));
+    const small = document.createElement("canvas");
+    small.width = Math.max(1, Math.round(canvas.width * scale));
+    small.height = Math.max(1, Math.round(canvas.height * scale));
+    const context = small.getContext("2d");
+    if (!context) break;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, small.width, small.height);
+    context.imageSmoothingQuality = "high";
+    context.drawImage(canvas, 0, 0, small.width, small.height);
+    const blob = await new Promise<Blob | null>((resolve) => small.toBlob(resolve, "image/jpeg", 0.82));
+    small.width = 0;
+    small.height = 0;
+    if (blob && blob.type === "image/jpeg" && blob.size <= PROOF_MAX_BYTES.doc) {
+      doc = blob;
+      break;
+    }
+  }
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
   canvas.width = 0;
   canvas.height = 0;
-  if (!blob) throw new Error("This browser couldn't make the proof's picture.");
-  return resizePicture(new File([blob], "proof.jpg", { type: "image/jpeg" }));
+  if (!blob || !doc) throw new Error("This browser couldn't make the proof's picture.");
+  const copies = await resizePicture(new File([blob], "proof.jpg", { type: "image/jpeg" }));
+  return { ...copies, doc };
 }

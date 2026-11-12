@@ -42,27 +42,37 @@ export function ProofAnswers({
         return;
       }
       setDone(changing.length ? "Thanks. We'll make the changes and send you a new proof." : "Thanks. Your approval is recorded.");
+      // Any proof left waiting keeps its buttons (audit, Nov 12).
+      setChoice({});
+      setNotes({});
+      setConfirmed(false);
       router.refresh();
     });
   }
 
-  if (done) {
+  // Still on screen after the page refreshes with what is left to answer.
+  const thanks = done ? (
+    <div className="card card-lit p-5 text-sm" role="status" data-testid="pf-done">
+      {done}
+    </div>
+  ) : null;
+
+  if (!proofs.length) {
     return (
-      <div className="card card-lit p-5 text-sm" role="status" data-testid="pf-done">
-        {done}
-      </div>
+      <>
+        {thanks}
+        {error && (
+          <p className="card p-5 text-sm text-[var(--danger)]" role="alert" data-testid="pf-error">
+            {error}
+          </p>
+        )}
+      </>
     );
   }
 
-  if (!proofs.length) {
-    return error ? (
-      <p className="card p-5 text-sm text-[var(--danger)]" role="alert" data-testid="pf-error">
-        {error}
-      </p>
-    ) : null;
-  }
-
   return (
+    <>
+    {thanks}
     <div className="card card-lit space-y-4 p-5" data-testid="pf-answers">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">Your answer</h2>
@@ -147,5 +157,6 @@ export function ProofAnswers({
         {pending ? "Sending…" : "Send my answer"}
       </button>
     </div>
+    </>
   );
 }

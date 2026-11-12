@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { ensureGroup, getVariationGroups } from "@/lib/variations";
+import { getVariationGroups } from "@/lib/variations";
 
 // The apparel pack (Nov 12, 2026): "We do apparel / custom print". A school
 // printer keeps each customer's logo, places it on a product's own picture
@@ -21,19 +21,23 @@ export const DEFAULT_PRINT_LOCATIONS = [
 ] as const;
 
 // Turned on or off by an owner or admin, or the operator on /admin.
-export async function setApparel(organizationId: string, on: boolean) {
+export async function setApparel(organizationId: string, on: boolean): Promise<{ ok: true } | { error: string }> {
   const current = await prisma.organization.findUnique({
     where: { id: organizationId },
     select: { apparelOn: true },
   });
-  if (!current) return;
-  if (on) await ensurePrintLocations(organizationId);
+  if (!current) return { error: "That workspace is gone." };
+  // Never on without the Print location list proofs pick from.
+  if (on && !(await ensurePrintLocations(organizationId))) {
+    return { error: "The Print location list couldn't be made. Try again." };
+  }
   if (current.apparelOn !== on) {
     await prisma.organization.update({
       where: { id: organizationId },
       data: { apparelOn: on, ...(on ? { apparelOnAt: new Date() } : {}) },
     });
   }
+  return { ok: true };
 }
 
 export async function apparelOn(organizationId: string) {
@@ -65,10 +69,24 @@ export async function ensurePrintLocations(organizationId: string) {
       WHERE "organizationId" = ${organizationId} AND lower(name) = lower(${PRINT_LOCATION_GROUP}) LIMIT 1`;
     if (existing[0]) groupId = existing[0].id;
     else {
-      const made = await ensureGroup(organizationId, PRINT_LOCATION_GROUP);
-      if ("error" in made) return null;
-      groupId = made.id;
-      fresh = true;
+      // Made here, not through ensureGroup: the list proofs need is never
+      // refused for the workspace's own 20-group cap (audit, Nov 12).
+      const last = await prisma.variationGroup.aggregate({ where: { organizationId, kind: "CUSTOM" }, _max: { position: true } });
+      try {
+        const made = await prisma.variationGroup.create({
+          data: { organizationId, kind: "CUSTOM", name: PRINT_LOCATION_GROUP, position: Math.max(last._max.position ?? 9, 9) + 1 },
+          select: { id: true },
+        });
+        groupId = made.id;
+        fresh = true;
+      } catch {
+        // Another tab made it a moment ago.
+        const raced = await prisma.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "VariationGroup"
+          WHERE "organizationId" = ${organizationId} AND lower(name) = lower(${PRINT_LOCATION_GROUP}) LIMIT 1`;
+        if (!raced[0]) return null;
+        groupId = raced[0].id;
+      }
     }
     await prisma.organization.update({ where: { id: organizationId }, data: { printLocationGroupId: groupId } });
   }
