@@ -332,7 +332,10 @@ async function signAs(browser, token, name) {
   assert.deepEqual(captured, [{ name: "Door strikes", unitCostCents: 0 }, { name: "Mag locks", unitCostCents: 15000 }], "the contract captured $0 and $150");
   await page.goto(`${BASE}/dashboard/contracts/${sales.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" is already on the page as pipeline text, and sending now reads
+  // the contract over first (Release B): wait for the button that only
+  // exists once the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   await signAs(browser, sales.publicToken, "Dana Ruiz");
   const project = (await sql(`SELECT id FROM "Project" WHERE "organizationId"=$1 AND "dealId"='deal_ps2'`, [org])).rows[0];
   // A ratesheet re-import fixes the catalog: the strike costs $45 now,

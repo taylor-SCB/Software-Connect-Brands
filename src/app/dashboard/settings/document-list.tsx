@@ -4,6 +4,7 @@ import { IconDownload, IconTrash, IconFileText } from "@/components/icons";
 import { fileUrl } from "@/lib/uploads";
 import { EmailButton } from "@/components/email-composer";
 import { deleteDocument } from "./actions";
+import { ComplianceDetails } from "./compliance-details";
 
 type Doc = {
   id: string;
@@ -14,6 +15,8 @@ type Doc = {
   expiresOn: Date | null;
   publicToken: string;
   createdAt: Date;
+  // Release B: what a compliance file says.
+  compliance?: { namedInsured: string | null; insurer: string | null; policyNumber: string | null; limits: unknown } | null;
 };
 
 function humanSize(bytes: number) {
@@ -31,6 +34,7 @@ export function DocumentList({
   emptyTitle,
   emptyBody,
   emailable = false,
+  expectedName = null,
 }: {
   documents: Doc[];
   timeZone: string;
@@ -39,6 +43,8 @@ export function DocumentList({
   emailable?: boolean;
   emptyTitle: string;
   emptyBody: string;
+  /** Who a compliance file should be made out to (Release B). */
+  expectedName?: string | null;
 }) {
   if (documents.length === 0) {
     return <EmptyState icon={<IconFileText size={20} />} title={emptyTitle} body={emptyBody} />;
@@ -69,6 +75,7 @@ export function DocumentList({
                 <td>
                   <p className="font-medium">{doc.name}</p>
                   <p className="faint text-xs">{doc.fileName}</p>
+                  {doc.compliance && <ComplianceDetails doc={doc} expectedName={expectedName} />}
                 </td>
                 <td>{doc.category ? <Badge>{doc.category}</Badge> : <span className="faint">—</span>}</td>
                 <td className="text-xs">
@@ -107,3 +114,4 @@ export function DocumentList({
     </div>
   );
 }
+

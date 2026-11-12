@@ -156,7 +156,10 @@ async function signAs(browser, token, name) {
   for (const contract of [inbound, outbound]) {
     await page.goto(`${BASE}/dashboard/contracts/${contract.id}`);
     await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-    await page.getByText(/Sent/).first().waitFor();
+    // "Sent" is already on the page as pipeline text, and sending now reads
+    // the contract over first (Release B): wait for the button that only
+    // exists once the status has really changed.
+    await page.locator("[data-testid=mark-signed]").first().waitFor();
   }
   await signAs(browser, outbound.publicToken, "Sam Rep");
   assert.equal((await sql(`SELECT status FROM "Contract" WHERE id=$1`, [outbound.id])).rows[0].status, "SIGNED");

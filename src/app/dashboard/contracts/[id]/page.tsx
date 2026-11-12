@@ -19,7 +19,7 @@ import {
   Badge,
   TagBadge,
 } from "@/components/ui";
-import { IconSend, IconExternal, IconDownload, IconClock, IconHardHat } from "@/components/icons";
+import { IconExternal, IconDownload, IconClock, IconHardHat } from "@/components/icons";
 import { PublicLinkField } from "@/components/copy-link";
 import { Avatar } from "@/components/avatar";
 import { ReminderButton } from "@/components/reminder-button";
@@ -29,6 +29,13 @@ import { DeleteRecordForm } from "@/components/delete-record-form";
 import { ContractBodyForm } from "./body-form";
 import { PaymentScheduleEditor } from "./payment-schedule-editor";
 import { SignerForm } from "./signer-form";
+import { SendContractButton } from "./send-contract-button";
+import { RedlineDraftProvider } from "./redline-draft";
+import { RedlineReader, type RedlineFileGroup } from "./redline-reader";
+import { ContractDatesCard } from "./contract-dates";
+import { aiConfigured } from "@/lib/ai";
+import { readAnswer } from "@/lib/ai-answers";
+import { storedContractDates, type RedlineResult } from "../ai-actions";
 import { setContractStatus, deleteContract } from "../actions";
 import { cancelContract, reopenContract } from "@/app/dashboard/deals/tracker/actions";
 import { DealJourney } from "@/components/deal-journey";
@@ -116,17 +123,45 @@ export default async function ContractDetailPage({
       : null;
   const sendForSignature =
     contract.status === "DRAFT" && canSend ? (
-      <form action={setContractStatus} className="max-sm:w-full">
-        <input type="hidden" name="contractId" value={contract.id} />
-        <input type="hidden" name="status" value="SENT" />
-        <button type="submit" className="btn btn-primary btn-sm max-sm:min-h-11 max-sm:w-full" data-testid="journey-next">
-          <IconSend size={13} />
-          Send for signature
-        </button>
-      </form>
+      <SendContractButton
+        contractId={contract.id}
+        formClassName="max-sm:w-full"
+        className="btn btn-primary btn-sm max-sm:min-h-11 max-sm:w-full"
+        testId="journey-next"
+      />
     ) : contract.status === "DRAFT" ? (
       <span className="faint text-xs">Only the people on its template can send it</span>
     ) : null;
+  // Release B: the customer's marked-up copies on file and the last one
+  // read (the redline reader), and the dates read from a signed contract.
+  const aiOn = aiConfigured();
+  const redlinable = contract.status === "DRAFT" || contract.status === "SENT" || contract.status === "DECLINED";
+  const [redlineRows, lastRedline, storedDates] = await Promise.all([
+    prisma.contractFile.findMany({
+      where: { organizationId, contractId: contract.id, complete: true },
+      orderBy: [{ createdAt: "desc" }, { position: "asc" }],
+      take: 60,
+      select: { id: true, groupId: true, fileName: true, createdAt: true, position: true },
+    }),
+    readAnswer<RedlineResult>(organizationId, "REDLINE", `contract:${contract.id}`),
+    signed ? storedContractDates(organizationId, contract.id) : Promise.resolve(null),
+  ]);
+  const redlineFiles: RedlineFileGroup[] = [];
+  for (const row of redlineRows) {
+    let group = redlineFiles.find((entry) => entry.groupId === row.groupId);
+    if (!group) {
+      group = { groupId: row.groupId, when: formatDateTime(row.createdAt, timeZone), files: [] };
+      redlineFiles.push(group);
+    }
+    group.files.push({ id: row.id, fileName: row.fileName });
+  }
+  // A set of photos reads page 1 first, whichever finished uploading last.
+  for (const group of redlineFiles) {
+    group.files.sort((a, b) => (redlineRows.find((row) => row.id === a.id)?.position ?? 0) - (redlineRows.find((row) => row.id === b.id)?.position ?? 0));
+  }
+  // The last read is offered again only while its file is still on file.
+  const redlineInitial = lastRedline && redlineFiles.some((group) => group.groupId === lastRedline.groupId) ? lastRedline : null;
+
   // "Send deposit invoice" is the main button on a signed money-in
   // contract whose first payment row is still owed.
   const depositRow = contract.payments[0] ?? null;
@@ -180,14 +215,7 @@ export default async function ContractDetailPage({
               )
             )}
             {!journey && contract.status === "DRAFT" && canSend && (
-              <form action={setContractStatus}>
-                <input type="hidden" name="contractId" value={contract.id} />
-                <input type="hidden" name="status" value="SENT" />
-                <button type="submit" className="btn btn-primary btn-sm">
-                  <IconSend size={13} />
-                  Send for signature
-                </button>
-              </form>
+              <SendContractButton contractId={contract.id} />
             )}
             {!journey && depositDue && depositRow && (
               <DepositInvoiceButton rowId={depositRow.id} token={depositRow.invoiceToken} label="Send deposit invoice" />
@@ -216,6 +244,7 @@ export default async function ContractDetailPage({
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch">
         {/* ---------------------------- Agreement ---------------------------- */}
+        <RedlineDraftProvider>
         <div className="min-w-0 flex-1 space-y-5">
           {signed && (
             <Card className="p-4">
@@ -255,6 +284,48 @@ export default async function ContractDetailPage({
               sent={contract.status === "SENT"}
             />
           </Card>
+
+          {((aiOn && redlinable) || redlineFiles.length > 0) && (
+            <Card lit>
+              <CardHeader
+                title="Their marked-up copy"
+                subtitle={
+                  aiOn && redlinable
+                    ? "Upload the customer's version and get each change they made, to accept or reject."
+                    : "Copies the customer sent back."
+                }
+              />
+              {aiOn && redlinable ? (
+                <RedlineReader
+                  contractId={contract.id}
+                  body={contract.body}
+                  status={contract.status}
+                  initial={redlineInitial}
+                  files={redlineFiles}
+                />
+              ) : (
+                <ul className="space-y-1 p-5 text-xs" data-testid="redline-files">
+                  {redlineFiles.map((group) => (
+                    <li key={group.groupId} className="flex flex-wrap gap-x-3">
+                      <span className="faint">{group.when}</span>
+                      {group.files.map((file) => (
+                        <a key={file.id} href={`/dashboard/contracts/${contract.id}/files/${file.id}`} className="link">
+                          {file.fileName}
+                        </a>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          )}
+
+          {signed && (aiOn || storedDates) && (
+            <Card lit>
+              <CardHeader title="Dates in this contract" subtitle="Deadlines the signed wording sets, to put on the calendar." />
+              <ContractDatesCard contractId={contract.id} initial={storedDates} aiOn={aiOn} />
+            </Card>
+          )}
 
           {contract.lineItems.length > 0 && (
             <Card lit>
@@ -424,6 +495,8 @@ export default async function ContractDetailPage({
           )}
         </div>
 
+        </RedlineDraftProvider>
+
         {/* --------------------------- Silver line --------------------------- */}
         <div className="divider-silver-h lg:hidden" aria-hidden="true" />
         <div className="divider-silver hidden self-stretch lg:block" aria-hidden="true" />
@@ -533,14 +606,7 @@ export default async function ContractDetailPage({
                       Not sent yet. Sending turns the customer&apos;s link on and moves the deal
                       to Contract Sent.
                     </p>
-                    <form action={setContractStatus}>
-                      <input type="hidden" name="contractId" value={contract.id} />
-                      <input type="hidden" name="status" value="SENT" />
-                      <button type="submit" className="btn btn-primary w-full">
-                        <IconSend size={14} />
-                        Send for signature
-                      </button>
-                    </form>
+                    <SendContractButton contractId={contract.id} className="btn btn-primary w-full" testId="send-contract" />
                   </>
                 ) : (
                   <p

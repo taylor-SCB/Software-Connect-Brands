@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { JobComplianceBanner } from "./job-compliance";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -186,6 +187,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </div>
 
       <ProjectTabs projectId={project.id} current="budget" />
+      <JobComplianceBanner organizationId={organizationId} projectId={project.id} />
 
       <div className="mb-4 flex flex-wrap items-start gap-2">
         <CloseOutButton

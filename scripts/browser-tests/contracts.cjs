@@ -479,7 +479,11 @@ async function previewChips(page) {
     await tab.locator("[name=signerName]").fill("Danny Ortiz");
     await tab.locator("[name=agree]").check();
     await tab.getByRole("button", { name: "Sign contract" }).click();
-    await tab.getByRole("button", { name: "Sign contract" }).waitFor({ state: "detached" });
+    // The button turns into "Signing…" before the write lands, so wait on
+    // the database, not on the label going (CLAUDE.md, BDR sprint lessons).
+    for (let i = 0; i < 80 && (await sql(`SELECT status FROM "Contract" WHERE id='con_ct_au3'`)).rows[0].status !== "SIGNED"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
     assert.equal((await sql(`SELECT status FROM "Contract" WHERE id='con_ct_au3'`)).rows[0].status, "SIGNED");
     // A second tap from a stale copy of the same page writes nothing more.
     const again = await customerCtx.newPage();

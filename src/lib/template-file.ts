@@ -23,7 +23,10 @@ const MAX_DOCX_XML_BYTES = 12 * 1024 * 1024;
 // and every page read costs time and memory.
 const MAX_PDF_PAGES = 300;
 
-export async function readAgreementFile(file: File): Promise<{ text: string } | { error: string }> {
+// `maxChars` is the template's limit unless a caller reads something
+// longer: the redline reader reads a customer's copy of a contract, which
+// may run to a contract's 80,000 (Release B).
+export async function readAgreementFile(file: File, maxChars = TEMPLATE_MAX_CHARS): Promise<{ text: string } | { error: string }> {
   if (file.size === 0) return { error: "That file is empty." };
   if (file.size > TEMPLATE_FILE_MAX_BYTES) return { error: "Keep the file under 20 MB." };
 
@@ -63,7 +66,7 @@ export async function readAgreementFile(file: File): Promise<{ text: string } | 
         : "There's almost no text in that file.",
     };
   }
-  if (text.length > TEMPLATE_MAX_CHARS) return { error: tooLong() };
+  if (text.length > maxChars) return { error: maxChars === TEMPLATE_MAX_CHARS ? tooLong() : `That file is longer than ${maxChars.toLocaleString("en-US")} characters.` };
   return { text };
 }
 
