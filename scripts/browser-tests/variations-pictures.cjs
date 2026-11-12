@@ -604,7 +604,10 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   assert.equal(saleRows[2].v, "[]", "a row made from 3b on with no labels says so, unlike a row from before it");
   await page.goto(`${BASE}/dashboard/contracts/${sale.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" can already be on the page, and sending reads the contract
+  // over first (Release B): wait for the button that only exists once
+  // the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   const signer = await browser.newContext();
   const signPage = await signer.newPage();
   await signPage.goto(`${BASE}/c/${sale.publicToken}`);
