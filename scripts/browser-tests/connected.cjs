@@ -653,11 +653,16 @@ async function logWith(page, fields, { body = "", type } = {}) {
   assert.deepEqual(labels.slice(0, 4), ["Not Actioned", "Attempted", "Connected", "Not Interested"]);
   await page.keyboard.press("Escape");
 
-  log("Sprint: the Stats funnel has Connected between Attempted and Interested");
+  // Taylor, Nov 12, 2026: Connected is the step; Interested or Not
+  // interested is the label on it, not a step of its own. So the funnel
+  // runs Attempted → Connected → Meeting Set.
+  log("Sprint: the Stats funnel runs Attempted → Connected → Meeting Set; Interested is a label on Connected, not a step");
   await page.goto(`${BASE}/dashboard/stats`);
   await page.locator("[data-testid=stats-page]").waitFor();
   const funnelText = await page.locator("[data-testid=stats-page]").textContent();
-  assert.match(funnelText, /Attempted[\s\S]*Connected[\s\S]*Interested[\s\S]*Meeting Set/);
+  const funnel = funnelText.slice(funnelText.indexOf("The funnel"), funnelText.indexOf("Tries and talks per day"));
+  assert.match(funnel, /Attempted\d+Connected\d+[\s\S]*Meeting Set\d+[\s\S]*Meeting Completed\d+/, funnel);
+  assert.doesNotMatch(funnel, /Interested/, "Interested is not a funnel step");
   await shot(page, "03-stats");
 
   await nicContext.close();

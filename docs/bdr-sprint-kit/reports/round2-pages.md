@@ -51,9 +51,9 @@ Run against a production build on scb_pages:
 | follow-ups-status-filter | PASS, 17 steps |
 | calendar-v2 | PASS, 42 steps |
 | round2-pages (new) | PASS, 10 steps |
-| connected | **FAIL at step 30**, not caused by this branch |
+| connected | PASS, 30 steps (step 30 corrected, see below) |
 
-**Why `connected` fails.** Step 30 expects Interested in the Stats funnel. `src/app/dashboard/stats/page.tsx` leaves Interested out of the funnel on purpose (`FUNNEL_STEPS`, with a comment saying so), merged before this branch from claude/sprint-numbers. This branch touches nothing in Stats. Whoever owns Stats or connected.cjs needs to decide which one is right; I didn't change either.
+**`connected` step 30, settled by Taylor (Nov 12, 2026):** "the baseline activity is connected. then the label is either not interested or interested." So Connected is the step, and Interested / Not interested is a label on it. The Stats funnel was already right, leaving Interested out. The test expected Interested as a funnel step; it now checks that the funnel runs Attempted → Connected → Meeting Set → Meeting Completed with no Interested step, and it passes.
 
 `npx tsc --noEmit -p .`, `npx next build` and eslint on the changed files are all clean.
 
@@ -63,6 +63,7 @@ Run against a production build on scb_pages:
 
 - New: `src/components/activity-edit.tsx`, `src/lib/event-order.ts`, `src/app/dashboard/contacts/[id]/contact-upcoming.tsx`, `scripts/browser-tests/round2-pages.cjs`.
 - `scripts/browser-tests/companies-contacts.cjs`: the + Event assertion (see above).
+- `scripts/browser-tests/connected.cjs`: step 30, to match Taylor's rule.
 - `src/app/dashboard/companies/[id]/load.ts`, `company-shell.tsx`, `header-actions.tsx`: in the owned company-page directory.
 
 ## Notes for CLAUDE.md
@@ -72,4 +73,4 @@ Run against a production build on scb_pages:
 - "+ Event" from a contact or company page lists sales types first and starts on Call while the next step is to reach them, Meeting after that.
 - The contact page has one toast slot. The sheets there hand their toasts to it.
 - The company page's Book offers the person's own tile: the no-show's, else their open one (`bookingTiles`).
-- connected.cjs step 30 disagrees with the Stats funnel (Interested left out on purpose). It needs reconciling.
+- Taylor, Nov 12, 2026: Connected is the step; Interested / Not interested is the label on it, not a funnel step. The Stats funnel is Attempted → Connected → Meeting Set (connected.cjs step 30).
