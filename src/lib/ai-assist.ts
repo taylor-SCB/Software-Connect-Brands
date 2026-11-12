@@ -19,6 +19,26 @@ export const AI_DAILY_CAPS = {
   LEAD_LABEL: 200,
   // My day's greeting, reworded on request (BDR redesign, Round 2).
   MY_DAY_GREETING: 200,
+  // The AI release (Nov 12, 2026; plan: the "AI Release Plan" artifact).
+  // Costs are rough, at low effort unless the helper says otherwise.
+  // Release A, sales and calendar.
+  BRIEF: 300, // Brief me before a call or meeting, about 2 cents
+  CALL_OPENER: 300, // a drafted opener on Up next, about 1 cent
+  VOICE_LOG: 400, // Say it, don't type it: spoken words into the log sheet, under 1 cent
+  FORECAST_NOTE: 60, // the sentences behind the Stats forecast, about 1 cent
+  // Release B, contracts.
+  PRICE_CHECK: 100, // the explanation lines of the price check before Create, about 1 cent
+  SEND_CHECK: 100, // read before send, contract wording against the quote, about 5 cents
+  REDLINE: 20, // a customer's marked-up copy read into changes, 10 to 30 cents
+  CONTRACT_DATES: 50, // dated duties read from a signed contract, about 5 cents
+  COMPLIANCE_READ: 30, // a COI, license or W-9 read for dates, name and limits, about 3 cents
+  // Release C, jobs.
+  PHOTO_TAGS: 500, // one photo's suggested Photo Type and Location, about 1 cent
+  PUNCH_LIST: 20, // finished-install photos against the scope, about 15 cents
+  CLOSEOUT_REPORT: 20, // the close-out photo report's pairs and lines, about 15 cents
+  SITE_WALK: 50, // quote lines from site-walk photos and a sentence, about 10 cents
+  RECEIPT_READ: 100, // a receipt photo read into a bill, about 2 cents
+  JOB_QUESTION: 100, // a question answered from a job's own numbers, about 3 cents
 } as const;
 
 // How much meeting text one request carries at most.
