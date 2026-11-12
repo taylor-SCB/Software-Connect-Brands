@@ -433,8 +433,406 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   assert.ok(link.endsWith(quoteRow.proofToken));
   assert.equal((await outsider.request.get(draftUrl)).status(), 200, "a sent proof's picture is public");
 
-  console.log(`\nPart one passed (${step} steps).`);
+  log("the coach's page: the proof big, what it's for, no prices, nothing to sign in to");
+  const coach = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const coachPage = await coach.newPage();
+  coachPage.on("pageerror", (err) => pageErrors.push(`coach: ${err.message}`));
+  const pfUrl = `${BASE}/pf/${quoteRow.proofToken}`;
+  await coachPage.goto(pfUrl);
+  await settle(coachPage);
+  const pfProof = coachPage.locator('[data-testid=pf-proof][data-proof="1"]');
+  await pfProof.waitFor();
+  const pfText = await coachPage.locator("body").innerText();
+  assert.match(pfText, /Proofs from Test Apparel Co/i);
+  assert.match(pfText, /Front: Lincoln Lions · 2 colors: navy, gold/);
+  assert.match(pfText, /For 12 × Navy · S, 24 × Navy · M, 12 × Navy · L/);
+  assert.doesNotMatch(pfText, /\$\d/, "no prices on the approval page");
+  assert.equal(await pfProof.getByTestId("pf-status").innerText(), "Waiting for your answer");
+  await shot(coachPage, "05-pf");
+
+  log("an approval needs a name and the tick; a stale tab can't approve a proof the shop has changed since");
+  const answer = coachPage.locator(`[data-testid=pf-answer][data-version="${v1.id}"]`);
+  await answer.getByTestId("pf-approve").click();
+  await coachPage.getByTestId("pf-submit").click();
+  await coachPage.getByTestId("pf-error").waitFor();
+  assert.match(await coachPage.getByTestId("pf-error").innerText(), /Tick the box/);
+  // Meanwhile the shop opens the proof and saves a change: version 2, a draft.
+  await page.getByTestId("proof-open").first().click();
+  await sheet.waitFor();
+  await sheet.getByTestId("proof-new-version-note").waitFor();
+  await sheet.getByTestId("proof-artwork-box").focus();
+  await page.keyboard.press("ArrowUp");
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  const [, v2] = await versionsOf(proof1.id);
+  assert.equal(v2.version, 2);
+  assert.equal(v2.status, "DRAFT");
+  assert.equal((await versionsOf(proof1.id))[0].status, "SENT", "the coach still sees version 1 until version 2 is sent");
+  await coachPage.getByTestId("pf-name").fill("Coach Lee");
+  await coachPage.getByTestId("pf-confirm").check();
+  await coachPage.getByTestId("pf-submit").click();
+  await coachPage.getByTestId("pf-error").filter({ hasText: "This proof was updated" }).waitFor({ timeout: 8000 }).catch(async (error) => {
+    console.log("DEBUG pf:", await coachPage.locator("[data-testid=pf-answers], [data-testid=pf-done]").first().innerText().catch(() => "?"));
+    console.log("DEBUG versions:", (await versionsOf(proof1.id)).map((v) => [v.version, v.status]));
+    throw error;
+  });
+  assert.equal((await versionsOf(proof1.id))[0].status, "SENT", "nothing was approved");
+  await coachPage.reload();
+  await settle(coachPage);
+  assert.match(await pfProof.getByTestId("pf-status").innerText(), /Being updated by Test Apparel Co/);
+  assert.equal(await coachPage.getByTestId("pf-answers").count(), 0, "no buttons while a new version is being made");
+
+  log("Send proofs sends version 2 and replaces version 1; a tab still on version 1 is refused");
+  await page.getByTestId("send-proofs").click();
+  await sendSheet.getByTestId("send-proofs-list").waitFor();
+  await sendSheet.getByTestId("send-proofs-mark").click();
+  await sendSheet.waitFor({ state: "detached" });
+  let versions = await versionsOf(proof1.id);
+  assert.deepEqual(versions.map((v) => v.status), ["SUPERSEDED", "SENT"]);
+  await coachPage.reload();
+  await settle(coachPage);
+  assert.equal(await pfProof.getByTestId("pf-status").innerText(), "Waiting for your answer");
+
+  log("the coach approves version 2: approved with their name; the calendar says so; the quote line shows it");
+  await coachPage.locator(`[data-testid=pf-answer][data-version="${v2.id}"]`).getByTestId("pf-approve").click();
+  await coachPage.getByTestId("pf-name").fill("Coach Lee");
+  await coachPage.getByTestId("pf-confirm").check();
+  await coachPage.getByTestId("pf-submit").click();
+  await Promise.race([coachPage.getByTestId("pf-done").waitFor(), coachPage.getByTestId("pf-error").waitFor()]);
+  if (await coachPage.getByTestId("pf-error").count()) throw new Error(`refused: ${await coachPage.getByTestId("pf-error").innerText()}`);
+  versions = await versionsOf(proof1.id);
+  assert.equal(versions[1].status, "APPROVED");
+  assert.equal(versions[1].approvedByName, "Coach Lee");
+  assert.equal(versions[1].approvedOffline, false);
+  assert.equal(versions[0].status, "SUPERSEDED", "the replaced version stays replaced");
+  const events = async (type) =>
+    (await sql(`SELECT title, "doneAt", notes FROM "CalendarEvent" WHERE "organizationId"=$1 AND "quoteId"=$2 AND type=$3`, [org, quoteId, type])).rows;
+  const approvedEvents = await events("Proofs approved");
+  assert.equal(approvedEvents.length, 1);
+  assert.equal(approvedEvents[0].title, "Proofs approved · Coach Lee");
+  assert.ok(approvedEvents[0].doneAt);
+  await coachPage.reload();
+  await settle(coachPage);
+  assert.match(await pfProof.getByTestId("pf-status").innerText(), /^Approved by Coach Lee/);
+  // A double tap from another tab is a success that changes nothing.
+  await page.reload();
+  await settle(page);
+  assert.match(await page.getByTestId("line-row").nth(0).getByTestId("line-proof").innerText(), /Approved/);
+
+  log("a Gold proof on a plain front; the coach asks for changes; the rep gets an open calendar entry");
+  await page.getByTestId("line-row").nth(3).getByTestId("line-proof-add").click();
+  await sheet.waitFor();
+  assert.equal(await sheet.getByTestId("proof-line").count(), 1);
+  await sheet.getByTestId("proof-no-color-picture").waitFor();
+  assert.equal(await sheet.getByTestId("proof-base-plain-front").getAttribute("aria-pressed"), "true");
+  assert.equal(await sheet.getByTestId("proof-base-color").inputValue(), "#d9a520");
+  await sheet.locator('[data-testid=proof-artwork][data-name="Lincoln Lions"]').click();
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  const proof2 = (await proofRows())[1];
+  assert.equal(proof2.number, 2);
+  assert.equal(proof2.colorOptionId, gold);
+  await page.getByTestId("send-proofs").click();
+  await sendSheet.getByTestId("send-proofs-list").waitFor();
+  assert.match(await sendSheet.getByTestId("send-proofs-list").innerText(), /^Proof 2 · Classic Tee · Gold$/);
+  await sendSheet.getByTestId("send-proofs-mark").click();
+  await sendSheet.waitFor({ state: "detached" });
+  await coachPage.reload();
+  await settle(coachPage);
+  const p2v1 = (await versionsOf(proof2.id))[0];
+  const gAnswer = coachPage.locator(`[data-testid=pf-answer][data-version="${p2v1.id}"]`);
+  await gAnswer.getByTestId("pf-changes").click();
+  await coachPage.getByTestId("pf-name").fill("Coach Lee");
+  await coachPage.getByTestId("pf-submit").click();
+  await coachPage.getByTestId("pf-error").filter({ hasText: "Tell us what to change" }).waitFor();
+  await gAnswer.getByTestId("pf-note").fill("Make the logo bigger please");
+  await coachPage.getByTestId("pf-submit").click();
+  await coachPage.getByTestId("pf-done").waitFor();
+  assert.equal((await versionsOf(proof2.id))[0].status, "CHANGES");
+  const changeEvents = await events("Proof changes");
+  assert.equal(changeEvents.length, 1);
+  assert.equal(changeEvents[0].doneAt, null);
+  assert.match(changeEvents[0].notes, /Proof 2: Coach Lee asked for changes — Make the logo bigger please/);
+  await page.reload();
+  await settle(page);
+  assert.match(await page.locator('[data-testid=proof-row][data-proof="2"] [data-testid=proof-words]').innerText(), /asked for changes: Make the logo bigger please/);
+
+  log("the rep makes version 2 and marks it approved by hand (approved on the phone); the changes entry goes");
+  await page.locator('[data-testid=proof-row][data-proof="2"]').getByTestId("proof-open").click();
+  await sheet.waitFor();
+  await sheet.getByTestId("proof-artwork-box").focus();
+  await page.keyboard.press("+");
+  await page.keyboard.press("+");
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  const row2 = page.locator('[data-testid=proof-row][data-proof="2"]');
+  await row2.getByTestId("proof-mark-approved").click();
+  await row2.getByTestId("proof-mark-approved-name").fill("Coach Lee (phone)");
+  await row2.getByTestId("proof-mark-approved-save").click();
+  await row2.getByText(/Approved by Coach Lee \(phone\) \(marked by the team\)/).waitFor();
+  const p2 = await versionsOf(proof2.id);
+  assert.deepEqual(p2.map((v) => v.status), ["SUPERSEDED", "APPROVED"]);
+  assert.equal(p2[1].approvedOffline, true);
+  assert.equal(p2[1].approvedById, owner);
+  assert.equal((await events("Proof changes")).length, 0, "the open changes entry came off");
+
+  log("a size added later joins its garment's one proof; a line moved to Gold moves to the Gold proof");
+  const xl = cuid();
+  await sql(`INSERT INTO "VariationOption" (id, "organizationId", "groupId", name, position, "updatedAt") VALUES ($1,$2,$3,'XL',3,now())`, [xl, org, sizeGroup]);
+  await sql(`INSERT INTO "ProductVariation" ("productId", "optionId", "organizationId") VALUES ($1,$2,$3)`, [productId, xl, org]);
+  await page.reload();
+  await settle(page);
+  const catalog = page.getByLabel("Add product from catalog");
+  await catalog.fill("Classic");
+  await page.getByTestId("catalog-results").getByRole("option").first().waitFor();
+  await catalog.press("Enter");
+  const newRow = page.getByTestId("line-row").nth(5);
+  await newRow.locator('[data-testid=line-label][data-group="Color"]').selectOption({ label: "Navy" });
+  await newRow.locator('[data-testid=line-label][data-group="Size"]').selectOption({ label: "XL" });
+  assert.equal(await newRow.getByTestId("line-proof-save-first").count(), 1, "a new line needs saving before a proof");
+  // Move the M line to Gold in the same save.
+  await page.getByTestId("line-row").nth(1).locator('[data-testid=line-label][data-group="Color"]').selectOption({ label: "Gold" });
+  await page.getByTestId("quote-save").click();
+  await page.getByTestId("quote-save-status").filter({ hasText: "All changes saved" }).waitFor();
+  const xlLine = (await sql(`SELECT id, "proofId" FROM "QuoteLineItem" WHERE "quoteId"=$1 AND "variationText"='Navy · XL'`, [quoteId])).rows[0];
+  assert.equal(xlLine.proofId, proof1.id, "the XL line joined the Navy proof");
+  const lines2 = await proofOfLines();
+  assert.equal(lines2[lineIds.navyM], proof2.id, "the line now Gold is on the Gold proof");
+  assert.equal(lines2[lineIds.navyS], proof1.id);
+  assert.equal((await versionsOf(proof1.id)).length, 2, "joining lines made no new version");
+  await coachPage.reload();
+  await settle(coachPage);
+  assert.match(await pfProof.innerText(), /12 × Navy · S, 12 × Navy · L, 1 × Navy · XL/);
+
+  log("the customer's quote shows each line's proof instead of the product picture, linking to the approval page");
+  await page.getByTestId("send-quote").first().click();
+  await page.getByTestId("send-quote-mark").click();
+  for (let i = 0; i < 40 && (await sql(`SELECT status FROM "Quote" WHERE id=$1`, [quoteId])).rows[0].status !== "SENT"; i += 1) await page.waitForTimeout(250);
+  const publicToken = (await sql(`SELECT "publicToken" FROM "Quote" WHERE id=$1`, [quoteId])).rows[0].publicToken;
+  await coachPage.goto(`${BASE}/q/${publicToken}`);
+  await settle(coachPage);
+  const docProof = coachPage.getByTestId("document-line-proof");
+  assert.ok((await docProof.count()) >= 4);
+  assert.match(await docProof.first().innerText(), /Proof 1: approved/);
+  assert.equal(await docProof.first().locator("a").getAttribute("href"), `/pf/${quoteRow.proofToken}`);
+  const firstPicture = await coachPage.getByTestId("document-line-picture").first().getAttribute("src");
+  assert.equal(firstPicture, `/files/${(await versionsOf(proof1.id))[1].publicToken}?v=doc`);
+
+  log("contracts: the customer's Sales Order carries the proofs; a blank supplier's order doesn't; the printer's does, with its files");
+  const salesOrder = cuid();
+  const blankPo = cuid();
+  const printerPo = cuid();
+  const supplier = cuid();
+  await sql(`INSERT INTO "Company" (id, "organizationId", name, "updatedAt") VALUES ($1,$2,'Ace Printing',now())`, [supplier, org]);
+  const contract = async (id, number, payable, title, status) =>
+    sql(
+      `INSERT INTO "Contract" (id, "organizationId", "contactId", "companyId", "dealId", "quoteId", number, title, body, status, payable, "publicToken", "updatedAt", "sentAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Terms.',$9::"ContractStatus",$10,$11,now(), CASE WHEN $9::text <> 'DRAFT' THEN now() END)`,
+      [id, org, contactId, payable ? supplier : companyId, dealId, quoteId, number, title, status, payable, `c${randomBytes(12).toString("hex")}`],
+    );
+  await contract(salesOrder, 1, false, "Sales Order", "DRAFT");
+  await contract(blankPo, 2, true, "Blank tees", "DRAFT");
+  await contract(printerPo, 3, true, "Printing", "DRAFT");
+  await sql(`UPDATE "Organization" SET "nextContractNumber" = 4 WHERE id=$1`, [org]);
+  for (const [id, line] of [[salesOrder, lineIds.navyS], [salesOrder, lineIds.goldM], [blankPo, lineIds.navyS], [printerPo, lineIds.print]]) {
+    await sql(
+      `INSERT INTO "ContractLineItem" (id, "contractId", "quoteLineItemId", name, quantity, "unitPriceCents", tag) VALUES ($1,$2,$3,'Row',1,100,'MATERIALS')`,
+      [cuid(), id, line],
+    );
+  }
+  await page.goto(`${BASE}/dashboard/contracts/${printerPo}`);
+  await settle(page);
+  const proofsCard = page.getByTestId("contract-proofs");
+  await proofsCard.waitFor();
+  assert.equal(await proofsCard.getByTestId("contract-proof").count(), 2);
+  await proofsCard.locator('[data-testid=contract-proof][data-proof="1"]').check();
+  await proofsCard.locator('[data-testid=contract-proof][data-proof="2"]').check();
+  await proofsCard.getByTestId("contract-proofs-save").click();
+  await proofsCard.getByText("Saved.").waitFor();
+  const held = async (id) =>
+    (await sql(`SELECT cp."versionId", cp.covers FROM "ContractProof" cp WHERE cp."contractId"=$1 ORDER BY position`, [id])).rows;
+  const printerHeld = await held(printerPo);
+  assert.equal(printerHeld.length, 2);
+  assert.match(printerHeld[0].covers, /^Classic Tee · Navy: 12 × Navy · S, 12 × Navy · L, 1 × Navy · XL$/);
+  assert.equal((await held(blankPo)).length, 0);
+  // A draft order's file isn't out yet.
+  const printerToken = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [printerPo])).rows[0].publicToken;
+  const approvedV2 = (await versionsOf(proof1.id))[1];
+  const printUrl = `${BASE}/c/${printerToken}/print/${approvedV2.id}?p=0`;
+  assert.equal((await outsider.request.get(printUrl)).status(), 404, "not while a draft");
+  await sql(`UPDATE "Contract" SET status='SENT', "sentAt"=now() WHERE id=$1`, [printerPo]);
+  await coachPage.goto(`${BASE}/c/${printerToken}`);
+  await settle(coachPage);
+  const docProofs = coachPage.getByTestId("document-proof");
+  assert.equal(await docProofs.count(), 2);
+  assert.match(await docProofs.first().getByTestId("document-proof-status").innerText(), /^Approved by Coach Lee/);
+  assert.equal(await coachPage.getByTestId("document-print-file").count(), 3, "Navy front and back, and Gold front, each with its file");
+  const printDownload = await outsider.request.get(printUrl);
+  assert.equal(printDownload.status(), 200);
+  assert.match(printDownload.headers()["content-disposition"], /^attachment; filename="lincoln_lions.png"/);
+  assert.ok(Buffer.from(await printDownload.body()).equals(png));
+  await shot(coachPage, "06-printer-po");
+
+  log("the customer's Sales Order shows what they approved but no print files; a proof another contract doesn't carry can't be fetched");
+  await page.goto(`${BASE}/dashboard/contracts/${salesOrder}`);
+  await settle(page);
+  assert.equal(await page.getByTestId("contract-proof").count(), 2);
+  await page.locator('[data-testid=contract-proof][data-proof="1"]').check();
+  await page.getByTestId("contract-proofs-save").click();
+  await page.getByTestId("contract-proofs").getByText("Saved.").waitFor();
+  await sql(`UPDATE "Contract" SET status='SENT', "sentAt"=now() WHERE id=$1`, [salesOrder]);
+  const soToken = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [salesOrder])).rows[0].publicToken;
+  await coachPage.goto(`${BASE}/c/${soToken}`);
+  await settle(coachPage);
+  assert.equal(await coachPage.getByTestId("document-proof").count(), 1);
+  assert.equal(await coachPage.getByTestId("document-print-file").count(), 0);
+  assert.equal((await outsider.request.get(`${BASE}/c/${soToken}/print/${approvedV2.id}?p=0`)).status(), 404, "money in: no files");
+  const blankToken = (await sql(`SELECT "publicToken" FROM "Contract" WHERE id=$1`, [blankPo])).rows[0].publicToken;
+  await sql(`UPDATE "Contract" SET status='SENT', "sentAt"=now() WHERE id=$1`, [blankPo]);
+  assert.equal((await outsider.request.get(`${BASE}/c/${blankToken}/print/${approvedV2.id}?p=0`)).status(), 404, "not carried: no files");
+
+  log("a sent contract's proofs are locked; a newer version after signing leaves the signed order its file, flagged");
+  await page.goto(`${BASE}/dashboard/contracts/${printerPo}`);
+  await settle(page);
+  assert.equal(await page.getByTestId("contract-proof").first().isDisabled(), true);
+  await sql(`UPDATE "Contract" SET status='SIGNED', "signedAt"=now(), "signerName"='Ace' WHERE id=$1`, [printerPo]);
+  await page.goto(`${BASE}/dashboard/quotes/${quoteId}`);
+  await settle(page);
+  await page.locator('[data-testid=proof-row][data-proof="1"]').getByTestId("proof-open").click();
+  await sheet.waitFor();
+  await sheet.getByTestId("proof-artwork-box").focus();
+  await page.keyboard.press("ArrowDown");
+  await sheet.getByTestId("proof-save").click();
+  await sheet.waitFor({ state: "detached" });
+  await page.getByTestId("send-proofs").click();
+  await sendSheet.getByTestId("send-proofs-list").waitFor();
+  await sendSheet.getByTestId("send-proofs-mark").click();
+  await sendSheet.waitFor({ state: "detached" });
+  assert.deepEqual((await versionsOf(proof1.id)).map((v) => v.status), ["SUPERSEDED", "SUPERSEDED", "SENT"]);
+  await coachPage.goto(`${BASE}/c/${printerToken}`);
+  await settle(coachPage);
+  assert.match(await docProofs.first().getByTestId("document-proof-status").innerText(), /since replaced by a newer version: check before printing/);
+  assert.equal((await outsider.request.get(printUrl)).status(), 200, "the signed order keeps the file it was signed for");
+
+  log("the Contract Coordinator: Include the proofs is on for money in, off for money out, and warns about one not approved");
+  await page.goto(`${BASE}/dashboard/deals/tracker?dealId=${dealId}&quoteId=${quoteId}`);
+  await settle(page);
+  const header = page.locator("[data-testid=column-header]").first();
+  await header.getByTestId("column-change").click();
+  const include = page.getByTestId("column-include-proofs").first();
+  await include.waitFor();
+  assert.equal(await include.isChecked(), true);
+  await page.getByTestId("column-unapproved-proofs").first().waitFor();
+  assert.match(await page.getByTestId("column-unapproved-proofs").first().innerText(), /Proof 1 isn't approved yet/);
+  await page.locator("#col-1-direction").selectOption("out");
+  assert.equal(await include.isChecked(), false);
+  await page.locator("#col-1-direction").selectOption("in");
+  const before = Number((await sql(`SELECT count(*) FROM "Contract" WHERE "organizationId"=$1`, [org])).rows[0].count);
+  // The deal already has contracts, so nothing starts ticked.
+  await page.getByRole("checkbox", { name: "Put Classic Tee on Contract A" }).first().check();
+  await page.locator("[data-testid=create-contracts]").click();
+  const anyway = page.getByTestId("price-check-create-anyway");
+  await Promise.race([page.waitForURL(/created=1/), anyway.waitFor().then(() => anyway.click())]);
+  await page.waitForURL(/created=1/);
+  const made = (await sql(`SELECT id FROM "Contract" WHERE "organizationId"=$1 ORDER BY number DESC LIMIT 1`, [org])).rows[0].id;
+  assert.equal(Number((await sql(`SELECT count(*) FROM "Contract" WHERE "organizationId"=$1`, [org])).rows[0].count), before + 1);
+  assert.ok((await held(made)).length >= 1, "the new Sales Order carries the proofs");
+
+  log("next season: a new quote for Lincoln High reuses the approved proof as a draft that still needs its own yes");
+  const quote2 = cuid();
+  await sql(
+    `INSERT INTO "Quote" (id, "organizationId", "contactId", "dealId", number, title, "publicToken", "updatedAt") VALUES ($1,$2,$3,$4,1002,'Fall tees',$5,now())`,
+    [quote2, org, contactId, dealId, `q${randomBytes(12).toString("hex")}`],
+  );
+  const q2Line = cuid();
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id, "quoteId", "productId", name, quantity, "unitPriceCents", tag, variations, "variationText", position)
+     VALUES ($1,$2,$3,'Classic Tee',30,1200,'MATERIALS',$4,'Navy · S',0)`,
+    [q2Line, quote2, productId, JSON.stringify(lineVariations(navy, "Navy", "S"))],
+  );
+  await page.goto(`${BASE}/dashboard/quotes/${quote2}`);
+  await settle(page);
+  await page.getByTestId("line-row").first().getByTestId("line-proof-add").click();
+  await sheet.waitFor();
+  await sheet.getByTestId("proof-earlier").click();
+  await sheet.getByTestId("proof-earlier-row").first().waitFor();
+  assert.match(await sheet.getByTestId("proof-earlier-row").first().innerText(), /QUO-1001 · Proof 1/);
+  await sheet.getByTestId("proof-earlier-use").first().click();
+  await sheet.waitFor({ state: "detached" });
+  const reused = (await sql(`SELECT * FROM "Proof" WHERE "quoteId"=$1`, [quote2])).rows[0];
+  const [reusedVersion] = await versionsOf(reused.id);
+  assert.equal(reusedVersion.status, "DRAFT");
+  assert.match(reusedVersion.copiedFrom, /^Approved on QUO-1001 by Coach Lee/);
+  assert.equal(reusedVersion.displayKey, (await versionsOf(proof1.id))[1].displayKey, "the files are shared, not copied");
+  assert.notEqual(reusedVersion.publicToken, (await versionsOf(proof1.id))[1].publicToken);
+  assert.equal((await panelsOf(reusedVersion.id)).length, 2);
+
+  log("deleting the new quote takes its proof but not the shared files; deleting the first keeps the proofs its contracts carry");
+  await sql(`DELETE FROM "Quote" WHERE id=$1`, [quote2]);
+  await page.goto(`${BASE}/dashboard/quotes/${quoteId}`);
+  await settle(page);
+  await page.getByTestId("delete-quote").click();
+  await page.getByTestId("delete-quote-yes").click();
+  await page.waitForURL(/\/dashboard\/quotes$/);
+  const left = (await sql(`SELECT id, "quoteId" FROM "Proof" WHERE "organizationId"=$1 ORDER BY number`, [org])).rows;
+  assert.ok(left.every((row) => row.quoteId === null), "quote-less");
+  assert.equal(left.filter((row) => row.id === reused.id).length, 0, "the reused draft went with its quote");
+  assert.ok(left.some((row) => row.id === proof1.id), "the proof a signed order carries lives on");
+  const sharedFile = path.join(process.cwd(), ".local-storage", approvedV2.displayKey);
+  assert.ok(fs.existsSync(sharedFile), "the shared picture is still there");
+  await coachPage.goto(`${BASE}/c/${printerToken}`);
+  await settle(coachPage);
+  assert.equal(await coachPage.getByTestId("document-proof").count(), 2);
+  assert.equal((await coachPage.goto(pfUrl)).status(), 404, "the approval link went with its quote");
+
+  log("Labels & Units won't retire Print location while apparel is on; turning apparel off hides it all and deletes nothing");
+  await sql(`UPDATE "Organization" SET "apparelOn"=false WHERE id=$1`, [org]);
+  await page.goto(`${BASE}/dashboard/companies/${companyId}`);
+  await settle(page);
+  assert.equal(await page.getByTestId("artwork-card").count(), 0);
+  assert.ok(Number((await sql(`SELECT count(*) FROM "Artwork" WHERE "organizationId"=$1`, [org])).rows[0].count) >= 4);
+  await page.goto(`${BASE}/dashboard/settings/general#apparel`);
+  await settle(page);
+  await page.getByTestId("apparel-switch").click();
+  await page.getByTestId("apparel-save").click();
+  await page.getByText("Apparel is on.").waitFor();
+
+  log("the phone: the proof sheet is a bottom sheet and the approval page fits");
+  const phone = await browser.newContext({ ...devices["iPhone 13"] });
+  const phonePage = await phone.newPage();
+  await phonePage.goto(`${BASE}/login`);
+  await phonePage.fill("#email", EMAIL);
+  await phonePage.fill("#password", PASSWORD);
+  await phonePage.click("button[type=submit]");
+  await phonePage.waitForURL(/\/dashboard$/);
+  const q3 = cuid();
+  await sql(
+    `INSERT INTO "Quote" (id, "organizationId", "contactId", "dealId", number, title, "publicToken", "updatedAt") VALUES ($1,$2,$3,$4,1003,'Phone tees',$5,now())`,
+    [q3, org, contactId, dealId, `q${randomBytes(12).toString("hex")}`],
+  );
+  await sql(
+    `INSERT INTO "QuoteLineItem" (id, "quoteId", "productId", name, quantity, "unitPriceCents", tag, variations, "variationText", position)
+     VALUES ($1,$2,$3,'Classic Tee',5,1200,'MATERIALS',$4,'Navy · M',0)`,
+    [cuid(), q3, productId, JSON.stringify(lineVariations(navy, "Navy", "M"))],
+  );
+  await phonePage.goto(`${BASE}/dashboard/quotes/${q3}`);
+  await settle(phonePage);
+  await phonePage.getByTestId("line-proof-add").first().click();
+  const phoneSheet = phonePage.getByTestId("proof-sheet");
+  await phoneSheet.waitFor();
+  const sheetBox = await phoneSheet.boundingBox();
+  const viewport = phonePage.viewportSize();
+  assert.ok(sheetBox.x <= 1 && sheetBox.width >= viewport.width - 2, "full width on a phone");
+  assert.ok(sheetBox.y + sheetBox.height >= viewport.height - 2, "pinned to the bottom");
+  const canvasBox = await phoneSheet.getByTestId("proof-canvas").boundingBox();
+  assert.ok(canvasBox.width <= viewport.width, "the picture fits");
+  await shot(phonePage, "07-phone-sheet");
+  await phonePage.keyboard.press("Escape");
+  await phone.close();
+
+  console.log(`\nAll ${step} steps passed.`);
   if (pageErrors.length) throw new Error(`page errors: ${pageErrors.join(" | ")}`);
+  await coach.close();
   await outsider.close();
   await browser.close();
   await claude.close();

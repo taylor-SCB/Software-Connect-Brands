@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { ContractDocument } from "@/components/contract-document";
+import { contractProofs } from "@/lib/proofs";
 import { IconDownload } from "@/components/icons";
 import { SignForm } from "./sign-form";
 import { contractTotalCents } from "@/lib/contracts";
@@ -50,6 +51,8 @@ export default async function PublicContractPage({
   }
 
   const canSign = contract.status === "SENT";
+  // The apparel pack: the proofs it carries, read live.
+  const proofs = await contractProofs(contract.id, contract.organization.id);
   // A cancelled contract's link stops working for the customer.
   if (contract.status === "CANCELLED" && !isOwnerPreview) {
     const session = await auth();
@@ -67,7 +70,14 @@ export default async function PublicContractPage({
         </div>
       )}
 
-      <ContractDocument contract={contract} />
+      <ContractDocument
+        contract={{
+          ...contract,
+          proofs,
+          // The printer's files: only on a money-out contract that is out.
+          proofDownloadBase: contract.payable && (contract.status === "SENT" || contract.status === "SIGNED") ? `/c/${token}/print` : null,
+        }}
+      />
 
       <div className="no-print mx-auto mt-5 flex max-w-3xl justify-center">
         <a href={`/c/${token}/pdf`} className="btn btn-ghost">

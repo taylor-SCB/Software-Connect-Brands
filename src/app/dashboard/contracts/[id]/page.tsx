@@ -1,3 +1,6 @@
+import { ContractProofsCard } from "./proofs-card";
+import { apparelOn } from "@/lib/apparel";
+import { contractProofChoices } from "@/lib/proofs";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
@@ -135,6 +138,9 @@ export default async function ContractDetailPage({
   // Release B: the customer's marked-up copies on file and the last one
   // read (the redline reader), and the dates read from a signed contract.
   const aiOn = aiConfigured();
+  // The apparel pack: a contract made from a quote can carry its proofs.
+  const proofChoices =
+    contract.quoteId && (await apparelOn(organizationId)) ? await contractProofChoices(organizationId, contract.id) : null;
   const redlinable = contract.status === "DRAFT" || contract.status === "SENT" || contract.status === "DECLINED";
   const [redlineRows, lastRedline, storedDates] = await Promise.all([
     prisma.contractFile.findMany({
@@ -324,6 +330,16 @@ export default async function ContractDetailPage({
             <Card lit>
               <CardHeader title="Dates in this contract" subtitle="Deadlines the signed wording sets, to put on the calendar." />
               <ContractDatesCard contractId={contract.id} initial={storedDates} aiOn={aiOn} />
+            </Card>
+          )}
+
+          {proofChoices && (proofChoices.length > 0 || contract.status === "DRAFT") && (
+            <Card lit>
+              <CardHeader
+                title="Proofs"
+                subtitle="The quote's proofs this contract carries, with the printer's files on a purchase order. Leave them off a blank-garment supplier's order."
+              />
+              <ContractProofsCard contractId={contract.id} choices={proofChoices} editable={contract.status === "DRAFT"} />
             </Card>
           )}
 

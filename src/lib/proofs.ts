@@ -998,7 +998,7 @@ export async function answerProofs(input: {
   decision: "approve" | "changes";
   name: unknown;
   note?: unknown;
-}): Promise<{ ok: true } | { error: string }> {
+}): Promise<{ ok: true; quoteId: string } | { error: string; quoteId?: string }> {
   const quote = await prisma.quote.findUnique({
     where: { proofToken: input.token },
     select: { id: true, organizationId: true, organization: { select: { status: true } } },
@@ -1041,8 +1041,8 @@ export async function answerProofs(input: {
     if (!same) stale = true;
   }
   await refreshProofEvents(quote.organizationId, quote.id);
-  if (stale) return { error: "This proof was updated. Reload the page to see the new one." };
-  return { ok: true };
+  if (stale) return { error: "This proof was updated. Reload the page to see the new one.", quoteId: quote.id };
+  return { ok: true, quoteId: quote.id };
 }
 
 // The team marks a proof approved by hand: said yes on the phone, signed a
