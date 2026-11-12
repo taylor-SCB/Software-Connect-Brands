@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { PUBLIC_IMAGE_KINDS } from "@/lib/uploads";
-import { streamObject, viewUrl } from "@/lib/storage";
+import { streamObject, streamStoredFile, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 import { readPicture } from "@/lib/product-images";
 
@@ -49,6 +49,24 @@ export async function GET(
     if (session?.user?.organizationId !== file.organizationId) {
       return new Response("Not found", { status: 404 });
     }
+  }
+
+  // ?stream=1 (Release C, Nov 12, 2026): the workspace's own people get a
+  // stored photo through this server instead of a redirect to the store,
+  // so the browser can draw it on a canvas to make it small for the AI.
+  if (file.storageKey && new URL(request.url).searchParams.get("stream") === "1") {
+    const session = await auth();
+    if (session?.user?.organizationId !== file.organizationId) return new Response("Not found", { status: 404 });
+    const streamed = await streamStoredFile(file.storageDriver, file.storageKey);
+    if (!streamed) return new Response("Not found", { status: 404 });
+    return new Response(streamed.body, {
+      headers: {
+        "Content-Type": file.mimeType,
+        ...(streamed.size !== null ? { "Content-Length": String(streamed.size) } : {}),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+      },
+    });
   }
 
   if (file.storageKey) {

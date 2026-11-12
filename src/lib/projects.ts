@@ -102,6 +102,7 @@ const CONTRACT_FOR_AWARD = {
   companyId: true,
   contactId: true,
   dealId: true,
+  quoteId: true,
   discountCents: true,
   company: { select: { id: true, name: true } },
   contact: { select: { id: true, name: true, companyId: true, company: { select: { id: true, name: true } } } },
@@ -348,9 +349,32 @@ export async function awardFromContract(organizationId: string, contractId: stri
       });
     }
 
+    // Site-walk photos taken on the deal's quotes (Release C, Taylor's call
+    // 3) move into the job's Main folder. Only those not on a job yet, so
+    // signing a second agreement moves nothing twice.
+    await moveSiteWalkPhotos(tx, organizationId, project.id, { dealId: contract.dealId, quoteId: contract.quoteId });
+
     await refreshTotals(tx, organizationId, project.id);
     return project.id;
   });
+}
+
+export async function moveSiteWalkPhotos(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  projectId: string,
+  from: { dealId: string | null; quoteId: string | null },
+) {
+  const quotes: Prisma.UploadWhereInput[] = [
+    ...(from.dealId ? [{ quote: { dealId: from.dealId, organizationId } }] : []),
+    ...(from.quoteId ? [{ quoteId: from.quoteId }] : []),
+  ];
+  if (!quotes.length) return 0;
+  const moved = await tx.upload.updateMany({
+    where: { organizationId, kind: "PROJECT_FILE", projectId: null, quoteId: { not: null }, OR: quotes },
+    data: { projectId, photoFolderId: null, quoteId: null },
+  });
+  return moved.count;
 }
 
 // The reversal: signed paperwork that is deleted takes its award back out

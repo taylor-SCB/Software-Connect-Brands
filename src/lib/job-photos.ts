@@ -170,7 +170,7 @@ export async function finishMediaUpload(
   actor: PhotoActor,
   rawTicket: string,
   input: { fileName: string; uploadedByName?: string; tagIds?: string[] },
-): Promise<{ error?: string; ok?: true }> {
+): Promise<{ error?: string; ok?: true; id?: string }> {
   const ticket = readUploadTicket(rawTicket);
   if (
     !ticket ||
@@ -192,11 +192,11 @@ export async function finishMediaUpload(
 
   // Already recorded: a retry after a dropped answer, not a second photo.
   const existing = await prisma.upload.findFirst({ where: { storageKey: ticket.key }, select: { id: true } });
-  if (existing) return { ok: true };
+  if (existing) return { ok: true, id: existing.id };
 
   const tagIds = await resolvePhotoTags(ticket.organizationId, input.tagIds);
   const fileName = parsed.data.fileName.slice(0, 200);
-  await prisma.upload.create({
+  const created = await prisma.upload.create({
     data: {
       organizationId: ticket.organizationId,
       projectId: actor.projectId,
@@ -215,8 +215,9 @@ export async function finishMediaUpload(
       uploadedByName: parsed.data.uploadedByName || null,
       tags: { create: tagIds.map((tagId) => ({ tagId })) },
     },
+    select: { id: true },
   });
-  return { ok: true };
+  return { ok: true, id: created.id };
 }
 
 /* --------------------------------- Links --------------------------------- */
