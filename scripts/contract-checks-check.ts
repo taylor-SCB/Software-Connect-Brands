@@ -69,6 +69,11 @@ check("a discount bigger than the margin", () => {
   assert.deepEqual(codes({ rows, subtotalCents: 20000, discountCents: 10001, totalCents: 9999 }), ["DISCOUNT_OVER_MARGIN"]);
   assert.deepEqual(codes({ rows, subtotalCents: 20000, discountCents: 10000, totalCents: 10000 }), []);
   assert.deepEqual(codes({ payable: true, rows: [row({ unitPriceCents: 10000 })], discountCents: 99999 }), [], "not on a purchase order");
+  assert.deepEqual(
+    codes({ rows: [...rows, row({ product: null, name: "Labor" })], subtotalCents: 40000, discountCents: 30000, totalCents: 10000 }),
+    [],
+    "a row with no catalog cost leaves the margin unknown",
+  );
 });
 check("a schedule that doesn't add up", () => {
   const schedule = [{ label: "Deposit", kind: "PERCENT" as const, percent: 50, fixedCents: null, dueOn: "" }];

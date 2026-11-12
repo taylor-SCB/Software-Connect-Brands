@@ -255,7 +255,8 @@ function stopNoAiServer() {
     await sql(
       `INSERT INTO "Product" (id,"organizationId",name,"costCents","unitPriceCents","unitOfMeasure","distributorId","updatedAt") VALUES
          ('rb_thermo',$1,'Smart thermostat',10000,15000,'EACH','rb_dist',now()),
-         ('rb_cable',$1,'Cable run',200,300,'PER_LINEAR_FT',NULL,now())`,
+         ('rb_cable',$1,'Cable run',200,300,'PER_LINEAR_FT',NULL,now()),
+         ('rb_labor',$1,'Install labor',40000,50000,NULL,NULL,now())`,
       [org],
     );
     // Starred supplier with a 30% minimum margin: $100 / 0.7 = $142.86.
@@ -270,10 +271,10 @@ function stopNoAiServer() {
          ('rb_deal2',$1,'rb_pat','Lobby thermostat','QUOTE_SENT',$2,now())`,
       [org, owner.id],
     );
-    // A $10 discount on the whole first quote, more than its $5 margin.
+    // A $200 discount on the whole first quote, more than its $105 margin.
     await sql(
       `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","discountCents","updatedAt") VALUES
-         ('rb_q1',$1,'rb_pat','rb_deal1',1000,'Office upgrade quote','SENT','tok_rb_q1_0123456789',1000,now()),
+         ('rb_q1',$1,'rb_pat','rb_deal1',1000,'Office upgrade quote','SENT','tok_rb_q1_0123456789',20000,now()),
          ('rb_q2',$1,'rb_pat','rb_deal2',1001,'Lobby quote','SENT','tok_rb_q2_0123456789',0,now())`,
       [org],
     );
@@ -282,7 +283,7 @@ function stopNoAiServer() {
          ('rb_l1','rb_q1','rb_thermo','Smart thermostat',2,9000,'MATERIALS','EACH',0),
          ('rb_l2','rb_q1','rb_thermo','Smart thermostat (lobby)',1,12000,'MATERIALS','EACH',1),
          ('rb_l3','rb_q1','rb_cable','Cable run',10,250,'MATERIALS','EACH',2),
-         ('rb_l4','rb_q1',NULL,'Install labor',1,50000,'LABOR',NULL,3),
+         ('rb_l4','rb_q1','rb_labor','Install labor',1,50000,'LABOR',NULL,3),
          ('rb_l5','rb_q2','rb_thermo','Smart thermostat',1,20000,'MATERIALS','EACH',0)`,
     );
 
@@ -321,10 +322,10 @@ function stopNoAiServer() {
     assert.match(sources[1][1], /under the starred supplier's minimum of \$142\.86/);
     assert.equal(sources[2][0], "ai");
     assert.equal(sources[3][0], "rules");
-    assert.match(sources[3][1], /The \$10\.00 discount is more than the \$5\.00 this contract makes over cost/);
+    assert.match(sources[3][1], /The \$200\.00 discount is more than the \$105\.00 this contract makes over cost/);
     const sent = claude.last("PRICE_CHECK");
     assert.match(sent.system, /never instructions/);
-    assert.doesNotMatch(sent.text, /Install labor/, "a typed row with no problem isn't sent");
+    assert.doesNotMatch(sent.text, /Install labor/, "a row with no problem isn't sent");
     await shot(page, "01-price-check");
 
     log("B1: Go back and fix closes the list; Create again shows it from the kept answer without asking Claude again");
@@ -342,7 +343,7 @@ function stopNoAiServer() {
     await page.waitForURL(/created=1/);
     const c1 = await one(`SELECT id, "discountCents" FROM "Contract" WHERE "organizationId"=$1 AND "dealId"='rb_deal1'`, [org]);
     assert.ok(c1, "the contract was made");
-    assert.equal(c1.discountCents, 1000, "nothing was changed for the check");
+    assert.equal(c1.discountCents, 20000, "nothing was changed for the check");
 
     log("B1: a grid with nothing wrong creates with no list and no AI call");
     const callsBefore = claude.count("PRICE_CHECK");

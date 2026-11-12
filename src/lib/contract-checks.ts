@@ -109,13 +109,11 @@ export function priceCheckProblems(columns: PriceCheckColumn[]): CheckProblem[] 
       }
     });
 
-    if (!column.payable && column.discountCents > 0) {
-      const costed = column.rows.filter((row) => row.product);
-      if (costed.length > 0) {
-        const marginCents = column.rows.reduce(
-          (sum, row) => sum + net(row) - (row.product ? Math.round(row.quantity * row.product.costCents) : 0),
-          0,
-        );
+    // Only when every row has a catalog cost: a typed row's cost isn't
+    // known, so the contract's margin isn't either.
+    if (!column.payable && column.discountCents > 0 && column.rows.length > 0) {
+      if (column.rows.every((row) => row.product)) {
+        const marginCents = column.rows.reduce((sum, row) => sum + net(row) - Math.round(row.quantity * row.product!.costCents), 0);
         if (column.discountCents > marginCents) {
           problems.push({
             id: `${where}:discount`,

@@ -141,7 +141,7 @@ export default async function ContractDetailPage({
       where: { organizationId, contractId: contract.id, complete: true },
       orderBy: [{ createdAt: "desc" }, { position: "asc" }],
       take: 60,
-      select: { id: true, groupId: true, fileName: true, createdAt: true },
+      select: { id: true, groupId: true, fileName: true, createdAt: true, position: true },
     }),
     readAnswer<RedlineResult>(organizationId, "REDLINE", `contract:${contract.id}`),
     signed ? storedContractDates(organizationId, contract.id) : Promise.resolve(null),
@@ -154,6 +154,10 @@ export default async function ContractDetailPage({
       redlineFiles.push(group);
     }
     group.files.push({ id: row.id, fileName: row.fileName });
+  }
+  // A set of photos reads page 1 first, whichever finished uploading last.
+  for (const group of redlineFiles) {
+    group.files.sort((a, b) => (redlineRows.find((row) => row.id === a.id)?.position ?? 0) - (redlineRows.find((row) => row.id === b.id)?.position ?? 0));
   }
   // The last read is offered again only while its file is still on file.
   const redlineInitial = lastRedline && redlineFiles.some((group) => group.groupId === lastRedline.groupId) ? lastRedline : null;
