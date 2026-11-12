@@ -121,7 +121,7 @@ export async function runReportEmails(input: { now: Date; baseUrl: string; budge
         narrative: narrative.body,
         headlines: data.headlines,
         table: data.table,
-        url: `${input.baseUrl}${reportHref(choice)}`,
+        url: `${input.baseUrl}${reportHref(choice, "/dashboard", { explicit: true })}`,
         settingsUrl: `${input.baseUrl}/dashboard/settings/account`,
         cadenceLabel: CADENCE_LABELS[cadence],
       });

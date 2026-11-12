@@ -1201,7 +1201,7 @@ export function LineItemsEditor({
           page has one. */}
       {!readOnly && (
         <div
-          className="popover sticky bottom-0 z-30 flex items-center justify-between gap-3 border-t border-[var(--hairline-3)] px-4 py-2.5 sm:hidden [body:has(.dj-next[data-sticky])_&]:bottom-[4.75rem]"
+          className="popover sticky bottom-[var(--phone-tabbar-h,0px)] z-30 flex items-center justify-between gap-3 border-t border-[var(--hairline-3)] px-4 py-2.5 sm:hidden [body:has(.dj-next[data-sticky])_&]:bottom-[calc(4.75rem+var(--phone-tabbar-h,0px))]"
           data-testid="line-items-phone-bar"
         >
           <div className="min-w-0">

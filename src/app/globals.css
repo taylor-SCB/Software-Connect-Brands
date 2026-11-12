@@ -1377,10 +1377,12 @@
     .dj:has(> .dj-row > .dj-next[data-sticky]) .dj-dots {
       display: flex;
     }
+    /* Above the phone's tab bar (audit fix, Nov 12, 2026: it covered the
+       tabs, More, the look and Log out on quotes and contracts). */
     .dj-next[data-sticky] {
       position: fixed;
       inset-inline: 0;
-      bottom: 0;
+      bottom: var(--phone-tabbar-h, 0px);
       z-index: 40;
       padding: 0.6rem 16px calc(0.6rem + env(safe-area-inset-bottom, 0px));
       background: var(--overlay);

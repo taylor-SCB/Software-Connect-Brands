@@ -1,5 +1,6 @@
 "use client";
 
+import { firstSentence } from "@/lib/reports/first-sentence";
 import { useEffect, useState, useTransition } from "react";
 import { narrativeAction } from "./actions";
 
@@ -82,8 +83,7 @@ export function NarrativeCard({
 // The first sentence, then the rest behind "Read more".
 function Folded({ text }: { text: string }) {
   const trimmed = text.trim();
-  const match = /^[\s\S]*?[.!?](?=\s|$)/.exec(trimmed);
-  const head = match ? match[0] : trimmed;
+  const head = firstSentence(trimmed);
   const rest = trimmed.slice(head.length).trim();
   return (
     <>
