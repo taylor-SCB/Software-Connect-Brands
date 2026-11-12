@@ -471,6 +471,14 @@ let noaiServer = null;
     await until(async () => guest.evaluate(() => [...document.images].every((img) => img.complete && img.naturalWidth > 0)), "report photos load");
     const photoStatus = async (id) => (await guest.request.get(`${BASE}/jr/${saved.token}/photo/${id}`)).status();
     assert.equal(await photoStatus(lobbyId), 200);
+    // audit fixes (coordinator): photos served from the site's own address
+    // are sandboxed, so an uploaded SVG opened on its own can't run script.
+    const sandboxed = (res) => /\bsandbox\b/.test(res.headers()["content-security-policy"] ?? "");
+    assert.ok(sandboxed(await guest.request.get(`${BASE}/jr/${saved.token}/photo/${lobbyId}`)), "the customer's report photo is sandboxed");
+    const lobbyToken = (await one(`SELECT "publicToken" FROM "Upload" WHERE id=$1`, [lobbyId])).publicToken;
+    const staffStream = await page.request.get(`${BASE}/files/${lobbyToken}?stream=1`);
+    assert.equal(staffStream.status(), 200);
+    assert.ok(sandboxed(staffStream), "a staff ?stream=1 photo is sandboxed");
     const otherJobPhoto = (await sql(`SELECT id FROM "Upload" WHERE "organizationId"=$1 AND "projectId"='arc_job' AND id NOT IN ($2,$3,$4,$5) LIMIT 1`, [org, lobbyId, roofId, crewAId, crewBId])).rows[0];
     if (otherJobPhoto) assert.equal(await photoStatus(otherJobPhoto.id), 404, "a job photo not in the report isn't served");
     assert.equal(await photoStatus("nope"), 404);

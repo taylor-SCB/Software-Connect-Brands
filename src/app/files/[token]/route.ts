@@ -5,6 +5,9 @@ import { streamObject, streamStoredFile, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 import { readPicture } from "@/lib/product-images";
 
+// A file streamed from this site's own address can never run script.
+const SANDBOXED = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox";
+
 // Streams an uploaded file. Images (logos, avatars) are served to anyone
 // with the link, because they are drawn on the quote or contract a
 // customer opens without logging in — the token is the only address they
@@ -64,6 +67,11 @@ export async function GET(
         "Content-Type": file.mimeType,
         ...(streamed.size !== null ? { "Content-Length": String(streamed.size) } : {}),
         "X-Content-Type-Options": "nosniff",
+        // The type is whatever the uploader's browser said, and a crew link
+        // can upload. Served from this site's own address, an SVG opened
+        // on its own could run script as the signed-in person; sandboxed,
+        // it can't (Release C audit, Nov 12, 2026).
+        "Content-Security-Policy": SANDBOXED,
         "Cache-Control": "private, no-store",
       },
     });

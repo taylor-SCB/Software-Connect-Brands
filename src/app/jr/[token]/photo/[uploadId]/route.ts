@@ -15,7 +15,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   });
   if (!report?.shared || report.organization.status !== "ACTIVE") return new Response("Not found", { status: 404 });
   const photo = await prisma.upload.findFirst({
-    where: { id: uploadId, organizationId: report.organizationId, projectId: report.projectId, kind: "PROJECT_FILE", mimeType: { startsWith: "image/" } },
+    where: { id: uploadId, organizationId: report.organizationId, projectId: report.projectId, kind: "PROJECT_FILE", mimeType: { startsWith: "image/", not: "image/svg+xml" } },
     select: { id: true, mimeType: true, storageKey: true, storageDriver: true },
   });
   if (!photo?.storageKey) return new Response("Not found", { status: 404 });
@@ -31,6 +31,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
       ...(streamed.size !== null ? { "Content-Length": String(streamed.size) } : {}),
       "Content-Disposition": "inline",
       "X-Content-Type-Options": "nosniff",
+      // A picture from a crew link is whatever type its browser said: from
+      // this site's address it must never be able to run script.
+      "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
       // Turned off means off: never kept by a shared cache.
       "Cache-Control": "private, max-age=300",
     },
