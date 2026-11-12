@@ -47,6 +47,15 @@ model Organization {
   id                      String             @id @default(cuid())
   name                    String
   slug                    String             @unique
+  // The apparel pack (Nov 12, 2026): "We do apparel / custom print" on
+  // Settings → General. Turns on Artwork on company pages, proofs on quote
+  // lines and the approval link; off hides them and deletes nothing.
+  apparelOn               Boolean            @default(false)
+  apparelOnAt             DateTime?
+  // The workspace's Print location label group, made when apparel is
+  // first turned on (or the one it already had by that name).
+  printLocationGroupId    String?
+  printLocationGroup      VariationGroup?    @relation("PrintLocationGroup", fields: [printLocationGroupId], references: [id], onDelete: SetNull)
   status                  OrganizationStatus @default(PENDING)
   // Set when the operator approves or rejects, for the admin list.
   reviewedAt              DateTime?
@@ -172,6 +181,9 @@ model Organization {
   variationOptions      VariationOption[]
   productVariations     ProductVariation[]
   productImages         ProductImage[]
+  artworks              Artwork[]
+  proofs                Proof[]
+  proofVersions         ProofVersion[]
   // Release C (Nov 12, 2026): AI on jobs, photos and money.
   photoTagSuggestions   PhotoTagSuggestion[]
   photoReports          PhotoReport[]
@@ -290,6 +302,10 @@ model User {
   accountTypeRequests   AccountTypeRequest[]   @relation("AccountTypeRequester")
   accountTypeDecisions  AccountTypeRequest[]   @relation("AccountTypeDecider")
   productImagesAdded    ProductImage[]         @relation("ProductImageAddedBy")
+  artworksAdded         Artwork[]              @relation("ArtworkAddedBy")
+  proofsMade            Proof[]                @relation("ProofMadeBy")
+  proofVersionsMade     ProofVersion[]         @relation("ProofVersionMadeBy")
+  proofsApproved        ProofVersion[]         @relation("ProofApprovedBy")
 
   // Per-person view choices (list scope, preset, sort, columns, calendar
   // view), merged key by key and checked when read.
@@ -414,6 +430,7 @@ model Company {
   notes              Note[]
   activities         Activity[]
   uploads            Upload[]
+  artworks           Artwork[]
   contracts          Contract[]
   projects           Project[]
   distributor        Distributor?
@@ -523,6 +540,7 @@ model Contact {
   quotes          Quote[]
   contracts       Contract[]
   uploads         Upload[]
+  artworks        Artwork[]
   projects        Project[]
   crews           Crew[]
   events          CalendarEvent[]
@@ -822,6 +840,7 @@ model Product {
   // Release 3b: the labels it comes in and up to six pictures.
   variations     ProductVariation[]
   images         ProductImage[]
+  proofs         Proof[]
 
   @@index([organizationId])
   @@index([manufacturerId])
@@ -877,19 +896,20 @@ enum VariationKind {
 }
 
 model VariationGroup {
-  id             String            @id @default(cuid())
-  organizationId String
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  kind           VariationKind
+  id              String            @id @default(cuid())
+  organizationId  String
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind            VariationKind
   // "Unit", "Color", "Size" for the built-ins (fixed); the workspace's own
   // up to 40 characters. Names are matched case-insensitively in code.
-  name           String
-  position       Int               @default(0)
+  name            String
+  position        Int               @default(0)
   // Retired: off every picker, kept on everything that already has it.
-  archivedAt     DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  options        VariationOption[]
+  archivedAt      DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  options         VariationOption[]
+  printLocationOf Organization[]    @relation("PrintLocationGroup")
 
   @@unique([organizationId, name])
   @@index([organizationId, position])
@@ -917,10 +937,12 @@ model VariationOption {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  products       ProductVariation[]
-  unitOfProducts Product[]          @relation("ProductCustomUnit")
-  unitOfLines    QuoteLineItem[]    @relation("QuoteLineCustomUnit")
-  colorOfImages  ProductImage[]
+  products         ProductVariation[]
+  unitOfProducts   Product[]          @relation("ProductCustomUnit")
+  unitOfLines      QuoteLineItem[]    @relation("QuoteLineCustomUnit")
+  colorOfImages    ProductImage[]
+  colorOfProofs    Proof[]            @relation("ProofColor")
+  locationOfPanels ProofPanel[]       @relation("ProofPanelLocation")
 
   @@unique([groupId, name])
   @@unique([groupId, builtInUnit])
@@ -975,13 +997,198 @@ model ProductImage {
   createdBy      User?            @relation("ProductImageAddedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt      DateTime         @default(now())
 
-  lines QuoteLineItem[]
+  lines       QuoteLineItem[]
+  proofPanels ProofPanel[]
 
   @@unique([productId, position])
   @@unique([productId, storageKey])
   @@index([storageKey])
   @@index([organizationId])
   @@index([colorOptionId])
+}
+
+// The apparel pack (Nov 12, 2026). A customer's logo, kept on their company
+// (or on the contact, for a customer with no company). The browser makes a
+// picture of it with its transparency kept (preview, thumb) and a small JPEG
+// on mid-grey for the look-alike check; the file the school sent is kept
+// exactly as sent for the printer (the print file). Files are in the private
+// Blob store and only ever served to the workspace's own people: the
+// customer and the printer see a proof, never the artwork itself. Kept
+// (removedAt) while a proof holds it.
+model Artwork {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  companyId      String?
+  company        Company?     @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  name           String
+  // "2 colors: navy, gold" — what the printer needs to know, as typed.
+  inkNote        String?
+  previewKey     String
+  thumbKey       String
+  checkKey       String
+  previewType    String
+  width          Int?
+  height         Int?
+  printKey       String?
+  printName      String?
+  printFormat    String?
+  printSize      Int?
+  // The look-alike check (Taylor, Nov 12: a warning only, never a block):
+  // ok, famous, unsure or unchecked, what Claude said, and the check copy's
+  // sha256 so the same picture uploaded again reuses the answer.
+  checkStatus    String?
+  checkNote      String?
+  checkHash      String?
+  removedAt      DateTime?
+  createdById    String?
+  createdBy      User?        @relation("ArtworkAddedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+
+  panels ProofPanel[]
+
+  @@index([organizationId, companyId])
+  @@index([organizationId, contactId])
+  @@index([organizationId, checkHash])
+  @@index([previewKey])
+}
+
+enum ProofStatus {
+  DRAFT
+  SENT
+  APPROVED
+  CHANGES
+  SUPERSEDED
+}
+
+// A proof: one design on one garment colour, on one quote ("Proof 2 ·
+// Classic Tee · Navy"), shown as a panel per print location (front, back,
+// a sleeve) side by side, the way a print shop's proof sheet is. What the
+// customer looks at is a version of it; a change after it was sent is a new
+// version, and the older one is kept for its approval and any contract that
+// printed it. The key is (productId, colorOptionId): a line shows a proof it
+// is joined to only while its own product and Color still match.
+model Proof {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // SetNull: a deleted quote's proofs live on while a contract holds one.
+  quoteId        String?
+  quote          Quote?           @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  number         Int
+  productId      String?
+  product        Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  colorOptionId  String?
+  colorOption    VariationOption? @relation("ProofColor", fields: [colorOptionId], references: [id], onDelete: SetNull)
+  // As they read when the proof was made.
+  productName    String
+  colorLabel     String?
+  createdById    String?
+  createdBy      User?            @relation("ProofMadeBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
+
+  versions ProofVersion[]
+  lines    QuoteLineItem[]
+
+  @@unique([quoteId, number])
+  @@index([organizationId])
+  @@index([productId])
+}
+
+// One version of a proof: its panels drawn in the browser into one picture,
+// the artwork exactly as uploaded (never redrawn by AI; Taylor, Nov 12). A
+// DRAFT's picture is replaced when it is edited (new keys, new token); once
+// sent it never changes.
+model ProofVersion {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  proofId         String
+  proof           Proof        @relation(fields: [proofId], references: [id], onDelete: Cascade)
+  version         Int
+  displayKey      String
+  thumbKey        String
+  docKey          String
+  contentType     String
+  sizeBytes       Int
+  width           Int?
+  height          Int?
+  publicToken     String       @unique
+  status          ProofStatus  @default(DRAFT)
+  // "Approved on QUO-1042 by Coach Smith · Sep 3": a proof brought over from
+  // an earlier order, as it read then. It still needs this order's answer.
+  copiedFrom      String?
+  sentAt          DateTime?
+  approvedByName  String?
+  approvedAt      DateTime?
+  // Marked approved by the team (by phone, on paper), not on the link.
+  approvedOffline Boolean      @default(false)
+  approvedById    String?
+  approvedBy      User?        @relation("ProofApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  changesByName   String?
+  changesNote     String?
+  changesAt       DateTime?
+  supersededAt    DateTime?
+  createdById     String?
+  createdBy       User?        @relation("ProofVersionMadeBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  panels    ProofPanel[]
+  contracts ContractProof[]
+
+  @@unique([proofId, version])
+  @@index([organizationId])
+  @@index([displayKey])
+}
+
+// One print location of a version: which artwork, placed where, on what.
+// The base is one of the product's pictures, or a plain garment drawn in a
+// colour when the product has no picture in this Color (never a white shirt
+// passed off as navy). "shownOn" captions a picture of another colour.
+model ProofPanel {
+  id               String           @id @default(cuid())
+  versionId        String
+  version          ProofVersion     @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  position         Int
+  locationOptionId String?
+  locationOption   VariationOption? @relation("ProofPanelLocation", fields: [locationOptionId], references: [id], onDelete: SetNull)
+  locationLabel    String
+  artworkId        String?
+  artwork          Artwork?         @relation(fields: [artworkId], references: [id], onDelete: SetNull)
+  artworkName      String
+  inkNote          String?
+  baseImageId      String?
+  baseImage        ProductImage?    @relation(fields: [baseImageId], references: [id], onDelete: SetNull)
+  // "picture", "plain-front" or "plain-back"; a plain garment's colour.
+  baseKind         String
+  baseColor        String?
+  shownOn          String?
+  // Where the artwork sits, as fractions of the base: {x, y, w, h}.
+  placement        Json
+
+  @@unique([versionId, position])
+  @@index([artworkId])
+  @@index([baseImageId])
+}
+
+// The proofs a contract carries, picked by the shop ("Include the proofs"):
+// the printer's purchase order and the customer's Sales Order, never the
+// blank-garment supplier's. Changed only while the contract is a draft. The
+// version is the one it was written with; "covers" is what it is for, as
+// the quote's lines read then ("Classic Tee · Navy: 12 S, 24 M").
+model ContractProof {
+  contractId String
+  contract   Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  versionId  String
+  version    ProofVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  position   Int          @default(0)
+  covers     String       @default("")
+
+  @@id([contractId, versionId])
+  @@index([versionId])
 }
 
 enum QuoteTemplate {
@@ -1040,6 +1247,9 @@ model Quote {
   discountCents    Int           @default(0)
   discountPercent  Float?
   publicToken      String        @unique
+  // The apparel pack's approval link (/pf/<token>), made the first time
+  // proofs are sent. One link for every proof on the quote.
+  proofToken       String?       @unique
   sentAt           DateTime?
   respondedAt      DateTime?
   // The name the customer typed when they said yes on their own copy
@@ -1049,7 +1259,9 @@ model Quote {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  lineItems      QuoteLineItem[]
+  lineItems QuoteLineItem[]
+
+  proofs         Proof[]
   payments       QuotePayment[]
   contracts      Contract[]
   // Quote sent / Quote due / Quote follow up, written by the app.
@@ -1117,6 +1329,11 @@ model QuoteLineItem {
   // quote keeps it after the product's pictures change.
   imageId            String?
   image              ProductImage?    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  // The apparel pack: the proof this line is printed from (its sizes share
+  // one). Counts only while the line's product and Color still match the
+  // proof's, so a line changed by older code never shows another garment's.
+  proofId            String?
+  proof              Proof?           @relation(fields: [proofId], references: [id], onDelete: SetNull)
   // Optional: which kind of work this row belongs to, from the
   // workspace's service-type list. Only shown once "Split by service
   // type" is turned on, so a one-trade business never sees it.
@@ -1133,6 +1350,7 @@ model QuoteLineItem {
   @@index([supplierCompanyId])
   @@index([customUnitId])
   @@index([imageId])
+  @@index([proofId])
 }
 
 // What the customer is asked to pay and when. Deliberately NOT a copy of
@@ -1445,6 +1663,7 @@ model Contract {
   updatedAt         DateTime          @updatedAt
 
   lineItems      ContractLineItem[]
+  proofs         ContractProof[]
   payments       ContractPayment[]
   // Contract sent / Contract follow up / Contract closed, written by the app.
   calendarEvents CalendarEvent[]

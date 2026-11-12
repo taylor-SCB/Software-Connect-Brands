@@ -81,6 +81,8 @@ export async function mergeContacts(organizationId: string, keepId: string, othe
     prisma.quote.updateMany({ where: from, data: moved }),
     prisma.contract.updateMany({ where: from, data: moved }),
     prisma.upload.updateMany({ where: from, data: moved }),
+    // The apparel pack: a no-company customer's logos go with them.
+    prisma.artwork.updateMany({ where: from, data: moved }),
     prisma.project.updateMany({ where: from, data: moved }),
     prisma.crew.updateMany({ where: from, data: moved }),
     prisma.calendarEvent.updateMany({ where: from, data: moved }),
@@ -185,6 +187,8 @@ export async function mergeCompanies(organizationId: string, keepId: string, oth
     prisma.note.updateMany({ where: from, data: moved }),
     prisma.activity.updateMany({ where: from, data: moved }),
     prisma.upload.updateMany({ where: from, data: moved }),
+    // The apparel pack: the school's logos go with it.
+    prisma.artwork.updateMany({ where: from, data: moved }),
     prisma.contract.updateMany({ where: from, data: moved }),
     prisma.project.updateMany({ where: from, data: moved }),
     prisma.crew.updateMany({ where: from, data: moved }),

@@ -41,6 +41,16 @@ export function productImageBase(organizationId: string, productId: string) {
   return `org/${organizationId}/products/${productId}/${randomBytes(12).toString("base64url")}`;
 }
 
+// The apparel pack: org/<org>/artwork/<random>(-thumb|-check|-print) and
+// org/<org>/proofs/<quote>/<random>(-thumb|-doc). No company in an artwork
+// key, so merging companies never renames a file.
+export function artworkBase(organizationId: string) {
+  return `org/${organizationId}/artwork/${randomBytes(12).toString("base64url")}`;
+}
+export function proofBase(organizationId: string, quoteId: string) {
+  return `org/${organizationId}/proofs/${quoteId}/${randomBytes(12).toString("base64url")}`;
+}
+
 // org/<org>/projects/<job>/<random>-<name>: unguessable, and grouped so a
 // workspace's files can be found in the store's own browser.
 export function mediaKey(organizationId: string, projectId: string, fileName: string) {
@@ -65,12 +75,18 @@ export type UploadTicket = {
   // What the file is for, checked by every finish step so a ticket for one
   // can't be finished as the other. Tickets signed before Release 3b carry
   // none and are job photos.
-  purpose?: "job-photo" | "product-image";
+  purpose?: "job-photo" | "product-image" | "artwork" | "proof";
   projectId?: string;
   // A product picture (Release 3b): which product, and which of its three
   // copies this file is.
   productId?: string;
-  role?: "display" | "thumb" | "doc";
+  role?: "display" | "thumb" | "doc" | "preview" | "print" | "check";
+  // The apparel pack (Nov 12, 2026): a customer's artwork (on their company,
+  // or on the contact when there is none), or a proof's version on a quote.
+  companyId?: string;
+  contactId?: string;
+  quoteId?: string;
+  proofId?: string;
   photoLinkId?: string;
   photoGrantId?: string;
   photoFolderId?: string;
