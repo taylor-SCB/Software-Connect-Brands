@@ -134,7 +134,7 @@ const insensitive = "insensitive" as const;
 
 // LIKE's own characters, matched as typed. Prisma's `contains` passes them
 // through, so "r%a" would be a wildcard and a trailing backslash an error.
-function likeText(term: string) {
+export function likeText(term: string) {
   return term.replace(/[\\%_]/g, "\\$&");
 }
 

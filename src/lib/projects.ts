@@ -102,6 +102,7 @@ const CONTRACT_FOR_AWARD = {
   companyId: true,
   contactId: true,
   dealId: true,
+  quoteId: true,
   discountCents: true,
   company: { select: { id: true, name: true } },
   contact: { select: { id: true, name: true, companyId: true, company: { select: { id: true, name: true } } } },
@@ -295,6 +296,7 @@ export async function awardFromContract(organizationId: string, contractId: stri
       select: { id: true },
     });
 
+    const made = !project;
     if (!project) {
       // A change order with nothing to amend is treated as its own job
       // rather than refused, so no signature is ever silently dropped.
@@ -348,9 +350,34 @@ export async function awardFromContract(organizationId: string, contractId: stri
       });
     }
 
+    // Site-walk photos (Release C, Taylor's call 3) move into the job's Main
+    // folder when the job is made: those on every quote of the deal. Later
+    // signatures move only the signed paperwork's own quote's, so a new
+    // draft quote on the same deal keeps its photos (audit fix: any re-award
+    // swept them off it). Only photos not on a job yet are ever moved.
+    await moveSiteWalkPhotos(tx, organizationId, project.id, { dealId: made ? contract.dealId : null, quoteId: contract.quoteId });
+
     await refreshTotals(tx, organizationId, project.id);
     return project.id;
   });
+}
+
+export async function moveSiteWalkPhotos(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  projectId: string,
+  from: { dealId: string | null; quoteId: string | null },
+) {
+  const quotes: Prisma.UploadWhereInput[] = [
+    ...(from.dealId ? [{ quote: { dealId: from.dealId, organizationId } }] : []),
+    ...(from.quoteId ? [{ quoteId: from.quoteId }] : []),
+  ];
+  if (!quotes.length) return 0;
+  const moved = await tx.upload.updateMany({
+    where: { organizationId, kind: "PROJECT_FILE", projectId: null, quoteId: { not: null }, OR: quotes },
+    data: { projectId, photoFolderId: null, quoteId: null },
+  });
+  return moved.count;
 }
 
 // The reversal: signed paperwork that is deleted takes its award back out

@@ -5,11 +5,15 @@ import { PageHeader, Card, EmptyState } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
 import { IconHardHat } from "@/components/icons";
 import { CrewCard, NewCrewButton, type CrewView } from "./crew-card";
+import { crewComplianceDocs } from "@/lib/compliance";
+import { aiConfigured } from "@/lib/ai";
 
 // The people who do the work: your own crews, and the subcontractors who
 // bill you. Built once here, then assigned to scopes of work on any job.
 export default async function CrewsPage() {
-  const { organizationId } = await requireSession();
+  const { organizationId, role } = await requireSession();
+  // Owners and Admins manage company files, a subcontractor's COI too.
+  const canManageFiles = role === "OWNER" || role === "ADMIN";
 
   const [crews, companies, contacts, serviceTypes] = await Promise.all([
     prisma.crew.findMany({
@@ -64,7 +68,21 @@ export default async function CrewsPage() {
     getServiceTypes(organizationId),
   ]);
 
+  // Release B: each subcontractor's COI, license and W-9, with flags.
+  // Every crew is asked, so papers filed while a crew was a subcontractor
+  // still show after it is changed to your own (audit fix).
+  const subDocs = await crewComplianceDocs(
+    organizationId,
+    crews.map((crew) => ({ id: crew.id, name: crew.name, companyName: crew.company?.name ?? null })),
+  );
+  const aiOn = aiConfigured();
+
   const views: CrewView[] = crews.map((crew) => ({
+    compliance: (subDocs.get(crew.id) ?? []).map((doc) => ({
+      ...doc,
+      expiresOn: doc.expiresOn ? doc.expiresOn.toISOString().slice(0, 10) : null,
+      createdAt: doc.createdAt.toISOString(),
+    })),
     id: crew.id,
     name: crew.name,
     kind: crew.kind,
@@ -120,6 +138,8 @@ export default async function CrewsPage() {
                   companies={companies}
                   contacts={contacts}
                   serviceTypes={serviceTypes}
+                  canManageFiles={canManageFiles}
+                  aiOn={aiOn}
                 />
               ))}
             </section>
@@ -138,6 +158,8 @@ export default async function CrewsPage() {
                   companies={companies}
                   contacts={contacts}
                   serviceTypes={serviceTypes}
+                  canManageFiles={canManageFiles}
+                  aiOn={aiOn}
                 />
               ))}
             </section>

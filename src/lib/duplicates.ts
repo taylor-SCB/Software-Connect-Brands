@@ -34,6 +34,27 @@ const SHOWN_PER_GROUP = 10;
 
 export type DuplicateGroup = { key: string; count: number; ids: string[] };
 
+// "Not the same person" (AI release A, Nov 12, 2026): a contact group in
+// which every pair was marked different is hidden. Groups bigger than this
+// are always shown (and never checked pair by pair). The check is skipped
+// outright while the workspace has marked nobody.
+const DISMISS_CHECK_UP_TO = 10;
+function dismissedFilter(kind: DuplicateKind, organizationId: string): Prisma.Sql {
+  if (kind !== "contacts") return Prisma.sql`true`;
+  return Prisma.sql`(
+    NOT EXISTS (SELECT 1 FROM "DuplicateDismissal" WHERE "organizationId" = ${organizationId} AND kind = 'contact')
+    OR n > ${DISMISS_CHECK_UP_TO}
+    OR EXISTS (
+      SELECT 1 FROM unnest(members) a, unnest(members) b
+       WHERE a COLLATE "C" < b COLLATE "C"
+         AND NOT EXISTS (
+           SELECT 1 FROM "DuplicateDismissal" d
+            WHERE d."organizationId" = ${organizationId} AND d.kind = 'contact' AND d."aId" = a AND d."bId" = b
+         )
+    )
+  )`;
+}
+
 function keysSql(kind: DuplicateKind, mode: DuplicateMode, organizationId: string): Prisma.Sql {
   if (kind === "contacts") {
     if (mode === "email") {
@@ -91,11 +112,14 @@ export async function findDuplicateGroups(
       WITH k AS (${keysSql(kind, mode, organizationId)}),
       g AS (
         SELECT key, count(DISTINCT id)::int AS n,
-               (array_agg(id ORDER BY "createdAt", id))[1:${SHOWN_PER_GROUP * 3}] AS ids
+               (array_agg(id ORDER BY "createdAt", id))[1:${SHOWN_PER_GROUP * 3}] AS ids,
+               (array_agg(DISTINCT id))[1:${DISMISS_CHECK_UP_TO + 1}] AS members
           FROM k GROUP BY key HAVING count(DISTINCT id) > 1
       )
       SELECT key, n, ids, (count(*) OVER ())::int AS total
-        FROM g ORDER BY n DESC, key
+        FROM g
+       WHERE ${dismissedFilter(kind, organizationId)}
+       ORDER BY n DESC, key
        LIMIT ${GROUPS_PER_PAGE} OFFSET ${(Math.max(1, n) - 1) * GROUPS_PER_PAGE}`;
   let rows = await pageOf(page);
   // Past the last page (audit fix, Nov 10, 2026): merging the only group

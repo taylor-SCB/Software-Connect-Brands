@@ -19,6 +19,7 @@ import {
 } from "@/lib/uploads";
 import { isoToDate, PAYMENT_TERM_OPTIONS, SCHEDULE_PRESETS } from "@/lib/payments";
 import { COMPLIANCE_CATEGORIES } from "@/lib/constants";
+import { parseLimits } from "@/lib/compliance-shared";
 
 const idSchema = z.string().trim().min(1, "Missing record reference");
 
@@ -365,6 +366,14 @@ const documentSchema = z.object({
   name: z.string().trim().min(1, "Give the file a name").max(160),
   category: z.string().trim().max(60).optional(),
   expiresOn: z.string().trim().optional(),
+  // Release B, the compliance watchdog: what the file says, read by the AI
+  // or typed, and the subcontractor crew it belongs to.
+  namedInsured: z.string().trim().max(200).optional(),
+  insurer: z.string().trim().max(200).optional(),
+  policyNumber: z.string().trim().max(100).optional(),
+  limits: z.string().max(4000).optional(),
+  readByAi: z.enum(["1", ""]).optional(),
+  crewId: z.string().trim().max(100).optional(),
 });
 
 export async function uploadDocument(
@@ -385,8 +394,25 @@ export async function uploadDocument(
     name: formData.get("name") || file.name.replace(/\.[^.]+$/, ""),
     category: formData.get("category") ?? undefined,
     expiresOn: formData.get("expiresOn") ?? undefined,
+    namedInsured: formData.get("namedInsured") ?? undefined,
+    insurer: formData.get("insurer") ?? undefined,
+    policyNumber: formData.get("policyNumber") ?? undefined,
+    limits: formData.get("limits") ?? undefined,
+    readByAi: formData.get("readByAi") ?? undefined,
+    crewId: formData.get("crewId") ?? undefined,
   });
   if (!parsed.ok) return { error: parsed.error };
+  const limits = parsed.data.kind === "COMPLIANCE" ? parseLimits(parsed.data.limits ?? "") : [];
+  if ("error" in limits) return { error: limits.error };
+  // A subcontractor's paper goes on their crew card, and only a
+  // subcontractor crew of this workspace takes one.
+  const crew = parsed.data.kind === "COMPLIANCE" && parsed.data.crewId
+    ? await prisma.crew.findFirst({
+        where: { id: parsed.data.crewId, organizationId: session.organizationId, kind: "SUBCONTRACTOR" },
+        select: { id: true },
+      })
+    : null;
+  if (parsed.data.crewId && !crew) return { error: "That subcontractor isn't on your crews list" };
 
   const expiresOn = parsed.data.expiresOn ? isoToDate(parsed.data.expiresOn) : null;
   if (parsed.data.expiresOn && !expiresOn) return { error: "That expiry date isn't valid" };
@@ -398,6 +424,18 @@ export async function uploadDocument(
         : "Other"
       : parsed.data.category || null;
 
+  const compliance =
+    parsed.data.kind === "COMPLIANCE"
+      ? {
+          organizationId: session.organizationId,
+          crewId: crew?.id ?? null,
+          namedInsured: parsed.data.namedInsured || null,
+          insurer: parsed.data.insurer || null,
+          policyNumber: parsed.data.policyNumber || null,
+          limits,
+          readByAi: parsed.data.readByAi === "1",
+        }
+      : null;
   await prisma.upload.create({
     data: {
       organizationId: session.organizationId,
@@ -406,11 +444,16 @@ export async function uploadDocument(
       name: parsed.data.name,
       expiresOn,
       ...(await readUpload(file)),
+      ...(compliance ? { compliance: { create: compliance } } : {}),
     },
   });
 
   const page = parsed.data.kind === "COMPLIANCE" ? "compliance" : "marketing";
   revalidatePath(`/dashboard/settings/${page}`);
+  if (crew) {
+    revalidatePath("/dashboard/projects/crews");
+    revalidatePath("/dashboard/projects", "layout");
+  }
   return { success: `${parsed.data.name} uploaded` };
 }
 
@@ -430,4 +473,6 @@ export async function deleteDocument(formData: FormData) {
   });
   revalidatePath("/dashboard/settings/compliance");
   revalidatePath("/dashboard/settings/marketing");
+  revalidatePath("/dashboard/projects/crews");
+  revalidatePath("/dashboard/projects", "layout");
 }

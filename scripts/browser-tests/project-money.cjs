@@ -152,7 +152,10 @@ async function signAs(browser, token, name) {
   )).rows[0];
   await page.goto(`${BASE}/dashboard/contracts/${sales.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" can already be on the page, and sending reads the contract
+  // over first (Release B): wait for the button that only exists once
+  // the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   await signAs(browser, sales.publicToken, "Dana Ruiz");
   const project = (await sql(`SELECT id, number FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0];
 
@@ -278,7 +281,10 @@ async function signAs(browser, token, name) {
   log("the order shows under You owe, grouped by supplier, once it is sent");
   await page.goto(`${BASE}/dashboard/contracts/${order.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" can already be on the page, and sending reads the contract
+  // over first (Release B): wait for the button that only exists once
+  // the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   await page.goto(`${BASE}/dashboard/projects/${project.id}/money`);
   await page.locator("[data-testid=supplier-group]").first().waitFor();
   assert.match(await page.locator("[data-testid=supplier-group]").first().textContent(), /Gulf Lock Supply/);

@@ -5,11 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { askClaude } from "@/lib/ai";
 import { AI_DAILY_CAPS, catalogCandidates, notesForPrompt, opportunityMeetingNotes } from "@/lib/ai-assist";
-import { LINE_ITEM_TAGS, type LineItemTagValue } from "@/lib/constants";
-import { STARRED_MINIMUM_SELECT, starredMinimumCents } from "@/lib/supplier-math";
-import { lineLabelsFor } from "@/lib/line-labels";
+import { LINE_ITEM_TAGS } from "@/lib/constants";
 import { formatCents } from "@/lib/format";
-import type { EditorProduct } from "./[id]/line-items-editor";
+import { buildDraftedLines, type DraftedLine, type PickedLine } from "@/lib/drafted-lines";
 
 // "Draft lines from the meeting" on a draft quote that belongs to an
 // opportunity (Nov 10, 2026; STRATEGY.md's "Quote from a sentence"). The
@@ -21,9 +19,7 @@ import type { EditorProduct } from "./[id]/line-items-editor";
 // candidate is dropped. The lines go into the editor for review; nothing
 // is saved until the person presses Save, and the quote stays a Draft.
 
-export type DraftedLine =
-  | { kind: "catalog"; product: EditorProduct; quantity: number; note: string }
-  | { kind: "typed"; name: string; description: string; quantity: number; tag: LineItemTagValue; note: string };
+export type { DraftedLine } from "@/lib/drafted-lines";
 
 const answerSchema = z.object({
   lines: z.array(
@@ -84,9 +80,8 @@ export async function draftQuoteLines(quoteId: string): Promise<{ lines: Drafted
   });
   if ("error" in answer) return answer;
 
-  type Picked = { productId: string | null; name?: string; quantity: number; tag?: LineItemTagValue; note: string };
   let dropped = 0;
-  const picked = answer.data.lines.slice(0, 40).flatMap((line): Picked[] => {
+  const picked = answer.data.lines.slice(0, 40).flatMap((line): PickedLine[] => {
     const quantity = Number.isFinite(line.quantity) && line.quantity > 0 ? Math.min(1_000_000, Math.round(line.quantity * 100) / 100) : 1;
     if (line.productId) {
       if (!candidateIds.has(line.productId)) {
@@ -100,57 +95,6 @@ export async function draftQuoteLines(quoteId: string): Promise<{ lines: Drafted
     return [{ productId: null, name, quantity, tag: line.tag, note: line.note.slice(0, 200) }];
   });
 
-  const productIds = [...new Set(picked.flatMap((line) => (line.productId ? [line.productId] : [])))];
-  const [products, labels] = await Promise.all([
-    prisma.product.findMany({
-      where: { organizationId, id: { in: productIds } },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        unitPriceCents: true,
-        defaultTag: true,
-        serviceType: true,
-        unitOfMeasure: true,
-        softwareRate: true,
-        softwareTerm: true,
-        customUnitId: true,
-        customUnit: { select: { name: true } },
-        suppliers: STARRED_MINIMUM_SELECT,
-      },
-    }),
-    lineLabelsFor(organizationId, productIds),
-  ]);
-  const byId = new Map(products.map((row) => [row.id, row]));
-  const lines: DraftedLine[] = picked.flatMap((line): DraftedLine[] => {
-    if (!line.productId) {
-      return [{ kind: "typed", name: line.name!, description: "", quantity: line.quantity, tag: line.tag!, note: line.note }];
-    }
-    const row = byId.get(line.productId);
-    if (!row) return [];
-    const ownUnit = row.unitOfMeasure ? null : row.customUnitId;
-    return [
-      {
-        kind: "catalog",
-        quantity: line.quantity,
-        note: line.note,
-        product: {
-          id: row.id,
-          name: row.name,
-          description: row.description,
-          unitPriceCents: row.unitPriceCents,
-          defaultTag: row.defaultTag,
-          serviceType: row.serviceType,
-          unitOfMeasure: row.unitOfMeasure,
-          softwareRate: row.softwareRate,
-          softwareTerm: row.softwareTerm,
-          minPriceCents: starredMinimumCents(row.suppliers),
-          customUnitId: ownUnit,
-          customUnitName: ownUnit ? (row.customUnit?.name ?? null) : null,
-          labels: labels[row.id] ?? null,
-        },
-      },
-    ];
-  });
+  const lines = await buildDraftedLines(organizationId, picked);
   return { lines, dropped };
 }

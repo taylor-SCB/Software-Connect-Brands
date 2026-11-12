@@ -35,6 +35,8 @@ import { lineLabelsFor } from "@/lib/line-labels";
 import { getCustomUnits } from "@/lib/variations";
 import { readSnapshot } from "@/lib/variation-shared";
 import { aiConfigured } from "@/lib/ai";
+import { fileUrl } from "@/lib/uploads";
+import { SiteWalkPhotos } from "./site-walk";
 
 // yyyy-mm-dd for <input type="date">, which only accepts that shape.
 function toDateInput(date: Date | null) {
@@ -92,6 +94,18 @@ export default async function QuoteBuilderPage({
     aiConfigured() && quote.status === "DRAFT"
       ? await prisma.opportunity.findFirst({ where: { organizationId, dealId: quote.dealId }, select: { id: true } })
       : null;
+
+  // Release C (C4): site-walk photos kept on this quote, for the team only;
+  // they move into the job's photos when the job is made.
+  const siteWalkPhotos = (
+    await prisma.upload.findMany({
+      where: { organizationId, quoteId: quote.id, projectId: null },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+      select: { id: true, name: true, publicToken: true },
+    })
+  ).map((photo) => ({ id: photo.id, name: photo.name, src: fileUrl(photo.publicToken) }));
+  const siteWalkOn = aiConfigured() && quote.status === "DRAFT";
 
   // Suppliers already on a line are fetched back even if they have since
   // stopped being distributors, so the picker can offer the linked one.
@@ -273,8 +287,19 @@ export default async function QuoteBuilderPage({
             suppliers={suppliers}
             platformSuppliers={platformSuppliers}
             meetingDraft={fromOpportunity ? { auto: draftParam === "meeting" && quote.lineItems.length === 0 } : null}
+            siteWalk={siteWalkOn ? { photos: siteWalkPhotos } : null}
           />
         </Card>
+
+        {siteWalkPhotos.length > 0 && (
+          <Card lit>
+            <CardHeader
+              title="Site-walk photos"
+              subtitle="For your team only: never on the customer's copy. They move into the job's photos when the job is signed."
+            />
+            <SiteWalkPhotos quoteId={quote.id} photos={siteWalkPhotos} canRemove />
+          </Card>
+        )}
 
         <Card lit>
           <CardHeader

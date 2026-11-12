@@ -167,6 +167,13 @@ async function signAs(browser, token, name) {
   await page.locator("#col-2-contact").selectOption("ctc_sup_pj");
   await page.getByRole("checkbox", { name: "Put Smart locks on Contract B" }).check();
   await page.locator("[data-testid=create-contracts]").click();
+  // Release B's price check before Create: say what it found, then go ahead.
+  {
+    await page.getByTestId("price-check").waitFor();
+    const found = await page.getByTestId("price-check-item").evaluateAll((items) => items.map((item) => item.dataset.code));
+    assert.deepEqual(found, ["PO_OVER_COST"], "the purchase order copies the quote's $150 sell price, above the $90 catalog cost");
+    await page.getByTestId("price-check-create-anyway").click();
+  }
   await page.waitForURL(/created=\d+/);
 
   const contracts = (await sql(
@@ -184,7 +191,10 @@ async function signAs(browser, token, name) {
   for (const contract of [sales, order]) {
     await page.goto(`${BASE}/dashboard/contracts/${contract.id}`);
     await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-    await page.getByText(/Sent/).first().waitFor();
+    // "Sent" can already be on the page, and sending reads the contract
+    // over first (Release B): wait for the button that only exists once
+    // the status has really changed.
+    await page.locator("[data-testid=mark-signed]").first().waitFor();
   }
   await signAs(browser, order.publicToken, "Sam Rep");
   assert.equal(Number((await sql(`SELECT count(*) FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0].count), 0);
@@ -577,7 +587,10 @@ async function signAs(browser, token, name) {
   // Mark as sent: the stored budget has to pick the order up.
   await page.goto(`${BASE}/dashboard/contracts/con_pj_po`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" can already be on the page, and sending reads the contract
+  // over first (Release B): wait for the button that only exists once
+  // the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   for (let tries = 0; tries < 40; tries += 1) {
     const now = (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id])).rows[0]
       .committedCents;

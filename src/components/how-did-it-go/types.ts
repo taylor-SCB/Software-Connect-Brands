@@ -25,6 +25,8 @@ export type LogContext = {
   // A calendar entry with nobody on it (a front-desk try's follow-up): it
   // can only be logged as a try (final audit, Nov 11, 2026).
   nobody?: boolean;
+  // AI is switched on: the sheet offers "Fill it in from my words".
+  ai?: boolean;
 };
 
 // One save the sheet made, for "Saved · Undo" and the next step.

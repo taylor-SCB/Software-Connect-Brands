@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { Field, TextareaField, FormError, FormSuccess } from "@/components/ui";
 import { updateContractBody, setContractStatus } from "../actions";
 import type { ActionState } from "@/lib/forms";
+import { useRedlineDraft } from "./redline-draft";
 
 export function ContractBodyForm({
   contractId,
@@ -23,6 +24,15 @@ export function ContractBodyForm({
     updateContractBody,
     {},
   );
+  // Changes accepted from the customer's marked-up copy (Release B) wait
+  // here until Save; a save that goes through lets them go.
+  const { draft, clearDraft } = useRedlineDraft();
+  useEffect(() => {
+    if (state?.success) clearDraft();
+    // Each save hands back a new state object, so two saves in a row both
+    // count (comparing the message would not).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   if (locked || sent) {
     return (
@@ -51,7 +61,18 @@ export function ContractBodyForm({
     <form action={formAction} className="space-y-4 p-5">
       <input type="hidden" name="contractId" value={contractId} />
       <Field label="Contract title" name="title" defaultValue={title} required />
-      <TextareaField label="Body" name="body" rows={24} defaultValue={body} required />
+      {draft && (
+        <p
+          role="status"
+          className="rounded-lg border border-[color-mix(in_srgb,var(--warn)_45%,transparent)] bg-[color-mix(in_srgb,var(--warn)_8%,transparent)] px-3 py-2 text-xs text-[var(--text-strong)]"
+          data-testid="redline-draft-note"
+        >
+          {draft.applied === 1 ? "One change" : `${draft.applied} changes`} from their marked-up copy {draft.applied === 1 ? "is" : "are"} in the body below. Nothing is saved until Save changes.
+        </p>
+      )}
+      <div key={draft?.version ?? 0}>
+        <TextareaField label="Body" name="body" rows={24} defaultValue={draft?.body ?? body} required />
+      </div>
 
       <FormError message={state?.error} />
       <FormSuccess message={state?.success} />

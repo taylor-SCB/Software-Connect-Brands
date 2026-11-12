@@ -14,6 +14,8 @@ import { UP_NEXT_SHOWN } from "@/lib/up-next";
 import type { UpNextItem } from "./load";
 import { giveBackLeads, takeUnownedLeads } from "./actions";
 import { smsHref, telHref } from "@/lib/dial";
+import { BriefMeButton } from "@/components/brief-me";
+import { OpenerLink } from "./opener";
 
 // Up next on My day (BDR redesign, Nov 11, 2026): one ranked list (the
 // order is rankUpNext's), 8 rows then "Show all n". Each row: the health
@@ -34,11 +36,14 @@ export function UpNextList({
   today,
   readOnly,
   unowned,
+  ai = false,
 }: {
   items: UpNextItem[];
   today: string;
   readOnly: boolean;
   unowned: { count: number; ids: string[] };
+  // AI is switched on: each row offers "Draft an opener" (on a tap).
+  ai?: boolean;
 }) {
   const router = useRouter();
   const how = useHowDidItGo({ dial: !readOnly });
@@ -96,6 +101,10 @@ export function UpNextList({
                   {item.reason}
                   {item.park && <span className="faint"> · can rest 30 days</span>}
                 </p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3">
+                  <BriefMeButton contactId={item.id} name={item.name} variant="link" testId="up-next-brief" />
+                  {ai && !readOnly && <OpenerLink contactId={item.id} reason={item.reason} />}
+                </div>
               </div>
               <div className="hidden w-36 shrink-0 md:block">
                 <LifecycleMeter health={item.health} size="mini" showCaption={false} />

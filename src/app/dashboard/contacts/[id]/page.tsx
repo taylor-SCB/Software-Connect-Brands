@@ -44,6 +44,9 @@ import { ContactShell } from "./contact-shell";
 import { CallButton, MainAction, TextButton, type MainActionData, type PhoneRow } from "./action-bar";
 import { MoreMenu } from "./more-menu";
 import { HeaderMeter } from "./header-meter";
+import { BriefMeButton } from "@/components/brief-me";
+import { findLookalikes } from "@/lib/lookalikes";
+import { Lookalikes } from "./lookalikes";
 import { NextStepStrip, type NextItem } from "./next-step";
 import { LogBar } from "./log-bar";
 import { ContactHistory, type HistoryItem } from "./contact-history";
@@ -146,7 +149,12 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     loadRepChoices(organizationId),
   ]);
   if (!health) notFound();
-  const upcomingActions = await loadUpcomingActions(organizationId, upcoming, today);
+  const linkedIdsEarly = [...(contact.company ? [contact.company.id] : []), ...contact.accounts.map((row) => row.company.id)];
+  const [upcomingActions, lookalikes] = await Promise.all([
+    loadUpcomingActions(organizationId, upcoming, today),
+    // Looks like the same person (AI release A): one statement, no AI.
+    findLookalikes(organizationId, contact, linkedIdsEarly),
+  ]);
   const meetingSetOn = meetingSet ? dayInZone(meetingSet, timeZone) : null;
   const canManage = role === "OWNER" || role === "ADMIN";
 
@@ -164,7 +172,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const quotesOut = contact.quotes.filter((quote) => quote.status === "SENT").length;
   const lastTouchAt = touches[0]?.occurredAt ?? null;
   const pickable = { id: contact.id, name: contact.name, company: contact.company?.name ?? null };
-  const linkedIds = [...(contact.company ? [contact.company.id] : []), ...contact.accounts.map((row) => row.company.id)];
+  const linkedIds = linkedIdsEarly;
 
   // Numbers to call and text, the mobile first.
   const phoneLabel = contact.phone2 || contact.phoneLabel === "PERSONAL" ? `Phone · ${CHANNEL_LABEL_NAMES[contact.phoneLabel]}` : "Phone";
@@ -388,6 +396,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
               }}
             />
             <MoreMenu {...moreProps} />
+            <BriefMeButton contactId={contact.id} name={contact.name} />
           </div>
 
           <HeaderMeter health={health} />
@@ -405,6 +414,12 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             />
           </Disclosure>
         </header>
+
+        {/* Always mounted, so its "Undo" outlives the last suggestion. */}
+        <Lookalikes
+          me={{ id: contact.id, name: contact.name, email: contact.email ?? contact.email2, phone: contact.mobile ?? contact.phone ?? contact.phone2, company: contact.company?.name ?? null }}
+          rows={lookalikes}
+        />
 
         <div className="mt-5 flex flex-col gap-5 lg:grid lg:grid-cols-3 lg:items-start">
           <div className="contents lg:col-span-2 lg:flex lg:min-w-0 lg:flex-col lg:gap-5">

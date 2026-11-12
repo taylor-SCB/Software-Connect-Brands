@@ -584,6 +584,13 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   await boxes.nth(1).check();
   await boxes.nth(2).check();
   await page.locator("[data-testid=create-contracts]").click();
+  // Release B's price check before Create: say what it found, then go ahead.
+  {
+    await page.getByTestId("price-check").waitFor();
+    const found = await page.getByTestId("price-check-item").evaluateAll((items) => items.map((item) => item.dataset.code));
+    assert.deepEqual(found, ["UNIT", "UNIT"], "two lines carry the Each an older build wrote, over the product's Box of 12");
+    await page.getByTestId("price-check-create-anyway").click();
+  }
   await page.waitForURL(/created=\d+/);
   const sale = (await sql(`SELECT id, "publicToken" FROM "Contract" WHERE "organizationId"=$1 AND payable=false`, [org])).rows[0];
   const saleRows = (
@@ -597,7 +604,10 @@ async function makePicture(page, color, size = 900, type = "image/png") {
   assert.equal(saleRows[2].v, "[]", "a row made from 3b on with no labels says so, unlike a row from before it");
   await page.goto(`${BASE}/dashboard/contracts/${sale.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" can already be on the page, and sending reads the contract
+  // over first (Release B): wait for the button that only exists once
+  // the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   const signer = await browser.newContext();
   const signPage = await signer.newPage();
   await signPage.goto(`${BASE}/c/${sale.publicToken}`);

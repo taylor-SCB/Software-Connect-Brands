@@ -25,6 +25,7 @@ import { SupplierCell, type SupplierOption } from "./supplier-cell";
 import type { PlatformSupplier } from "@/lib/account-types";
 import { CatalogPicker } from "./catalog-picker";
 import { MeetingDraftButton } from "./meeting-draft";
+import { SiteWalkButton, type SiteWalkPhoto } from "./site-walk";
 import { useQuoteSaveAll, useQuoteSaveSection } from "./quote-save";
 import { useReportUnsavedLines } from "./mark-sent";
 import type { DraftedLine } from "../ai-actions";
@@ -270,6 +271,7 @@ export function LineItemsEditor({
   units = [],
   draft = true,
   meetingDraft = null,
+  siteWalk = null,
 }: {
   quoteId: string;
   initialLines: EditorLine[];
@@ -292,6 +294,9 @@ export function LineItemsEditor({
   // "Draft lines from the meeting" (AI on, a draft quote whose deal came
   // from a Pipeline opportunity); auto when Build Quote asked for it.
   meetingDraft?: { auto: boolean } | null;
+  // Release C (C4): "Draft from photos" (AI on, a draft quote), with the
+  // site-walk photos already kept on it.
+  siteWalk?: { photos: SiteWalkPhoto[] } | null;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialLines.map(toRow));
   // Grows as products are added from the catalog.
@@ -1169,6 +1174,7 @@ export function LineItemsEditor({
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--hairline-3)] px-5 py-3">
           <CatalogPicker onPick={addProductLine} />
           {meetingDraft && <MeetingDraftButton quoteId={quoteId} auto={meetingDraft.auto} onLines={addDraftedLines} />}
+          {siteWalk && <SiteWalkButton quoteId={quoteId} photos={siteWalk.photos} onLines={addDraftedLines} />}
           <button type="button" onClick={addBlankLine} className="btn btn-ghost btn-sm">
             <IconPlus size={13} />
             Blank line

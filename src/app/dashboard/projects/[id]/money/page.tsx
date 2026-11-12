@@ -15,9 +15,13 @@ import { InvoiceRow } from "./invoice-row";
 import { OrderMaterials } from "./order-materials";
 import { ChangeOrderForm } from "./change-order-form";
 import { materialsToOrder } from "../../actions";
+import { aiConfigured } from "@/lib/ai";
+import { fileUrl } from "@/lib/uploads";
+import { distributorTypeName } from "@/lib/distributors";
+import { AddReceipt, PendingReceipts, type PendingReceipt } from "./receipts";
 
 export default async function ProjectMoneyPage({ params }: { params: Promise<{ id: string }> }) {
-  const { organizationId } = await requireSession();
+  const { organizationId, role } = await requireSession();
   const { id } = await params;
   const timeZone = await getTimeZone();
   const today = todayIso(timeZone);
@@ -78,6 +82,49 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
   if (!project) notFound();
 
   const suppliers = await materialsToOrder(project.id);
+
+  // Release C (C5): receipts. Those sent through the crew link wait here,
+  // counting nowhere, until an Owner or Admin approves one. The store box
+  // offers the workspace's suppliers.
+  const supplierType = await distributorTypeName(organizationId);
+  const [pendingRows, supplierCompanies] = await Promise.all([
+    prisma.jobReceipt.findMany({
+      where: { organizationId, projectId: project.id, status: "PENDING" },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+      select: {
+        id: true,
+        storeName: true,
+        purchasedOn: true,
+        totalCents: true,
+        taxCents: true,
+        items: true,
+        aiRead: true,
+        sentByName: true,
+        createdAt: true,
+        upload: { select: { publicToken: true } },
+      },
+    }),
+    prisma.company.findMany({
+      where: { organizationId, companyTypes: { has: supplierType } },
+      orderBy: { name: "asc" },
+      take: 300,
+      select: { name: true },
+    }),
+  ]);
+  const pending: PendingReceipt[] = pendingRows.map((row) => ({
+    id: row.id,
+    photoSrc: row.upload ? fileUrl(row.upload.publicToken) : null,
+    sentBy: row.sentByName ?? "Someone",
+    sentOn: formatDate(row.createdAt, timeZone),
+    storeName: row.storeName,
+    purchasedOn: row.purchasedOn ? row.purchasedOn.toISOString().slice(0, 10) : null,
+    totalCents: row.totalCents,
+    taxCents: row.taxCents,
+    items: Array.isArray(row.items) ? (row.items as PendingReceipt["items"]) : [],
+    aiRead: row.aiRead,
+  }));
+  const supplierNames = supplierCompanies.map((company) => company.name);
 
   // What the customer owes: the rows on their signed paperwork.
   const incoming = project.contracts.filter((contract) => !contract.payable && contract.status === "SIGNED");
@@ -269,6 +316,27 @@ export default async function ProjectMoneyPage({ params }: { params: Promise<{ i
                 </li>
               ))}
             </ul>
+          )}
+        </Card>
+
+        <Card lit>
+          <CardHeader
+            title="Receipts"
+            subtitle="Snap a receipt from the store: it becomes a paid bill on the scope you pick and counts in Spent."
+            actions={
+              <AddReceipt projectId={project.id} scopes={scopeChoices} suppliers={supplierNames} aiOn={aiConfigured()} today={today} />
+            }
+          />
+          {pending.length > 0 ? (
+            <>
+              <p className="eyebrow px-5 pt-4" data-testid="pending-receipts-title">
+                Receipts waiting for approval · {pending.length}
+              </p>
+              <p className="faint px-5 text-xs">Sent through the crew photo link. They don&apos;t count anywhere until approved.</p>
+              <PendingReceipts receipts={pending} scopes={scopeChoices} suppliers={supplierNames} canApprove={role === "OWNER" || role === "ADMIN"} today={today} />
+            </>
+          ) : (
+            <p className="faint px-5 py-4 text-xs">Receipts your crew send through their photo link wait here for an owner or admin.</p>
           )}
         </Card>
 

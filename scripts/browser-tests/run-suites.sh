@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs browser suites against a production build (run "npx next build" first).
-# Usage: [PORT=3400] [LOG=/tmp/sprint-run.txt] DB=<url> run-suites.sh <group...>  groups: plain:<suites,comma> email:<suites> reports ai template load
+# Usage: [PORT=3400] [LOG=/tmp/sprint-run.txt] DB=<url> run-suites.sh <group...>  groups: plain:<suites,comma> email:<suites> reports ai[:<suites>] template load
+# "ai" alone runs ai-assist; "ai:ai-assist,sales-ai" runs those, each with its own stand-in Claude on :3995 (fake-claude.cjs).
 DIR=${DIR:-$(git rev-parse --show-toplevel)}; PORT=${PORT:-3400}; : "${DB:?set DB to your database URL}"
 cd "$DIR" || exit 1
 
@@ -40,7 +41,7 @@ for g in "$@"; do
     reports) echo "== reports" >> $LOG; start RESEND_API_KEY=test-resend-key "EMAIL_FROM=Software Connect Brands <no-reply@example.com>" RESEND_ENDPOINT=http://localhost:3993/emails \
            CRON_SECRET=test-cron-secret REPORTS_TEST_CLOCK=1 APP_URL=http://localhost:$PORT
            run reports CRON_SECRET=test-cron-secret ;;
-    ai) echo "== ai" >> $LOG; start ANTHROPIC_API_KEY=test-key ANTHROPIC_ENDPOINT=http://localhost:3995; run ai-assist ;;
+    ai) echo "== ai" >> $LOG; start ANTHROPIC_API_KEY=test-key ANTHROPIC_ENDPOINT=http://localhost:3995; l=${list//,/ }; for n in ${l:-ai-assist}; do run $n; done ;;
     template) echo "== template" >> $LOG; start ANTHROPIC_API_KEY=test-key ANTHROPIC_ENDPOINT=http://localhost:3998; run template-import ;;
     load) echo "== load" >> $LOG; start; run load-test ;;
   esac

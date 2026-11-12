@@ -163,7 +163,10 @@ async function closeFilters(page) {
   ).rows[0];
   await page.goto(`${BASE}/dashboard/contracts/${sales.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" is already on the page as pipeline text, and sending now reads
+  // the contract over first (Release B): wait for the button that only
+  // exists once the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   await signAs(browser, sales.publicToken, "Dana Ruiz");
   const projectId = (await sql(`SELECT id FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0].id;
   // Sending and signing write "Contract sent" / "Contract closed" on the

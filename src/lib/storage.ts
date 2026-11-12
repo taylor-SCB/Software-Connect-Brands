@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { del, get, head, issueSignedToken, presignUrl, type IssuedSignedToken } from "@vercel/blob";
+import { del, get, head, issueSignedToken, presignUrl, put, type IssuedSignedToken } from "@vercel/blob";
 
 // Where big files live: job photos and videos, which are far past what a
 // Postgres row should hold (Oct 17, 2026). Everything that touches the
@@ -202,4 +202,68 @@ export async function streamObject(key: string) {
   const result = await get(key, { access: "private" });
   if (!result || result.statusCode !== 200) return null;
   return result;
+}
+
+/* ------------------------- Small server-side files ------------------------ */
+
+// Release C (Nov 12, 2026): a picture already made small in the browser
+// (a site-walk photo, a receipt) is a few hundred KB, so it comes to the
+// server in the action that uses it and is written from here rather than
+// through a ticket. Kept to small files: server actions take 5 MB at most.
+export const MAX_SMALL_OBJECT_BYTES = 3 * 1024 * 1024;
+
+export async function putSmallObject(driver: StorageDriver, key: string, bytes: Buffer, type: string) {
+  if (bytes.length > MAX_SMALL_OBJECT_BYTES) throw new Error("too big");
+  if (driver === "local") {
+    await ensureLocalDir(key);
+    await writeFile(localPath(key), bytes, { flag: "wx" });
+    return;
+  }
+  await put(key, bytes, { access: "private", contentType: type, addRandomSuffix: false, allowOverwrite: false });
+}
+
+// A stored file's bytes, for one small enough to hold in memory (a
+// picture made small before it was stored). Null when it isn't there.
+export async function readSmallObject(driver: string | null, key: string): Promise<Buffer | null> {
+  try {
+    if (driver === "local") {
+      const file = localPath(key);
+      const size = (await stat(file)).size;
+      if (size > MAX_SMALL_OBJECT_BYTES * 2) return null;
+      return await readFile(file);
+    }
+    if (driver !== "vercel-blob") return null;
+    const result = await streamObject(key);
+    if (!result?.stream) return null;
+    if (result.blob.size > MAX_SMALL_OBJECT_BYTES * 2) return null;
+    return Buffer.from(await new Response(result.stream).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+// A stored file sent through the server (same origin, so the browser can
+// draw it on a canvas, and the address never leaves the server).
+export async function streamStoredFile(driver: string | null, key: string): Promise<{ body: ReadableStream; size: number | null } | null> {
+  try {
+    if (driver === "local") {
+      const file = localPath(key);
+      const size = (await stat(file)).size;
+      const { createReadStream } = await import("node:fs");
+      const { Readable } = await import("node:stream");
+      return { body: Readable.toWeb(createReadStream(file)) as ReadableStream, size };
+    }
+    if (driver !== "vercel-blob") return null;
+    const result = await streamObject(key);
+    if (!result?.stream) return null;
+    return { body: result.stream, size: result.blob.size };
+  } catch {
+    return null;
+  }
+}
+
+// org/<org>/quotes/<quote>/<random>.jpg and org/<org>/projects/<job>/
+// receipts/<random>.jpg.
+export function smallPictureKey(organizationId: string, folder: string) {
+  return `org/${organizationId}/${folder}/${randomBytes(12).toString("base64url")}.jpg`;
 }
