@@ -25,7 +25,7 @@ import { BookMeetingFields, EMPTY_BOOKING, type BookingValue } from "@/component
 import { afterLog, logContext, notMovingForward, rescheduleEntry } from "./actions";
 import { fillFromWords, type VoiceFill } from "./voice-actions";
 import { voiceBooks } from "./voice-options";
-import { MicButton } from "./mic";
+import { MicButton, MIC_STOP } from "./mic";
 import { Chip, ChipGrid, Sheet } from "./sheet";
 import { UndoToast, UNDO_MS } from "./undo-toast";
 import { browserToday, dayChips, longDay, plusDays, whenWords } from "./dates";
@@ -276,6 +276,15 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const [fill, setFill] = useState<(VoiceFill & { type: ActivityTypeValue; original: string }) | null>(null);
   const fillNow = useRef<typeof fill>(null);
   const [fillError, setFillError] = useState<string | null>(null);
+  // The notes box is unmounted on the Book step; coming back puts the
+  // words back in it (audit fix: it came back empty while `note` kept them).
+  const noteNow = useRef("");
+  useEffect(() => {
+    noteNow.current = note;
+  }, [note]);
+  useEffect(() => {
+    if (phase !== "book" && noteRef.current && !noteRef.current.value && noteNow.current) noteRef.current.value = noteNow.current;
+  }, [phase]);
 
   // Whatever opened the sheet, a pending tel:/sms: tap is now answered.
   useEffect(() => {
@@ -709,8 +718,12 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     setFill(next);
   }
   function fillIn() {
-    const words = (noteRef.current?.value ?? note).trim();
+    // The box after the Book step remounts it is empty until typed in; the
+    // words are still in `note` (audit fix).
+    const words = (noteRef.current?.value || note).trim();
     if (words.length < 3 || pending) return;
+    // Whatever the mic hears next would write over the tidied words.
+    noteRef.current?.dispatchEvent(new Event(MIC_STOP));
     setFillError(null);
     setFilling(true);
     start(async () => {
@@ -732,7 +745,9 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
         const chip = chipByKey(type, result.chip);
         const blocked = chip && ((chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule)) || (nobody && chip.connect));
         const picked = { ...result, chip: blocked ? null : result.chip, next: blocked ? null : result.next, type, original: words };
-        if (result.notes && noteRef.current) {
+        // Tidied words only with a picked outcome, where "Use my words"
+        // can put the person's own back (audit fix).
+        if (picked.chip && result.notes && noteRef.current) {
           noteRef.current.value = result.notes;
           setNote(result.notes);
         }
@@ -747,6 +762,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     fired.preventDefault();
     // Enter in a box on step 2 must not log the touch a second time.
     if (phase !== "log" || pending) return;
+    // The outcome "Fill it in" picked is the one shown picked, so the main
+    // button saves it too (audit fix: it saved a touch with no outcome).
+    const picked = fillNow.current && fillNow.current.type === type ? chipByKey(type, fillNow.current.chip) : null;
+    if (picked) return tapChip(picked);
     saveTouch(null);
   }
 

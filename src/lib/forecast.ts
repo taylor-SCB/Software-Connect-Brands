@@ -5,6 +5,7 @@ import { AI_DAILY_CAPS } from "@/lib/ai-assist";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
 import { addDays } from "@/lib/payments";
 import { formatCents, pct } from "@/lib/format";
+import { zoneDay } from "@/lib/health";
 import { inventedNumbers } from "@/lib/reports/narrative";
 import { fingerprintOf, inventedNames, readWriting, storeWriting } from "@/lib/ai-writing";
 
@@ -38,7 +39,8 @@ const PRIOR: Record<Stage, { rate: number; days: number }> = {
 };
 const STAGE_NAMES: Record<Stage, string> = { QUOTE_SENT: "Quote Sent", CONTRACT_SENT: "Contract Sent" };
 export const CONFIDENT_AFTER_DAYS = 90;
-const OPEN_LIMIT = 2000;
+// Open deals read, newest first; past this the page says how many more.
+const OPEN_LIMIT = 5000;
 
 export type StageRate = { stage: Stage; label: string; rate: number; days: number; won: number; lost: number; sentence: string };
 
@@ -81,6 +83,8 @@ export type Forecast = {
   totals: { thisCents: number; nextCents: number; deals: number; openCents: number };
   reps: RepForecast[];
   long: ForecastDeal[];
+  // Open deals past OPEN_LIMIT, left out of the numbers.
+  leftOut: number;
   historyDays: number;
   lowConfidence: boolean;
   confidenceNote: string;
@@ -109,20 +113,25 @@ export function repSentence(rep: Omit<RepForecast, "sentence">, months: { thisMo
   return `${rep.name} has ${mix} out worth ${formatCents(rep.openCents)}; about ${formatCents(rep.thisCents)} is likely to sign in ${months.thisMonth} and ${formatCents(rep.nextCents)} in ${months.nextMonth}.${long}`;
 }
 
-export async function loadForecast(organizationId: string, options: { today: string; repIds: string[] }): Promise<Forecast> {
-  const { today, repIds } = options;
+export async function loadForecast(organizationId: string, options: { today: string; repIds: string[]; timeZone: string }): Promise<Forecast> {
+  const { today, repIds, timeZone } = options;
   const since = new Date(Date.now() - 365 * DAY);
-  const [changes, firstChange, open] = await Promise.all([
+  const openWhere = { organizationId, stage: { in: [...FORECAST_STAGES] }, ...(repIds.length ? { ownerId: { in: repIds } } : {}) };
+  const [changesNewest, firstChange, open, openCount] = await Promise.all([
+    // The newest 50,000 moves of the last year (audit fix: oldest-first
+    // dropped the recent ones a forecast needs most).
     prisma.statusChange.findMany({
       where: { organizationId, dealId: { not: null }, on: { gte: since }, toStatus: { in: [...FORECAST_STAGES, "WON", "LOST"] } },
       select: { dealId: true, toStatus: true, on: true },
-      orderBy: { on: "asc" },
+      orderBy: { on: "desc" },
       take: 50_000,
     }),
-    prisma.statusChange.findFirst({ where: { organizationId }, orderBy: { on: "asc" }, select: { on: true } }),
+    // History is the deals' own (audit fix: a contact's step back-dated by
+    // hand made a new workspace read as years old).
+    prisma.statusChange.findFirst({ where: { organizationId, dealId: { not: null } }, orderBy: { on: "asc" }, select: { on: true } }),
     prisma.deal.findMany({
-      where: { organizationId, stage: { in: [...FORECAST_STAGES] }, ...(repIds.length ? { ownerId: { in: repIds } } : {}) },
-      orderBy: { stageChangedAt: "asc" },
+      where: openWhere,
+      orderBy: { stageChangedAt: "desc" },
       take: OPEN_LIMIT,
       select: {
         id: true,
@@ -136,16 +145,29 @@ export async function loadForecast(organizationId: string, options: { today: str
         contact: { select: { id: true, name: true } },
       },
     }),
+    prisma.deal.count({ where: openWhere }),
   ]);
+  const changes = changesNewest.reverse();
+  // How each deal really ended: a deal won and then moved to Lost or back
+  // into the pipeline is not a win (audit fix, Nov 12, 2026).
+  const journeyIds = [...new Set(changes.map((change) => change.dealId!))];
+  const endings = new Map<string, string>();
+  for (let index = 0; index < journeyIds.length; index += 10_000) {
+    const rows = await prisma.deal.findMany({ where: { organizationId, id: { in: journeyIds.slice(index, index + 10_000) } }, select: { id: true, stage: true } });
+    for (const row of rows) endings.set(row.id, row.stage);
+  }
 
   // Each deal's first day at each step, and how it ended (a contact's own
   // move carries the deal too, so the earliest of each is kept).
-  const journeys = new Map<string, { reached: Partial<Record<Stage, Date>>; wonOn?: Date; lost?: boolean }>();
+  const journeys = new Map<string, { reached: Partial<Record<Stage, Date>>; wonOn?: Date; lost: boolean }>();
   for (const change of changes) {
-    const journey = journeys.get(change.dealId!) ?? { reached: {} };
+    const ending = endings.get(change.dealId!);
+    // Only deals that are Won or Lost now count toward a rate.
+    if (ending !== "WON" && ending !== "LOST" && ending !== "ARCHIVED") continue;
+    const journey = journeys.get(change.dealId!) ?? { reached: {}, lost: ending !== "WON" };
     if ((FORECAST_STAGES as readonly string[]).includes(change.toStatus)) journey.reached[change.toStatus as Stage] ??= change.on;
-    else if (change.toStatus === "WON") journey.wonOn ??= change.on;
-    else journey.lost = true;
+    // The last time it was won (rows run oldest first).
+    else if (change.toStatus === "WON") journey.wonOn = change.on;
     journeys.set(change.dealId!, journey);
   }
 
@@ -157,10 +179,10 @@ export async function loadForecast(organizationId: string, options: { today: str
     for (const journey of journeys.values()) {
       const reached = journey.reached[stage];
       if (!reached) continue;
-      if (journey.wonOn) {
+      if (!journey.lost) {
         won += 1;
-        waits.push(Math.max(0, (journey.wonOn.getTime() - reached.getTime()) / DAY));
-      } else if (journey.lost) lost += 1;
+        if (journey.wonOn) waits.push(Math.max(0, (journey.wonOn.getTime() - reached.getTime()) / DAY));
+      } else lost += 1;
     }
     const prior = PRIOR[stage];
     const rate = (won + prior.rate * PRIOR_WEIGHT) / (won + lost + PRIOR_WEIGHT);
@@ -187,7 +209,9 @@ export async function loadForecast(organizationId: string, options: { today: str
     const ageDays = Math.max(0, Math.floor((Date.now() - deal.stageChangedAt.getTime()) / DAY));
     const long = ageDays > rate.days;
     const chance = ageDays > rate.days * 2 ? rate.rate / 2 : rate.rate;
-    const due = addDays(deal.stageChangedAt.toISOString().slice(0, 10), rate.days);
+    // Counted from the workspace's own day (audit fix: an evening send in
+    // Chicago is already tomorrow in UTC).
+    const due = addDays(zoneDay(deal.stageChangedAt, timeZone), rate.days);
     const expectedOn = due < today ? today : due;
     return {
       id: deal.id,
@@ -244,6 +268,7 @@ export async function loadForecast(organizationId: string, options: { today: str
     },
     reps,
     long: deals.filter((deal) => deal.long).sort((a, b) => b.valueCents - a.valueCents).slice(0, 10),
+    leftOut: Math.max(0, openCount - open.length),
     historyDays,
     lowConfidence,
     confidenceNote,

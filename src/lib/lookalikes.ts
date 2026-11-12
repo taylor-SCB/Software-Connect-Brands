@@ -84,7 +84,7 @@ export async function findLookalikes(
     SELECT id, name, email, phone, "companyId", company, "byEmail", "byPhone", "byName" FROM (
       SELECT c.id, c.name, coalesce(c.email, c.email2) AS email, coalesce(c.mobile, c.phone, c.phone2) AS phone,
              c."companyId", co.name AS company, c."createdAt",
-             ${emailTest} AS "byEmail", ${phoneTest} AS "byPhone", ${nameTest} AS "byName"
+             coalesce(${emailTest}, false) AS "byEmail", coalesce(${phoneTest}, false) AS "byPhone", coalesce(${nameTest}, false) AS "byName"
         FROM "Contact" c
         LEFT JOIN "Company" co ON co.id = c."companyId"
        WHERE c."organizationId" = ${organizationId}
@@ -95,6 +95,10 @@ export async function findLookalikes(
             WHERE d."organizationId" = ${organizationId} AND d.kind = 'contact'
               AND d."aId" = least(c.id COLLATE "C", ${contact.id} COLLATE "C") AND d."bId" = greatest(c.id COLLATE "C", ${contact.id} COLLATE "C")
          )
+       -- The strongest matches first, before the cap (audit fix: a shared
+       -- office line could crowd out a record matching on email and phone).
+       -- (A missing email is NULL, not false; NULLs sort first.)
+       ORDER BY coalesce(${emailTest}, false)::int + coalesce(${phoneTest}, false)::int + coalesce(${nameTest}, false)::int DESC, c."createdAt", c.id
        LIMIT 50
     ) t
     ORDER BY ("byEmail")::int + ("byPhone")::int + ("byName")::int DESC, "createdAt", id

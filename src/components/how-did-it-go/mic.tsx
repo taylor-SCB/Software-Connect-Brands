@@ -34,12 +34,35 @@ const MicGlyph = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
+// Sent to the notes box to stop listening (Fill it in does).
+export const MIC_STOP = "scb-mic-stop";
+
 export function MicButton({ target, onWords, disabled }: { target: RefObject<HTMLTextAreaElement | null>; onWords: (text: string) => void; disabled?: boolean }) {
   const [listening, setListening] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const live = useRef<Recognition | null>(null);
 
   useEffect(() => () => live.current?.abort(), []);
+
+  // Typing in the box, or "Fill it in", stops the mic (audit fix: each
+  // result rewrote the box from what it held when the mic started, so
+  // typed or tidied words were lost).
+  useEffect(() => {
+    const box = target.current;
+    if (!box || !listening) return;
+    const stop = () => {
+      const rec = live.current;
+      // Nothing heard after this is written.
+      live.current = null;
+      rec?.stop();
+    };
+    box.addEventListener("input", stop);
+    box.addEventListener(MIC_STOP, stop);
+    return () => {
+      box.removeEventListener("input", stop);
+      box.removeEventListener(MIC_STOP, stop);
+    };
+  }, [listening, target]);
 
   function start() {
     const box = target.current;
@@ -56,6 +79,7 @@ export function MicButton({ target, onWords, disabled }: { target: RefObject<HTM
     rec.interimResults = true;
     rec.lang = navigator.language || "en-US";
     rec.onresult = (event) => {
+      if (live.current !== rec) return;
       let said = "";
       for (let i = 0; i < event.results.length; i += 1) said += event.results[i][0]?.transcript ?? "";
       box.value = `${base}${said.trim()}`.slice(0, 5000);
@@ -65,6 +89,8 @@ export function MicButton({ target, onWords, disabled }: { target: RefObject<HTM
       setHint(event.error === "not-allowed" || event.error === "service-not-allowed" ? "The mic isn't allowed here. Use your keyboard's mic to dictate." : "Didn't catch that. Try again, or use your keyboard's mic.");
     };
     rec.onend = () => {
+      // An earlier recognition ending never stops a newer one.
+      if (live.current !== rec && live.current !== null) return;
       live.current = null;
       setListening(false);
     };

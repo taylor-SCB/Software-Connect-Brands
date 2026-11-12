@@ -78,7 +78,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
     readUiPrefsWithLegacy(userId),
     // The forecast follows the rep filter (Members open on Me); it looks
     // ahead, so the period picker doesn't apply to it.
-    loadForecast(organizationId, { today: todayIso(timeZone), repIds }),
+    loadForecast(organizationId, { today: todayIso(timeZone), repIds, timeZone }),
   ]);
   const forecastStored = await storedForecastNotes(organizationId, repIds, forecast);
   const t = stats.totals;
@@ -300,6 +300,11 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             <Mini label={`Out now (${forecast.totals.deals})`} value={formatCents(forecast.totals.openCents)} />
             <Mini label="Running long" value={String(forecast.reps.reduce((sum, rep) => sum + rep.long, 0))} />
           </div>
+          {forecast.leftOut > 0 && (
+            <p className="mb-2 text-xs text-[var(--warn)]" data-testid="forecast-left-out">
+              Counting the newest {(forecast.totals.deals).toLocaleString("en-US")} open deals; {forecast.leftOut.toLocaleString("en-US")} older ones are left out.
+            </p>
+          )}
           <ForecastReps
             key={`${repIds.join(",") || "all"}|${forecastStored ? "kept" : "new"}|${forecast.reps.map((rep) => `${rep.id}:${rep.thisCents}:${rep.nextCents}:${rep.deals}`).join(",")}`}
             rows={forecast.reps.map((rep) => ({

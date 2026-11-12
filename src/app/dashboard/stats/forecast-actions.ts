@@ -24,7 +24,8 @@ export async function forecastNotes(repIds: string[], force = false): Promise<{ 
     : [];
   if (reps.length !== parsed.data.length) return { error: "Those reps aren't valid" };
   const organization = await prisma.organization.findUnique({ where: { id: organizationId }, select: { timeZone: true } });
-  const forecast = await loadForecast(organizationId, { today: todayIso(organization?.timeZone || "America/Chicago"), repIds: reps });
+  const timeZone = organization?.timeZone || "America/Chicago";
+  const forecast = await loadForecast(organizationId, { today: todayIso(timeZone), repIds: reps, timeZone });
   if (!force) {
     const kept = await storedForecastNotes(organizationId, reps, forecast);
     if (kept) return { notes: kept };

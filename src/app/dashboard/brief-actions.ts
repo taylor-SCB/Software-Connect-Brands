@@ -52,11 +52,11 @@ export async function draftOpener(contactId: string, reason: string | null, forc
   if (!aiConfigured()) return { error: "AI isn't switched on for this site yet." };
   const brief = await loadBrief(organizationId, id.data);
   if (!brief) return { error: "That person is no longer here" };
+  const why = typeof reason === "string" ? reason.trim().slice(0, 200) || null : null;
   if (!force) {
-    const kept = await storedOpener(organizationId, brief);
+    const kept = await storedOpener(organizationId, userId, brief, why);
     if (kept) return { opener: kept };
   }
-  const why = typeof reason === "string" ? reason.trim().slice(0, 200) || null : null;
   const result = await writeOpener(organizationId, userId, brief, why);
   return "error" in result ? result : { opener: result };
 }

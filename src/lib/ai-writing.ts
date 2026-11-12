@@ -44,19 +44,27 @@ const COMMON = new Set(
   ).split(" "),
 );
 
+// A word, its possessive and its contraction read as the same word
+// ("Dana's", "I'm", "I'll" are Dana and I).
+const bareWord = (word: string) => word.replace(/['’](s|m|ll|d|ve|re|t)$/i, "").toLowerCase();
+
 export function inventedNames(answer: string, facts: unknown): string[] {
-  const known = JSON.stringify(facts).toLowerCase();
+  // Whole words only (audit fix, Nov 12, 2026): "Dan" is not "Dana", "Al"
+  // is not inside "Talked".
+  const known = new Set(
+    (JSON.stringify(facts).match(/[A-Za-z][A-Za-z'’-]*/g) ?? []).flatMap((word) => [bareWord(word), ...bareWord(word).split("-")]),
+  );
   const found = new Set<string>();
   for (const sentence of answer.split(/(?<=[.!?:;\n])\s+|^\s*[-•]\s*/m)) {
     const words = sentence.match(/[A-Za-z][A-Za-z'’-]*/g) ?? [];
     words.forEach((word, index) => {
       if (!/^[A-Z]/.test(word)) return;
-      // A sentence's first word is checked only as the start of a two-word
-      // name ("Bob Smith said"), never "Ask" or "Mention".
-      if (index === 0 && !/^[A-Z]/.test(words[1] ?? "")) return;
-      const bare = word.replace(/['’]s$/i, "").toLowerCase();
+      // A sentence's first word is capitalised anyway ("Confirm Thursday",
+      // "Remind Bob"); a made-up surname after it is still caught.
+      if (index === 0) return;
+      const bare = bareWord(word);
       if (COMMON.has(bare) || bare.length < 2) return;
-      if (!known.includes(bare)) found.add(word);
+      if (!known.has(bare) && !bare.split("-").every((part) => known.has(part) || COMMON.has(part))) found.add(word);
     });
   }
   return [...found];
