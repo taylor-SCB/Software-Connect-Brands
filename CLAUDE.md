@@ -1139,6 +1139,22 @@ Migrations `20261112120100_ai_a_writings_and_pairs`,
 `20261112120200_ai_b_contracts` and `20261112120300_ai_c_jobs` add new
 tables, one new enum type and the nullable `Upload.quoteId` only; no
 existing value changed, so Instant Rollback stays safe.
+**Taylor's two follow-ups (Nov 12, 2026).** **A purchase order made on the
+Contract Coordinator starts at the catalog cost**, without the customer's
+line discount, the way Order materials does: `purchaseOrderPrice` in
+`src/lib/po-pricing.ts` is read by Create (`deals/tracker/actions.ts`), the
+price check (`check-actions.ts`) and the card (`tracker-grid.tsx`, which
+gets `product.costCents` per row from `src/lib/tracker.ts` and says "At
+your catalog cost" in `po-pricing-note`); so "above catalog cost" no longer
+fires on Coordinator POs. **"Subcontractor insurance to check"** on the
+Daily Rundown for Owners and Admins (`subInsuranceFlags` in
+`src/lib/compliance.ts`, `SubInsuranceCard` in
+`src/app/dashboard/reports/sub-insurance.tsx`, loaded beside Team today in
+`src/app/dashboard/page.tsx`): active subcontractor crews whose newest
+paper of each kind (by when it runs out) has run out or runs out within
+30 days, expired first; a name mismatch stays on the crew card only; the
+card shows only when there is something to check, and it isn't in the
+report email.
 
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
@@ -1213,11 +1229,10 @@ are all blocking before the first paying customer.
   used every cap of the three releases in a day it would cost about $48 on
   top of about $20 for the AI before them. Photos cost most (a punch list
   or a close-out report about 15 cents, a tag about a cent a photo).
-- **Coordinator purchase orders copy the quote's sell price** (found by
-  Release B): Order materials prices a PO at catalog cost, the Coordinator
-  doesn't, so the price check's "above catalog cost" flag shows on every
-  Coordinator PO with a markup. Release B recommends pricing them at cost;
-  Taylor decides.
+- **A Coordinator purchase order row with no cost on file keeps the
+  quote's price** (a typed line, or a product nobody priced): the card says
+  "No cost on file … at the quote's price. Check the supplier's price."
+  Every row with a catalog cost is at that cost (Taylor, Nov 12, 2026).
 - **A site-walk photo's file stays in Blob when its contact or deal is
   deleted** (the rows cascade; only Delete quote removes the files), the
   same gap as deleting a workspace or a job.
