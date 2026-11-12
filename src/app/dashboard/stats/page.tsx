@@ -13,6 +13,10 @@ import { readLeaderboardColumns, type LeaderboardRow } from "@/lib/stats-columns
 import { Columns } from "@/app/dashboard/reports/charts";
 import { FunnelBars, RepActivityBars, VelocityBars } from "./charts";
 import { Leaderboard } from "./leaderboard";
+import { ForecastReps } from "./forecast";
+import { loadForecast, storedForecastNotes } from "@/lib/forecast";
+import { aiConfigured } from "@/lib/ai";
+import { todayIso } from "@/lib/payments";
 
 type Params = Promise<{ period?: string; reps?: string }>;
 
@@ -68,11 +72,15 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
   const timeZone = await getTimeZone();
 
   await sweepStaleContracts(organizationId);
-  const [stats, users, me] = await Promise.all([
+  const [stats, users, me, forecast] = await Promise.all([
     loadStats(organizationId, { period, userIds: repIds, timeZone }),
     loadWorkspaceUsers(organizationId),
     readUiPrefsWithLegacy(userId),
+    // The forecast follows the rep filter (Members open on Me); it looks
+    // ahead, so the period picker doesn't apply to it.
+    loadForecast(organizationId, { today: todayIso(timeZone), repIds }),
   ]);
+  const forecastStored = await storedForecastNotes(organizationId, repIds, forecast);
   const t = stats.totals;
   const p = stats.previous;
   const rate = (a: number, b: number) => (b ? a / b : null);
@@ -270,6 +278,73 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
           Tries and talks count each save once, so a call logged on three people is one try. Meetings booked and held belong to whoever booked them; Won $ to the deal&apos;s rep. People
           are counted once per step, and the team row counts each person once even when two reps moved them.
         </p>
+      </Panel>
+
+      <Panel
+        title="Forecast"
+        sub={`What's likely to sign in ${forecast.thisMonth} and ${forecast.nextMonth}, from quotes and contracts out now. Follows the rep filter, not the period.`}
+        className="mt-4"
+      >
+        <div data-testid="forecast">
+          <p
+            className={`mb-3 rounded-lg px-3 py-2 text-xs ${forecast.lowConfidence ? "bg-[var(--tint-2)] text-[var(--text)]" : "faint"}`}
+            data-testid="forecast-confidence"
+            data-low={forecast.lowConfidence ? "" : undefined}
+          >
+            {forecast.lowConfidence && <span className="mr-1 font-semibold text-[var(--warn)]">Low confidence.</span>}
+            {forecast.lowConfidence ? forecast.confidenceNote.replace(/^Low confidence: /, "") : forecast.confidenceNote}
+          </p>
+          <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Mini label={`Likely in ${forecast.thisMonth}`} value={formatCents(forecast.totals.thisCents)} />
+            <Mini label={`Likely in ${forecast.nextMonth}`} value={formatCents(forecast.totals.nextCents)} />
+            <Mini label={`Out now (${forecast.totals.deals})`} value={formatCents(forecast.totals.openCents)} />
+            <Mini label="Running long" value={String(forecast.reps.reduce((sum, rep) => sum + rep.long, 0))} />
+          </div>
+          <ForecastReps
+            key={`${repIds.join(",") || "all"}|${forecastStored ? "kept" : "new"}|${forecast.reps.map((rep) => `${rep.id}:${rep.thisCents}:${rep.nextCents}:${rep.deals}`).join(",")}`}
+            rows={forecast.reps.map((rep) => ({
+              id: rep.id,
+              name: rep.name,
+              thisCents: formatCents(rep.thisCents),
+              nextCents: formatCents(rep.nextCents),
+              open: formatCents(rep.openCents),
+              deals: rep.deals,
+              long: rep.long,
+              sentence: rep.sentence,
+            }))}
+            repIds={repIds}
+            ai={aiConfigured()}
+            stored={forecastStored}
+            thisMonth={forecast.thisMonth}
+            nextMonth={forecast.nextMonth}
+          />
+          {forecast.long.length > 0 && (
+            <div className="mt-4" data-testid="forecast-long">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-dim)]">Running past the usual time</h3>
+              <ul className="mt-1 space-y-1 text-sm">
+                {forecast.long.map((deal) => (
+                  <li key={deal.id} className="min-w-0 [overflow-wrap:anywhere]" data-testid="forecast-long-deal">
+                    <Link href={`/dashboard/contacts/${deal.contactId}`} className="link">
+                      {deal.title}
+                    </Link>{" "}
+                    <span className="faint text-xs">
+                      · {deal.contactName} · {deal.rep} · {deal.stage === "QUOTE_SENT" ? "Quote Sent" : "Contract Sent"} {deal.ageDays} days (usually {deal.usualDays}) · {formatCents(deal.valueCents)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <details className="mt-3">
+            <summary className="link inline-flex min-h-11 cursor-pointer items-center text-xs sm:min-h-0">How this is worked out</summary>
+            <ul className="faint mt-1 space-y-1 text-xs" data-testid="forecast-rates">
+              {forecast.rates.map((rate) => (
+                <li key={rate.stage}>{rate.sentence}</li>
+              ))}
+              <li>Each open deal counts its value times that chance, in the month it usually signs. Past twice the usual time, its chance is halved.</li>
+            </ul>
+          </details>
+        </div>
       </Panel>
     </div>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { BriefMeButton } from "@/components/brief-me";
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { createPortal } from "react-dom";
@@ -598,6 +599,7 @@ export function OpportunityPanel({
                         <span className="block text-xs text-[var(--text-dim)] [overflow-wrap:anywhere]">
                           {[row.company, row.phone, row.fromMeeting ? "from the meeting" : "added"].filter(Boolean).join(" · ")}
                         </span>
+                        {row.role === "PRIMARY" && <BriefMeButton contactId={row.contactId} name={row.name} variant="link" testId="panel-brief" />}
                       </div>
                       <ReachButtons person={row} onLog={() => logWith(row.contactId, row.name)} />
                     </div>

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession, requireSession } from "@/lib/session";
+import { aiConfigured } from "@/lib/ai";
 import { ACTIVITY_LABELS, STATUS_REASONS } from "@/lib/constants";
 import { nextStepSchema, markSchema, reasonSchema } from "@/lib/outcomes";
 import { healthSettings, contactHealth, companyHealth } from "@/lib/health-load";
@@ -98,6 +99,7 @@ export async function logContext(input: {
       park: Boolean(health?.park),
       tries: health?.counts.tries ?? 0,
       parkAfterTries: settings.parkAfterTries,
+      ai: aiConfigured(),
       meeting,
     };
   }
@@ -115,6 +117,7 @@ export async function logContext(input: {
       park: Boolean(health?.park),
       tries: health?.counts.tries ?? 0,
       parkAfterTries: settings.parkAfterTries,
+      ai: aiConfigured(),
       meeting: null,
       nobody,
     };
