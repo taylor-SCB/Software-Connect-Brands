@@ -32,6 +32,9 @@ import {
   updateQuoteLine,
   type SplitInput,
 } from "./actions";
+import { checkContractPrices, explainPriceCheck, type PriceCheckInput } from "./check-actions";
+import { PriceCheckPanel } from "./price-check-panel";
+import type { CheckProblem } from "@/lib/contract-checks";
 
 const NEW = "__new__";
 
@@ -279,6 +282,10 @@ export function TrackerGrid({
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
   const [rowPending, startRow] = useTransition();
+  // B1, the price check before Create (Release B): what the rules found,
+  // Claude's plainer lines as they arrive, and "Create anyway" for one go.
+  const [check, setCheck] = useState<{ problems: CheckProblem[]; lines: Record<string, string>; explaining: boolean; note?: string } | null>(null);
+  const checkRun = useRef(0);
   // Saves of row prices still in flight, awaited before contracts are
   // made so a price typed a moment ago is what goes on them.
   const inFlight = useRef(new Set<Promise<unknown>>());
@@ -490,8 +497,9 @@ export function TrackerGrid({
 
   /* -------------------------------- Creating -------------------------------- */
 
-  function submit() {
+  function submit(anyway = false) {
     setError(undefined);
+    if (!anyway) setCheck(null);
     startTransition(async () => {
       // Anything typed into a row, or into the quote's discount box, and
       // not yet on the quote goes there first, so the contracts copy the
@@ -537,9 +545,50 @@ export function TrackerGrid({
           lineItemIds: column.selected,
         })),
       };
+      // The price check (B1): no problems, no list and no extra click.
+      if (!anyway) {
+        const checkInput: PriceCheckInput = {
+          dealId,
+          quoteId: quote.id,
+          columns: payload.columns.map((column) => ({
+            payable: column.payable,
+            discount: column.discount,
+            schedule: column.schedule,
+            scheduleFromQuote: column.scheduleFromQuote,
+            lineItemIds: column.lineItemIds,
+          })),
+        };
+        const found = await checkContractPrices(checkInput).catch(() => null);
+        if (found && "problems" in found && found.problems.length > 0) {
+          const run = ++checkRun.current;
+          start(() => setCheck({ problems: found.problems, lines: {}, explaining: found.ai }));
+          if (found.ai) {
+            // In the background: the list is already showing in the
+            // rules' words and never waits on this.
+            void explainPriceCheck(checkInput)
+              .catch(() => ({ error: "The AI didn't answer." }))
+              .then((explained) => {
+                if (run !== checkRun.current) return;
+                setCheck((current) =>
+                  current
+                    ? "error" in explained
+                      ? { ...current, explaining: false, note: explained.error }
+                      : { ...current, explaining: false, lines: explained.lines }
+                    : current,
+                );
+              });
+          }
+          return;
+        }
+      }
       const result = await createSplitContracts(payload);
       if (result?.error) setError(result.error);
     });
+  }
+
+  // State set after an await inside the transition isn't part of it.
+  function start(update: () => void) {
+    startTransition(update);
   }
 
   function setCancelled(lineId: string, cancelled: boolean) {
@@ -840,9 +889,27 @@ export function TrackerGrid({
         </div>
         <div className="flex flex-col items-end gap-2">
           <FormError message={error} />
+          {check && (
+            <PriceCheckPanel
+              problems={check.problems}
+              lines={check.lines}
+              explaining={check.explaining}
+              note={check.note}
+              pending={pending}
+              onCreateAnyway={() => {
+                checkRun.current += 1;
+                setCheck(null);
+                submit(true);
+              }}
+              onBack={() => {
+                checkRun.current += 1;
+                setCheck(null);
+              }}
+            />
+          )}
           <button
             type="button"
-            onClick={submit}
+            onClick={() => submit()}
             disabled={pending || ticked === 0}
             className="btn btn-primary"
             data-testid="create-contracts"

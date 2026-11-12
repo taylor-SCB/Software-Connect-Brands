@@ -153,6 +153,10 @@ model Organization {
   marketingTemplates    MarketingTemplate[]
   emailSends            EmailSend[]
   aiRequests            AiRequest[]
+  // Release B, contracts (Nov 12, 2026).
+  aiAnswers             AiAnswer[]
+  contractFiles         ContractFile[]
+  complianceInfos       ComplianceInfo[]
   contactAccounts       ContactAccount[]
   statusChanges         StatusChange[]
   photoLinks            ProjectPhotoLink[]
@@ -256,6 +260,7 @@ model User {
   signerQuotes          Quote[]                @relation("QuoteContractSigner")
   emailSends            EmailSend[]
   aiRequests            AiRequest[]
+  contractFilesUploaded ContractFile[]         @relation("ContractFileUploadedBy")
   ratesheetImportIssues RatesheetImportIssue[]
   ownedDeals            Deal[]                 @relation("DealOwner")
   ownedOpportunities    Opportunity[]          @relation("OpportunityOwner")
@@ -1256,6 +1261,80 @@ model AiRequest {
   @@index([organizationId, kind, createdAt])
 }
 
+// What an AI helper wrote, kept so opening the page again doesn't pay
+// again (Release B, Nov 12, 2026). One row per helper and subject: `key`
+// names the subject (a contract's id, a quote and its columns), and
+// `fingerprint` is a hash of what the answer was written from, so a
+// changed contract asks again and an unchanged one reads this.
+model AiAnswer {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String
+  key            String
+  fingerprint    String
+  body           Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, kind, key])
+}
+
+// A file kept on a contract (Release B): the customer's marked-up copy
+// the redline reader read, as uploaded (Word or PDF) or as the photos of
+// its pages, made small in the browser. One upload is one `groupId`; a
+// set of photos is several rows in `position` order. Bytes in Postgres
+// like the other documents, written a piece at a time so a 10 MB PDF
+// gets past the 4.5 MB request limit; omitted from every query by
+// default (src/lib/prisma.ts).
+model ContractFile {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contractId     String
+  contract       Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  groupId        String
+  position       Int          @default(0)
+  // "REDLINE" today.
+  purpose        String       @default("REDLINE")
+  fileName       String
+  mimeType       String
+  // What the file will be once every piece is in; `data` grows to it.
+  sizeBytes      Int
+  data           Bytes        @default("")
+  complete       Boolean      @default(false)
+  uploadedById   String?
+  uploadedBy     User?        @relation("ContractFileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+
+  @@index([contractId, createdAt])
+  @@index([groupId])
+}
+
+// What a compliance file says, read by the AI or typed by a person and
+// checked before saving (Release B). The workspace's own papers have no
+// crew; a subcontractor's COI sits on their crew card.
+model ComplianceInfo {
+  uploadId       String       @id
+  upload         Upload       @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  crewId         String?
+  crew           Crew?        @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  namedInsured   String?
+  insurer        String?
+  policyNumber   String?
+  // The coverage limits as written: [{ "label": "Each occurrence", "amountCents": 100000000 }].
+  limits         Json         @default("[]")
+  // True when the fields came from "Read it for me" (and a person saved them).
+  readByAi       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, crewId])
+  @@index([crewId])
+}
+
 enum ContractStatus {
   DRAFT
   SENT
@@ -1360,6 +1439,8 @@ model Contract {
   payments       ContractPayment[]
   // Contract sent / Contract follow up / Contract closed, written by the app.
   calendarEvents CalendarEvent[]
+  // The customer's marked-up copies read by the redline reader (Release B).
+  files          ContractFile[]
 
   @@unique([organizationId, number])
   @@index([organizationId])
@@ -1858,6 +1939,8 @@ model Upload {
   photoFolderId  String?
   photoFolder    PhotoFolder?      @relation(fields: [photoFolderId], references: [id], onDelete: SetNull)
   tags           UploadTag[]
+  // What a COI, license or W-9 says (Release B, the compliance watchdog).
+  compliance     ComplianceInfo?
   publicToken    String            @unique
   // When a COI or license runs out, so the compliance tile can flag it.
   expiresOn      DateTime?         @db.Date
@@ -2232,6 +2315,8 @@ model Crew {
   timeEntries TimeEntry[]
   scopes      ProjectScope[]
   events      CalendarEvent[]
+  // A subcontractor's COI, license and W-9 (Release B, Taylor's call 4).
+  compliance  ComplianceInfo[]
 
   @@index([organizationId, active])
   @@index([companyId])

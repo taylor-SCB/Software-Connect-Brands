@@ -9,6 +9,7 @@ import { IconTrash, IconPlus, IconUserPlus } from "@/components/icons";
 import type { ActionState } from "@/lib/forms";
 import { CrewForm, type CrewValues } from "./crew-form";
 import { deleteCrew, deleteWorker, saveWorker, setCrewActive, setWorkerActive } from "./actions";
+import { ComplianceFlagBadge, CrewCompliance, type CrewComplianceView } from "./crew-compliance";
 
 export type WorkerView = {
   id: string;
@@ -29,6 +30,8 @@ export type CrewView = CrewValues & {
   // How much time they have logged, so retiring reads as a consequence
   // rather than a surprise.
   daysLogged: number;
+  // A subcontractor's COI, license and W-9 (Release B).
+  compliance?: CrewComplianceView[];
 };
 
 type Choice = { id: string; name: string };
@@ -40,11 +43,15 @@ export function CrewCard({
   companies,
   contacts,
   serviceTypes,
+  canManageFiles = false,
+  aiOn = false,
 }: {
   crew: CrewView;
   companies: Choice[];
   contacts: Choice[];
   serviceTypes: string[];
+  canManageFiles?: boolean;
+  aiOn?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [addingPerson, setAddingPerson] = useState(false);
@@ -60,6 +67,8 @@ export function CrewCard({
 
   const crewRates = { hourlyRateCents: crew.hourlyRateCents, dailyRateCents: crew.dailyRateCents };
   const onCrew = crew.workers.filter((worker) => worker.active);
+  const isSub = crew.kind === "SUBCONTRACTOR";
+  const worst = isSub ? worstOf(crew.compliance ?? []) : null;
 
   // The wrapper carries the test hook so a suite can scope to one crew:
   // the name lives in the card's header, which is a sibling of the body.
@@ -78,6 +87,7 @@ export function CrewCard({
                 {CREW_KIND_LABELS[crew.kind as "OWN" | "SUBCONTRACTOR"]}
               </Badge>
               {!crew.active && <Badge color="#94a3b8">Retired</Badge>}
+              {worst && <ComplianceFlagBadge flag={worst.flag} category={worst.category} />}
               <button
                 type="button"
                 onClick={() => setEditing(!editing)}
@@ -194,6 +204,16 @@ export function CrewCard({
                   </div>
                 )}
               </div>
+
+              {isSub && (
+                <CrewCompliance
+                  crewId={crew.id}
+                  docs={crew.compliance ?? []}
+                  canManageFiles={canManageFiles}
+                  aiOn={aiOn}
+                  expectedName={crew.company?.name ?? crew.name}
+                />
+              )}
             </>
           )}
 
@@ -419,4 +439,14 @@ export function NewCrewButton({
       </div>
     </Card>
   );
+}
+
+// The worst flag across a subcontractor's papers, for the card's header:
+// expired, then running out, then a name that isn't theirs.
+function worstOf(docs: CrewComplianceView[]) {
+  for (const flag of ["EXPIRED", "EXPIRING", "NAME"] as const) {
+    const doc = docs.find((row) => row.flags.includes(flag));
+    if (doc) return { flag, category: doc.category };
+  }
+  return null;
 }

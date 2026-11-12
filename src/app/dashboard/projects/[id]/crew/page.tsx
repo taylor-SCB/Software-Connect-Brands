@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { JobComplianceBanner } from "../job-compliance";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -184,6 +185,7 @@ export default async function ProjectCrewPage({ params }: { params: Promise<{ id
       />
 
       <ProjectTabs projectId={project.id} current="crew" />
+      <JobComplianceBanner organizationId={organizationId} projectId={project.id} />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile

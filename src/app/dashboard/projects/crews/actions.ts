@@ -133,8 +133,14 @@ export async function deleteCrew(crewId: string): Promise<ActionState> {
       } of work. Retire them instead — deleting would take that cost off the jobs.`,
     };
   }
-  await prisma.crew.deleteMany({ where: { id: crew.id, organizationId } });
+  // Their compliance files go with them (Release B): left behind, a
+  // subcontractor's COI would read as the workspace's own.
+  await prisma.$transaction([
+    prisma.upload.deleteMany({ where: { organizationId, kind: "COMPLIANCE", compliance: { crewId: crew.id } } }),
+    prisma.crew.deleteMany({ where: { id: crew.id, organizationId } }),
+  ]);
   revalidateCrews();
+  revalidatePath("/dashboard/settings/compliance");
   return { success: `${crew.name} removed` };
 }
 
