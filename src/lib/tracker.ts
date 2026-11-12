@@ -116,6 +116,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
               tag: true,
               cancelledAt: true,
               variationText: true,
+              // A purchase order row starts at this cost (po-pricing.ts).
+              product: { select: { costCents: true } },
               contractLines: {
                 select: {
                   contract: { select: { id: true, number: true, status: true, title: true, type: true } },
@@ -205,6 +207,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
         tag: item.tag,
         // "Black · L", so two sizes of one product can be told apart.
         variationText: item.variationText,
+        // Its product's cost, which a purchase order row starts at.
+        product: item.product ? { costCents: item.product.costCents } : null,
         cancelled: Boolean(item.cancelledAt),
         // Only contracts still standing count; a cancelled or declined
         // one has let the row go.

@@ -471,6 +471,9 @@ async function anonymousStatus(browser, url) {
   assert.equal(await page.locator("#col-2-direction").inputValue(), "out", "a Purchase Order is money going out");
   await page.getByRole("checkbox", { name: "Put Tile on Contract B" }).check();
   assert.equal(await page.locator("[data-testid=column-total]").nth(1).textContent(), "$50.00");
+  // A typed row has no cost on file, so the purchase order keeps the
+  // quote's price and says so (Taylor, Nov 12, 2026: POs start at cost).
+  assert.match(await page.getByTestId("po-pricing-note").textContent(), /No cost on file/);
   await page.locator("#col-2-preset").selectOption("INSTALLMENTS");
   await page.locator("#col-2-count").fill("2");
   await colB.getByLabel("First payment").fill("2026-11-01");

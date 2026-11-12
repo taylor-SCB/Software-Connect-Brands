@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { purchaseOrderPrice } from "@/lib/po-pricing";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
@@ -168,27 +169,32 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       return { error: `${label}: a ticked row has been cancelled. Restore it first.` };
     }
 
-    const lineItems = lines.map((line, position) => ({
-      quoteLineItemId: line.id,
-      name: line.name,
-      description: line.description,
-      quantity: line.quantity,
-      unitPriceCents: line.unitPriceCents,
-      // The line's own discount travels with its price: the contract
-      // asks for what the quote line comes to.
-      discountCents: line.discountCents,
-      discountPercent: line.discountPercent,
-      tag: line.tag,
-      // Copied like the tag is, so the job's budget can split itself by
-      // scope of work and show the expected cost, and neither changes
-      // later when the catalog or the quote does.
-      serviceType: line.serviceType,
-      unitCostCents: line.product ? line.product.costCents : null,
-      // Release 3b: its labels and a workspace unit's name, as the quote
-      // line has them.
-      ...contractRowLabels(line),
-      position,
-    }));
+    const lineItems = lines.map((line, position) => {
+      // A purchase order asks the supplier for the catalog cost, without
+      // the customer's line discount (Taylor, Nov 12, 2026; po-pricing.ts).
+      const price = column.payable ? purchaseOrderPrice(line) : line;
+      return {
+        quoteLineItemId: line.id,
+        name: line.name,
+        description: line.description,
+        quantity: line.quantity,
+        unitPriceCents: price.unitPriceCents,
+        // Otherwise the line's own discount travels with its price: the
+        // contract asks for what the quote line comes to.
+        discountCents: price.discountCents,
+        discountPercent: price.discountPercent,
+        tag: line.tag,
+        // Copied like the tag is, so the job's budget can split itself by
+        // scope of work and show the expected cost, and neither changes
+        // later when the catalog or the quote does.
+        serviceType: line.serviceType,
+        unitCostCents: line.product ? line.product.costCents : null,
+        // Release 3b: its labels and a workspace unit's name, as the quote
+        // line has them.
+        ...contractRowLabels(line),
+        position,
+      };
+    });
     // The whole-contract discount is worked out here against the rows as
     // stored, and capped at the subtotal, so no contract can total less
     // than nothing.

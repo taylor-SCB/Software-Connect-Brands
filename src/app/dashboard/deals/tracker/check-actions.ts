@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { purchaseOrderPrice } from "@/lib/po-pricing";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { aiConfigured, askClaude } from "@/lib/ai";
@@ -64,6 +65,7 @@ async function findProblems(organizationId: string, raw: PriceCheckInput): Promi
           quantity: true,
           unitPriceCents: true,
           discountCents: true,
+          discountPercent: true,
           tag: true,
           unitOfMeasure: true,
           customUnitId: true,
@@ -90,7 +92,10 @@ async function findProblems(organizationId: string, raw: PriceCheckInput): Promi
   const columns: PriceCheckColumn[] = [];
   input.columns.forEach((column, index) => {
     if (column.lineItemIds.length === 0) return;
-    const lines = column.lineItemIds.map((id) => lineById.get(id)).filter((line) => line !== undefined);
+    const found = column.lineItemIds.map((id) => lineById.get(id)).filter((line) => line !== undefined);
+    // Priced as Create will price them: a purchase order at the catalog
+    // cost (po-pricing.ts), so the check judges the contract that is made.
+    const lines = column.payable ? found.map((line) => ({ ...line, ...purchaseOrderPrice(line) })) : found;
     const subtotalCents = contractSubtotalCents(lines);
     const discount = resolveDiscount(column.discount ?? { percent: null, cents: 0 }, subtotalCents);
     const totalCents = contractTotalCents(lines, discount.discountCents);

@@ -23,6 +23,8 @@ import { loadMyDay } from "./my-day/load";
 import { MyDayView, TeamTodayStrip } from "./my-day/my-day";
 import { MemberJumpIn } from "./my-day/jump-in";
 import { loadTeamToday } from "@/lib/reports/daily";
+import { subInsuranceFlags } from "@/lib/compliance";
+import { SubInsuranceCard } from "./reports/sub-insurance";
 import { aiConfigured } from "@/lib/ai";
 import { prefFlag, readUiPrefs } from "@/lib/user-prefs";
 import { NarrativeCard } from "./reports/narrative-card";
@@ -544,7 +546,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const body = <ReportBody report={report} range={range} by={choice.by} />;
 
   const now = new Date();
-  const teamToday = isAdmin && choice.report === "daily" ? await loadTeamToday(organizationId, timeZone, now) : null;
+  const ownersRundown = isAdmin && choice.report === "daily";
+  const [teamToday, subInsurance] = await Promise.all([
+    ownersRundown ? loadTeamToday(organizationId, timeZone, now) : null,
+    // Subcontractors' papers running out (Taylor, Nov 12, 2026).
+    ownersRundown ? subInsuranceFlags(organizationId) : [],
+  ]);
 
   return (
     <div>
@@ -560,6 +567,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           intro={
             <>
               {teamToday && <TeamTodayStrip team={teamToday} now={now} />}
+              {subInsurance.length > 0 && <SubInsuranceCard items={subInsurance} />}
               {head}
             </>
           }

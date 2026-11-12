@@ -762,6 +762,29 @@ function stopNoAiServer() {
     await page.goto(`${BASE}/dashboard/settings/compliance`);
     assert.equal(await page.getByText("Sparky COI").count(), 0, "a sub's paper isn't on the workspace's own list");
 
+    log("Follow-up: an Owner's Daily Rundown lists the sub's expired COI; a renewed one clears it");
+    await page.goto(`${BASE}/dashboard`);
+    await page.getByTestId("sub-insurance").waitFor();
+    const subRows = page.getByTestId("sub-insurance-row");
+    assert.equal(await subRows.count(), 1);
+    assert.equal(await subRows.first().getAttribute("data-flag"), "EXPIRED");
+    assert.match(await subRows.first().textContent(), /Sparky crew.*COI.*Ran out/s);
+    // The renewal, a year out: only the newest COI counts.
+    const nextYear = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
+    await sql(
+      `INSERT INTO "Upload" (id,"organizationId",kind,category,name,"fileName","mimeType","sizeBytes","publicToken","expiresOn","updatedAt")
+       VALUES ('rb_renewal',$1,'COMPLIANCE','COI','Sparky COI renewal','renewal.pdf','application/pdf',10,'tok_rb_renewal_000000001',$2,now())`,
+      [org, nextYear],
+    );
+    await sql(
+      `INSERT INTO "ComplianceInfo" ("uploadId","organizationId","crewId","namedInsured","updatedAt") VALUES ('rb_renewal',$1,'rb_crew','Sparky Electric',now())`,
+      [org],
+    );
+    await page.goto(`${BASE}/dashboard`);
+    await page.getByTestId("rundown-quiet").waitFor();
+    assert.equal(await page.getByTestId("sub-insurance").count(), 0, "nothing to check once the COI is renewed");
+    await sql(`DELETE FROM "Upload" WHERE id='rb_renewal'`);
+
     log("audit fixes: a subcontractor changed to your own crew still shows the papers filed on it");
     await sql(`UPDATE "Crew" SET kind='OWN' WHERE id='rb_crew'`);
     await page.goto(`${BASE}/dashboard/projects/crews`);
