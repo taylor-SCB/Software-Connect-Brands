@@ -17,12 +17,15 @@ import {
 import { outcomeNote, type LogMark, type NextStep } from "@/lib/outcomes";
 import type { FollowUpSeed } from "@/lib/logging";
 import { FormError } from "@/components/ui";
-import { IconCalendar, IconCheck, IconMail, IconMessage, IconPhone } from "@/components/icons";
+import { IconCalendar, IconCheck, IconMail, IconMessage, IconPhone, IconSparkles } from "@/components/icons";
 import { ContactMultiSelect, type PickableContact } from "@/components/contact-multi-select";
 import { CompanyPeoplePicker, type CompanyPerson } from "@/components/company-people-picker";
 import { FollowUpPrompt } from "@/components/follow-up-prompt";
 import { BookMeetingFields, EMPTY_BOOKING, type BookingValue } from "@/components/book-meeting/book-meeting";
 import { afterLog, logContext, notMovingForward, rescheduleEntry } from "./actions";
+import { fillFromWords, type VoiceFill } from "./voice-actions";
+import { voiceBooks } from "./voice-options";
+import { MicButton, MIC_STOP } from "./mic";
 import { Chip, ChipGrid, Sheet } from "./sheet";
 import { UndoToast, UNDO_MS } from "./undo-toast";
 import { browserToday, dayChips, longDay, plusDays, whenWords } from "./dates";
@@ -266,6 +269,22 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const [interested, setInterested] = useState(false);
   const [reason, setReason] = useState<StatusReasonValue | null>(null);
   const [checkBack, setCheckBack] = useState(false);
+  // Say it, don't type it (AI release A): the notes box, and what "Fill it
+  // in from my words" suggested (the chip shown picked, the next step and
+  // day it pre-picks after the save, the words before they were tidied).
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const [fill, setFill] = useState<(VoiceFill & { type: ActivityTypeValue; original: string }) | null>(null);
+  const fillNow = useRef<typeof fill>(null);
+  const [fillError, setFillError] = useState<string | null>(null);
+  // The notes box is unmounted on the Book step; coming back puts the
+  // words back in it (audit fix: it came back empty while `note` kept them).
+  const noteNow = useRef("");
+  useEffect(() => {
+    noteNow.current = note;
+  }, [note]);
+  useEffect(() => {
+    if (phase !== "book" && noteRef.current && !noteRef.current.value && noteNow.current) noteRef.current.value = noteNow.current;
+  }, [phase]);
 
   // Whatever opened the sheet, a pending tel:/sms: tap is now answered.
   useEffect(() => {
@@ -386,6 +405,20 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     else if (key === "NO_SHOW") setChoice("reschedule");
     else setChoice("none");
     setBook(key === "NO_SHOW" ? movedBooking() : freshBooking());
+    // What the person's words said comes next, when the sheet offers it.
+    const said = fillNow.current;
+    if (said && said.chip === key && said.type === next.type) {
+      const offered = nextChoices(key, Boolean(ctxNow.current?.park), Boolean(bookWith), ctxNow.current?.tries ?? 0).map((option) => option.key);
+      const choiceSaid = said.next as Choice | null;
+      if (choiceSaid && offered.includes(choiceSaid)) {
+        setChoice(choiceSaid);
+        if (said.on && (choiceSaid === "follow" || choiceSaid === "book")) {
+          setNextOn(said.on);
+          setPickNextDay(!days.some((row) => row.on === said.on));
+        }
+        if (said.on && (choiceSaid === "meeting" || choiceSaid === "reschedule")) setBook({ ...(choiceSaid === "reschedule" ? movedBooking() : freshBooking()), on: said.on });
+      }
+    }
   }
 
   // The touch, from the form (with whatever is on it) plus the chip.
@@ -522,7 +555,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     if (chip.book || chip.reschedule) {
       if (chip.reschedule) setBookMode(meeting ? "reschedule" : eventMode ? "entry" : "new");
       else setBookMode("log");
-      setBook(chip.reschedule ? movedBooking() : freshBooking());
+      const base = chip.reschedule ? movedBooking() : freshBooking();
+      // A day said for it in "Fill it in from my words".
+      const said = fillNow.current;
+      setBook(said && said.chip === chip.key && said.type === type && voiceBooks(said.chip) && said.on ? { ...base, on: said.on } : base);
       setError(undefined);
       setPhase("book");
       return;
@@ -670,10 +706,66 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     });
   }
 
+  // "Fill it in from my words": the AI suggests; the sheet pre-picks;
+  // the person taps Save (or another chip). Nothing is saved here.
+  const [filling, setFilling] = useState(false);
+  function applyFill(next: typeof fill, restore = false) {
+    if (restore && fillNow.current && noteRef.current) {
+      noteRef.current.value = fillNow.current.original;
+      setNote(fillNow.current.original);
+    }
+    fillNow.current = next;
+    setFill(next);
+  }
+  function fillIn() {
+    // The box after the Book step remounts it is empty until typed in; the
+    // words are still in `note` (audit fix).
+    const words = (noteRef.current?.value || note).trim();
+    if (words.length < 3 || pending) return;
+    // Whatever the mic hears next would write over the tidied words.
+    noteRef.current?.dispatchEvent(new Event(MIC_STOP));
+    setFillError(null);
+    setFilling(true);
+    start(async () => {
+      const result = await fillFromWords({
+        type,
+        words,
+        contactId: eventMode ? null : (target?.contactId ?? null),
+        companyId: eventMode ? null : (target?.companyId ?? null),
+        eventId: event?.id ?? null,
+        opportunityId,
+      });
+      start(() => {
+        setFilling(false);
+        if ("error" in result) {
+          setFillError(result.error);
+          return;
+        }
+        // The chips the sheet can't take right now stay unpicked.
+        const chip = chipByKey(type, result.chip);
+        const blocked = chip && ((chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule)) || (nobody && chip.connect));
+        const picked = { ...result, chip: blocked ? null : result.chip, next: blocked ? null : result.next, type, original: words };
+        // Tidied words only with a picked outcome, where "Use my words"
+        // can put the person's own back (audit fix).
+        if (picked.chip && result.notes && noteRef.current) {
+          noteRef.current.value = result.notes;
+          setNote(result.notes);
+        }
+        if (picked.chip && CALL_MORE.some((row) => row.key === picked.chip)) setMore(true);
+        applyFill(picked);
+        if (!picked.chip) setFillError("Couldn't tell how it went from those words. Tap how it went.");
+      });
+    });
+  }
+
   function onSubmit(fired: FormEvent<HTMLFormElement>) {
     fired.preventDefault();
     // Enter in a box on step 2 must not log the touch a second time.
     if (phase !== "log" || pending) return;
+    // The outcome "Fill it in" picked is the one shown picked, so the main
+    // button saves it too (audit fix: it saved a touch with no outcome).
+    const picked = fillNow.current && fillNow.current.type === type ? chipByKey(type, fillNow.current.chip) : null;
+    if (picked) return tapChip(picked);
     saveTouch(null);
   }
 
@@ -864,6 +956,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                       setType(option);
                       setMore(false);
                       setError(undefined);
+                      if (option !== type) applyFill(null);
                     }}
                     aria-pressed={on}
                     className={`btn btn-sm min-h-11 ${on ? "btn-primary" : "btn-ghost"} sm:min-h-0`}
@@ -888,11 +981,13 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                     {meeting.ahead ? " (still ahead)" : meeting.noShow ? " (marked no-show)" : ""}
                   </p>
                 )}
+                {fill && fill.type === type && <FillBanner fill={fill} chip={chipByKey(type, fill.chip)} onSave={(chip) => tapChip(chip)} onUndo={() => applyFill(null, true)} pending={pending} />}
                 <ChipGrid label={`How did the ${TYPE_WORD[type].toLowerCase()} go?`} testId="outcome-chips">
                   {chips.map((chip) => (
                     <Chip
                       key={chip.key}
                       connect={chip.connect}
+                      on={fill?.chip === chip.key && fill.type === type}
                       onClick={() => tapChip(chip)}
                       disabled={
                         pending || meetingWaiting || (chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule)) || (nobody && chip.connect)
@@ -919,7 +1014,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                   {type === "PHONE_CALL" &&
                     more &&
                     CALL_MORE.map((chip) => (
-                      <Chip key={chip.key} onClick={() => tapChip(chip)} disabled={pending} testId={`outcome-${chip.key}`}>
+                      <Chip key={chip.key} on={fill?.chip === chip.key && fill.type === type} onClick={() => tapChip(chip)} disabled={pending} testId={`outcome-${chip.key}`}>
                         {chip.label}
                       </Chip>
                     ))}
@@ -1108,6 +1203,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
               name="body"
               rows={2}
               defaultValue=""
+              ref={noteRef}
               onChange={(fired) => setNote(fired.target.value)}
               maxLength={5000}
               placeholder={eventMode && event?.notes ? `Leave blank to log “${event.notes.slice(0, 60)}”` : "Anything worth remembering"}
@@ -1116,6 +1212,29 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
               data-testid={eventMode ? "done-note" : "log-note"}
             />
           </label>
+        )}
+        {phase === "log" && (
+          <div className="flex flex-wrap items-center gap-2" data-testid="log-voice">
+            <MicButton target={noteRef} onWords={setNote} disabled={pending} />
+            {ctx?.ai && !ahead && (
+              <button
+                type="button"
+                onClick={fillIn}
+                disabled={pending || note.trim().length < 3}
+                title={note.trim().length < 3 ? "Say or type what happened first" : undefined}
+                className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+                data-testid="log-fill"
+              >
+                <IconSparkles size={13} />
+                {filling ? "Reading your words…" : "Fill it in from my words"}
+              </button>
+            )}
+            {fillError && (
+              <span className="text-xs text-[var(--danger)]" role="status" data-testid="log-fill-error">
+                {fillError}
+              </span>
+            )}
+          </div>
         )}
 
         {phase === "log" && !eventMode && (
@@ -1153,6 +1272,57 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
         )}
       </div>
     </Sheet>
+  );
+}
+
+function chipByKey(type: ActivityTypeValue, key: string | null): ChipDef | null {
+  if (!key) return null;
+  return [...chipsFor(type), ...(type === "PHONE_CALL" ? CALL_MORE : [])].find((chip) => chip.key === key) ?? null;
+}
+
+const NEXT_WORDS: Record<string, string> = {
+  follow: "try again",
+  park: "try again in 30 days",
+  book: "a reminder to book a meeting",
+  meeting: "book a meeting",
+  quote: "start a quote",
+  lost: "not moving forward",
+  reschedule: "reschedule",
+};
+
+// What the words said, above the chips: the picked outcome, what comes
+// next, and Save (the picked chip's own tap), or "Use my words" to put the
+// untidied words back.
+function FillBanner({
+  fill,
+  chip,
+  onSave,
+  onUndo,
+  pending,
+}: {
+  fill: VoiceFill;
+  chip: ChipDef | null;
+  onSave: (chip: ChipDef) => void;
+  onUndo: () => void;
+  pending: boolean;
+}) {
+  if (!chip) return null;
+  const next = fill.next ? NEXT_WORDS[fill.next] : voiceBooks(fill.chip) ? "pick the day" : null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--border-strong)] px-3 py-2 text-sm" role="status" data-testid="log-fill-result" data-chip={fill.chip ?? ""} data-next={fill.next ?? ""} data-on={fill.on ?? ""}>
+      <IconSparkles size={13} className="shrink-0" />
+      <span className="min-w-0 flex-1">
+        From your words: <span className="font-semibold">{chip.label}</span>
+        {next && <> · then {next}{fill.on ? ` ${longDay(fill.on)}` : ""}</>}
+        <span className="faint block text-xs">Change anything, then save. Nothing is saved until you do.</span>
+      </span>
+      <button type="button" onClick={onUndo} className="link text-xs min-h-11 sm:min-h-0" data-testid="log-fill-undo">
+        Use my words
+      </button>
+      <button type="button" onClick={() => onSave(chip)} disabled={pending} className="btn btn-primary btn-sm min-h-11 sm:min-h-0" data-testid="log-fill-save">
+        {chip.book || chip.reschedule ? `${chip.label} · pick the day` : `Save · ${chip.label}`}
+      </button>
+    </div>
   );
 }
 

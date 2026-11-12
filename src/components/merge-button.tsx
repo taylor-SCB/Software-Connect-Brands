@@ -124,7 +124,7 @@ export function MergeButton({
       <button
         type="button"
         onClick={openDialog}
-        className={`btn btn-sm ${initial ? "btn-primary" : "btn-ghost"}`}
+        className={`btn btn-sm pointer-coarse:min-h-11 ${initial ? "btn-primary" : "btn-ghost"}`}
         data-testid={initial ? "duplicate-merge" : "merge-open"}
       >
         <IconMerge size={13} />

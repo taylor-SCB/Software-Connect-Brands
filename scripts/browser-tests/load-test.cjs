@@ -256,6 +256,32 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     console.log(`     ${seconds.toFixed(2)}s  job title choices → ${rows.length} rows`);
     assert.ok(rows.length > 0 && seconds <= 1, `job title choices took ${seconds.toFixed(2)}s`);
   }
+  // (Their ids end in two digits like every seeded contact: a later step
+  // reads right(id, 2) as a number.)
+  // AI release A (Nov 12, 2026): "Looks like the same person" on a contact
+  // page is one statement over the whole workspace (email, phone digits,
+  // name at another company), and Find duplicates checks "Not the same
+  // person" pairs once any exist.
+  log("AI release A: a contact page with three lookalikes among 200,000, and Find duplicates with a dismissed pair, inside budget");
+  await sql(`UPDATE "Contact" SET mobile='(737) 555-0102' WHERE id='lp00000002'`);
+  const twin = (await sql(`SELECT name, email, "companyId" FROM "Contact" WHERE id='lp00000002'`)).rows[0];
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId","companyId",name,email,phone,status,"updatedAt") VALUES
+       ('lp90000001',$1,NULL,'Someone Else',upper($2),NULL,'NOT_ACTIONED',now()),
+       ('lp90000002',$1,NULL,'Phone Twin',NULL,'737.555.0102','NOT_ACTIONED',now()),
+       ('lp90000003',$1,CASE WHEN $4::text = 'lc00000003' THEN 'lc00000004' ELSE 'lc00000003' END,$3,NULL,NULL,'NOT_ACTIONED',now())`,
+    [org, twin.email, twin.name, twin.companyId],
+  );
+  await timed(page, "A contact page with three lookalikes", `${BASE}/dashboard/contacts/lp00000002`, "[data-testid=lookalike]");
+  assert.equal(await page.locator("[data-testid=lookalike]").count(), 3);
+  await timed(page, "A contact page with none", `${BASE}/dashboard/contacts/lp00000001`, "[data-testid=contact-header]");
+  await sql(
+    `INSERT INTO "DuplicateDismissal" (id,"organizationId",kind,"aId","bId") VALUES ('lk_dismiss',$1,'contact',least('lp90000001' COLLATE "C",'lp00000002'),greatest('lp90000001' COLLATE "C",'lp00000002'))`,
+    [org],
+  );
+  await timed(page, "Duplicate contacts by email, one pair marked not the same", `${BASE}/dashboard/contacts/duplicates?by=email`, "h1");
+  await timed(page, "Duplicate contacts by phone, one pair marked not the same", `${BASE}/dashboard/contacts/duplicates?by=phone`, "h1");
+
   log("Sprint: the lists' presets, sorts and scopes at 200,000 contacts, with 3,000 calendar entries late, ahead and this week");
   await sql(
     `INSERT INTO "CalendarEvent" (id, "organizationId", title, type, "startOn", "contactId", "updatedAt")

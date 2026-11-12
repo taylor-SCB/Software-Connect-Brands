@@ -27,6 +27,7 @@ import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
 import { saveUiPref } from "../prefs-actions";
 import { IconMessage, IconPhone } from "@/components/icons";
 import { smsHref, telHref } from "@/lib/dial";
+import { BriefMeButton } from "@/components/brief-me";
 
 export type EventView = EventFormValues & {
   crewName: string | null;
@@ -65,6 +66,12 @@ export function wantsCall(event: { type: string; contactPhone?: string | null })
 
 // An entry that is an activity rather than a day of work, so a missing
 // clock reads "No time set" and not "All day": a call is never all day.
+// Brief me on a Call or Meeting entry with a person on it that is still to
+// do (AI release A, Nov 12, 2026: the pre-call card from Calendar v2).
+export function wantsBrief(event: { type: string; contactId?: string | null; doneAt: string | null }) {
+  return Boolean(event.contactId) && !event.doneAt && /^(call|phone call|meeting)$/i.test(event.type.trim());
+}
+
 export function isActivityType(type: string) {
   return ACTIVITY_EVENT_TYPES.some((name) => name.toLowerCase() === type.toLowerCase());
 }
@@ -640,6 +647,7 @@ export function EventCard({
         >
           <IconTrash size={12} />
         </button>
+        {wantsBrief(event) && <BriefMeButton contactId={event.contactId!} name={event.contactName ?? undefined} testId="event-brief" />}
       </div>
 
       {confirming && (

@@ -31,7 +31,8 @@ export function MyDayView({
 }: {
   day: MyDay;
   readOnly: boolean;
-  // AI is switched on: the greeting offers Rewrite.
+  // AI is switched on: the greeting offers Rewrite, Up next rows offer a
+  // drafted opener.
   ai?: boolean;
   // "Team & money" was left open last time (uiPrefs myday.teamMoney).
   teamMoneyOpen?: boolean;
@@ -58,7 +59,7 @@ export function MyDayView({
 
       <Card lit className="min-w-0">
         <CardHeader title="Up next" subtitle={day.upNext.length ? `${day.upNext.length}${day.more ? "+" : ""} waiting, most urgent first` : undefined} />
-        <UpNextList items={day.upNext} today={day.today} readOnly={readOnly} unowned={day.unowned} />
+        <UpNextList items={day.upNext} today={day.today} readOnly={readOnly} unowned={day.unowned} ai={ai} />
       </Card>
 
       <Card lit className="min-w-0">

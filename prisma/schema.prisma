@@ -120,6 +120,8 @@ model Organization {
   opportunities         Opportunity[]
   reportSubscriptions   ReportSubscription[]
   reportNarratives      ReportNarrative[]
+  aiWritings            AiWriting[]
+  duplicateDismissals   DuplicateDismissal[]
   // An open opportunity untouched this many days reads "gone quiet".
   quietDays             Int                    @default(8)
   leadLabelOptions      LeadLabelOption[]
@@ -2818,4 +2820,41 @@ model JobReceipt {
 
   @@index([projectId, status])
   @@index([organizationId])
+// Words the AI wrote for a workspace and keeps until what they were
+// written from changes (AI release A, Nov 12, 2026): a Brief me card, a
+// drafted opener, the sentences behind the Stats forecast. `key` names
+// what it is for ("brief:<contactId>", "opener:<contactId>",
+// "forecast:<scope>"); `fingerprint` is a hash of the facts or numbers
+// it was written from, so a page opened again reuses it instead of
+// paying again, and anything that moved asks again.
+model AiWriting {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key            String
+  fingerprint    String
+  body           Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId, updatedAt])
+}
+
+// "Not the same person" (AI release A, Nov 12, 2026): two records someone
+// said are different people. Remembered for the pair, smaller id first,
+// so the contact page stops suggesting them and Find duplicates hides a
+// group that is only that pair. `kind` is "contact" today.
+model DuplicateDismissal {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String
+  aId            String
+  bId            String
+  userId         String?
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, kind, aId, bId])
+  @@index([organizationId, kind, bId])
 }
