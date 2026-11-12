@@ -1034,6 +1034,112 @@ read it with `readUiPrefs`, or `readUiPrefsWithLegacy` where the first
 build's top-level keys may still be stored (`src/lib/user-prefs.ts`). Schema:
 the `20261111*` migrations.
 
+**The AI release (Nov 12, 2026; plan: the "AI Release Plan" artifact,
+claude.ai/artifact/NbGqNjF9vjCskNhPb9XKLd).** Taylor picked seventeen AI
+items from earlier sessions and think tanks once `ANTHROPIC_API_KEY` was
+set (Nov 11, 2026), built as three releases on `claude/ai-release-a`,
+`-b` and `-c` and merged on `claude/ai-release-final`. The same rules as
+"AI assist": every answer is a suggestion a person accepts, every AI
+control hides without the key, every call is `askClaude` with its kind
+and `AI_DAILY_CAPS` (fifteen new kinds), and every answer is checked
+against what was sent (ids offered, labels on the lists, snippets found
+in the source, numbers through `inventedNumbers`). Taylor's four calls on
+the plan: openers go on My day's Up next (no Call List page); installers
+send receipts through the crew link, held until an Owner or Admin
+approves; site-walk photos are kept and move into the job; the compliance
+watchdog covers his subs' COIs too. **Groundwork**: `askClaude` takes
+`AiPart`s (pictures as base64 JPEG made small in the browser, PDFs, text
+documents; at most 20 pictures and 24 MB of base64, refused in words
+before the allowance is spent) and a `timeoutMs`; to a stand-in endpoint
+(`ANTHROPIC_ENDPOINT`) it adds an `x-scb-ai-kind` header, never to
+Anthropic. **Release A, sales and calendar**: **Brief me**
+(`src/lib/brief.ts`, `BriefMeButton` in `src/components/brief-me.tsx`) on
+the contact page header, Call and Meeting entries with a person (the
+week/month entry card and the open Agenda row), Up next rows and the
+Pipeline panel's Primary POC: facts by rules with no key, five lines and
+an ask by Claude checked with `inventedNumbers` / `factCounts` and
+`inventedNames` (`src/lib/ai-writing.ts`), "Couldn't write the brief this
+time." over the facts on a failed check. Written words are kept in
+`AiWriting` (`readWriting` / `storeWriting` / `fingerprintOf`; keys
+`brief:<contactId>`, `opener:<contactId>:<userId>`,
+`forecast:<reps or all>`). **Draft an opener** on Up next rows only
+(`my-day/opener.tsx`), on a tap. **Say it, don't type it** in How did it
+go? (`how-did-it-go/mic.tsx`, `voice-actions.ts`, `voice-options.ts`):
+the browser's own speech recognition fills the notes box (nothing
+recorded or sent by us); "Fill it in from my words" picks only from
+`voiceChips(type)` / `voiceNextSteps(chip)` and the sheet re-checks
+against `nextChoices`; it stays two Saves (outcome, then the next step
+already picked), the coordinator's call. **The Stats forecast**
+(`src/lib/forecast.ts`, `stats/forecast.tsx`): this month and next by rep
+from open deals at Quote Sent and Contract Sent, the workspace's own
+rates (deals Won or Lost now) and usual days, "Running past the usual
+time", Low confidence until 90 days of history, the rep filter only (it
+looks ahead), the newest 5,000 open deals. **Looks like the same person**
+(`src/lib/lookalikes.ts`, no AI) under the contact header: same email,
+phone digits or name at another company, with Merge these,
++ Additional Account and Not the same person (`DuplicateDismissal`,
+smaller id first by byte order, `pairKey`; also hides that pair in Find
+duplicates). **Release B, contracts**: the rules for every check are
+pure in `src/lib/contract-checks.ts` (`scripts/contract-checks-check.ts`
+runs them). **Price check before Create** in the Coordinator
+(`check-actions.ts` under the tracker): under cost, under the starred
+minimum, a different unit, a discount past the margin, a schedule that
+doesn't add up, a purchase order row above catalog cost; "Create anyway".
+**Read before send**: `checkBeforeSend` in `contracts/ai-actions.ts`;
+**every Send for signature is `SendContractButton`**, never another send
+form (it still posts `setContractStatus`). **The redline reader**
+(`redline-reader.tsx`): Word read in the browser (tracked changes from
+`<w:ins>` / `<w:del>`), PDF or photos sent as files, each change's
+snippet found exactly once or listed "Couldn't place this one", Accept /
+Reject into a draft; the copy kept in `ContractFile`, written in 2.5 MB
+pieces by `addRedlineChunk`'s raw `||` append and omitted from every query
+by default. **Dates in this contract** on a signed contract: duties with
+their snippet, ticked into calendar entries of type "Contract date"
+(`ensureEventType`). **The compliance watchdog**: `ComplianceInfo` beside
+`Upload` (`src/lib/compliance.ts`, `compliance-shared.ts`), on Settings →
+Compliance (the workspace's own, `crewId` null) and on a sub crew's card
+(`crewId`; deleting the crew deletes them; a Member can't), flags on the
+tile, the crews list and a job where that crew is scheduled. What PRICE_CHECK,
+SEND_CHECK, REDLINE and CONTRACT_DATES wrote is kept in `AiAnswer` by
+(organization, kind, key) with a fingerprint. **Release C, jobs**:
+pictures are made small by `src/lib/ai-picture.ts` (`pictureForAi`,
+`picturesForAi` under 3.6 MB a request), job photos read through
+`/files/<token>?stream=1` (staff only, sandboxed by a
+Content-Security-Policy), and checked server-side as JPEG
+(`jpegFromBase64`, `readAiImages` in `src/lib/job-ai.ts`); workspace words
+go in through `fenced()`. **Tags from the picture**: `PhotoTagSuggestion`,
+one row per photo written before Claude is asked (the claim), dashed
+chips on the tile, crew-link photos asked about on the next staff visit
+(12 a visit, 30 days). **Punch list** and **Ask the job a question**
+(`src/lib/job-facts.ts`; dates written as words because `withoutDates`
+leaves ISO dates in) in an "Ask about this job" card on the job's Budget
+page; the punch list also from Files → Select. **The close-out photo
+report**: `PhotoReport`, edited at `/dashboard/projects/[id]/report`
+beside Close out (which is unchanged), shared at **`/jr/<token>`** (never
+`/p`, the crew link), its photos only through
+`/jr/<token>/photo/<id>` while shared, in the report, never SVG, sandboxed.
+**Site walk to quote**: "Draft from photos" on a draft quote, two asks
+(what it sees and the words to search, then lines from
+`catalogCandidates` under the rules of Draft lines from the meeting, now
+shared in `src/lib/drafted-lines.ts`); the photos are Uploads with
+`quoteId` (cascade) and `projectId` null, shown to the team only, moved
+into the job's Main folder by `moveSiteWalkPhotos` inside
+`awardFromContract` (all of the deal's quotes when the job is first made,
+the signed paperwork's own quote after that). **Receipts**: Add receipt on
+the Money tab makes a paid bill by `makeReceiptBill`
+(`src/lib/receipts.ts`): a signed, payable Purchase Order titled "Receipt —
+Store" on one scope (goods + Sales tax), one payment row settled on the
+receipt's day, the store found or made as a supplier company (with a
+"<Store> receipts" contact, since a contract needs one) inside that
+transaction under an advisory lock, the photo in the job's "Receipts"
+folder; so Spent ties out through paperwork. The crew link's **Send a
+receipt** makes a `JobReceipt` PENDING (30 waiting a job at most) that
+counts nowhere until an Owner or Admin approves it on the Money tab.
+Migrations `20261112120100_ai_a_writings_and_pairs`,
+`20261112120200_ai_b_contracts` and `20261112120300_ai_c_jobs` add new
+tables, one new enum type and the nullable `Upload.quoteId` only; no
+existing value changed, so Instant Rollback stays safe.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -1060,10 +1166,13 @@ are all blocking before the first paying customer.
   refused without it, by design. Add it (any long random value) under
   Settings → Environment Variables, all environments, then redeploy. Email
   itself (`RESEND_API_KEY`, `EMAIL_FROM`) must be on too.
-- **Report write-ups are rules-written until `ANTHROPIC_API_KEY` is set.**
-  They are still useful prose; AI ones cost about a cent each and are
-  written only when a report's numbers change, capped at 60 a workspace a
-  day.
+- **`ANTHROPIC_API_KEY` is set in Vercel, Production only (Nov 11,
+  2026, by Taylor, with a monthly spend limit on the Anthropic account as
+  the backstop).** Every AI feature is on in the live site. Each was tested
+  only against a stand-in Claude; the first real answers are on the live
+  site. Report write-ups cost about a cent each and are written only when
+  a report's numbers change, capped at 60 a workspace a day; without the
+  key they fall back to rules-written prose.
 - **Reports count from what is recorded.** A deal's win or loss is dated
   by `Deal.stageChangedAt` (a deal won and then moved out of Won is not a
   win); the Pipeline's "what moved" only knows `StatusChange` rows (from
@@ -1076,15 +1185,15 @@ are all blocking before the first paying customer.
   zone; its period picker is hidden. The gone-quiet list uses the real
   clock, so the cron's test clock does not move it.
 
-- **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel** (`DEPLOY.md`).
-  Without it the button simply isn't shown. It sends the agreement's
+- **Suggest fields runs on the site's key** (`DEPLOY.md`).
+  Without the key the button simply isn't shown. It sends the agreement's
   text to Claude (claude-opus-5-5, server-side fallback on) and costs
   about a cent on a short agreement, up to about 40 cents on a
   60,000-character one, on the site's own key. 20 a day per workspace
   caps it at roughly $8 a workspace a day; a spend limit on the
   Anthropic account is the backstop.
-- **The Pipeline, quote and import AI helpers wait on `ANTHROPIC_API_KEY`
-  in Vercel too** (Nov 10, 2026). Until it is set, Draft a follow-up,
+- **The Pipeline, quote and import AI helpers run on the same key**
+  (Nov 10, 2026). Without it, Draft a follow-up,
   Suggest from meeting notes, Draft lines from the meeting, the import's
   "Suggest where they go" and "Suggest label" don't show; Gone quiet, the
   import's duplicate flags and the rule-based label chips need no key.
@@ -1099,6 +1208,23 @@ are all blocking before the first paying customer.
   candidate, so it comes back as a typed "Price needed" line. A catalog
   of tens of thousands narrows to the 300 first word matches before the
   best 40 are picked.
+- **AI release costs sit on Taylor's key for every workspace** (Nov 12,
+  2026), capped per workspace per day in `AI_DAILY_CAPS`; if one workspace
+  used every cap of the three releases in a day it would cost about $48 on
+  top of about $20 for the AI before them. Photos cost most (a punch list
+  or a close-out report about 15 cents, a tag about a cent a photo).
+- **Coordinator purchase orders copy the quote's sell price** (found by
+  Release B): Order materials prices a PO at catalog cost, the Coordinator
+  doesn't, so the price check's "above catalog cost" flag shows on every
+  Coordinator PO with a markup. Release B recommends pricing them at cost;
+  Taylor decides.
+- **A site-walk photo's file stays in Blob when its contact or deal is
+  deleted** (the rows cascade; only Delete quote removes the files), the
+  same gap as deleting a workspace or a job.
+- **Contract dates count business days without holidays**, the redline
+  reader sees a Word copy's tracked changes but not its comments, and the
+  compliance flags compare UTC days (as the compliance list always has).
+
 - **The meeting suggestion's next step is copy-only**, and its value only
   fills a deal's value box: an opportunity with no deal has nowhere to
   keep either until it is converted.
@@ -1474,7 +1600,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Forty-six** (Nov 11, 2026; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
+suite, and the delete-confirmation suite. **Forty-nine** (Nov 12, 2026; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1666,6 +1792,27 @@ seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
+
+**The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (30),
+`ai-release-b.cjs` (34; runs `scripts/contract-checks-check.ts` first) and
+`ai-release-c.cjs` (29) answer as Claude through
+`scripts/browser-tests/fake-claude.cjs` (a helper, not a suite) on :3995,
+which picks each reply by the request's `x-scb-ai-kind` header, never by
+prompt text: `claude.reply(kind, value)`, `refuse`, `cutOff`, `garbage`,
+`fail(kind, status)`, `last(kind)` (its `text`, `images`, `documents`).
+**`reply()` sends any object with a string `text` field as a raw reply**,
+so an answer whose own JSON has a `text` key goes as
+`{ text: JSON.stringify(value), stop: "end_turn" }`. Each starts its own
+keyless server from the same build for its "AI off" steps (`NOAI_PORT`
+3116, 3117 and 3127). Run them with `run-suites.sh "ai:ai-assist,ai-release-a,ai-release-b,ai-release-c"`.
+Release A's suite fakes speech with an init script defining
+`window.webkitSpeechRecognition` (`FAKE_SPEECH`). A suite that sends a
+contract waits for the send to land (Mark signed, or the database), never
+for the word "Sent": the send reads the contract over first. A suite that
+creates contracts on the Coordinator gets the price-check list whenever a
+rule fires: assert it (`price-check-item` `data-code`), then
+`price-check-create-anyway`. `load-test.cjs` seeds contact ids as `lp`
+plus 8 digits because a later step reads `right(id, 2)::int`.
 
 `ai-assist.cjs` (Nov 10, 2026) answers as Claude on :3995 (set
 `ANTHROPIC_API_KEY=test-key` and `ANTHROPIC_ENDPOINT=http://localhost:3995`
