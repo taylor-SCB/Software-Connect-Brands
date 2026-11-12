@@ -19,6 +19,9 @@ import { CloseOutButton } from "./close-out-button";
 import { ProjectNotes, type ProjectNoteView } from "./project-notes";
 import { PropertyPicker } from "./property-picker";
 import { openItems } from "@/lib/close-out";
+import { aiConfigured } from "@/lib/ai";
+import { PunchListButton } from "@/components/punch-list";
+import { JobQuestion } from "./job-question";
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { organizationId } = await requireSession();
@@ -51,6 +54,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       closeOutNote: true,
       propertyId: true,
       property: { select: { id: true, name: true } },
+      photoReport: { select: { shared: true } },
       notes: {
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -106,6 +110,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     }),
   ]);
 
+  const aiOn = aiConfigured();
   const projectNotes: ProjectNoteView[] = project.notes.map((note) => ({
     id: note.id,
     body: note.body,
@@ -182,7 +187,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
       <ProjectTabs projectId={project.id} current="budget" />
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-start gap-2">
         <CloseOutButton
           projectId={project.id}
           projectName={project.name}
@@ -196,6 +201,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           }
           openItems={open}
         />
+        {/* Release C (C3): beside Close out, never part of it. */}
+        <Link href={`/dashboard/projects/${project.id}/report`} className="btn btn-ghost btn-sm" data-testid="photo-report-link">
+          {project.photoReport ? `Photo report${project.photoReport.shared ? " · shared" : ""}` : "Make a photo report"}
+        </Link>
       </div>
 
       <ProjectHeaderForm
@@ -277,6 +286,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
       </Card>
+
+      {aiOn && (
+        <Card lit className="mt-4">
+          <CardHeader
+            title="Ask about this job"
+            subtitle="Plain answers from this job's own numbers, and a check of its photos against the scope."
+            actions={<PunchListButton projectId={project.id} />}
+          />
+          <div className="p-5">
+            <JobQuestion projectId={project.id} />
+          </div>
+        </Card>
+      )}
 
       {showScopes && (
         <div className="mt-5 space-y-4">

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { deleteObject } from "@/lib/storage";
 import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/session";
 import { parseForm, keepFields, type ActionState } from "@/lib/forms";
@@ -900,8 +901,19 @@ export async function deleteQuote(_prev: ActionState, formData: FormData): Promi
   const id = idSchema.safeParse(formData.get("quoteId"));
   if (!id.success) return { error: "Missing quote reference" };
 
+  // Site-walk photos still on the quote (Release C) go with it; their rows
+  // cascade, so the stored files are removed here first.
+  const siteWalk = await prisma.upload.findMany({
+    where: { organizationId, quoteId: id.data, projectId: null },
+    select: { storageKey: true, storageDriver: true },
+  });
   const deleted = await prisma.quote.deleteMany({ where: { id: id.data, organizationId } });
   if (deleted.count === 0) return { error: "Quote not found" };
+  for (const photo of siteWalk) {
+    if (photo.storageKey && (await prisma.upload.count({ where: { storageKey: photo.storageKey } })) === 0) {
+      await deleteObject(photo.storageDriver, photo.storageKey);
+    }
+  }
   revalidatePath("/dashboard/quotes");
   redirect("/dashboard/quotes");
 }

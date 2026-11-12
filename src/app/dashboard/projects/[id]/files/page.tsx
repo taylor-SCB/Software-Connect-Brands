@@ -14,12 +14,20 @@ import { MediaUploader } from "@/components/media-uploader";
 import { PhotoGrid } from "@/components/photo-grid";
 import { isMediaMime, jobAccounts } from "@/lib/job-photos";
 import { getPhotoTags } from "@/lib/photo-tags";
+import { aiConfigured } from "@/lib/ai";
+import { viewSuggestion, type TagSuggestionView } from "@/lib/photo-tag-suggestions";
+import { DEFAULT_PHOTO_TYPE } from "@/lib/constants";
 import { ProjectTabs } from "../project-tabs";
 import { ProjectFileForm } from "./project-file-form";
 import { GrantAccessButton } from "./grant-access";
 import { NewFolderForm } from "./new-folder-form";
 import { deleteProjectFile } from "../../actions";
 import { makeCrewLink, setGrantRole, turnOffCrewLink, turnOffGrant } from "../../photo-actions";
+
+// How far back a crew photo still gets tag suggestions on its own.
+function thirtyDaysAgo() {
+  return Date.now() - 30 * 86_400_000;
+}
 
 function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -87,7 +95,9 @@ export default async function ProjectFilesPage({
         uploadedByName: true,
         uploadedBy: { select: { name: true } },
         photoGrant: { select: { name: true } },
+        photoLinkId: true,
         tags: { select: { tagId: true } },
+        tagSuggestion: { select: { typeTagId: true, locationTagId: true, newKind: true, newName: true, failed: true } },
       },
     }),
     prisma.upload.groupBy({
@@ -110,6 +120,31 @@ export default async function ProjectFilesPage({
   const documents = uploads.filter((upload) => !isMediaMime(upload.mimeType));
   const countIn = (id: string | null) => counts.find((row) => row.photoFolderId === id)?._count ?? 0;
   const crewLink = project.photoLinks[0];
+
+  // Release C (C1): the stored tag suggestions on the photos shown, and the
+  // crew-link photos nobody in the app has seen yet, to ask about now: a
+  // picture sent in the last 30 days, never asked about, still missing a
+  // Location or a real Photo Type. Twelve at most a visit.
+  const aiOn = aiConfigured();
+  const general = tags.find((tag) => tag.kind === "TYPE" && tag.name.toLowerCase() === DEFAULT_PHOTO_TYPE.toLowerCase());
+  const suggestions: Record<string, TagSuggestionView> = {};
+  const auto: string[] = [];
+  if (aiOn) {
+    const since = thirtyDaysAgo();
+    for (const upload of media) {
+      const has = upload.tags.map((tag) => tag.tagId);
+      if (upload.tagSuggestion) {
+        suggestions[upload.id] = viewSuggestion(upload.tagSuggestion, tags, has);
+        continue;
+      }
+      const needs =
+        !tags.some((tag) => tag.kind === "LOCATION" && has.includes(tag.id)) ||
+        !tags.some((tag) => tag.kind === "TYPE" && tag.id !== general?.id && has.includes(tag.id));
+      if (upload.photoLinkId && needs && upload.category !== "Receipt" && upload.createdAt.getTime() > since && /^image\/(jpeg|png|webp|gif)$/.test(upload.mimeType) && auto.length < 12) {
+        auto.push(upload.id);
+      }
+    }
+  }
   const folderName = folder ? folder.name : "Main folder";
 
   return (
@@ -148,7 +183,13 @@ export default async function ProjectFilesPage({
             </nav>
 
             <div className="max-w-xl">
-              <MediaUploader key={folderId ?? "main"} access={{ projectId: project.id }} folderId={folderId} tags={tags} />
+              <MediaUploader
+                key={folderId ?? "main"}
+                access={{ projectId: project.id }}
+                folderId={folderId}
+                tags={tags}
+                suggestTags={aiOn ? { projectId: project.id } : null}
+              />
             </div>
 
             <PhotoGrid
@@ -157,6 +198,7 @@ export default async function ProjectFilesPage({
               tags={tags}
               canTag
               staff={{ projectId: project.id, folderId, folders: project.photoFolders }}
+              ai={aiOn ? { suggestions, auto } : null}
               items={media.map((upload) => ({
                 id: upload.id,
                 name: upload.name,

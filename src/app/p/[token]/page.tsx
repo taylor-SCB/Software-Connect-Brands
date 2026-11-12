@@ -6,6 +6,7 @@ import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 import { getPhotoTags } from "@/lib/photo-tags";
 import { MediaUploader } from "@/components/media-uploader";
 import { PhotoGrid } from "@/components/photo-grid";
+import { CrewReceipt } from "./crew-receipt";
 
 export const metadata: Metadata = {
   title: "Job photos",
@@ -37,7 +38,10 @@ export default async function JobPhotosPage({ params }: { params: Promise<{ toke
   const tags = await getPhotoTags(link.organizationId);
 
   if (link.kind === "CREW") {
-    const sentHere = await prisma.upload.count({ where: { photoLinkId: link.id } });
+    const sentHere = await prisma.upload.count({
+      // Receipts sent here (Release C) are counted with the office, not here.
+      where: { photoLinkId: link.id, receipt: null },
+    });
     return (
       <Shell organization={organization} eyebrow={`Photos for ${organization.name}`} title={project.name}>
         <div className="card card-lit space-y-4 p-5">
@@ -50,6 +54,13 @@ export default async function JobPhotosPage({ params }: { params: Promise<{ toke
               {sentHere} sent on this link so far.
             </p>
           )}
+        </div>
+        <div className="card card-lit mt-5 space-y-3 p-5">
+          <div>
+            <p className="eyebrow">Bought something for this job?</p>
+            <p className="muted text-sm">Photograph the receipt and send it. The office checks it before it goes on the job.</p>
+          </div>
+          <CrewReceipt token={token} />
         </div>
       </Shell>
     );

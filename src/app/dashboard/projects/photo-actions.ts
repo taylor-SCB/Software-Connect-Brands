@@ -54,7 +54,7 @@ export async function finishPhotoUpload(
   access: PhotoAccess,
   ticket: string,
   input: { fileName: string; uploadedByName?: string; tagIds?: string[] },
-): Promise<{ error?: string; ok?: true }> {
+): Promise<{ error?: string; ok?: true; id?: string }> {
   const actor = await resolvePhotoActor(access);
   if (!actor) return { error: OFF };
   if (actor.kind === "crew" && !input.uploadedByName?.trim()) {
@@ -67,7 +67,9 @@ export async function finishPhotoUpload(
     }
     revalidatePath(filesPath(actor.projectId));
   }
-  return result;
+  // Only the workspace's own people get the new row's id back (Release C:
+  // the uploader asks for tag suggestions on it); a link gets "sent".
+  return actor.kind === "staff" ? result : { ok: result.ok, error: result.error };
 }
 
 /* ---------------------------------- Tags --------------------------------- */

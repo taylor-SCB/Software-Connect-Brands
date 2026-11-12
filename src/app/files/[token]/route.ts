@@ -1,9 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { PUBLIC_IMAGE_KINDS } from "@/lib/uploads";
-import { streamObject, viewUrl } from "@/lib/storage";
+import { streamObject, streamStoredFile, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 import { readPicture } from "@/lib/product-images";
+
+// A file streamed from this site's own address can never run script.
+const SANDBOXED = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox";
 
 // Streams an uploaded file. Images (logos, avatars) are served to anyone
 // with the link, because they are drawn on the quote or contract a
@@ -49,6 +52,29 @@ export async function GET(
     if (session?.user?.organizationId !== file.organizationId) {
       return new Response("Not found", { status: 404 });
     }
+  }
+
+  // ?stream=1 (Release C, Nov 12, 2026): the workspace's own people get a
+  // stored photo through this server instead of a redirect to the store,
+  // so the browser can draw it on a canvas to make it small for the AI.
+  if (file.storageKey && new URL(request.url).searchParams.get("stream") === "1") {
+    const session = await auth();
+    if (session?.user?.organizationId !== file.organizationId) return new Response("Not found", { status: 404 });
+    const streamed = await streamStoredFile(file.storageDriver, file.storageKey);
+    if (!streamed) return new Response("Not found", { status: 404 });
+    return new Response(streamed.body, {
+      headers: {
+        "Content-Type": file.mimeType,
+        ...(streamed.size !== null ? { "Content-Length": String(streamed.size) } : {}),
+        "X-Content-Type-Options": "nosniff",
+        // The type is whatever the uploader's browser said, and a crew link
+        // can upload. Served from this site's own address, an SVG opened
+        // on its own could run script as the signed-in person; sandboxed,
+        // it can't (Release C audit, Nov 12, 2026).
+        "Content-Security-Policy": SANDBOXED,
+        "Cache-Control": "private, no-store",
+      },
+    });
   }
 
   if (file.storageKey) {

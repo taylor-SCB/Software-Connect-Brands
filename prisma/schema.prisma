@@ -166,6 +166,10 @@ model Organization {
   variationOptions      VariationOption[]
   productVariations     ProductVariation[]
   productImages         ProductImage[]
+  // Release C (Nov 12, 2026): AI on jobs, photos and money.
+  photoTagSuggestions   PhotoTagSuggestion[]
+  photoReports          PhotoReport[]
+  jobReceipts           JobReceipt[]
   // Other workspaces' supplier records that point at this account.
   platformSupplierLinks Distributor[]          @relation("PlatformSupplier")
 
@@ -567,7 +571,7 @@ model StatusChange {
   createdAt      DateTime     @default(now())
 
   // The one-tap reason for Not interested, Lost or a no-show.
-  reason String?
+  reason  String?
   // The log (or meeting action) that wrote it, so "Undo" can take exactly
   // that save back (undoLog in contacts/actions.ts).
   batchId String?
@@ -1043,6 +1047,9 @@ model Quote {
   contracts      Contract[]
   // Quote sent / Quote due / Quote follow up, written by the app.
   calendarEvents CalendarEvent[]
+  // Site-walk photos (Release C, Nov 12, 2026): kept on the quote and
+  // moved into the job's Main folder when the job is made.
+  siteWalkPhotos Upload[]        @relation("QuoteSiteWalk")
 
   @@unique([organizationId, number])
   @@index([organizationId])
@@ -1360,6 +1367,8 @@ model Contract {
   payments       ContractPayment[]
   // Contract sent / Contract follow up / Contract closed, written by the app.
   calendarEvents CalendarEvent[]
+  // The receipt this paid bill was made from (Release C).
+  receipt        JobReceipt?
 
   @@unique([organizationId, number])
   @@index([organizationId])
@@ -1823,9 +1832,9 @@ enum UploadKind {
 // `publicToken` is the file's address under /files/, so a logo's URL is
 // unguessable and changes every time the logo is replaced.
 model Upload {
-  id             String            @id @default(cuid())
+  id             String              @id @default(cuid())
   organizationId String
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   kind           UploadKind
   // "W-9", "COI", "License" on a compliance file; free on marketing.
   category       String?
@@ -1845,35 +1854,44 @@ model Upload {
   // link, so turning a link off doesn't lose where its photos came from.
   uploadedByName String?
   photoLinkId    String?
-  photoLink      ProjectPhotoLink? @relation(fields: [photoLinkId], references: [id], onDelete: SetNull)
+  photoLink      ProjectPhotoLink?   @relation(fields: [photoLinkId], references: [id], onDelete: SetNull)
   // Who sent it from inside the app.
   uploadedById   String?
-  uploadedBy     User?             @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedBy     User?               @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   // Who sent it through their own access link as an editor (Oct 21, 2026).
   photoGrantId   String?
-  photoGrant     PhotoGrant?       @relation("GrantUploads", fields: [photoGrantId], references: [id], onDelete: SetNull)
+  photoGrant     PhotoGrant?         @relation("GrantUploads", fields: [photoGrantId], references: [id], onDelete: SetNull)
   // A job photo's mini folder; null is the job's main folder. A clone is
   // its own row pointing at the same stored file, so its tags and its
   // folder are its own.
   photoFolderId  String?
-  photoFolder    PhotoFolder?      @relation(fields: [photoFolderId], references: [id], onDelete: SetNull)
+  photoFolder    PhotoFolder?        @relation(fields: [photoFolderId], references: [id], onDelete: SetNull)
   tags           UploadTag[]
-  publicToken    String            @unique
+  publicToken    String              @unique
   // When a COI or license runs out, so the compliance tile can flag it.
-  expiresOn      DateTime?         @db.Date
+  expiresOn      DateTime?           @db.Date
   // Which record an image belongs to; null for workspace-level files.
   userId         String?
-  user           User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
   companyId      String?
-  company        Company?          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company        Company?            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   contactId      String?
-  contact        Contact?          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact        Contact?            @relation(fields: [contactId], references: [id], onDelete: Cascade)
   projectId      String?
-  project        Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  project        Project?            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // A site-walk photo taken on a draft quote (Release C, Nov 12, 2026):
+  // projectId null until the job is made from the signed paperwork; then
+  // projectId is set, quoteId cleared, and it sits in the job's Main
+  // folder. Deleting the quote (or its deal) takes the ones not yet moved.
+  quoteId        String?
+  quote          Quote?              @relation("QuoteSiteWalk", fields: [quoteId], references: [id], onDelete: Cascade)
+  tagSuggestion  PhotoTagSuggestion?
+  receipt        JobReceipt?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   @@index([organizationId, kind])
+  @@index([quoteId])
   @@index([projectId])
   @@index([photoLinkId])
   @@index([photoFolderId])
@@ -2103,6 +2121,8 @@ model Project {
   photoLinks   ProjectPhotoLink[]
   photoFolders PhotoFolder[]
   photoGrants  PhotoGrant[]
+  photoReport  PhotoReport?
+  receipts     JobReceipt[]
 
   @@unique([organizationId, number])
   @@index([organizationId, stage])
@@ -2392,6 +2412,15 @@ model CalendarEvent {
   batchId        String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  // Also "CalendarEvent_open_startOn_idx" on (organizationId, startOn) WHERE
+  // "doneAt" IS NULL, the open entries only (audit, Nov 11, 2026, migration
+  // 20261111190100_audit_cross_calendar): My day's due follow-ups, the
+  // Rundown's and the calendar's Overdue; and "CalendarEvent_runs_endOn_idx"
+  // on (organizationId, endOn) WHERE "endOn" IS NOT NULL, the multi-day
+  // entries only, for the "started before and still running" arm of the
+  // Rundown's On today and every calendar window. Hand-written in SQL,
+  // because a partial index needs Prisma's partialIndexes preview; Prisma's
+  // diff leaves them alone.
 
   @@index([organizationId, startOn])
   @@index([batchId])
@@ -2404,15 +2433,6 @@ model CalendarEvent {
   @@index([ownerId, startOn])
   @@index([quoteId])
   @@index([contractId])
-  // Also "CalendarEvent_open_startOn_idx" on (organizationId, startOn) WHERE
-  // "doneAt" IS NULL, the open entries only (audit, Nov 11, 2026, migration
-  // 20261111190100_audit_cross_calendar): My day's due follow-ups, the
-  // Rundown's and the calendar's Overdue; and "CalendarEvent_runs_endOn_idx"
-  // on (organizationId, endOn) WHERE "endOn" IS NOT NULL, the multi-day
-  // entries only, for the "started before and still running" arm of the
-  // Rundown's On today and every calendar window. Hand-written in SQL,
-  // because a partial index needs Prisma's partialIndexes preview; Prisma's
-  // diff leaves them alone.
 }
 
 // A thing to do on a job, with an optional day it is wanted by. Kept
@@ -2611,8 +2631,8 @@ model OpportunityMeeting {
   createdAt     DateTime    @default(now())
 
   // Who booked it (credited with it being held) and how it went.
-  bookedById String?
-  outcome    ActivityOutcome?
+  bookedById  String?
+  outcome     ActivityOutcome?
   // What the save that last answered it found (batchId, who, outcome, day,
   // calendar tick, history lines), so Undo restores exactly that save
   // (stashMeeting in src/lib/undo-log.ts).
@@ -2701,4 +2721,101 @@ model ReportNarrative {
   createdAt      DateTime     @default(now())
 
   @@unique([organizationId, key])
+}
+
+// ------------------------------------------------------------------
+// Release C: AI on jobs, photos and money (Nov 12, 2026)
+// ------------------------------------------------------------------
+
+// What Claude suggested for one photo's tags, kept until a person accepts
+// or dismisses each part, so opening the job again doesn't pay again.
+// The row is the claim too: one per photo, written before Claude is asked,
+// so two tabs never ask twice. A part is set to null once it is answered;
+// a row with every part null is a photo already asked about.
+model PhotoTagSuggestion {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadId       String        @unique
+  upload         Upload        @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  // Ids from the workspace's own Photo Type and Location / Area lists.
+  typeTagId      String?
+  locationTagId  String?
+  // At most one label the lists don't have yet, made only when accepted.
+  newKind        PhotoTagKind?
+  newName        String?
+  // Claude couldn't answer (off, the allowance, an error). Not asked again
+  // on its own; "Suggest tags" asks again.
+  failed         Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([organizationId])
+}
+
+// The close-out photo report: before-and-after pairs with a line each and
+// a short summary, written by a person (Claude drafts). One per job. The
+// customer's page is /jr/<token>, open only while shared.
+model PhotoReport {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String       @unique
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  token          String       @unique
+  summary        String       @default("")
+  // [{ beforeId, afterId, line }]: Upload ids on this job.
+  pairs          Json         @default("[]")
+  shared         Boolean      @default(false)
+  sharedAt       DateTime?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+// A receipt photographed on the job's Money tab or sent through the crew
+// photo link. One from the app is saved APPROVED with its paid bill; one
+// from the crew link waits PENDING, counting nowhere, until an Owner or
+// Admin approves it (then the bill is made) or declines it (the row and
+// its photo go).
+enum ReceiptStatus {
+  PENDING
+  APPROVED
+}
+
+model JobReceipt {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status         ReceiptStatus @default(PENDING)
+  // The photo. A pending receipt's photo belongs to no job yet (projectId
+  // null on the Upload), so it shows nowhere until it is approved.
+  uploadId       String?       @unique
+  upload         Upload?       @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  storeName      String        @default("")
+  purchasedOn    DateTime?     @db.Date
+  totalCents     Int           @default(0)
+  taxCents       Int           @default(0)
+  // [{ name, quantity, amountCents }] as read; shown, printed on the bill.
+  items          Json          @default("[]")
+  // Claude read it (false: typed by hand, or AI off).
+  aiRead         Boolean       @default(false)
+  // Who sent it through the crew link: the name they typed, and the link.
+  sentByName     String?
+  photoLinkId    String?
+  // The paid bill it became.
+  contractId     String?       @unique
+  contract       Contract?     @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  createdById    String?
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([projectId, status])
+  @@index([organizationId])
 }
