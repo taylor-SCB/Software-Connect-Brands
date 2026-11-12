@@ -996,7 +996,12 @@ Text · Book · Log, "N new leads nobody owns · Take 10" with Undo, Meetings
 with Held / No-show, and Team & money folded. Owners and Admins keep the
 Daily Rundown with **Team today** on top (`loadTeamToday`, `repNumbers`;
 `sellingReps()` is the one definition of who counts as a rep; all in
-`src/lib/reports/daily.ts`). A Member's Rundown is Me unless `rep=all`. The
+`src/lib/reports/daily.ts`). A Member's Rundown is Me unless `rep=all`, and an address naming any rep
+is the Rundown, never My day; links that leave the page (the report email,
+My report emails) use `reportHref(choice, path, { explicit: true })`, which
+names `report=daily` and `rep=all` outright. Done today and Recent activity
+read whole saves through `recentSaves()` (`src/lib/recent-saves.ts`), never
+"the newest N rows, then fold". The
 Rundown's four money tiles are whole dollars (`wholeDollars`). The
 calendar gains the **Agenda** (the default for a Member and a phone), a
 [Mine | Team] toolbar with View and Filters, and "+ New" as a sheet. **The
@@ -2123,10 +2128,12 @@ what is still open is in Known gaps. Lessons worth keeping:
   (`ResponsiveList`). The server picks by user agent and the width decides
   after load: at a narrow viewport without `isMobile`, wait for
   `contact-card` / `company-card`.
-- **The calendar remembers Mine** (`calendar.scope`) for a bare address
-  only. A suite that clicks Mine clicks Team after it, or later bare visits
-  show one person's days. A filter other than Users ignores the remembered
-  Mine, so a shared link means the same thing to everyone.
+- **The calendar remembers Mine** (`calendar.scope`) whenever the address
+  names no users, filters included (session audit, Nov 12, 2026: a filter
+  used to drop a Member's Mine and flip the toggle to Team). Clear takes
+  the filters off and leaves Mine / Team alone; the Team week always reads
+  everyone. A suite that clicks Mine clicks Team after it, or later visits
+  show one person's days.
 - **A "Search people and companies" button is on every page**, so
   `getByLabel("Search people…")` needs `{ exact: true }`.
 - **The Agenda draws at most 60 entries a day** (`loadAgenda` in
