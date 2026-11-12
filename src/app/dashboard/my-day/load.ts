@@ -40,6 +40,19 @@ export type UpNextItem = {
   // The tile the row is about (the meeting waiting, else the one booked,
   // else their latest), handed to the log and booking sheets.
   opportunityId: string | null;
+  // The entry due (late or today) for Done / Reschedule / Delete (Planner
+  // AI, Nov 12, 2026); null when the row has nothing scheduled.
+  entry: UpNextEntry | null;
+};
+
+export type UpNextEntry = {
+  id: string;
+  title: string;
+  type: string;
+  notes: string;
+  startOn: string;
+  startTime: string | null;
+  delegatedBy: string | null;
 };
 
 export type MeetingItem = {
@@ -88,6 +101,7 @@ type CandidateRow = {
   meeting_oldest: Date | null;
   today_time: string | null;
   today_type: string | null;
+  due_eid: string | null;
   ahead: boolean;
   why: string[];
 };
@@ -133,7 +147,7 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
          WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
       ),
       due_ev AS (
-        SELECT o.cid, e."startOn", e."startTime", e.type, ${meetingTypes} AS meeting
+        SELECT o.cid, e.id AS eid, e."startOn", e."startTime", e.type, ${meetingTypes} AS meeting
           FROM "CalendarEvent" e
           JOIN on_ev o ON o.eid = e.id
           JOIN "Contact" c ON c.id = o.cid AND c."organizationId" = ${organizationId}
@@ -148,7 +162,10 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
                MIN("startOn") FILTER (WHERE "startOn" < ${today}::date AND NOT meeting) AS late_oldest,
                MIN("startOn") FILTER (WHERE "startOn" < ${today}::date AND meeting) AS meeting_oldest,
                MIN("startTime") FILTER (WHERE "startOn" = ${today}::date AND NOT meeting) AS today_time,
-               (array_agg(type ORDER BY "startTime" NULLS LAST) FILTER (WHERE "startOn" = ${today}::date AND NOT meeting))[1] AS today_type
+               (array_agg(type ORDER BY "startTime" NULLS LAST) FILTER (WHERE "startOn" = ${today}::date AND NOT meeting))[1] AS today_type,
+               -- The entry the row's Done / Reschedule / Delete act on (Planner
+               -- AI, Nov 12, 2026): the oldest one due, not a meeting.
+               (array_agg(eid ORDER BY "startOn", "startTime" NULLS LAST, eid) FILTER (WHERE NOT meeting))[1] AS due_eid
           FROM due_ev
          GROUP BY cid
       ),
@@ -189,7 +206,7 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       ids AS (SELECT id, array_agg(why) AS why FROM picked GROUP BY id)
       SELECT c.id, c.name, co.name AS company, c.mobile, c.phone, c."imageUrl" AS image_url,
              c."createdAt" AS created_at, c."lastTouchAt" AS last_touch, c."lastConnectAt" AS last_connect,
-             d.late_oldest, d.meeting_oldest, d.today_time, d.today_type,
+             d.late_oldest, d.meeting_oldest, d.today_time, d.today_type, d.due_eid,
              c.id IN (SELECT cid FROM ahead WHERE cid IS NOT NULL) AS ahead, ids.why
         FROM ids
         JOIN "Contact" c ON c.id = ids.id AND c."organizationId" = ${organizationId}
@@ -246,6 +263,30 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
   ]);
 
   const byId = new Map(candidates.map((row) => [row.id, row]));
+  const dueIds = [...new Set(candidates.map((row) => row.due_eid).filter((id): id is string => Boolean(id)))];
+  const dueEntries = dueIds.length
+    ? await prisma.calendarEvent.findMany({
+        // Only entries on this rep's own calendar get the buttons: a
+        // teammate's follow-up on one of their people stays the teammate's.
+        where: { organizationId, id: { in: dueIds }, ownerId: rep.id },
+        select: { id: true, title: true, type: true, notes: true, startOn: true, startTime: true, ownerId: true, createdById: true, createdBy: { select: { name: true } } },
+      })
+    : [];
+  const entryOf = new Map<string, UpNextEntry>(
+    dueEntries.map((event) => [
+      event.id,
+      {
+        id: event.id,
+        title: event.title,
+        type: event.type,
+        notes: event.notes,
+        startOn: event.startOn.toISOString().slice(0, 10),
+        startTime: event.startTime,
+        // Delegated: on this rep's calendar, put there by someone else.
+        delegatedBy: event.ownerId === rep.id && event.createdById && event.createdById !== rep.id ? (event.createdBy?.name ?? "a teammate") : null,
+      },
+    ]),
+  );
   const input: UpNextCandidate[] = [];
   for (const row of candidates) {
     const one = health.get(row.id);
@@ -281,6 +322,7 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       park: entry.park,
       health: health.get(entry.id)!,
       opportunityId: tileOf(waiting.get(entry.id)),
+      entry: (entry.category === "late" || entry.category === "today") && row.due_eid ? (entryOf.get(row.due_eid) ?? null) : null,
     };
   });
   const groupCounts = new Map<string, number>();

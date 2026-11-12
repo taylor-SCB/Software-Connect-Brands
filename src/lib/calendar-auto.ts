@@ -547,6 +547,7 @@ export async function scheduleFollowUpEvents(input: {
       data: {
         organizationId: input.organizationId,
         ownerId: input.userId,
+        createdById: input.userId,
         batchId: input.batchId ?? null,
         type,
         title: item.title ?? `Follow up · ${input.primaryName}`,
@@ -571,7 +572,14 @@ export async function scheduleFollowUpEvents(input: {
 // meeting" and "Try again in 30 days" are calendar entries like the
 // follow-up box writes; a meeting is booked by the caller.
 export type PlannedNextStep =
-  | { kind: "follow" | "book" | "park"; type: ActivityTypeValue; startOn: string; startTime: string | null }
+  | {
+      kind: "follow" | "book" | "park";
+      type: ActivityTypeValue;
+      startOn: string;
+      startTime: string | null;
+      // A follow-up's other rows (up to 5 more), each its own entry.
+      extra?: { type: ActivityTypeValue; startOn: string }[];
+    }
   | { kind: "meeting"; on: string; time: string | null; withContactIds: string[]; where: string | null; note: string | null; opportunity: string | null };
 
 export function planNextStep(next: NextStep | undefined, today: string): PlannedNextStep | { error: string } | null {
@@ -600,7 +608,13 @@ export function planNextStep(next: NextStep | undefined, today: string): Planned
       opportunity: next.opportunity?.trim() || null,
     };
   }
-  return { kind: "follow", type: next.type ?? "PHONE_CALL", startOn: on, startTime: time };
+  const extra: { type: ActivityTypeValue; startOn: string }[] = [];
+  for (const row of next.more ?? []) {
+    if (!isRealDay(row.on)) return { error: "That day isn't a real date" };
+    if (row.on < today) return { error: `A follow-up has to be today or later (one is dated ${formatDay(`${row.on}T12:00:00Z`)})` };
+    extra.push({ type: row.type, startOn: row.on });
+  }
+  return { kind: "follow", type: next.type ?? "PHONE_CALL", startOn: on, startTime: time, ...(extra.length ? { extra } : {}) };
 }
 
 // Writes a planned follow-up / reminder / park, tagged with the save.
@@ -620,10 +634,14 @@ export async function writeNextStep(input: {
       : input.plan.kind === "park"
         ? `Try again · ${input.primaryName}`
         : undefined;
+  const extra = input.plan.kind === "follow" ? (input.plan.extra ?? []) : [];
   const [eventId] = await scheduleFollowUpEvents({
     organizationId: input.organizationId,
     userId: input.userId,
-    items: [{ type: input.plan.type, startOn: input.plan.startOn, startTime: input.plan.startTime, title }],
+    items: [
+      { type: input.plan.type, startOn: input.plan.startOn, startTime: input.plan.startTime, title },
+      ...extra.map((row) => ({ type: row.type, startOn: row.startOn, startTime: null, title: undefined })),
+    ],
     contactIds: input.contactIds,
     companyId: input.companyId,
     primaryName: input.primaryName,
@@ -636,7 +654,9 @@ export async function writeNextStep(input: {
       ? `“Try to book a meeting” on the calendar for ${day}`
       : input.plan.kind === "park"
         ? `Parked: “Try again” on the calendar for ${day}`
-        : `${ACTIVITY_LABELS[input.plan.type]} follow-up on the calendar for ${day}`;
+        : extra.length
+          ? `${extra.length + 1} follow-ups on the calendar from ${day}`
+          : `${ACTIVITY_LABELS[input.plan.type]} follow-up on the calendar for ${day}`;
   return { eventId, words };
 }
 

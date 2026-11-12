@@ -241,6 +241,7 @@ const ago = (days) => `now() - interval '${days} days'`;
   await sheet.waitFor();
   assert.match(await sheet.textContent(), /Ty/);
   await sheet.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await sheet.locator("[data-testid=outcome-save]").click();
   await page.locator("[data-testid=follow-up-save]").waitFor();
   await until(async () => (await sql(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_md_ty' AND outcome='NO_ANSWER'`)).rows[0].n === 2, "the no answer saved");
   await page.locator("[data-testid=follow-up-save]").click();

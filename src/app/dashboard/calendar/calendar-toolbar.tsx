@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { addDays } from "@/lib/payments";
@@ -9,6 +11,7 @@ import { useSearch } from "@/lib/use-search";
 import { FormError, FormSuccess } from "@/components/ui";
 import {
   IconCheck,
+  IconSparkles,
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
@@ -279,6 +282,12 @@ export function CalendarToolbar({
             <IconFilter size={12} />
             Filters{filterCount > 0 ? ` (${filterCount})` : ""}
           </button>
+          {/* Planner AI (Nov 12, 2026): plan calls, emails and texts for up
+              to 50 people onto your own calendar. */}
+          <Link href="/dashboard/planner" className="btn btn-ghost btn-sm pointer-coarse:min-h-11" data-testid="cal-planner">
+            <IconSparkles size={12} />
+            Planner
+          </Link>
           <button
             type="button"
             onClick={() => setAdding(true)}

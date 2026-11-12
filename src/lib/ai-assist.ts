@@ -39,6 +39,8 @@ export const AI_DAILY_CAPS = {
   SITE_WALK: 50, // quote lines from site-walk photos and a sentence, about 10 cents
   RECEIPT_READ: 100, // a receipt photo read into a bill, about 2 cents
   JOB_QUESTION: 100, // a question answered from a job's own numbers, about 3 cents
+  // Planner AI (Nov 12, 2026): a description of leads turned into filter chips, under 1 cent.
+  PLANNER_FILTERS: 150,
 } as const;
 
 // How much meeting text one request carries at most.

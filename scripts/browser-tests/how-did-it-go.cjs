@@ -155,6 +155,7 @@ const ladder = async (contactId) =>
   assert.deepEqual(callChips.map((t) => t.trim()), ["No answer", "Left voicemail", "Talked", "Meeting booked", "Not interested", "More…"]);
   await shot(page, "01-call-chips");
   await form.locator("[data-testid=outcome-VOICEMAIL]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await page.locator("[data-testid=log-saved]").waitFor();
   assert.match(await page.locator("[data-testid=log-saved]").textContent(), /Saved · Left voicemail/);
   assert.ok(await page.locator("[data-testid=log-undo]").isVisible(), "Undo for ten seconds");
@@ -188,6 +189,7 @@ const ladder = async (contactId) =>
   await page.reload();
   await openBar();
   await form.locator("[data-testid=outcome-TALKED]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   assert.equal(await next.locator("[data-testid=next-meeting]").getAttribute("aria-checked"), "true", "Book meeting is the main choice");
   await next.locator("[data-testid=book-day-week]").click();
@@ -236,6 +238,7 @@ const ladder = async (contactId) =>
   await page.goto(`${BASE}/dashboard/contacts/ctc_hd_olivia`);
   await openBar();
   await form.locator("[data-testid=outcome-NOT_INTERESTED]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.locator("[data-testid=reason-HAS_VENDOR]").waitFor();
   assert.equal(await status("Contact", "ctc_hd_olivia"), "NOT_INTERESTED", "saved on the tap");
   const ni = await one(`SELECT body, outcome, "batchId" FROM "Activity" WHERE "contactId"='ctc_hd_olivia'`);
@@ -257,6 +260,7 @@ const ladder = async (contactId) =>
     ["Busy", "Front desk", "Wrong number"],
   );
   await form.locator("[data-testid=outcome-BUSY]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await page.locator("[data-testid=log-saved]").waitFor();
   assert.deepEqual({ ...(await one(`SELECT outcome, body FROM "Activity" WHERE "contactId"='ctc_hd_pam'`)) }, { outcome: "NO_ANSWER", body: "Busy" });
   await page.locator("[data-testid=log-undo]").click();
@@ -273,6 +277,7 @@ const ladder = async (contactId) =>
   await page.reload();
   await openBar();
   await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.locator("[data-testid=next-park]").waitFor();
   assert.equal(await next.locator("[data-testid=next-park]").getAttribute("aria-checked"), "true", "parking is picked");
   assert.match(await page.locator("[data-testid=follow-up-save]").textContent(), /Try again in 30 days/);
@@ -286,6 +291,7 @@ const ladder = async (contactId) =>
   await page.goto(`${BASE}/dashboard/contacts/ctc_hd_chase`);
   await openBar();
   await form.locator("[data-testid=outcome-TALKED]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   await form.locator("textarea[name=body]").fill("Wants pricing by Friday");
   await next.locator("[data-testid=next-follow]").click();
@@ -356,6 +362,7 @@ const ladder = async (contactId) =>
   assert.ok(await form.locator("[data-testid=outcome-BOOKED]").isDisabled(), "a meeting needs a person");
   await form.locator("[data-testid=company-bypass-tick]").check();
   await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   const desk = await one(`SELECT "contactId", "companyId", outcome FROM "Activity" WHERE "companyId"='cmp_hd_red'`);
   assert.deepEqual({ ...desk }, { contactId: null, companyId: "cmp_hd_red", outcome: "NO_ANSWER" });
@@ -374,6 +381,7 @@ const ladder = async (contactId) =>
   await box.waitFor();
   assert.equal(await box.locator("[data-testid=done-type-PHONE_CALL]").getAttribute("aria-pressed"), "true");
   await box.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await box.locator("[data-testid=outcome-save]").click();
   await box.locator("[data-testid=follow-up-prompt]").waitFor();
   assert.equal(await box.locator("[data-testid=next-follow]").getAttribute("aria-checked"), "true");
   await shot(page, "04-done-box-next");
@@ -392,6 +400,7 @@ const ladder = async (contactId) =>
   assert.equal(await box.locator("[data-testid=done-type-MEETING]").getAttribute("aria-pressed"), "true");
   assert.deepEqual((await box.locator("[data-testid=outcome-chips] button").allTextContents()).map((t) => t.trim()), ["Held", "No-show", "Rescheduled"]);
   await box.locator("[data-testid=outcome-HELD]").click();
+  await box.locator("[data-testid=outcome-save]").click();
   await box.locator("[data-testid=log-early]").waitFor();
   assert.match(await box.locator("[data-testid=log-early]").textContent(), /Did it happen early\?/);
   assert.equal(await status("Contact", "ctc_hd_dana"), "MEETING_SET", "nothing written before the answer");
@@ -412,6 +421,7 @@ const ladder = async (contactId) =>
   await form.locator("[data-testid=log-meeting-line]").waitFor();
   const krisBefore = await status("Contact", "ctc_hd_kris");
   await form.locator("[data-testid=outcome-NO_SHOW]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id=$1`, [krisOm.id])).outcome, "NO_SHOW");
   assert.equal(await status("Contact", "ctc_hd_kris"), krisBefore, "a no-show moves nobody");
@@ -454,6 +464,7 @@ const ladder = async (contactId) =>
   await page.route(/\/dashboard\/contacts\/ctc_hd_quinn/, hold);
   await openBar();
   await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.locator("[data-testid=next-park]").waitFor();
   await page.unroute(/\/dashboard\/contacts\/ctc_hd_quinn/, hold);
   assert.ok(held >= 2, "the context was held and the save came after it");
@@ -478,6 +489,7 @@ const ladder = async (contactId) =>
   await page.goto(`${BASE}/dashboard/contacts/ctc_hd_rae`);
   await openBar();
   await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   assert.equal(await next.locator("[data-testid=next-park]").count(), 1, "the try that reaches the limit offers parking (it came one try late)");
   assert.equal(await next.locator("[data-testid=next-park]").getAttribute("aria-checked"), "true");
@@ -502,6 +514,7 @@ const ladder = async (contactId) =>
   });
   await openBar();
   await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   await page.locator("[data-testid=follow-up-skip]").click();
   await form.waitFor({ state: "detached" });
@@ -537,6 +550,7 @@ const ladder = async (contactId) =>
   await page.goto(`${BASE}/dashboard/contacts/ctc_hd_lee`);
   await openBar();
   await form.locator("[data-testid=outcome-TALKED]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   await next.locator("[data-testid=book-day-week]").click();
   await next.locator("[data-testid=book-time-09\\:00]").click();
@@ -560,6 +574,7 @@ const ladder = async (contactId) =>
   await form.locator("[data-testid=log-type-MEETING]").click();
   await form.locator("[data-testid=log-meeting-line]").waitFor();
   await form.locator("[data-testid=outcome-HELD]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await next.waitFor();
   await next.locator("[data-testid=next-lost]").click();
   await next.locator("[data-testid=next-lost-note]").waitFor();
@@ -592,6 +607,7 @@ const ladder = async (contactId) =>
   await tab.goto(`${BASE}/dashboard/contacts/ctc_hd_olivia`);
   await tab.locator("[data-testid=log-bar]").click();
   await tab.locator("[data-testid=outcome-VOICEMAIL]").click();
+  await tab.locator("[data-testid=outcome-save]").click();
   await tab.locator("[data-testid=follow-up-skip]").click();
   const tToast = await tab.locator("[data-testid=log-toast]").boundingBox();
   const tTabs = await tab.locator("[data-testid=phone-tabs]").boundingBox();

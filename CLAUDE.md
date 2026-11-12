@@ -1161,6 +1161,50 @@ paper of each kind (by when it runs out) has run out or runs out within
 card shows only when there is something to check, and it isn't in the
 report email.
 
+**Planner AI (Nov 12, 2026; Taylor's plan v2).** `/dashboard/planner`,
+opened from the Calendar toolbar's **Planner** (`cal-planner`), the
+dashboard's box (`PlannerBox`, `src/components/planner-box.tsx`, on My day
+and the Owner's Daily Rundown; `?q=` words) and the Contacts list's **Plan
+outreach** (`plan-outreach`, carrying title / industry / type / status /
+state / never=1). Owner-only: it books only on the signed-in person's own
+calendar (`ownerId` = `createdById` = them) and never changes a contact's
+owner. **Plan**: words turned into filter chips by `plannerFromText`
+(`PLANNER_FILTERS`, 150 a day; only values the workspace has, via
+`plannerChoices` / `cleanCriteria`), or picked by hand (Job title, Industry,
+Company type, Stage, State, City, Never contacted); a required **Warm**
+(a logged touch, `lastTouchAt`; latest talk first) / **Cold** (none; newest
+first) / **Mix** (alternating, topped up); up to 6 rows of date + Call /
+Email / Text (Email and Text are reminders; nothing is sent); Generate
+(`previewPlanner`) gives up to 50, at most 3 a company; tick boxes; Create
+(`createPlannerBatch`) re-checks the rules and writes one entry per person
+per row in one `createMany`, batchId `plan:<id>`, one batch a minute per
+person; one Undo (`undoPlannerBatch`, only entries not yet ticked done).
+**Who can be planned** (`eligible` in `src/lib/planner.ts`): not Won, Lost,
+Not interested or Archived; nothing open on anyone's calendar for them
+today or later; theirs, unowned, or a teammate's only when that lead also
+has no logged touch in 45 days; a phone for Call / Text rows, an email for
+Email rows. **Planned** tab (`loadPlanned`, 300 at most): open planner
+entries by day, overdue first. **Row buttons** (`EntryActions`,
+`src/components/entry-actions.tsx`) on Planned and on My day's Up next rows
+that have an entry due on the rep's own calendar (`UpNextItem.entry`):
+✅ Done opens How did it go? on the entry, 📅 Reschedule (day + optional
+time, Save / Cancel, `rescheduleEntry`), red trash (Delete / Cancel). **A
+delegated entry** (`CalendarEvent.createdById`, new, set by every place a
+person puts something on a calendar; delegated = on my calendar, made by
+someone else) can't be deleted (`deleteEvent` refuses): **Hand back**
+(`handBackEvent`) puts it on its maker's calendar, also on the calendar's
+cards and log rows (`isDelegated`). **Done everywhere** (Taylor): in the
+shared How did it go? sheet a chip now *picks* (aria-pressed), the notes
+take focus, and `outcome-save` / `outcome-cancel` decide; Fill it in's own
+Save still saves at once, and Book / Reschedule chips still open their
+step. The next step's follow-up takes up to 6 rows (`next-add-row`,
+`next-row-day-n` / `next-row-type-n`; `NextStep.more`, written in the same
+save); its Skip reads **Cancel** (keeps the touch, no follow-up).
+**Suites that tap an outcome chip must click `outcome-save` after it.**
+Migration `20261112150000_planner_calendar_creator` adds the nullable
+column only. `planner.cjs` (21 steps, in the "ai" group) covers it;
+`load-test.cjs` times the page and the three previews at 200,000.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -1602,6 +1646,11 @@ are all blocking before the first paying customer.
   sheet and the Meetings card each draw their own "Saved · Undo", and two
   can show in the same spot for up to ten seconds. The contact page and the
   Pipeline have one slot each (`onToast`).
+- **Planner entries made before Nov 12, 2026 and app-written entries have
+  no maker** (`createdById` null), so they never count as delegated and can
+  be deleted as before. The planner's Email and Text rows are reminders; it
+  sends nothing. Its 45-day rule reads `lastTouchAt`, so a teammate's lead
+  with only marketing sends counts as quiet.
 - **The one-to-one email has no daily cap of its own.** Decision 16 keeps it
   out of the 40 a day, so only Resend's plan limit, shared by every
   workspace, stands behind it.

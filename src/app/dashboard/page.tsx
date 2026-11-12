@@ -22,6 +22,7 @@ import { CADENCE_LABELS, cadencesFor, isCadence } from "@/lib/reports/subscripti
 import { ReportControls } from "./reports/report-controls";
 import { loadMyDay } from "./my-day/load";
 import { MyDayView, TeamTodayStrip } from "./my-day/my-day";
+import { PlannerBox } from "@/components/planner-box";
 import { MemberJumpIn } from "./my-day/jump-in";
 import { loadTeamToday } from "@/lib/reports/daily";
 import { subInsuranceFlags } from "@/lib/compliance";
@@ -547,6 +548,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           intro={
             <>
               {teamToday && <TeamTodayStrip team={teamToday} now={now} />}
+              {teamToday && <PlannerBox />}
               {subInsurance.length > 0 && <SubInsuranceCard items={subInsurance} />}
               {head}
             </>

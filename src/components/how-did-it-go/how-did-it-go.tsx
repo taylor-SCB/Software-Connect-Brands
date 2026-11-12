@@ -269,6 +269,11 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
   const [interested, setInterested] = useState(false);
   const [reason, setReason] = useState<StatusReasonValue | null>(null);
   const [checkBack, setCheckBack] = useState(false);
+  // The outcome picked, not yet saved (Planner AI, Nov 12, 2026; Taylor:
+  // tap how it went, add notes, then Save or Cancel — everywhere).
+  const [selected, setSelected] = useState<ChipDef | null>(null);
+  // A follow-up's rows after the first (up to 5 more): date and type each.
+  const [moreRows, setMoreRows] = useState<{ on: string; type: ActivityTypeValue }[]>([]);
   // Say it, don't type it (AI release A): the notes box, and what "Fill it
   // in from my words" suggested (the chip shown picked, the next step and
   // day it pre-picks after the save, the words before they were tidied).
@@ -388,6 +393,8 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     setCheckBack(false);
     setPickNextDay(false);
     setNextOn(days[1].on);
+    setMoreRows([]);
+    setSelected(null);
     // A plain log (no outcome) gets the full follow-up box.
     if (!chip) {
       setPhase(followUp ? "several" : "next");
@@ -563,7 +570,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
       setPhase("book");
       return;
     }
-    saveTouch(chip);
+    // A tap picks it (a second tap on it unpicks); Save saves it.
+    setError(undefined);
+    setSelected((current) => (current?.key === chip.key ? null : chip));
+    window.requestAnimationFrame(() => noteRef.current?.focus({ preventScroll: true }));
   }
 
   // Book it, from the Book meeting step.
@@ -654,7 +664,10 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
         if (checkBack) input.next = { kind: "follow", on: plusDays(today, 90), type: "PHONE_CALL", withContactIds: [] };
       } else {
         if (interested) input.mark = "INTERESTED";
-        if (choice === "follow") input.next = { kind: "follow", on: nextOn, type: nextType, withContactIds: [] };
+        if (choice === "follow") {
+          const rows = moreRows.filter((row) => row.on);
+          input.next = { kind: "follow", on: nextOn, type: nextType, withContactIds: [], ...(rows.length ? { more: rows } : {}) };
+        }
         if (choice === "book") input.next = { kind: "book", on: nextOn, withContactIds: [] };
         if (choice === "park") input.next = { kind: "park", withContactIds: [] };
         if ((choice === "meeting" || choice === "reschedule") && book.on) {
@@ -764,8 +777,9 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     if (phase !== "log" || pending) return;
     // The outcome "Fill it in" picked is the one shown picked, so the main
     // button saves it too (audit fix: it saved a touch with no outcome).
+    if (selected && chipsFor(type).concat(CALL_MORE).some((chip) => chip.key === selected.key)) return saveTouch(selected);
     const picked = fillNow.current && fillNow.current.type === type ? chipByKey(type, fillNow.current.chip) : null;
-    if (picked) return tapChip(picked);
+    if (picked) return picked.book || picked.reschedule ? tapChip(picked) : saveTouch(picked);
     saveTouch(null);
   }
 
@@ -801,7 +815,17 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
           </div>
         </div>
       )}
-      {phase === "log" && !eventMode && (
+      {phase === "log" && selected && !ahead && (
+        <div className="grid grid-cols-[auto_1fr] gap-2" data-testid="outcome-confirm">
+          <button type="button" onClick={() => setSelected(null)} disabled={pending} className="btn btn-ghost min-h-12 sm:min-h-11" data-testid="outcome-cancel">
+            Cancel
+          </button>
+          <button type="submit" disabled={pending} className="btn btn-primary min-h-12 sm:min-h-11" data-testid="outcome-save">
+            {pending ? "Saving…" : `Save · ${selected.label}`}
+          </button>
+        </div>
+      )}
+      {phase === "log" && !eventMode && !(selected && !ahead) && (
         <div className="flex flex-wrap items-center gap-2">
           {/* A meeting that happened is held, a talk: not at the front desk
               (the server refuses it too; final audit, Nov 11, 2026). */}
@@ -816,7 +840,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
           {!ahead && <span className="faint text-xs">or tap how it went</span>}
         </div>
       )}
-      {phase === "log" && eventMode && (
+      {phase === "log" && eventMode && !selected && (
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           <button
             type="submit"
@@ -861,8 +885,8 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
       )}
       {phase === "next" && (
         <div className="grid grid-cols-[auto_1fr] gap-2">
-          <button type="button" onClick={skip} disabled={pending} className="btn btn-ghost min-h-12 sm:min-h-11" data-testid="follow-up-skip">
-            Skip
+          <button type="button" onClick={skip} disabled={pending} className="btn btn-ghost min-h-12 sm:min-h-11" data-testid="follow-up-skip" title="Keeps what you saved, with no next step">
+            Cancel
           </button>
           {choice === "quote" && bookWith ? (
             <Link
@@ -877,7 +901,12 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
             <button
               type="button"
               onClick={saveNext}
-              disabled={pending || ((choice === "meeting" || choice === "reschedule") && !book.on) || ((choice === "follow" || choice === "book") && !nextOn)}
+              disabled={
+                pending ||
+                ((choice === "meeting" || choice === "reschedule") && !book.on) ||
+                ((choice === "follow" || choice === "book") && !nextOn) ||
+                (choice === "follow" && moreRows.some((row) => !row.on || row.on < today))
+              }
               className="btn btn-primary min-h-12 sm:min-h-11"
               data-testid="follow-up-save"
             >
@@ -894,6 +923,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
     if (saved?.chip === "NOT_INTERESTED") return checkBack ? "Save · check back in 90 days" : "Save";
     switch (choice) {
       case "follow":
+        if (moreRows.length) return `Save ${moreRows.length + 1} follow-ups`;
         return saved?.chip && TRIES.has(saved.chip) && nextType === "PHONE_CALL" ? `Try again ${dayWord}` : `${TYPE_WORD[nextType]} ${dayWord}`;
       case "park":
         return "Try again in 30 days";
@@ -955,6 +985,7 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                     onClick={() => {
                       setType(option);
                       setMore(false);
+                      setSelected(null);
                       setError(undefined);
                       if (option !== type) applyFill(null);
                     }}
@@ -981,13 +1012,13 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                     {meeting.ahead ? " (still ahead)" : meeting.noShow ? " (marked no-show)" : ""}
                   </p>
                 )}
-                {fill && fill.type === type && <FillBanner fill={fill} chip={chipByKey(type, fill.chip)} onSave={(chip) => tapChip(chip)} onUndo={() => applyFill(null, true)} pending={pending} />}
+                {fill && fill.type === type && <FillBanner fill={fill} chip={chipByKey(type, fill.chip)} onSave={(chip) => (chip.book || chip.reschedule ? tapChip(chip) : saveTouch(chip))} onUndo={() => applyFill(null, true)} pending={pending} />}
                 <ChipGrid label={`How did the ${TYPE_WORD[type].toLowerCase()} go?`} testId="outcome-chips">
                   {chips.map((chip) => (
                     <Chip
                       key={chip.key}
                       connect={chip.connect}
-                      on={fill?.chip === chip.key && fill.type === type}
+                      on={selected ? selected.key === chip.key : fill?.chip === chip.key && fill.type === type}
                       onClick={() => tapChip(chip)}
                       disabled={
                         pending || meetingWaiting || (chip.book && !bookWith) || (frontDesk && (chip.connect || chip.reschedule)) || (nobody && chip.connect)
@@ -1014,14 +1045,14 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                   {type === "PHONE_CALL" &&
                     more &&
                     CALL_MORE.map((chip) => (
-                      <Chip key={chip.key} on={fill?.chip === chip.key && fill.type === type} onClick={() => tapChip(chip)} disabled={pending} testId={`outcome-${chip.key}`}>
+                      <Chip key={chip.key} on={selected ? selected.key === chip.key : fill?.chip === chip.key && fill.type === type} onClick={() => tapChip(chip)} disabled={pending} testId={`outcome-${chip.key}`}>
                         {chip.label}
                       </Chip>
                     ))}
                 </ChipGrid>
                 <p className="faint text-xs">
                   <span aria-hidden className="mr-1 inline-block h-2 w-2 rounded-full bg-[var(--health-good)]" />
-                  counts as a talk. One tap saves it.
+                  counts as a talk. Tap how it went, add notes, then Save.
                 </p>
               </div>
             )}
@@ -1157,6 +1188,14 @@ function HowSheet(props: HowDidItGoProps & { emit: (toast: Toast) => void }) {
                           </button>
                         ))}
                       </div>
+                    )}
+                    {choice === "follow" && (
+                      <FollowUpRows
+                        rows={moreRows}
+                        today={today}
+                        after={nextOn}
+                        onChange={setMoreRows}
+                      />
                     )}
                   </fieldset>
                 )}
@@ -1396,4 +1435,75 @@ export function useHowDidItGo(settings: { dial?: boolean; defaults?: HowDidItGoO
   });
   const element = state.options ? <HowDidItGo open={state.open} onClose={close} {...state.options} /> : null;
   return { open, close, element, isOpen: state.open };
+}
+
+// Rows 2 to 6 of a follow-up (Planner AI, Nov 12, 2026; Taylor): the date in
+// the first column and Call / Text / Email in the second, each its own
+// calendar entry, written in the same save as the first.
+const MAX_FOLLOW_ROWS = 6;
+function FollowUpRows({
+  rows,
+  today,
+  after,
+  onChange,
+}: {
+  rows: { on: string; type: ActivityTypeValue }[];
+  today: string;
+  after: string;
+  onChange: (rows: { on: string; type: ActivityTypeValue }[]) => void;
+}) {
+  const set = (index: number, patch: Partial<{ on: string; type: ActivityTypeValue }>) => onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  return (
+    <div className="space-y-2" data-testid="next-rows">
+      {rows.map((row, index) => (
+        <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-testid="next-row">
+          <input
+            type="date"
+            min={today}
+            value={row.on}
+            onChange={(fired) => set(index, { on: fired.target.value })}
+            aria-label={`Follow-up ${index + 2} day`}
+            className="input input-sm min-w-0"
+            data-testid={`next-row-day-${index}`}
+          />
+          <select
+            value={row.type}
+            onChange={(fired) => set(index, { type: fired.target.value as ActivityTypeValue })}
+            aria-label={`Follow-up ${index + 2} type`}
+            className="select input-sm min-w-0"
+            data-testid={`next-row-type-${index}`}
+          >
+            <option value="PHONE_CALL">Call</option>
+            <option value="TEXT">Text</option>
+            <option value="EMAIL">Email</option>
+          </select>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+            onClick={() => onChange(rows.filter((_, i) => i !== index))}
+            aria-label={`Remove follow-up ${index + 2}`}
+            data-testid={`next-row-remove-${index}`}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {rows.length + 1 < MAX_FOLLOW_ROWS && (
+        <button
+          type="button"
+          className="link text-xs"
+          data-testid="next-add-row"
+          onClick={() => {
+            const last = rows.length ? rows[rows.length - 1].on : after;
+            const base = last && last >= today ? last : today;
+            const next = new Date(`${base}T12:00:00Z`);
+            next.setUTCDate(next.getUTCDate() + 3);
+            onChange([...rows, { on: next.toISOString().slice(0, 10), type: "PHONE_CALL" }]);
+          }}
+        >
+          + Add another follow-up ({MAX_FOLLOW_ROWS - rows.length - 1} more)
+        </button>
+      )}
+    </div>
+  );
 }
