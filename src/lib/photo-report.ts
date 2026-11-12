@@ -34,17 +34,29 @@ export async function jobReportPhotos(organizationId: string, projectId: string)
       mimeType: { in: ["image/jpeg", "image/png", "image/webp", "image/gif"] },
       receipt: null,
     },
-    orderBy: { createdAt: "asc" },
+    // The newest 400 (audit fix: oldest-first cut off the finished-work
+    // photos on a busy job), put back in date order below.
+    orderBy: { createdAt: "desc" },
     take: 400,
     select: {
       id: true,
+      storageKey: true,
       name: true,
       publicToken: true,
       createdAt: true,
       tags: { select: { tag: { select: { kind: true, name: true } } } },
     },
   });
-  return rows.map((row) => ({
+  // A clone is its own row on the same stored file (Move / Clone); the
+  // report counts the picture once, or the rules could pair a photo with
+  // its own copy (audit fix).
+  const seen = new Set<string>();
+  const unique = rows.reverse().filter((row) => {
+    if (!row.storageKey || seen.has(row.storageKey)) return false;
+    seen.add(row.storageKey);
+    return true;
+  });
+  return unique.map((row) => ({
     id: row.id,
     src: `/files/${row.publicToken}`,
     name: row.name,
@@ -88,6 +100,25 @@ export function pairByRules(photos: Photo[]): { candidates: ReportPhoto[]; pairs
     .filter((photo) => inPairs.has(photo.id))
     .map((photo) => ({ ...photo, role: pairs.some((pair) => pair.beforeId === photo.id) ? "before" : "after" }));
   return { candidates, pairs };
+}
+
+// What is wrong with a list of pairs the person is saving, in words: a
+// photo used twice or on both sides, or one no longer on the job. Null
+// when every pair can be kept as it is (audit fix: Save used to drop such
+// a pair quietly and still say "Report saved").
+export function pairsProblem(raw: unknown[], allowed: Set<string>): string | null {
+  const used = new Set<string>();
+  for (const [index, entry] of raw.entries()) {
+    const pair = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const before = typeof pair.beforeId === "string" ? pair.beforeId : "";
+    const after = typeof pair.afterId === "string" ? pair.afterId : "";
+    if (!allowed.has(before) || !allowed.has(after)) return `Pair ${index + 1} has a photo that's no longer on this job. Pick another.`;
+    if (before === after) return `Pair ${index + 1} has the same photo before and after. Pick another.`;
+    if (used.has(before) || used.has(after)) return `Pair ${index + 1} uses a photo that's already in another pair. Each photo goes in one pair.`;
+    used.add(before);
+    used.add(after);
+  }
+  return null;
 }
 
 // A stored or posted list of pairs, kept only where both photos are on

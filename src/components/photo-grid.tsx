@@ -53,7 +53,12 @@ export function PhotoGrid({
   ai?: { suggestions: Record<string, TagSuggestionView>; auto: string[] } | null;
 }) {
   const router = useRouter();
-  const [tags, setTags] = useState(initialTags);
+  // The workspace's lists as the page last sent them, plus any tag added
+  // here since (+ Add in the tag editor). A refresh after a suggestion's
+  // new label is accepted brings that tag in through the prop (audit fix,
+  // Nov 12, 2026: the list was copied once and never followed the prop).
+  const [addedTags, setAddedTags] = useState<PhotoTagOption[]>([]);
+  const tags = [...initialTags, ...addedTags.filter((tag) => !initialTags.some((each) => each.id === tag.id))];
   // Select mode (staff): pick photos for Suggest tags, Accept all or the
   // punch list.
   const [selecting, setSelecting] = useState(false);
@@ -152,7 +157,7 @@ export function PhotoGrid({
 
   async function addTag(kind: PhotoTagOption["kind"], name: string) {
     const result = await addPhotoTag(access, kind, name);
-    if (!("error" in result)) setTags((current) => (current.some((tag) => tag.id === result.id) ? current : [...current, result]));
+    if (!("error" in result)) setAddedTags((current) => (current.some((tag) => tag.id === result.id) ? current : [...current, result]));
     return result;
   }
 

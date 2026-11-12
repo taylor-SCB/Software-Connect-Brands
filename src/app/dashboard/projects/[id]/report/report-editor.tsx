@@ -16,7 +16,7 @@ function photoLabel(photo: Photo) {
 
 export function ReportEditor({
   projectId,
-  photos,
+  photos: pagePhotos,
   aiOn,
   saved,
   customer,
@@ -25,7 +25,7 @@ export function ReportEditor({
   projectId: string;
   photos: Photo[];
   aiOn: boolean;
-  saved: { token: string; summary: string; pairs: Pair[]; shared: boolean } | null;
+  saved: { url: string; summary: string; pairs: Pair[]; shared: boolean } | null;
   customer: { name: string; phone: string | null; email: string | null };
   jobName: string;
 }) {
@@ -37,7 +37,13 @@ export function ReportEditor({
   const [stage, setStage] = useState("");
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
+  // The page's photos, plus any a draft brought back that arrived after the
+  // page was drawn (a crew upload meanwhile), so every pair's photo is one
+  // the selects offer (audit fix: the select fell back to the first photo).
+  const [later, setLater] = useState<Photo[]>([]);
+  const photos = [...pagePhotos, ...later.filter((photo) => !pagePhotos.some((each) => each.id === photo.id))];
   const byId = new Map(photos.map((photo) => [photo.id, photo]));
+  const learn = (found: Photo[]) => setLater((current) => [...current, ...found.filter((photo) => !current.some((each) => each.id === photo.id))]);
 
   function edit(next: Pair[]) {
     setPairs(next);
@@ -49,6 +55,7 @@ export function ReportEditor({
     start(async () => {
       const startFrom = await reportStart(projectId);
       if ("error" in startFrom) return void setMessage({ text: startFrom.error, error: true });
+      start(() => learn(startFrom.candidates));
       if (!withAi) {
         start(() => {
           setPairs(startFrom.pairs);
@@ -118,9 +125,7 @@ export function ReportEditor({
     });
   }
 
-  const [origin, setOrigin] = useState("");
-  if (typeof window !== "undefined" && origin === "") setOrigin(window.location.origin);
-  const url = saved ? `${origin}/jr/${saved.token}` : "";
+  const url = saved?.url ?? "";
   const firstName = customer.name.split(/\s+/)[0] || customer.name;
   const words = `Hi ${firstName}, here are the before and after photos from ${jobName}: ${url}`;
   const smsHref = `sms:${customer.phone ? dialNumber(customer.phone).main : ""}?&body=${encodeURIComponent(words)}`;
@@ -215,9 +220,12 @@ export function ReportEditor({
             type="button"
             onClick={() => {
               const taken = pairs.flatMap((pair) => [pair.beforeId, pair.afterId]);
-              const before = firstFree(taken) ?? photos[0]?.id;
-              const after = firstFree([...taken, before ?? ""]) ?? photos[photos.length - 1]?.id;
-              if (before && after) edit([...pairs, { beforeId: before, afterId: after, line: "" }]);
+              const before = firstFree(taken);
+              const after = before ? firstFree([...taken, before]) : undefined;
+              // Every photo is in a pair already: say so rather than adding a
+              // pair Save would refuse (audit fix).
+              if (!before || !after) return setMessage({ text: "Every photo on this job is in a pair already. Add more photos to the job first.", error: true });
+              edit([...pairs, { beforeId: before, afterId: after, line: "" }]);
             }}
             disabled={photos.length < 2}
             className="btn btn-ghost btn-sm"

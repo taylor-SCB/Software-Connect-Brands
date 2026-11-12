@@ -7,7 +7,12 @@ import { money } from "@/lib/job-ai";
 // C6 (Release C): one job's own numbers as the facts "Ask the job a
 // question" may answer from. Server only; scoped to the workspace.
 
-const iso = (date: Date | null | undefined) => (date ? date.toISOString().slice(0, 10) : null);
+// Dates as "Nov 12, 2026", the shape the number check takes out of both
+// the facts and the answer (audit fix: "2026-11-12" left 11 and 12 among
+// the allowed numbers, so "$11" passed). Calendar days are stored at UTC
+// midnight, so they are read in UTC.
+const iso = (date: Date | null | undefined) =>
+  date ? date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : null;
 
 // Everything the answer may use, all from paperwork, time and the
 // calendar: the same figures the Budget, Money and Crew tabs show.
@@ -127,7 +132,6 @@ export async function jobFacts(organizationId: string, projectId: string) {
       .filter((contract) => contract.type === "Change Order")
       .map((contract) => ({
         title: contract.title,
-        number: `CON-${contract.number}`,
         status: contract.status,
         amount: money(contractTotalCents(contract.lineItems, contract.discountCents)),
         signedOn: iso(contract.signedAt),

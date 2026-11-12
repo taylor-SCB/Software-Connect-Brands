@@ -296,6 +296,7 @@ export async function awardFromContract(organizationId: string, contractId: stri
       select: { id: true },
     });
 
+    const made = !project;
     if (!project) {
       // A change order with nothing to amend is treated as its own job
       // rather than refused, so no signature is ever silently dropped.
@@ -349,10 +350,12 @@ export async function awardFromContract(organizationId: string, contractId: stri
       });
     }
 
-    // Site-walk photos taken on the deal's quotes (Release C, Taylor's call
-    // 3) move into the job's Main folder. Only those not on a job yet, so
-    // signing a second agreement moves nothing twice.
-    await moveSiteWalkPhotos(tx, organizationId, project.id, { dealId: contract.dealId, quoteId: contract.quoteId });
+    // Site-walk photos (Release C, Taylor's call 3) move into the job's Main
+    // folder when the job is made: those on every quote of the deal. Later
+    // signatures move only the signed paperwork's own quote's, so a new
+    // draft quote on the same deal keeps its photos (audit fix: any re-award
+    // swept them off it). Only photos not on a job yet are ever moved.
+    await moveSiteWalkPhotos(tx, organizationId, project.id, { dealId: made ? contract.dealId : null, quoteId: contract.quoteId });
 
     await refreshTotals(tx, organizationId, project.id);
     return project.id;

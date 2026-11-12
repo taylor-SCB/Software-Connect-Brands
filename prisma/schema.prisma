@@ -1880,11 +1880,11 @@ model Upload {
   projectId      String?
   project        Project?            @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // A site-walk photo taken on a draft quote (Release C, Nov 12, 2026):
-  // projectId null until the job is made from the signed paperwork, then
-  // both are set and it sits in the job's Main folder. Kept after the move
-  // so the job's photo still says where it came from.
+  // projectId null until the job is made from the signed paperwork; then
+  // projectId is set, quoteId cleared, and it sits in the job's Main
+  // folder. Deleting the quote (or its deal) takes the ones not yet moved.
   quoteId        String?
-  quote          Quote?              @relation("QuoteSiteWalk", fields: [quoteId], references: [id], onDelete: SetNull)
+  quote          Quote?              @relation("QuoteSiteWalk", fields: [quoteId], references: [id], onDelete: Cascade)
   tagSuggestion  PhotoTagSuggestion?
   receipt        JobReceipt?
   createdAt      DateTime            @default(now())

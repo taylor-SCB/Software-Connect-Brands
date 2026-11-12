@@ -8,7 +8,7 @@ import { publicToken } from "@/lib/tokens";
 import { askClaude, aiConfigured, type AiPart } from "@/lib/ai";
 import { AI_DAILY_CAPS } from "@/lib/ai-assist";
 import { fenced, readAiImages } from "@/lib/job-ai";
-import { cleanPairs, jobReportPhotos, pairByRules, REPORT_MAX_PAIRS, type ReportPair, type ReportPhoto } from "@/lib/photo-report";
+import { cleanPairs, jobReportPhotos, pairByRules, pairsProblem, REPORT_MAX_PAIRS, type ReportPair, type ReportPhoto } from "@/lib/photo-report";
 
 // C3 "Make a photo report" (Release C, Nov 12, 2026), beside Close out.
 // The rules pick before and after photos and pair them; Claude, when on,
@@ -123,8 +123,11 @@ export async function savePhotoReport(
   const parsed = saveSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the report" };
   const photos = await jobReportPhotos(job.organizationId, job.project.id);
-  const pairs = cleanPairs(parsed.data.pairs, new Set(photos.map((photo) => photo.id)));
-  if (pairs.length === 0) return { error: "Keep at least one pair of photos." };
+  const allowed = new Set(photos.map((photo) => photo.id));
+  if (parsed.data.pairs.length === 0) return { error: "Keep at least one pair of photos." };
+  const problem = pairsProblem(parsed.data.pairs, allowed);
+  if (problem) return { error: problem };
+  const pairs = cleanPairs(parsed.data.pairs, allowed);
   const saved = await prisma.photoReport.upsert({
     where: { projectId: job.project.id },
     create: {

@@ -44,10 +44,11 @@ export function SiteWalkButton({
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
-  const [added, setAdded] = useState<SiteWalkPhoto[]>([]);
-  const photos = [...added.filter((photo) => !initial.some((each) => each.id === photo.id)), ...initial];
+  // Only what the quote holds now (audit fix: photos added here were kept in
+  // a list of their own, so one removed on the card stayed ticked).
+  const photos = initial;
   const [picked, setPicked] = useState<string[] | null>(null);
-  const ticked = picked ?? photos.slice(0, MAX_PICK).map((photo) => photo.id);
+  const ticked = (picked ?? photos.slice(0, MAX_PICK).map((photo) => photo.id)).filter((id) => photos.some((photo) => photo.id === id));
   const [sentence, setSentence] = useState("");
   const [pending, start] = useTransition();
   const [stage, setStage] = useState("");
@@ -61,7 +62,6 @@ export function SiteWalkButton({
       const error = await uploadAll(quoteId, files, (photo) => fresh.push(photo));
       start(() => {
         setStage("");
-        setAdded((current) => [...fresh, ...current]);
         setPicked((current) => {
           const base = current ?? ticked;
           return [...fresh.map((photo) => photo.id), ...base].slice(0, MAX_PICK);

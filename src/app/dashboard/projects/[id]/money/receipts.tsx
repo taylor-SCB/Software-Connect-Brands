@@ -164,7 +164,12 @@ export function AddReceipt({
   }
 
   function picked(file: File) {
+    // A new photo starts clean: the last one's items and match don't carry
+    // over into this bill (audit fix).
     setMessage(null);
+    setItems([]);
+    setAiRead(false);
+    setMatch(null);
     start(async () => {
       let base64: string;
       try {
@@ -293,7 +298,18 @@ export function AddReceipt({
                   </button>
                 </div>
               </div>
-              <BillFields prefix="receipt" scopes={scopes} suppliers={suppliers} values={values} onChange={(next) => setValues((current) => ({ ...current, ...next }))} match={match} />
+              <BillFields
+                prefix="receipt"
+                scopes={scopes}
+                suppliers={suppliers}
+                values={values}
+                onChange={(next) => {
+                  // Retyped store: the read's match no longer applies (audit fix).
+                  if (next.storeName !== undefined && next.storeName.trim().toLowerCase() !== match?.toLowerCase()) setMatch(null);
+                  setValues((current) => ({ ...current, ...next }));
+                }}
+                match={match}
+              />
               <ItemsList items={items} />
               <p className="faint text-xs">Saved as a paid bill from the store on that scope, counted in Spent, with the photo in Files → Receipts.</p>
             </>

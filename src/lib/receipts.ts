@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { publicToken } from "@/lib/tokens";
 import { askClaude, aiConfigured } from "@/lib/ai";
 import { AI_DAILY_CAPS } from "@/lib/ai-assist";
@@ -187,28 +188,32 @@ export type BillInput = z.infer<typeof billSchema>;
 
 // Finds the store as a company by name (any company, ignoring case), or
 // makes it a supplier company; someone at it to address the bill to.
-async function storeAsCompany(organizationId: string, userId: string | null, storeName: string) {
-  const existing = await prisma.company.findFirst({
+async function storeAsCompany(tx: Prisma.TransactionClient, organizationId: string, userId: string | null, storeName: string, supplierType: string) {
+  // One store name at a time per workspace, so two receipts from a new
+  // store never make it twice (audit fix: this ran outside the bill's
+  // transaction, and two Approves made two companies).
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`receipt-store:${organizationId}:${storeName.trim().toLowerCase()}`}))`;
+  const existing = await tx.company.findFirst({
     where: { organizationId, name: { equals: storeName, mode: "insensitive" } },
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true },
   });
   const company =
     existing ??
-    (await prisma.company.create({
+    (await tx.company.create({
       data: {
         organizationId,
         name: storeName,
         industries: ["Service Provider"],
-        companyTypes: [await ensureDistributorTypeName(organizationId)],
+        companyTypes: [supplierType],
         status: "WON",
         createdById: userId,
       },
       select: { id: true, name: true },
     }));
   const contact =
-    (await prisma.contact.findFirst({ where: { organizationId, companyId: company.id }, orderBy: { createdAt: "asc" }, select: { id: true } })) ??
-    (await prisma.contact.create({
+    (await tx.contact.findFirst({ where: { organizationId, companyId: company.id }, orderBy: { createdAt: "asc" }, select: { id: true } })) ??
+    (await tx.contact.create({
       data: { organizationId, companyId: company.id, name: `${company.name} receipts`, status: "WON", createdById: userId },
       select: { id: true },
     }));
@@ -246,23 +251,8 @@ export async function makeReceiptBill(input: {
   if (!scope) return { error: "That scope is gone. Reload the page." };
   const project = await prisma.project.findFirst({ where: { id: projectId, organizationId }, select: { name: true } });
   if (!project) return { error: "Project not found" };
-  const store = await storeAsCompany(organizationId, input.userId, bill.storeName);
+  const supplierType = await ensureDistributorTypeName(organizationId);
   const paidOn = isoToDate(bill.purchasedOn)!;
-  const itemsText = input.items.length
-    ? input.items.map((item) => `- ${item.quantity} × ${item.name}: ${formatCents(item.amountCents)}`).join("\n")
-    : "- (items not listed)";
-  const body = [
-    `Receipt from ${store.companyName}, ${bill.purchasedOn}, for ${project.name}.`,
-    "",
-    "Items as read from the receipt:",
-    itemsText,
-    "",
-    `Sales tax: ${formatCents(bill.taxCents)}`,
-    `Total paid: ${formatCents(bill.totalCents)}`,
-    "",
-    "Paid at the store. The receipt photo is in the job's Files, in the Receipts folder.",
-  ].join("\n");
-
   return prisma.$transaction(async (tx) => {
     // A receipt is turned into a bill once (a double tap on Approve).
     const claimed = await tx.jobReceipt.updateMany({
@@ -270,6 +260,22 @@ export async function makeReceiptBill(input: {
       data: { status: "APPROVED" },
     });
     if (claimed.count === 0) return { error: "That receipt is already saved." };
+    const store = await storeAsCompany(tx, organizationId, input.userId, bill.storeName, supplierType);
+    const itemsText = input.items.length
+      ? input.items.map((item) => `- ${item.quantity} × ${item.name}: ${formatCents(item.amountCents)}`).join("\n")
+      : "- (items not listed)";
+    const body = [
+      `Receipt from ${store.companyName}, ${bill.purchasedOn}, for ${project.name}.`,
+      "",
+      "Items as read from the receipt:",
+      itemsText,
+      "",
+      `Sales tax: ${formatCents(bill.taxCents)}`,
+      `Total paid: ${formatCents(bill.totalCents)}`,
+      "",
+      "Paid at the store. The receipt photo is in the job's Files, in the Receipts folder.",
+    ].join("\n");
+
     const numbered = await tx.organization.update({
       where: { id: organizationId },
       data: { nextContractNumber: { increment: 1 } },

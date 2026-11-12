@@ -685,6 +685,126 @@ let noaiServer = null;
     await until(async () => /allowance/.test((await page.locator("[data-testid=job-question-error]").textContent().catch(() => "")) ?? ""), "allowance shown");
     assert.equal(claude.count("JOB_QUESTION"), capBefore, "past the allowance Claude isn't asked");
 
+    await audit("tags and the photo report (an accepted new label shows at once; the report's share links keep the host after a reload; a repeated photo is refused, not dropped; a full Add a pair says so; a clone counts once)", async () => {
+      // A new Photo Type accepted from its chip shows on the tile straight
+      // away, with no reload (the grid's tag list follows the page's).
+      const crewB = await photoId("crew-b.jpg");
+      await sql(`UPDATE "PhotoTagSuggestion" SET "newKind"='TYPE', "newName"='Punch Walk', failed=false WHERE "uploadId"=$1`, [crewB]);
+      await page.goto(FILES);
+      await tile("crew-b.jpg").locator("[data-testid=media-suggestion][data-part=new] [data-testid=media-suggestion-accept]").click();
+      await until(async () => /Punch Walk/.test((await tile("crew-b.jpg").locator("[data-testid=media-tags]").textContent()) ?? ""), "new tag on the tile without a reload");
+      // The share links carry the site's address after the page is reloaded.
+      await page.goto(`${JOB}/report`);
+      await page.waitForSelector("[data-testid=report-text]");
+      const sms = decodeURIComponent((await page.locator("[data-testid=report-text]").getAttribute("href")) ?? "");
+      const mail = decodeURIComponent((await page.locator("[data-testid=report-email]").getAttribute("href")) ?? "");
+      assert.ok(sms.includes(`${BASE}/jr/`) && mail.includes(`${BASE}/jr/`), `full link in Text and Email: ${sms}`);
+      // A photo used in two pairs is refused in words and nothing changes.
+      const pairsBefore = (await one(`SELECT pairs FROM "PhotoReport" WHERE "projectId"='arc_job'`)).pairs;
+      await page.locator("[data-testid=report-pick-before]").nth(1).selectOption(lobbyId);
+      await page.click("[data-testid=report-save]");
+      await until(async () => /already in another pair/.test((await page.locator("[data-testid=report-message]").textContent().catch(() => "")) ?? ""), "repeat refused");
+      assert.deepEqual((await one(`SELECT pairs FROM "PhotoReport" WHERE "projectId"='arc_job'`)).pairs, pairsBefore, "nothing dropped and saved");
+      await page.reload();
+      // A clone of a photo is the same picture: offered once.
+      await sql(
+        `INSERT INTO "Upload" (id,"organizationId","projectId",kind,name,"fileName","mimeType","sizeBytes","storageKey","storageDriver","publicToken","createdAt","updatedAt")
+         SELECT 'arc_clone',"organizationId","projectId",kind,name,"fileName","mimeType","sizeBytes","storageKey","storageDriver",'arc_clone_token_0123456789',"createdAt",now() FROM "Upload" WHERE id=$1`,
+        [lobbyId],
+      );
+      await page.reload();
+      const options = await page.locator("[data-testid=report-pick-before]").first().locator("option").evaluateAll((els) => els.map((el) => el.value));
+      assert.ok(!options.includes("arc_clone"), "the clone isn't offered as its own photo");
+      await sql(`DELETE FROM "Upload" WHERE id='arc_clone'`);
+      // Every photo in a pair: Add a pair says so instead of adding one Save would refuse.
+      await page.reload();
+      const free = options.length - (await page.locator("[data-testid=report-pair]").count()) * 2;
+      for (let i = 0; i < Math.floor(free / 2); i += 1) await page.click("[data-testid=report-add-pair]");
+      const pairsNow = await page.locator("[data-testid=report-pair]").count();
+      await page.click("[data-testid=report-add-pair]");
+      await until(async () => /in a pair already/.test((await page.locator("[data-testid=report-message]").textContent().catch(() => "")) ?? ""), "full message");
+      assert.equal(await page.locator("[data-testid=report-pair]").count(), pairsNow);
+    });
+
+    await audit("site walk (a later signature on the deal leaves a new draft quote's photos alone; a photo removed on the card isn't offered in the sheet)", async () => {
+      await sql(
+        `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,"publicToken",status,"updatedAt")
+         VALUES ('arc_quote2',$1,'arc_dana','arc_deal',8802,'Garage extras','arc_quote2_token_0123456789a','DRAFT',now())`,
+        [org],
+      );
+      await page.goto(`${BASE}/dashboard/quotes/arc_quote2`);
+      await page.click("[data-testid=site-walk-open]");
+      await page.locator("[data-testid=site-walk-files]").setInputFiles([jpg("extra-1.jpg", await bigJpeg(page, 900, 700, 70)), jpg("extra-2.jpg", await bigJpeg(page, 900, 700, 75))]);
+      await until(async () => (await page.locator("[data-testid=site-walk-pick]").count()) === 2, "two kept");
+      await page.keyboard.press("Escape");
+      await page.locator("[data-testid=site-walk-remove]").first().click();
+      await until(async () => (await one(`SELECT count(*)::int n FROM "Upload" WHERE "quoteId"='arc_quote2'`)).n === 1, "one removed");
+      await page.click("[data-testid=site-walk-open]");
+      await until(async () => (await page.locator("[data-testid=site-walk-pick]").count()) === 1, "the removed one isn't offered");
+      assert.match(await page.locator("[data-testid=site-walk-draft]").textContent(), /from 1 photo/);
+      await page.keyboard.press("Escape");
+      // A change order on the same deal is signed: the job exists, so only
+      // that paperwork's own quote's photos would move — this draft keeps its.
+      await sql(
+        `INSERT INTO "Contract" (id,"organizationId","contactId","companyId","dealId",number,title,type,payable,status,"sentAt",body,"publicToken","updatedAt")
+         VALUES ('arc_deal_co',$1,'arc_dana','arc_harbor','arc_deal',7451,'More garage lights','Change Order',false,'SENT',now(),'Change','tok_arc_deal_co_0123456789',now())`,
+        [org],
+      );
+      await sql(`INSERT INTO "ContractLineItem" (id,"contractId",name,quantity,"unitPriceCents",tag,position) VALUES ('arc_deal_co_line','arc_deal_co','LED Fixture 2x4',2,8900,'MATERIALS',0)`);
+      await page.goto(`${BASE}/dashboard/contracts/arc_deal_co`);
+      await page.click("[data-testid=mark-signed]");
+      await page.click("[data-testid=mark-signed-save]");
+      await until(async () => (await one(`SELECT status FROM "Contract" WHERE id='arc_deal_co'`)).status === "SIGNED", "signed");
+      await until(async () => (await one(`SELECT count(*)::int n FROM "ScopeAward" WHERE "contractId"='arc_deal_co'`)).n > 0, "awarded");
+      const still = await one(`SELECT "projectId","quoteId" FROM "Upload" WHERE "organizationId"=$1 AND "fileName" LIKE 'extra-%'`, [org]);
+      assert.deepEqual(still, { projectId: null, quoteId: "arc_quote2" }, "the draft quote keeps its photo");
+    });
+
+    await audit("money and the question (a number found only in a date is refused; two Approves of a receipt from a new store make one company; a retyped store forgets the read's match; another photo starts clean)", async () => {
+      const day = (await one(`SELECT extract(day from "awardedAt" AT TIME ZONE 'UTC')::int d FROM "Project" WHERE id='arc_job'`)).d;
+      await sql(`DELETE FROM "AiRequest" WHERE "organizationId"=$1 AND kind='JOB_QUESTION'`, [org]);
+      claude.reply("JOB_QUESTION", { answer: `Electrical is over by $${day}.` });
+      await page.goto(JOB);
+      await page.fill("[data-testid=job-question-input]", "Are we over on electrical?");
+      await page.click("[data-testid=job-question-ask]");
+      await until(async () => /couldn't answer that from this job's numbers/.test((await page.locator("[data-testid=job-question-answer]").textContent().catch(() => "")) ?? ""), "a date's day isn't a number to use");
+      assert.doesNotMatch(claude.last("JOB_QUESTION").text, /\d{4}-\d{2}-\d{2}/, "no ISO dates in the facts");
+      // Two Approves of the same crew receipt from a store not yet a company.
+      claude.reply("RECEIPT_READ", { storeName: "Bolt Supply", date: null, total: 30, tax: 0, items: [] });
+      await crew.goto(`${BASE}/p/arc_crew_token_0123456789abcdef`);
+      await crew.fill("[data-testid=crew-receipt-who]", "Carl Crew");
+      await crew.locator("[data-testid=crew-receipt-file]").setInputFiles([jpg("bolt.jpg", await bigJpeg(page, 900, 1300, 15))]);
+      await until(async () => (await one(`SELECT count(*)::int n FROM "JobReceipt" WHERE "projectId"='arc_job' AND status='PENDING' AND "storeName"='Bolt Supply'`)).n === 1, "waiting");
+      const bolt = (await one(`SELECT id FROM "JobReceipt" WHERE "storeName"='Bolt Supply' AND "projectId"='arc_job'`)).id;
+      const tabA = await context.newPage();
+      const tabB = await context.newPage();
+      await Promise.all([tabA.goto(MONEY), tabB.goto(MONEY)]);
+      await Promise.all([
+        tabA.locator(`[data-testid=pending-receipt][data-id="${bolt}"] [data-testid=pending-approve]`).click(),
+        tabB.locator(`[data-testid=pending-receipt][data-id="${bolt}"] [data-testid=pending-approve]`).click(),
+      ]);
+      await until(async () => (await one(`SELECT status FROM "JobReceipt" WHERE id=$1`, [bolt])).status === "APPROVED", "approved");
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      assert.equal((await one(`SELECT count(*)::int n FROM "Company" WHERE "organizationId"=$1 AND name='Bolt Supply'`, [org])).n, 1, "one company");
+      assert.equal((await one(`SELECT count(*)::int n FROM "Contract" WHERE "organizationId"=$1 AND title='Receipt — Bolt Supply'`, [org])).n, 1, "one bill");
+      await tabA.close();
+      await tabB.close();
+      // A retyped store forgets the read's match; another photo starts clean.
+      claude.reply("RECEIPT_READ", { storeName: "Home Depot", date: null, total: 10, tax: 0, items: [{ name: "Tape", quantity: 1, amount: 10 }] });
+      await page.goto(MONEY);
+      await page.click("[data-testid=receipt-add]");
+      await page.locator("[data-testid=receipt-file]").setInputFiles([jpg("r3.jpg", await bigJpeg(page, 800, 1200, 5))]);
+      await until(async () => (await page.locator("[data-testid=receipt-store]").inputValue().catch(() => "")) === "Home Depot", "read");
+      assert.equal(await page.locator("[data-testid=receipt-items] li").count(), 1);
+      await page.fill("[data-testid=receipt-store]", "Brand New Store");
+      assert.match(await page.locator("[data-testid=receipt-store-note]").textContent(), /New: it will be added/);
+      claude.fail("RECEIPT_READ", 529);
+      await page.locator("[data-testid=receipt-file]").setInputFiles([jpg("r4.jpg", await bigJpeg(page, 800, 1200, 6))]);
+      await until(async () => /Fill it in by hand/.test((await page.locator("[data-testid=receipt-message]").textContent().catch(() => "")) ?? ""), "second read failed");
+      assert.equal(await page.locator("[data-testid=receipt-items]").count(), 0, "the first photo's items are gone");
+      await page.keyboard.press("Escape");
+    });
+
     log("recompute-projects --check finds nothing to change on these jobs (receipts tie out to their paperwork)");
     const checked = execFileSync("npx", ["tsx", "scripts/recompute-project-totals.ts", "--check"], { cwd: ROOT, env: { ...process.env, DATABASE_URL: DB }, encoding: "utf8" });
     assert.ok(!/PRJ-7301\b/.test(checked), `PRJ-7301 drifted:\n${checked}`);
@@ -749,7 +869,7 @@ let noaiServer = null;
     await off.fill("[data-testid=receipt-total]", "20.00");
     await off.fill("[data-testid=receipt-tax]", "1.00");
     await off.click("[data-testid=receipt-save]");
-    await until(async () => (await one(`SELECT "spentCents" FROM "Project" WHERE id='arc_job'`)).spentCents === 10725 + 4210 + 2000, "typed receipt counts");
+    await until(async () => (await one(`SELECT "spentCents" FROM "Project" WHERE id='arc_job'`)).spentCents === 10725 + 4210 + 3000 + 2000, "typed receipt counts");
     assert.equal((await one(`SELECT count(*)::int n FROM "Company" WHERE "organizationId"=$1 AND lower(name)='home depot'`, [org])).n, 1, "matched, not doubled");
     await sql(`DELETE FROM "PhotoReport" WHERE "projectId"='arc_job'`);
     await off.goto(`${NOAI_BASE}/dashboard/projects/arc_job/report`);

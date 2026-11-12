@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { aiConfigured } from "@/lib/ai";
+import { absoluteUrl } from "@/lib/app-url";
 import { PageHeader, Card, CardHeader, StatusBadge } from "@/components/ui";
 import { BackLink } from "@/components/back-link";
 import { cleanPairs, jobReportPhotos } from "@/lib/photo-report";
@@ -52,7 +53,15 @@ export default async function PhotoReportPage({ params }: { params: Promise<{ id
           aiOn={aiConfigured()}
           saved={
             report
-              ? { token: report.token, summary: report.summary, pairs: cleanPairs(report.pairs, allowed), shared: report.shared }
+              ? {
+                  // Built here with the site's own address (audit fix: built in
+                  // the browser, Text and Email kept a link with no host after
+                  // a reload).
+                  url: await absoluteUrl(`/jr/${report.token}`),
+                  summary: report.summary,
+                  pairs: cleanPairs(report.pairs, allowed),
+                  shared: report.shared,
+                }
               : null
           }
           customer={{
