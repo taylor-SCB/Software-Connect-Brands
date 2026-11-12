@@ -228,7 +228,7 @@ export async function loadForecast(organizationId: string, options: { today: str
 
   const lowConfidence = historyDays < CONFIDENT_AFTER_DAYS;
   const confidenceNote = lowConfidence
-    ? `Low confidence: the app has only ${plural(historyDays, "day")} of your deals moving between steps, and a forecast needs about ${CONFIDENT_AFTER_DAYS} days of them before it means much. Until then the rates lean on a starting guess.`
+    ? `The app has only ${plural(historyDays, "day")} of your deals moving between steps, and a forecast needs about ${CONFIDENT_AFTER_DAYS} days of them before it means much. Until then the rates lean on a starting guess.`
     : `Built from ${plural(historyDays, "day")} of your own deals moving between steps.`;
 
   return {
@@ -322,7 +322,9 @@ export async function writeForecastNotes(input: {
       dropped += 1;
       continue;
     }
-    if (inventedNumbers(sentence, fact).length || inventedNames(sentence, fact).length) {
+    // Checked against the numbers alone: the id is letters and digits.
+    const numbers = { ...fact, id: undefined };
+    if (inventedNumbers(sentence, numbers).length || inventedNames(sentence, numbers).length) {
       dropped += 1;
       continue;
     }

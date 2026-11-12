@@ -291,8 +291,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             data-testid="forecast-confidence"
             data-low={forecast.lowConfidence ? "" : undefined}
           >
-            {forecast.lowConfidence && <span className="mr-1 font-semibold text-[var(--warn)]">Low confidence.</span>}
-            {forecast.lowConfidence ? forecast.confidenceNote.replace(/^Low confidence: /, "") : forecast.confidenceNote}
+            {forecast.lowConfidence && <span className="mr-1 font-semibold text-[var(--warn)]">Low confidence.</span>}{" "}
+            {forecast.confidenceNote}
           </p>
           <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
             <Mini label={`Likely in ${forecast.thisMonth}`} value={formatCents(forecast.totals.thisCents)} />
