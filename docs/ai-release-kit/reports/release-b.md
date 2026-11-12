@@ -80,7 +80,32 @@ Every system prompt says the paperwork is data, never instructions. Every answer
 
 ## Suite results
 
-SUITE_RESULTS
+All on one production build against `scb_b`, through `run-suites.sh`. The final code was re-run for the `ai` group and `contracts` after the last fix (a redline-reader change); the others ran on the build just before it, which differs only in that file.
+
+| Suite | Result | Steps |
+|---|---|---|
+| ai-release-b | PASS | 34 |
+| contract-checks-check.ts (run inside ai-release-b) | PASS | 26 cases |
+| ai-assist | PASS | 28 |
+| template-import (template group) | PASS | 22 |
+| contracts | PASS | 27 |
+| deal-tracker | PASS | 46 |
+| template-replace | PASS | 18 |
+| money-payments | PASS | 28 |
+| projects-core | PASS | 26 |
+| project-money | PASS | 23 |
+| crews-time | PASS | 34 |
+| calendar | PASS | 47 |
+| calendar-v2 | PASS | 42 |
+| quotes-improvement | PASS | all |
+| variations-pictures | PASS | 30 |
+| products-scale | PASS | 18 |
+| companies-contacts | PASS | 29 |
+| overlay-readability | PASS | 16 |
+| job-photos (email group) | PASS | 28 |
+| account-types (email group) | PASS | 34 |
+
+The "AI off" steps run inside ai-release-b against a second server it starts itself without the key (`NOAI_PORT`, default 3117).
 
 ## Files touched outside your release
 

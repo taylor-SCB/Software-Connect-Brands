@@ -163,7 +163,9 @@ export function RedlineReader({
       await setContractStatus(form);
       // Signed or changed in the meantime: nothing to put the changes in.
       const now = await contractStatusOf(contractId);
-      router.refresh();
+      // A refresh would take this card away from a signed or cancelled
+      // contract before the reason could be read; the message says reload.
+      if (now === "DRAFT") router.refresh();
       start(() => {
         if (now !== "DRAFT") {
           setConfirming(false);

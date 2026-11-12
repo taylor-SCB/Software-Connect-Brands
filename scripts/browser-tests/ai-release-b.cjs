@@ -499,8 +499,11 @@ function stopNoAiServer() {
       changes: [{ ourWords: "We warrant the work for one year.", theirWords: "We warrant the work for two years.", deleted: false, explanation: "They want a two-year warranty." }],
     });
     const longDocx = makeDocx(["3. Warranty. We warrant the work for two years.", ...Array.from({ length: 130 }, (_, i) => `Clause ${i}. ${"Long boilerplate wording the customer pasted in. ".repeat(10)}`)]);
+    const readsBeforeLong = claude.count("REDLINE");
     await page.getByTestId("redline-file").setInputFiles({ name: "long.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: longDocx });
-    await page.getByTestId("redline-change").first().waitFor({ timeout: 20000 });
+    // The earlier read's changes are still on screen: wait for this one's.
+    await until(async () => claude.count("REDLINE") > readsBeforeLong, "the long copy to be read", 30000);
+    await page.getByTestId("redline-change").filter({ hasText: "two-year warranty" }).waitFor({ timeout: 20000 });
     assert.ok(claude.last("REDLINE").documents[1].text.length > 60000, "the long copy was read and sent");
     assert.equal((await one(`SELECT count(*)::int AS n FROM "ContractFile" WHERE id='rb_stale'`)).n, 0, "swept");
     await page.getByTestId("redline-change").first().getByTestId("redline-accept").click();
@@ -789,6 +792,7 @@ function stopNoAiServer() {
       `INSERT INTO "AiRequest" (id,"organizationId",kind,"createdAt") SELECT 'rb_cap_' || g, $1, 'COMPLIANCE_READ', now() FROM generate_series(1, 30) g`,
       [org],
     );
+    await page.goto(`${BASE}/dashboard/settings/compliance`);
     await page.getByTestId("document-upload-COMPLIANCE").getByTestId("document-file").setInputFiles({ name: "coi2.pdf", mimeType: "application/pdf", buffer: coi });
     const readsBefore = claude.count("COMPLIANCE_READ");
     await page.getByTestId("compliance-read").click();
