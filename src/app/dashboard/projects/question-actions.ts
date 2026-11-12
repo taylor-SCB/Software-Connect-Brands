@@ -46,8 +46,10 @@ export async function askJobQuestion(projectId: string, question: string): Promi
   });
   if ("error" in answer) return answer;
 
-  const sentences = answer.data.answer.trim().match(/[^.!?]+[.!?]*(\s+|$)/g) ?? [];
-  const text = sentences.slice(0, 4).join("").trim().slice(0, 800);
+  // Sentences end at . ! or ? followed by a space, so "$1,000.00" stays
+  // one number.
+  const sentences = answer.data.answer.trim().split(/(?<=[.!?])\s+/);
+  const text = sentences.slice(0, 4).join(" ").trim().slice(0, 800);
   if (!text) return { answer: NO_ANSWER };
   const invented = inventedNumbers(text, facts);
   if (invented.length) {
