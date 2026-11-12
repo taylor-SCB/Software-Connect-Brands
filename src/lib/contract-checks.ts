@@ -53,6 +53,10 @@ export type CheckProblem = {
 
 const net = (row: { quantity: number; unitPriceCents: number; discountCents: number }) =>
   lineGrossCents(row.quantity, row.unitPriceCents) - row.discountCents;
+// The same before rounding to cents, for comparing with a cost or a
+// minimum (audit fix: 0.7 at exactly the minimum rounded under it).
+const exactNet = (row: { quantity: number; unitPriceCents: number; discountCents: number }) =>
+  row.quantity * row.unitPriceCents - row.discountCents;
 
 // Compared before rounding, a millionth of a cent for floating point, the
 // way the quote line's "Below minimum" flag compares.
@@ -66,8 +70,9 @@ export function priceCheckProblems(columns: PriceCheckColumn[]): CheckProblem[] 
       const product = row.product;
       const id = `${where}:${index}`;
       const rowNet = net(row);
+      const exact = exactNet(row);
       if (product && row.quantity > 0) {
-        if (!column.payable && product.costCents > 0 && under(rowNet, row.quantity, product.costCents)) {
+        if (!column.payable && product.costCents > 0 && under(exact, row.quantity, product.costCents)) {
           problems.push({
             id: `${id}:cost`,
             where,
@@ -76,7 +81,7 @@ export function priceCheckProblems(columns: PriceCheckColumn[]): CheckProblem[] 
             fix: "Raise its price or take off its discount on the quote row above.",
             facts: { row: row.name, rowTotal: formatCents(rowNet), cost: formatCents(Math.round(row.quantity * product.costCents)), quantity: row.quantity },
           });
-        } else if (!column.payable && product.minPriceCents !== null && under(rowNet, row.quantity, product.minPriceCents)) {
+        } else if (!column.payable && product.minPriceCents !== null && under(exact, row.quantity, product.minPriceCents)) {
           problems.push({
             id: `${id}:min`,
             where,
@@ -86,7 +91,8 @@ export function priceCheckProblems(columns: PriceCheckColumn[]): CheckProblem[] 
             facts: { row: row.name, rowTotal: formatCents(rowNet), minimum: formatCents(Math.round(row.quantity * product.minPriceCents)), quantity: row.quantity },
           });
         }
-        if (column.payable && row.quantity > 0 && net(row) > Math.round(row.quantity * product.costCents) && product.costCents >= 0) {
+        // Only against a cost on file: $0 is a product nobody priced.
+        if (column.payable && product.costCents > 0 && exact > row.quantity * product.costCents + 1e-6) {
           problems.push({
             id: `${id}:po`,
             where,
@@ -96,7 +102,9 @@ export function priceCheckProblems(columns: PriceCheckColumn[]): CheckProblem[] 
             facts: { row: row.name, rowTotal: formatCents(rowNet), cost: formatCents(Math.round(row.quantity * product.costCents)), quantity: row.quantity },
           });
         }
-        if (product.unitKey && row.unitKey !== product.unitKey) {
+        // Both must have a unit: a line written with none (typed, or from
+        // before units were copied) says nothing about the product's.
+        if (product.unitKey && row.unitKey && row.unitKey !== product.unitKey) {
           problems.push({
             id: `${id}:unit`,
             where,
@@ -146,6 +154,9 @@ export function priceCheckProblems(columns: PriceCheckColumn[]): CheckProblem[] 
 
 export type SendCheckInput = {
   body: string;
+  // A purchase order's rows are priced at cost, never at the quote's
+  // prices, so only a money-in contract is compared with its quote.
+  payable?: boolean;
   rows: { name: string; quantity: number; unitPriceCents: number; discountCents: number; quoteLine: { quantity: number; unitPriceCents: number; discountCents: number } | null }[];
   totalCents: number;
   schedule: { label: string; amountCents: number; kind: string; percent: number | null; fixedCents: number | null; dueOn: string }[];
@@ -168,7 +179,9 @@ export function moneyIn(text: string): { cents: number; at: number; text: string
 export function sendCheckRules(input: SendCheckInput): CheckProblem[] {
   const problems: CheckProblem[] = [];
   const scheduled = input.schedule.reduce((sum, row) => sum + row.amountCents, 0);
-  if (input.schedule.length > 0 && scheduled !== input.totalCents) {
+  // A contract with no rows (an award without paperwork's own table) has
+  // no total for the table to add up to.
+  if (input.rows.length > 0 && input.schedule.length > 0 && scheduled !== input.totalCents) {
     problems.push({
       id: "schedule",
       where: "Payment table",
@@ -183,7 +196,11 @@ export function sendCheckRules(input: SendCheckInput): CheckProblem[] {
   // contract's total, so a line listing several figures isn't noise.
   const totals: { cents: number; text: string; line: string }[] = [];
   for (const line of input.body.split("\n")) {
-    if (!/\btotal\b/i.test(line.replace(/\bsub-?total\b/gi, " "))) continue;
+    // The contract's own total only: not a subtotal, not a change order's
+    // "new contract total" or an original one, and not a merged row of
+    // {{line_items}} ("1 × Total Station @ $500.00").
+    const bare = line.replace(/\b(sub-?|grand\s+sub)total\b/gi, " ").replace(/\b(new|original|previous|prior|revised|adjusted|updated|running|old)\s+(contract\s+|project\s+|job\s+)?(sum\s+|price\s+)?total\b/gi, " ");
+    if (!/\btotal\b/i.test(bare) || /[×@]|\s[xX]\s/.test(line)) continue;
     for (const amount of moneyIn(line)) totals.push({ cents: amount.cents, text: amount.text, line: line.trim() });
   }
   if (input.rows.length > 0 && totals.length > 0 && !totals.some((entry) => entry.cents === input.totalCents)) {
@@ -199,7 +216,7 @@ export function sendCheckRules(input: SendCheckInput): CheckProblem[] {
   }
   input.rows.forEach((row, index) => {
     const line = row.quoteLine;
-    if (!line) return;
+    if (!line || input.payable) return;
     if (line.quantity !== row.quantity || line.unitPriceCents !== row.unitPriceCents || line.discountCents !== row.discountCents) {
       problems.push({
         id: `row:${index}`,
@@ -304,14 +321,14 @@ export function dateWrittenIn(snippet: string, iso: string): boolean {
   const text = snippet.toLowerCase().replace(/\s+/g, " ");
   const name = MONTHS[month - 1];
   const short = name.slice(0, 3);
-  const monthWord = `(?:${name}|${short}\\.?)`;
+  const monthWord = `(?:${name}|${short}${month === 9 ? "t?" : ""}\\.?)`;
   const dayWord = `0?${day}(?:st|nd|rd|th)?`;
   const yearWord = `(?:${year}|'?${String(year).slice(2)})`;
   const patterns = [
     `\\b${monthWord} ${dayWord},? ${yearWord}\\b`,
-    `\\b${dayWord} (?:of )?${monthWord},? ${yearWord}\\b`,
+    `\\b${dayWord} (?:day )?(?:of )?${monthWord},? ${yearWord}\\b`,
     `\\b0?${month}[/.-]0?${day}[/.-](?:${year}|${String(year).slice(2)})\\b`,
-    `\\b${year}-0?${month}-0?${day}\\b`,
+    `\\b${year}[/.-]0?${month}[/.-]0?${day}\\b`,
   ];
   return patterns.some((pattern) => new RegExp(pattern).test(text));
 }
@@ -328,10 +345,23 @@ export function countWrittenIn(snippet: string, count: number): boolean {
   return Object.entries(NUMBER_WORDS).some(([word, value]) => value === count && new RegExp(`\\b${word}\\b`).test(text));
 }
 
-export type OffsetUnit = "days" | "weeks" | "months" | "years";
+export type OffsetUnit = "days" | "business days" | "weeks" | "months" | "years";
+
+// Whether a snippet counts working days rather than calendar days.
+export const BUSINESS_DAYS = /\b(business|working|banking)\s+days?\b/i;
 
 export function addOffset(iso: string, count: number, unit: OffsetUnit): string {
   if (unit === "days") return addDays(iso, count);
+  if (unit === "business days") {
+    // Monday to Friday; holidays aren't known here.
+    let day = iso;
+    for (let left = count; left > 0; ) {
+      day = addDays(day, 1);
+      const weekday = new Date(`${day}T12:00:00Z`).getUTCDay();
+      if (weekday !== 0 && weekday !== 6) left -= 1;
+    }
+    return day;
+  }
   if (unit === "weeks") return addDays(iso, count * 7);
   const [y, m, d] = iso.split("-").map(Number);
   const months = unit === "years" ? count * 12 : count;

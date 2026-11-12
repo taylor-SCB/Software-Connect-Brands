@@ -69,9 +69,11 @@ export default async function CrewsPage() {
   ]);
 
   // Release B: each subcontractor's COI, license and W-9, with flags.
+  // Every crew is asked, so papers filed while a crew was a subcontractor
+  // still show after it is changed to your own (audit fix).
   const subDocs = await crewComplianceDocs(
     organizationId,
-    crews.filter((crew) => crew.kind === "SUBCONTRACTOR").map((crew) => ({ id: crew.id, name: crew.name, companyName: crew.company?.name ?? null })),
+    crews.map((crew) => ({ id: crew.id, name: crew.name, companyName: crew.company?.name ?? null })),
   );
   const aiOn = aiConfigured();
 

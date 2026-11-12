@@ -68,7 +68,8 @@ export function CrewCard({
   const crewRates = { hourlyRateCents: crew.hourlyRateCents, dailyRateCents: crew.dailyRateCents };
   const onCrew = crew.workers.filter((worker) => worker.active);
   const isSub = crew.kind === "SUBCONTRACTOR";
-  const worst = isSub ? worstOf(crew.compliance ?? []) : null;
+  const papers = crew.compliance ?? [];
+  const worst = isSub || papers.length > 0 ? worstOf(papers) : null;
 
   // The wrapper carries the test hook so a suite can scope to one crew:
   // the name lives in the card's header, which is a sibling of the body.
@@ -205,13 +206,14 @@ export function CrewCard({
                 )}
               </div>
 
-              {isSub && (
+              {(isSub || papers.length > 0) && (
                 <CrewCompliance
                   crewId={crew.id}
                   docs={crew.compliance ?? []}
                   canManageFiles={canManageFiles}
                   aiOn={aiOn}
                   expectedName={crew.company?.name ?? crew.name}
+                  canAdd={isSub}
                 />
               )}
             </>

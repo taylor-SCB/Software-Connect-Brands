@@ -284,7 +284,7 @@ export function TrackerGrid({
   const [rowPending, startRow] = useTransition();
   // B1, the price check before Create (Release B): what the rules found,
   // Claude's plainer lines as they arrive, and "Create anyway" for one go.
-  const [check, setCheck] = useState<{ problems: CheckProblem[]; lines: Record<string, string>; explaining: boolean; note?: string } | null>(null);
+  const [check, setCheck] = useState<{ problems: CheckProblem[]; lines: Record<string, string>; explaining: boolean; note?: string; shape: string } | null>(null);
   const checkRun = useRef(0);
   // Saves of row prices still in flight, awaited before contracts are
   // made so a price typed a moment ago is what goes on them.
@@ -561,7 +561,7 @@ export function TrackerGrid({
         const found = await checkContractPrices(checkInput).catch(() => null);
         if (found && "problems" in found && found.problems.length > 0) {
           const run = ++checkRun.current;
-          start(() => setCheck({ problems: found.problems, lines: {}, explaining: found.ai }));
+          start(() => setCheck({ problems: found.problems, lines: {}, explaining: found.ai, shape: gridShape() }));
           if (found.ai) {
             // In the background: the list is already showing in the
             // rules' words and never waits on this.
@@ -590,6 +590,19 @@ export function TrackerGrid({
   function start(update: () => void) {
     startTransition(update);
   }
+
+  // What the price check looked at: the cards and the rows' prices. A list
+  // left up after either changes no longer describes the grid, and
+  // "Create anyway" would accept problems it never showed (audit fix), so
+  // it goes and the next Create checks again.
+  function gridShape() {
+    return JSON.stringify({
+      columns: columns.map((column) => [column.selected, column.direction, columnDiscount(column), column.schedule]),
+      edits: Object.fromEntries(Object.entries(edits).map(([id, edit]) => [id, [edit.quantityInput, edit.priceInput, edit.discount]])),
+      quoteDiscount: quoteDiscount.state,
+    });
+  }
+  if (check && !pending && check.shape !== gridShape()) setCheck(null);
 
   function setCancelled(lineId: string, cancelled: boolean) {
     const form = new FormData();

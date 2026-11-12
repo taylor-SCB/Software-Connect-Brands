@@ -46,7 +46,9 @@ export function CrewCompliance({
   canManageFiles,
   aiOn,
   expectedName,
+  canAdd = true,
 }: {
+  canAdd?: boolean;
   crewId: string;
   docs: CrewComplianceView[];
   canManageFiles: boolean;
@@ -58,7 +60,7 @@ export function CrewCompliance({
     <div className="border-t border-[var(--hairline-3)] pt-3" data-testid="crew-compliance">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <p className="eyebrow">Compliance{docs.length > 0 && ` · ${docs.length}`}</p>
-        {canManageFiles && (
+        {canManageFiles && canAdd && (
           <button type="button" onClick={() => setAdding(!adding)} className="btn btn-ghost btn-sm min-h-11 sm:min-h-0" data-testid="crew-compliance-add">
             <IconPlus size={13} />
             {adding ? "Close" : "Add COI, license or W-9"}
@@ -103,7 +105,7 @@ export function CrewCompliance({
           ))}
         </ul>
       )}
-      {adding && canManageFiles && (
+      {adding && canManageFiles && canAdd && (
         <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--tint-1)]">
           <DocumentUploadForm kind="COMPLIANCE" aiOn={aiOn} crewId={crewId} idPrefix={`crew-${crewId}`} />
         </div>

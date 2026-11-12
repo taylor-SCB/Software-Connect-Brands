@@ -338,6 +338,14 @@ function stopNoAiServer() {
     assert.equal(explainCalls, askedBefore, "kept by the findings' fingerprint");
     assert.equal(await page.getByTestId("price-check-line").first().getAttribute("data-source"), "ai");
 
+    log("audit fixes: a change to the grid takes the list down, so Create anyway never accepts problems it didn't show");
+    await page.getByRole("checkbox", { name: "Put Install labor on Contract A" }).uncheck();
+    await until(async () => (await page.getByTestId("price-check").count()) === 0, "the list to go");
+    await page.getByRole("checkbox", { name: "Put Install labor on Contract A" }).check();
+    assert.equal(await page.getByTestId("price-check").count(), 0, "it waits for the next Create");
+    await page.locator("[data-testid=create-contracts]").click();
+    await page.getByTestId("price-check").waitFor();
+
     log("B1: Create anyway makes the contract as it stands");
     await page.getByTestId("price-check-create-anyway").click();
     await page.waitForURL(/created=1/);
@@ -481,8 +489,45 @@ function stopNoAiServer() {
     assert.notEqual(anon.status(), 200, "not without a login");
     await stranger.close();
 
+    log("audit fixes: on a draft, accepted changes go onto what's typed in the editor; a Word copy past 60,000 characters is read; an abandoned upload is swept");
+    await sql(
+      `INSERT INTO "ContractFile" (id,"organizationId","contractId","groupId","fileName","mimeType","sizeBytes",complete,"createdAt") VALUES ('rb_stale',$1,$2,'00000000-0000-4000-8000-000000000000','half.pdf','application/pdf',999,false,now() - interval '2 hours')`,
+      [org, c1.id],
+    );
+    await page.locator("#body").fill((await page.locator("#body").inputValue()) + "\n5. Parking. Crew parks in the rear lot.");
+    claude.reply("REDLINE", {
+      changes: [{ ourWords: "We warrant the work for one year.", theirWords: "We warrant the work for two years.", deleted: false, explanation: "They want a two-year warranty." }],
+    });
+    const longDocx = makeDocx(["3. Warranty. We warrant the work for two years.", ...Array.from({ length: 130 }, (_, i) => `Clause ${i}. ${"Long boilerplate wording the customer pasted in. ".repeat(10)}`)]);
+    await page.getByTestId("redline-file").setInputFiles({ name: "long.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: longDocx });
+    await page.getByTestId("redline-change").first().waitFor({ timeout: 20000 });
+    assert.ok(claude.last("REDLINE").documents[1].text.length > 60000, "the long copy was read and sent");
+    assert.equal((await one(`SELECT count(*)::int AS n FROM "ContractFile" WHERE id='rb_stale'`)).n, 0, "swept");
+    await page.getByTestId("redline-change").first().getByTestId("redline-accept").click();
+    await page.getByTestId("redline-put-in").click();
+    await page.getByTestId("redline-draft-note").waitFor();
+    const merged = await page.locator("#body").inputValue();
+    assert.match(merged, /two years/);
+    assert.match(merged, /Crew parks in the rear lot/, "what was typed and not saved is kept");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await page.getByText("Contract saved").waitFor();
+
+    log("audit fixes: a contract that can't go back to draft (cancelled meanwhile) says so instead of a draft that can't be saved");
+    await sql(`UPDATE "Contract" SET status='SENT', "sentAt"=now() WHERE id=$1`, [c1.id]);
+    await page.reload();
+    await page.getByTestId("redline-change").first().getByTestId("redline-accept").click();
+    await page.getByTestId("redline-put-in").click();
+    await page.getByTestId("redline-pull-back").waitFor();
+    await sql(`UPDATE "Contract" SET status='CANCELLED' WHERE id=$1`, [c1.id]);
+    await page.getByTestId("redline-pull-back-yes").click();
+    await page.getByText(/couldn't go back to draft/).waitFor();
+    assert.equal(await page.getByTestId("redline-draft-note").count(), 0);
+    await sql(`UPDATE "Contract" SET status='DRAFT' WHERE id=$1`, [c1.id]);
+    await page.reload();
+
     log("B3: a PDF over the request limit goes in pieces and is sent as a PDF; a cut-off answer is a sentence and the upload is let go");
     claude.cutOff("REDLINE");
+    const filesBefore = (await one(`SELECT count(*)::int AS n FROM "ContractFile" WHERE "contractId"=$1`, [c1.id])).n;
     const bigPdf = makePdf(["SERVICE AGREEMENT", "2. Payment. Net 60 from the invoice date."], 6 * 1024 * 1024);
     await page.getByTestId("redline-file").setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: bigPdf });
     await page.getByTestId("redline-error").waitFor({ timeout: 30000 });
@@ -490,7 +535,7 @@ function stopNoAiServer() {
     assert.equal(claude.last("REDLINE").documents.find((doc) => doc.kind === "pdf")?.title, "THEIR marked-up copy");
     const pdfSent = claude.last("REDLINE").body.messages[0].content.find((block) => block.type === "document" && block.source.type === "base64");
     assert.equal(Buffer.from(pdfSent.source.data, "base64").length, bigPdf.length, "every piece arrived");
-    assert.equal((await one(`SELECT count(*)::int AS n FROM "ContractFile" WHERE "contractId"=$1`, [c1.id])).n, 1, "the failed upload isn't kept");
+    assert.equal((await one(`SELECT count(*)::int AS n FROM "ContractFile" WHERE "contractId"=$1`, [c1.id])).n, filesBefore, "the failed upload isn't kept");
 
     log("B3: photos of the pages are made small in the browser before they are sent");
     claude.reply("REDLINE", { changes: [] });
@@ -511,11 +556,13 @@ function stopNoAiServer() {
     log("B4: a signed contract offers Dates in this contract; the signing page never does");
     const body2 = [
       "SERVICE AGREEMENT for the Lobby thermostat.",
-      "The deposit is due within ten (10) days after signing.",
+      "The deposit is due within ten (10) business days after signing.",
       "Work will start by March 3, 2027.",
       "A warranty walk happens 1 year after signing.",
       "Insurance renews on December 31, 2027.",
       "Kickoff meeting on November 12, 2026.",
+      "Site walk on December 1, 2026.",
+      "Final payment is due 30 days after completion of the design work.",
       "Either party may end this agreement with written notice.",
     ].join("\n");
     await sql(`UPDATE "Contract" SET body=$1 WHERE id=$2`, [body2, c2.id]);
@@ -529,27 +576,37 @@ function stopNoAiServer() {
     assert.equal(claude.count("CONTRACT_DATES"), 0, "never read on page load");
 
     log("B4: Find the dates: written and counted dates kept, a wrong date and an unquoted duty dropped, no date listed, one already on the calendar");
+    // A site walk somebody already put on the calendar for this contract.
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","contractId",auto,"updatedAt") VALUES ('rb_walk',$1,'Site walk with Pat','Site walk','2026-12-01',$2,false,now())`,
+      [org, c2.id],
+    );
     claude.reply("CONTRACT_DATES", {
       duties: [
-        { title: "Deposit due", kind: "deposit", snippet: "The deposit is due within ten (10) days after signing.", writtenDate: null, afterSigning: { count: 10, unit: "days" } },
+        { title: "Deposit due", kind: "deposit", snippet: "The deposit is due within ten (10) business days after signing.", writtenDate: null, afterSigning: { count: 10, unit: "days" } },
+        { title: "Deposit due", kind: "deposit", snippet: "The deposit is due within ten (10) business days after signing.", writtenDate: null, afterSigning: { count: 10, unit: "business days" } },
         { title: "Start work by", kind: "start", snippet: "Work will start by March 3, 2027.", writtenDate: "2027-03-03", afterSigning: null },
         { title: "Warranty walk", kind: "warranty", snippet: "A warranty walk happens 1 year after signing.", writtenDate: null, afterSigning: { count: 1, unit: "years" } },
         { title: "Insurance renewal", kind: "insurance", snippet: "Insurance renews on December 31, 2027.", writtenDate: "2027-12-30", afterSigning: null },
         { title: "Final payment", kind: "payment", snippet: "Final payment due on completion of punch list.", writtenDate: "2027-05-01", afterSigning: null },
         { title: "Kickoff meeting", kind: "other", snippet: "Kickoff meeting on November 12, 2026.", writtenDate: "2026-11-12", afterSigning: null },
+        { title: "Site walk", kind: "other", snippet: "Site walk on December 1, 2026.", writtenDate: "2026-12-01", afterSigning: null },
+        { title: "Final payment", kind: "payment", snippet: "Final payment is due 30 days after completion of the design work.", writtenDate: null, afterSigning: { count: 30, unit: "days" } },
         { title: "Notice to end", kind: "notice", snippet: "Either party may end this agreement with written notice.", writtenDate: null, afterSigning: null },
       ],
     });
     await page.getByTestId("contract-dates-read").click();
     await page.getByTestId("contract-date").first().waitFor();
     const duties = await page.getByTestId("contract-date").evaluateAll((rows) => rows.map((row) => [row.dataset.state, row.textContent]));
-    assert.equal(duties.length, 4, "the wrong date and the unquoted duty are dropped");
-    assert.match(duties[0][1], /Deposit due · Nov 22, 2026/);
-    assert.match(duties[0][1], /10 days after signing \(2026-11-12\)/);
+    assert.equal(duties.length, 5, "the wrong date and the unquoted duty are dropped");
+    assert.match(duties[0][1], /Deposit due · Nov 26, 2026/);
+    assert.match(duties[0][1], /10 business days after signing \(2026-11-12\)/);
     assert.match(duties[1][1], /Start work by · Mar 3, 2027/);
     assert.match(duties[2][1], /Warranty walk · Nov 12, 2027/);
-    assert.equal(duties[3][0], "already", "the signing day already has Contract closed on it");
-    assert.match(duties[3][1], /Already on the calendar/);
+    assert.equal(duties[3][0], "open", "audit fixes: the app's own Contract closed milestone that day doesn't count as this duty");
+    assert.equal(duties[4][0], "already", "a site walk somebody already booked for this contract");
+    assert.match(duties[4][1], /Already on the calendar/);
+    assert.doesNotMatch(duties.map((row) => row[1]).join(" "), /Final payment|Nov 22, 2026/, "audit fixes: business days counted as calendar days, and 'design' read as 'sign', are dropped");
     assert.match(await page.getByTestId("contract-dates-undated").textContent(), /Notice to end/);
     const datesReq = claude.last("CONTRACT_DATES");
     assert.match(datesReq.text, /Signed on 2026-11-12/);
@@ -568,7 +625,7 @@ function stopNoAiServer() {
     assert.deepEqual(
       events.map((row) => [row.title, row.day]),
       [
-        [`Deposit due · CON-${(await one(`SELECT number FROM "Contract" WHERE id=$1`, [c2.id])).number}`, "2026-11-22"],
+        [`Deposit due · CON-${(await one(`SELECT number FROM "Contract" WHERE id=$1`, [c2.id])).number}`, "2026-11-26"],
         [`Start work by · CON-${(await one(`SELECT number FROM "Contract" WHERE id=$1`, [c2.id])).number}`, "2027-03-03"],
       ],
     );
@@ -576,8 +633,18 @@ function stopNoAiServer() {
     const datesCalls = claude.count("CONTRACT_DATES");
     await page.reload();
     await page.getByTestId("contract-date").first().waitFor();
-    assert.deepEqual(await page.getByTestId("contract-date").evaluateAll((rows) => rows.map((row) => row.dataset.state)), ["added", "added", "open", "already"]);
+    assert.deepEqual(await page.getByTestId("contract-date").evaluateAll((rows) => rows.map((row) => row.dataset.state)), ["added", "added", "open", "open", "already"]);
     assert.equal(claude.count("CONTRACT_DATES"), datesCalls);
+
+    log("audit fixes: a date deleted from the calendar is offered again, and adding it again writes one entry");
+    await sql(`DELETE FROM "CalendarEvent" WHERE "contractId"=$1 AND title LIKE 'Deposit due%'`, [c2.id]);
+    await page.reload();
+    await page.getByTestId("contract-date").first().waitFor();
+    assert.equal(await page.getByTestId("contract-date").first().getAttribute("data-state"), "open");
+    await page.getByTestId("contract-date").first().getByTestId("contract-date-tick").check();
+    await page.getByTestId("contract-dates-add").click();
+    await until(async () => (await page.getByTestId("contract-date").first().getAttribute("data-state")) === "added", "added again");
+    assert.equal((await one(`SELECT count(*)::int AS n FROM "CalendarEvent" WHERE "contractId"=$1 AND title LIKE 'Deposit due%'`, [c2.id])).n, 1);
 
     /* ------------------------------ B5: compliance ------------------------------ */
 
@@ -631,8 +698,8 @@ function stopNoAiServer() {
     log("B5: the Compliance tile flags one running out within 30 days; a file typed by hand made out to another name is flagged too");
     assert.match(await page.getByTestId("compliance-tile-flag").textContent(), /1 needs a look/);
     await page.getByTestId("document-upload-COMPLIANCE").getByTestId("document-file").setInputFiles({ name: "license.pdf", mimeType: "application/pdf", buffer: makePdf(["License"]) });
-    await page.locator("#COMPLIANCE-category").selectOption("License");
-    await page.locator("#COMPLIANCE-name").fill("Contractor license");
+    await page.locator("#category").selectOption("License");
+    await page.locator("#name").fill("Contractor license");
     await page.getByTestId("compliance-named").fill("Somebody Else LLC");
     await page.getByTestId("compliance-limits").fill("not a limit");
     await page.getByTestId("document-upload").click();
@@ -692,6 +759,13 @@ function stopNoAiServer() {
     await page.goto(`${BASE}/dashboard/settings/compliance`);
     assert.equal(await page.getByText("Sparky COI").count(), 0, "a sub's paper isn't on the workspace's own list");
 
+    log("audit fixes: a subcontractor changed to your own crew still shows the papers filed on it");
+    await sql(`UPDATE "Crew" SET kind='OWN' WHERE id='rb_crew'`);
+    await page.goto(`${BASE}/dashboard/projects/crews`);
+    await page.locator("[data-testid=crew-card][data-crew-id=rb_crew]").getByTestId("crew-compliance-doc").waitFor();
+    assert.equal(await page.locator("[data-testid=crew-card][data-crew-id=rb_crew]").getByTestId("crew-compliance-add").count(), 0, "no new ones on an own crew");
+    await sql(`UPDATE "Crew" SET kind='SUBCONTRACTOR' WHERE id='rb_crew'`);
+
     log("B5: a Member sees a sub's papers but can't add or read one");
     await sql(
       `INSERT INTO "User" (id,name,email,"passwordHash",role,"organizationId") VALUES ('rb_member','Mo Member',$1,$2,'MEMBER',$3)`,
@@ -704,6 +778,10 @@ function stopNoAiServer() {
     const memberCard = member.locator("[data-testid=crew-card][data-crew-id=rb_crew]");
     await memberCard.getByTestId("crew-compliance-doc").waitFor();
     assert.equal(await memberCard.getByTestId("crew-compliance-add").count(), 0);
+    log("audit fixes: a Member can't delete a crew that has compliance files on it");
+    await memberCard.getByTestId("crew-delete").click();
+    await memberCard.getByText(/has compliance files on their card/).waitFor();
+    assert.equal((await one(`SELECT count(*)::int AS n FROM "Crew" WHERE id='rb_crew'`)).n, 1);
     await memberContext.close();
 
     log("B5: the day's allowance used up is a sentence where the button was");
@@ -754,7 +832,7 @@ function stopNoAiServer() {
     await off.getByTestId("redline-files").waitFor();
     assert.equal(await off.getByTestId("redline-file").count(), 0);
     await off.goto(`${NOAI_BASE}/dashboard/contracts/${c2.id}`);
-    assert.equal(await off.getByTestId("contract-date").count(), 4);
+    assert.equal(await off.getByTestId("contract-date").count(), 5);
     assert.equal(await off.getByTestId("contract-dates-read").count(), 0);
     // Compliance: no Read it for me; the flags still show.
     await off.goto(`${NOAI_BASE}/dashboard/settings/compliance`);

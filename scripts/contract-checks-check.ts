@@ -60,7 +60,7 @@ check("a money-out row is never under cost, but above the catalog cost is flagge
 });
 check("a unit that differs from the product's", () => {
   assert.deepEqual(codes({ rows: [row({ unitKey: "PER_LINEAR_FT", unitLabel: "Per linear ft" })] }), ["UNIT"]);
-  assert.deepEqual(codes({ rows: [row({ unitKey: null, unitLabel: null })] }), ["UNIT"]);
+  assert.deepEqual(codes({ rows: [row({ unitKey: null, unitLabel: null })] }), [], "a line with no unit says nothing");
   assert.deepEqual(codes({ rows: [row({ product: { ...thermostat, unitKey: null, unitLabel: null }, unitKey: "EACH" })] }), [], "a product with no unit says nothing");
 });
 check("a typed row with no product is never flagged", () => assert.deepEqual(codes({ rows: [row({ product: null, unitPriceCents: 1 })] }), []));
@@ -87,8 +87,10 @@ check("each finding's words carry its numbers", () => {
 });
 
 check("send check: the payment table against the total", () => {
-  const rules = sendCheckRules({ body: "Agreement", rows: [], totalCents: 10000, schedule: [{ label: "Deposit", kind: "PERCENT", percent: 50, fixedCents: null, amountCents: 5000, dueOn: "" }] });
-  assert.deepEqual(rules.map((rule) => rule.code), ["SCHEDULE_TOTAL"]);
+  const schedule = [{ label: "Deposit", kind: "PERCENT", percent: 50, fixedCents: null, amountCents: 5000, dueOn: "" }];
+  const rows = [{ name: "A", quantity: 1, unitPriceCents: 10000, discountCents: 0, quoteLine: null }];
+  assert.deepEqual(sendCheckRules({ body: "Agreement", rows, totalCents: 10000, schedule }).map((rule) => rule.code), ["SCHEDULE_TOTAL"]);
+  assert.deepEqual(sendCheckRules({ body: "Agreement", rows: [], totalCents: 0, schedule }), [], "no rows, no total to add up to");
 });
 check("send check: a total in the wording, subtotals ignored", () => {
   const rows = [{ name: "A", quantity: 1, unitPriceCents: 10000, discountCents: 0, quoteLine: null }];
@@ -107,6 +109,14 @@ check("send check: a row the quote has since changed", () => {
     rows: [{ name: "A", quantity: 1, unitPriceCents: 10000, discountCents: 0, quoteLine: { quantity: 2, unitPriceCents: 10000, discountCents: 0 } }],
   });
   assert.deepEqual(rules.map((rule) => rule.code), ["QUOTE_CHANGED"]);
+  const po = sendCheckRules({
+    body: "x",
+    payable: true,
+    totalCents: 10000,
+    schedule: [],
+    rows: [{ name: "A", quantity: 1, unitPriceCents: 5000, discountCents: 0, quoteLine: { quantity: 1, unitPriceCents: 10000, discountCents: 0 } }],
+  });
+  assert.deepEqual(po, [], "a purchase order is priced at cost, never at the quote's prices");
 });
 check("money in words", () => assert.deepEqual(moneyIn("pay $1,250.50 then $3").map((entry) => entry.cents), [125050, 300]));
 
@@ -163,6 +173,33 @@ check("compliance flags", () => {
   assert.deepEqual(complianceFlags({ expiresOn: day("2026-12-13"), namedInsured: null }, "X", now), []);
   assert.deepEqual(complianceFlags({ expiresOn: null, namedInsured: "Someone Else LLC" }, "Test Co", now), ["NAME"]);
   assert.deepEqual(complianceFlags({ expiresOn: null, namedInsured: "Test Co, Inc." }, "Test Co", now), []);
+});
+
+check("audit fixes: a purchase order row against a $0 (unknown) cost isn't flagged", () => {
+  assert.deepEqual(codes({ payable: true, rows: [row({ product: { ...thermostat, costCents: 0 }, unitPriceCents: 50000 })] }), []);
+});
+check("audit fixes: under cost and under minimum compare before rounding to cents", () => {
+  const atMin = { ...thermostat, costCents: 100, minPriceCents: 333 };
+  assert.deepEqual(codes({ rows: [row({ product: atMin, quantity: 0.7, unitPriceCents: 333 })] }), [], "exactly at the minimum");
+  assert.deepEqual(codes({ rows: [row({ product: atMin, quantity: 0.3, unitPriceCents: 332 })] }), ["UNDER_MINIMUM"], "a cent under, whatever the rounding");
+});
+check("audit fixes: a change order's new contract total and a merged Total Station row aren't the contract's total", () => {
+  const rows = [{ name: "A", quantity: 1, unitPriceCents: 200000, discountCents: 0, quoteLine: null }];
+  const codesOf = (body: string) => sendCheckRules({ body, rows, totalCents: 200000, schedule: [] }).map((rule) => rule.code);
+  assert.deepEqual(codesOf("Amount of this Change Order: $2,000.00\nNew contract total: $12,000.00"), []);
+  assert.deepEqual(codesOf("Original contract total: $10,000.00"), []);
+  assert.deepEqual(codesOf("1 × Total Station rental @ $500.00 = $500.00"), []);
+  assert.deepEqual(codesOf("Grand total: $500.00"), ["WORDING_TOTAL"], "a real total that disagrees still is");
+});
+check("audit fixes: more ways a contract writes a date", () => {
+  assert.ok(dateWrittenIn("Deposit due Sept. 15, 2027", "2027-09-15"));
+  assert.ok(dateWrittenIn("on this 15th day of September, 2027", "2027-09-15"));
+  assert.ok(dateWrittenIn("by 2027/03/03", "2027-03-03"));
+  assert.equal(dateWrittenIn("Sept. 15, 2027", "2027-09-16"), false);
+});
+check("audit fixes: business days skip weekends", () => {
+  assert.equal(addOffset("2026-11-12", 10, "business days"), "2026-11-26", "Thursday + 10 working days");
+  assert.equal(addOffset("2027-03-05", 1, "business days"), "2027-03-08", "Friday + 1 is Monday");
 });
 
 console.log(`contract-checks: ${cases} cases passed`);

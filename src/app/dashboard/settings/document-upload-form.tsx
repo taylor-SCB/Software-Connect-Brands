@@ -42,6 +42,9 @@ export function DocumentUploadForm({
   const [readNote, setReadNote] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const prefix = idPrefix ?? kind;
+  // The settings pages keep the ids they always had (name, category,
+  // expiresOn); a crew card's form, one of several on a page, prefixes them.
+  const fieldId = (field: string) => (idPrefix ? `${idPrefix}-${field}` : field);
   const compliance = kind === "COMPLIANCE";
 
   // A save that went through clears the form for the next file. Done as
@@ -171,11 +174,11 @@ export function DocumentUploadForm({
           )}
         </div>
         <div>
-          <label className="label" htmlFor={`${prefix}-name`}>
+          <label className="label" htmlFor={fieldId("name")}>
             Name
           </label>
           <input
-            id={`${prefix}-name`}
+            id={fieldId("name")}
             name="name"
             value={fields.name}
             onChange={set("name")}
@@ -187,10 +190,10 @@ export function DocumentUploadForm({
         {compliance && (
           <>
             <div>
-              <label className="label" htmlFor={`${prefix}-category`}>
+              <label className="label" htmlFor={fieldId("category")}>
                 Type
               </label>
-              <select id={`${prefix}-category`} name="category" className="select" value={fields.category} onChange={set("category")}>
+              <select id={fieldId("category")} name="category" className="select" value={fields.category} onChange={set("category")}>
                 {COMPLIANCE_CATEGORIES.map((category) => (
                   <option key={category} value={category}>
                     {category}
@@ -199,11 +202,11 @@ export function DocumentUploadForm({
               </select>
             </div>
             <div>
-              <label className="label" htmlFor={`${prefix}-expiresOn`}>
+              <label className="label" htmlFor={fieldId("expiresOn")}>
                 Expires
               </label>
               <input
-                id={`${prefix}-expiresOn`}
+                id={fieldId("expiresOn")}
                 name="expiresOn"
                 type="date"
                 value={fields.expiresOn}
@@ -214,29 +217,29 @@ export function DocumentUploadForm({
               <p className="faint mt-1 text-xs">A COI or license runs out; the list flags it when it does.</p>
             </div>
             <div>
-              <label className="label" htmlFor={`${prefix}-namedInsured`}>
+              <label className="label" htmlFor={fieldId("namedInsured")}>
                 Named insured
               </label>
-              <input id={`${prefix}-namedInsured`} name="namedInsured" value={fields.namedInsured} onChange={set("namedInsured")} className="input" data-testid="compliance-named" />
+              <input id={fieldId("namedInsured")} name="namedInsured" value={fields.namedInsured} onChange={set("namedInsured")} className="input" data-testid="compliance-named" />
             </div>
             <div>
-              <label className="label" htmlFor={`${prefix}-insurer`}>
+              <label className="label" htmlFor={fieldId("insurer")}>
                 Insurer or issued by
               </label>
-              <input id={`${prefix}-insurer`} name="insurer" value={fields.insurer} onChange={set("insurer")} className="input" data-testid="compliance-insurer" />
+              <input id={fieldId("insurer")} name="insurer" value={fields.insurer} onChange={set("insurer")} className="input" data-testid="compliance-insurer" />
             </div>
             <div>
-              <label className="label" htmlFor={`${prefix}-policyNumber`}>
+              <label className="label" htmlFor={fieldId("policyNumber")}>
                 Policy or license number
               </label>
-              <input id={`${prefix}-policyNumber`} name="policyNumber" value={fields.policyNumber} onChange={set("policyNumber")} className="input" data-testid="compliance-policy" />
+              <input id={fieldId("policyNumber")} name="policyNumber" value={fields.policyNumber} onChange={set("policyNumber")} className="input" data-testid="compliance-policy" />
             </div>
             <div className="sm:col-span-2">
-              <label className="label" htmlFor={`${prefix}-limits`}>
+              <label className="label" htmlFor={fieldId("limits")}>
                 Coverage limits
               </label>
               <textarea
-                id={`${prefix}-limits`}
+                id={fieldId("limits")}
                 name="limits"
                 rows={3}
                 value={fields.limits}

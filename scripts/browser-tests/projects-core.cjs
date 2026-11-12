@@ -167,6 +167,13 @@ async function signAs(browser, token, name) {
   await page.locator("#col-2-contact").selectOption("ctc_sup_pj");
   await page.getByRole("checkbox", { name: "Put Smart locks on Contract B" }).check();
   await page.locator("[data-testid=create-contracts]").click();
+  // Release B's price check before Create: say what it found, then go ahead.
+  {
+    await page.getByTestId("price-check").waitFor();
+    const found = await page.getByTestId("price-check-item").evaluateAll((items) => items.map((item) => item.dataset.code));
+    assert.deepEqual(found, ["PO_OVER_COST"], "the purchase order copies the quote's $150 sell price, above the $90 catalog cost");
+    await page.getByTestId("price-check-create-anyway").click();
+  }
   await page.waitForURL(/created=\d+/);
 
   const contracts = (await sql(

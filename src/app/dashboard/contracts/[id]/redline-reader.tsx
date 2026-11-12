@@ -8,7 +8,7 @@ import { applyRedlines, type RedlineChange } from "@/lib/contract-checks";
 import { readAgreementFile } from "@/lib/template-file";
 import { pictureForAi, readPdf, readTrackedChanges } from "@/lib/redline-file";
 import { setContractStatus } from "../actions";
-import { addRedlineChunk, discardRedlineGroup, readRedline, startRedlineFile, type RedlineResult } from "../ai-actions";
+import { addRedlineChunk, contractStatusOf, discardRedlineGroup, readRedline, startRedlineFile, type RedlineResult } from "../ai-actions";
 import { useRedlineDraft } from "./redline-draft";
 
 // B3, the redline reader (Release B, Nov 12, 2026): the customer's
@@ -34,7 +34,8 @@ async function sendFile(contractId: string, blob: Blob, meta: { fileName: string
     form.set("id", started.id);
     form.set("chunk", blob.slice(at, at + CHUNK));
     const sent = await addRedlineChunk(form);
-    if ("error" in sent) return sent;
+    // The group goes back with the error, so the caller lets it go.
+    if ("error" in sent) return { error: sent.error, groupId: started.groupId };
   }
   return started;
 }
@@ -85,8 +86,8 @@ export function RedlineReader({
             const small = await pictureForAi(file, 1568, 0.8);
             start(() => setStage(`Sending photo ${position + 1} of ${picked.length}…`));
             const sent = await sendFile(contractId, small, { fileName: file.name || `page-${position + 1}.jpg`, mimeType: "image/jpeg", position, groupId });
+            groupId = ("groupId" in sent ? sent.groupId : undefined) ?? groupId;
             if ("error" in sent) throw new Error(sent.error);
-            groupId = sent.groupId;
           }
         } else if (picked.length > 1) {
           throw new Error("Upload one Word or PDF file, or photos of the pages.");
@@ -97,18 +98,18 @@ export function RedlineReader({
           if (pdf.pages > 100) throw new Error(`That PDF is ${pdf.pages} pages. The AI reads up to 100: send just the agreement.`);
           start(() => setStage("Sending the PDF…"));
           const sent = await sendFile(contractId, first, { fileName: first.name, mimeType: "application/pdf", position: 0 });
+          groupId = ("groupId" in sent ? sent.groupId : undefined) ?? groupId;
           if ("error" in sent) throw new Error(sent.error);
-          groupId = sent.groupId;
         } else if (name.endsWith(".docx")) {
           if (first.size > MAX_BYTES) throw new Error("Keep the Word file under 10 MB.");
-          const read = await readAgreementFile(first);
+          const read = await readAgreementFile(first, 80_000);
           if ("error" in read) throw new Error(read.error);
           wordText = read.text;
           tracked = readTrackedChanges(new Uint8Array(await first.arrayBuffer()));
           start(() => setStage("Sending the Word file…"));
           const sent = await sendFile(contractId, first, { fileName: first.name, mimeType: DOCX, position: 0 });
+          groupId = ("groupId" in sent ? sent.groupId : undefined) ?? groupId;
           if ("error" in sent) throw new Error(sent.error);
-          groupId = sent.groupId;
         } else if (name.endsWith(".doc")) {
           throw new Error("That's the old Word format. Open it in Word and Save As .docx, then upload that.");
         } else {
@@ -138,7 +139,10 @@ export function RedlineReader({
 
   function putIn() {
     if (!result || accepted.length === 0) return;
-    const applied = applyRedlines(body, accepted);
+    // Onto what is in the editor now, typed and not yet saved included
+    // (audit fix), else the saved wording.
+    const editor = document.querySelector<HTMLTextAreaElement>("textarea[name=body]");
+    const applied = applyRedlines(editor?.value ?? body, accepted);
     if (applied.applied.length === 0) {
       setError("None of the accepted changes fit the wording any more.");
       return;
@@ -157,8 +161,17 @@ export function RedlineReader({
       form.set("contractId", contractId);
       form.set("status", "DRAFT");
       await setContractStatus(form);
+      // Signed or changed in the meantime: nothing to put the changes in.
+      const now = await contractStatusOf(contractId);
       router.refresh();
-      start(() => putIn());
+      start(() => {
+        if (now !== "DRAFT") {
+          setConfirming(false);
+          setError("It couldn't go back to draft: it was signed or changed in the meantime. Reload the page.");
+          return;
+        }
+        putIn();
+      });
     });
   }
 
