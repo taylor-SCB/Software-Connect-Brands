@@ -86,7 +86,36 @@ All four already existed in `AI_DAILY_CAPS`; none were added. Every call runs at
 
 Server built with `npx next build` and run through `run-suites.sh` against `scb_a`.
 
-RESULTS_TABLE
+Final run, after the audit fixes, on one build:
+
+| Group | Suite | Result | Steps |
+|---|---|---|---|
+| ai | ai-assist | PASS | 28 |
+| ai | ai-release-a | PASS | 30 |
+| plain | how-did-it-go | PASS | 24 |
+| plain | myday | PASS | 43 |
+| plain | health | PASS | 34 |
+| plain | company-page | PASS | 24 |
+| plain | connected | PASS | 59 |
+| plain | crm-accounts | PASS | 22 |
+| plain | calendar-v2 | PASS | 42 |
+| plain | round2-pages | PASS on a solo rerun | 10 |
+| plain | pipeline-opportunities | PASS on a solo rerun | 59 |
+| plain | crm-pipeline-stats | PASS | 37 |
+| plain | calendar | PASS | 47 |
+| plain | overlay-readability | PASS | 16 |
+| plain | looks | PASS | 31 |
+| email | crm-data | PASS | 68 |
+| load | load-test (200,000 contacts) | PASS | 14 |
+
+In the group run, two suites failed on timing and passed when run alone:
+
+- `round2-pages` step 10 measured a 44px button as 43.99997px while the page was still fading in, the known lesson in CLAUDE.md.
+- `pipeline-opportunities` step 59 hit a 140 ms budget at 375 ms. This release doesn't touch the board's loading.
+
+Both passed in the first full run too.
+
+At 200,000 contacts in `load-test`: a contact page with three lookalikes opened in 0.44 s; Find duplicates with a dismissed pair took 0.65 s by email and 0.28 s by phone; the slowest page overall was 1.22 s.
 
 The first full run, before the audit fixes, also passed every suite above except `load-test`. Its new step used ids that broke a later step's `right(id, 2)::int`; that was fixed.
 
