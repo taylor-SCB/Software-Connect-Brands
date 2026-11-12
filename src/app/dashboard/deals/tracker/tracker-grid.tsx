@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { purchaseOrderPrice } from "@/lib/po-pricing";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
 import { lineGrossCents, lineTotalCents } from "@/lib/quote-math";
 import { MAX_TRACKER_COLUMNS } from "@/lib/contracts";
@@ -350,8 +351,20 @@ export function TrackerGrid({
     setColumns((all) => (all.length > 1 ? all.filter((column) => column.key !== key) : all));
   }
 
+  // A row as a contract card adds it up: on a purchase order at the
+  // catalog cost, without the customer's line discount, the way Create
+  // makes it (po-pricing.ts); on anything else at the quote's price.
+  function cardNet(direction: Direction, id: string) {
+    if (direction !== "out") return lineNet(id);
+    const value = live.get(id);
+    const row = rowsById.get(id);
+    if (!value || !row) return 0;
+    const price = purchaseOrderPrice({ ...value, product: row.product });
+    return lineTotalCents(value.quantity, price.unitPriceCents, price.discountCents);
+  }
+
   function columnSubtotal(column: Column) {
-    return column.selected.reduce((sum, id) => sum + lineNet(id), 0);
+    return column.selected.reduce((sum, id) => sum + cardNet(column.direction, id), 0);
   }
 
   // What a contract's discount starts as, until someone types in its box:
@@ -870,7 +883,7 @@ export function TrackerGrid({
             index={index}
             pickers={pickers}
             rows={quote.lineItems}
-            lineNet={lineNet}
+            lineNet={(id) => cardNet(column.direction, id)}
             discount={columnDiscount(column)}
             quoteRows={quoteRows}
             quoteTotalCents={quoteTotalCents}
@@ -1176,6 +1189,9 @@ function ContractCard({
               </button>
             ))
           )}
+          {column.direction === "out" && selectedRows.length > 0 && (
+            <PoPricingNote rows={selectedRows} />
+          )}
         </div>
         <div className="mt-2 space-y-1 text-sm">
           <div className="flex items-center justify-between">
@@ -1218,5 +1234,20 @@ function ContractCard({
         />
       </div>
     </div>
+  );
+}
+
+// On a purchase order card: the rows are at the catalog cost, and any row
+// with no cost on file is at the quote's price (po-pricing.ts).
+function PoPricingNote({ rows }: { rows: TrackerQuote["lineItems"] }) {
+  const noCost = rows.filter((row) => !(row.product && row.product.costCents > 0)).length;
+  return (
+    <p className="faint w-full text-xs" data-testid="po-pricing-note">
+      {noCost === rows.length
+        ? "No cost on file for these rows, so they're at the quote's price. Check the supplier's price."
+        : noCost > 0
+          ? `At your catalog cost. ${noCost} ${noCost === 1 ? "row has" : "rows have"} no cost on file and ${noCost === 1 ? "is" : "are"} at the quote's price.`
+          : "At your catalog cost, not the customer's price."}
+    </p>
   );
 }

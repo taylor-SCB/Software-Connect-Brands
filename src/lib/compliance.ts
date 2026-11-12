@@ -80,3 +80,48 @@ export function worstFlag(docs: { flags: ComplianceFlag[]; category: string | nu
   }
   return null;
 }
+
+export type SubInsuranceFlag = {
+  crewId: string;
+  crew: string;
+  company: string | null;
+  category: string | null;
+  flag: "EXPIRED" | "EXPIRING";
+  expiresOn: Date;
+};
+
+// Subcontractors whose papers have run out or run out within 30 days, for
+// the Daily Rundown's Owners and Admins (Taylor, Nov 12, 2026). Only the
+// newest paper of each kind counts, by when it runs out: a COI renewed
+// last week clears the one that expired yesterday. A name that doesn't
+// match isn't urgent, so it stays on the crew card only. Active
+// subcontractor crews, expired first, then soonest.
+export async function subInsuranceFlags(organizationId: string): Promise<SubInsuranceFlag[]> {
+  const crews = await prisma.crew.findMany({
+    where: { organizationId, kind: "SUBCONTRACTOR", active: true },
+    select: { id: true, name: true, company: { select: { name: true } } },
+    take: 500,
+  });
+  const docs = await crewComplianceDocs(
+    organizationId,
+    crews.map((crew) => ({ id: crew.id, name: crew.name, companyName: crew.company?.name ?? null })),
+  );
+  const flagged: SubInsuranceFlag[] = [];
+  for (const crew of crews) {
+    const newest = new Map<string, CrewComplianceDoc>();
+    for (const doc of docs.get(crew.id) ?? []) {
+      if (!doc.expiresOn) continue;
+      const kind = (doc.category ?? "").toLowerCase();
+      const kept = newest.get(kind);
+      if (!kept || doc.expiresOn > kept.expiresOn!) newest.set(kind, doc);
+    }
+    for (const doc of newest.values()) {
+      const flag = doc.flags.includes("EXPIRED") ? "EXPIRED" : doc.flags.includes("EXPIRING") ? "EXPIRING" : null;
+      if (!flag) continue;
+      flagged.push({ crewId: crew.id, crew: crew.name, company: crew.company?.name ?? null, category: doc.category, flag, expiresOn: doc.expiresOn! });
+    }
+  }
+  return flagged.sort(
+    (a, b) => (a.flag === b.flag ? a.expiresOn.getTime() - b.expiresOn.getTime() : a.flag === "EXPIRED" ? -1 : 1),
+  );
+}
