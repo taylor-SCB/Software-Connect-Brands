@@ -136,7 +136,7 @@ Run through `run-suites.sh` against `scb_c`, after the audit fixes:
 - the grid's tag list now follows the page;
 - the report's Text and Email links keep the site's address after a reload;
 - Save refuses a photo used twice instead of dropping the pair;
-- the report offers the newest 400 photos, and a clone counts once;
+- the report offers the newest 400 photos, and a clone counts once (the Main-folder copy, else the lowest id, so the choice is the same every time);
 - a draft's pairs are always among the photos the editor offers;
 - `schema.prisma` now matches the migration's CASCADE;
 - a later signature on a deal no longer moves a new draft quote's photos;

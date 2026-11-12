@@ -41,6 +41,7 @@ export async function jobReportPhotos(organizationId: string, projectId: string)
     select: {
       id: true,
       storageKey: true,
+      photoFolderId: true,
       name: true,
       publicToken: true,
       createdAt: true,
@@ -50,12 +51,20 @@ export async function jobReportPhotos(organizationId: string, projectId: string)
   // A clone is its own row on the same stored file (Move / Clone); the
   // report counts the picture once, or the rules could pair a photo with
   // its own copy (audit fix).
-  const seen = new Set<string>();
-  const unique = rows.reverse().filter((row) => {
-    if (!row.storageKey || seen.has(row.storageKey)) return false;
-    seen.add(row.storageKey);
-    return true;
-  });
+  // Which copy stands for the picture is fixed: the one in the Main folder,
+  // else the lowest id (a clone shares its original's date, so date order
+  // alone picked either).
+  const keep = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    if (!row.storageKey) continue;
+    const held = keep.get(row.storageKey);
+    const better =
+      !held ||
+      (row.photoFolderId === null && held.photoFolderId !== null) ||
+      ((row.photoFolderId === null) === (held.photoFolderId === null) && row.id < held.id);
+    if (better) keep.set(row.storageKey, row);
+  }
+  const unique = rows.reverse().filter((row) => row.storageKey && keep.get(row.storageKey)?.id === row.id);
   return unique.map((row) => ({
     id: row.id,
     src: `/files/${row.publicToken}`,

@@ -708,13 +708,19 @@ let noaiServer = null;
       await page.reload();
       // A clone of a photo is the same picture: offered once.
       await sql(
-        `INSERT INTO "Upload" (id,"organizationId","projectId",kind,name,"fileName","mimeType","sizeBytes","storageKey","storageDriver","publicToken","createdAt","updatedAt")
-         SELECT 'arc_clone',"organizationId","projectId",kind,name,"fileName","mimeType","sizeBytes","storageKey","storageDriver",'arc_clone_token_0123456789',"createdAt",now() FROM "Upload" WHERE id=$1`,
+        `INSERT INTO "PhotoFolder" (id,"organizationId","projectId",name) VALUES ('arc_folder',$1,'arc_job','For the owner')`,
+        [org],
+      );
+      // A clone, as Move / Clone makes one: in a mini folder, same file, same date.
+      await sql(
+        `INSERT INTO "Upload" (id,"organizationId","projectId",kind,name,"fileName","mimeType","sizeBytes","storageKey","storageDriver","publicToken","photoFolderId","createdAt","updatedAt")
+         SELECT 'arc_clone',"organizationId","projectId",kind,name,"fileName","mimeType","sizeBytes","storageKey","storageDriver",'arc_clone_token_0123456789','arc_folder',"createdAt",now() FROM "Upload" WHERE id=$1`,
         [lobbyId],
       );
       await page.reload();
       const options = await page.locator("[data-testid=report-pick-before]").first().locator("option").evaluateAll((els) => els.map((el) => el.value));
       assert.ok(!options.includes("arc_clone"), "the clone isn't offered as its own photo");
+      assert.ok(options.includes(lobbyId), "the original is the one offered");
       await sql(`DELETE FROM "Upload" WHERE id='arc_clone'`);
       // Every photo in a pair: Add a pair says so instead of adding one Save would refuse.
       await page.reload();
