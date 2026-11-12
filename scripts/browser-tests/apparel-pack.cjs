@@ -739,6 +739,16 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   assert.ok((await held(made)).length >= 1, "the new Sales Order carries the proofs");
 
   log("next season: a new quote for Lincoln High reuses the approved proof as a draft that still needs its own yes");
+  // Version 3 is approved first (a replaced version is never offered again).
+  await page.goto(`${BASE}/dashboard/quotes/${quoteId}`);
+  await settle(page);
+  const row1 = page.locator('[data-testid=proof-row][data-proof="1"]');
+  await row1.getByTestId("proof-mark-approved").click();
+  await row1.getByTestId("proof-mark-approved-name").fill("Coach Lee");
+  await row1.getByTestId("proof-mark-approved-save").click();
+  await row1.getByText(/Approved by Coach Lee \(marked by the team\)/).waitFor();
+  const v3 = (await versionsOf(proof1.id))[2];
+  assert.equal(v3.status, "APPROVED");
   const quote2 = cuid();
   await sql(
     `INSERT INTO "Quote" (id, "organizationId", "contactId", "dealId", number, title, "publicToken", "updatedAt") VALUES ($1,$2,$3,$4,1002,'Fall tees',$5,now())`,
@@ -763,8 +773,8 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   const [reusedVersion] = await versionsOf(reused.id);
   assert.equal(reusedVersion.status, "DRAFT");
   assert.match(reusedVersion.copiedFrom, /^Approved on QUO-1001 by Coach Lee/);
-  assert.equal(reusedVersion.displayKey, (await versionsOf(proof1.id))[1].displayKey, "the files are shared, not copied");
-  assert.notEqual(reusedVersion.publicToken, (await versionsOf(proof1.id))[1].publicToken);
+  assert.equal(reusedVersion.displayKey, v3.displayKey, "the files are shared, not copied");
+  assert.notEqual(reusedVersion.publicToken, v3.publicToken);
   assert.equal((await panelsOf(reusedVersion.id)).length, 2);
 
   log("deleting the new quote takes its proof but not the shared files; deleting the first keeps the proofs its contracts carry");
@@ -778,7 +788,7 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   assert.ok(left.every((row) => row.quoteId === null), "quote-less");
   assert.equal(left.filter((row) => row.id === reused.id).length, 0, "the reused draft went with its quote");
   assert.ok(left.some((row) => row.id === proof1.id), "the proof a signed order carries lives on");
-  const sharedFile = path.join(process.cwd(), ".local-storage", approvedV2.displayKey);
+  const sharedFile = path.join(process.cwd(), ".local-storage", v3.displayKey);
   assert.ok(fs.existsSync(sharedFile), "the shared picture is still there");
   await coachPage.goto(`${BASE}/c/${printerToken}`);
   await settle(coachPage);
@@ -786,7 +796,23 @@ const EPS = Buffer.from("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 100\nne
   assert.equal((await coachPage.goto(pfUrl)).status(), 404, "the approval link went with its quote");
 
   log("Labels & Units won't retire Print location while apparel is on; turning apparel off hides it all and deletes nothing");
-  await sql(`UPDATE "Organization" SET "apparelOn"=false WHERE id=$1`, [org]);
+  await page.goto(`${BASE}/dashboard/products/labels`);
+  await settle(page);
+  const locationGroup = page.locator('[data-testid=labels-group][data-group="Print location"]');
+  // The group's own Retire, not a label's.
+  await locationGroup.locator("button:not([data-testid=labels-retire])", { hasText: /^Retire$/ }).click();
+  await page.getByText("Proofs use this list for their print location").waitFor();
+  assert.equal((await sql(`SELECT "archivedAt" FROM "VariationGroup" WHERE id=$1`, [turnedOn.printLocationGroupId])).rows[0].archivedAt, null);
+  // The operator can switch it from /admin too.
+  await sql(`UPDATE "User" SET "isSuperAdmin"=true WHERE id=$1`, [owner]);
+  await page.goto(`${BASE}/admin`);
+  await settle(page);
+  const adminSwitch = page.locator(`form:has(input[name=organizationId][value="${org}"])`).getByTestId("workspace-apparel");
+  assert.equal(await adminSwitch.innerText(), "Turn off");
+  await adminSwitch.click();
+  for (let i = 0; i < 40 && (await orgRow()).apparelOn; i += 1) await page.waitForTimeout(250);
+  assert.equal((await orgRow()).apparelOn, false);
+  await sql(`UPDATE "User" SET "isSuperAdmin"=false WHERE id=$1`, [owner]);
   await page.goto(`${BASE}/dashboard/companies/${companyId}`);
   await settle(page);
   assert.equal(await page.getByTestId("artwork-card").count(), 0);
