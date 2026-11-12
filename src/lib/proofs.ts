@@ -686,15 +686,17 @@ export async function setLineProof(organizationId: string, lineId: string, proof
 // same one: coach tees and player tees of one Navy blank are two proofs, and
 // a new size is left for a person to pick.
 export async function syncLineProofs(organizationId: string, quoteId: string, touchedLineIds: string[]) {
-  const [proofs, lines, colorGroupId] = await Promise.all([
-    prisma.proof.findMany({ where: { organizationId, quoteId }, select: { id: true, productId: true, colorOptionId: true } }),
+  // A quote with no proofs (every quote of a workspace without apparel)
+  // costs one small read.
+  const proofs = await prisma.proof.findMany({ where: { organizationId, quoteId }, select: { id: true, productId: true, colorOptionId: true } });
+  if (!proofs.length) return;
+  const [lines, colorGroupId] = await Promise.all([
     prisma.quoteLineItem.findMany({
       where: { quoteId },
       select: { id: true, productId: true, variations: true, proofId: true },
     }),
     colorGroupIdOf(organizationId),
   ]);
-  if (!proofs.length) return;
   const byId = new Map(proofs.map((proof) => [proof.id, proof]));
   const valid = (line: (typeof lines)[number]) => {
     const proof = line.proofId ? byId.get(line.proofId) : undefined;
@@ -890,7 +892,14 @@ export async function proofsToSend(organizationId: string, userId: string, quote
     where: { organizationId, id: { in: artworkIds }, checkStatus: { in: ["famous", "unsure", "unchecked"] } },
     select: { name: true, checkStatus: true, checkNote: true },
   });
-  const quote = await prisma.quote.findFirst({ where: { id: quoteId, organizationId }, select: { proofToken: true } });
+  // The link exists before anything is sent, so Copy link can write it
+  // while the tap still counts (Safari refuses a write after a wait). It
+  // shows nothing until a proof is sent.
+  let quote = await prisma.quote.findFirst({ where: { id: quoteId, organizationId }, select: { proofToken: true } });
+  if (quote && !quote.proofToken) {
+    await prisma.quote.updateMany({ where: { id: quoteId, organizationId, proofToken: null }, data: { proofToken: publicToken() } });
+    quote = await prisma.quote.findFirst({ where: { id: quoteId, organizationId }, select: { proofToken: true } });
+  }
   return {
     drafts: drafts.map((proof) => ({ number: proof.number, productName: proof.productName, colorLabel: proof.colorLabel })),
     noLines: proofs.filter((proof) => proof.versions[0]?.status === "DRAFT" && proof.lineIds.length === 0).map((proof) => proof.number),

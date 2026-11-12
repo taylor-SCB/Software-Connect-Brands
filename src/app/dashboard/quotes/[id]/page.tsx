@@ -37,6 +37,11 @@ import { readSnapshot } from "@/lib/variation-shared";
 import { aiConfigured } from "@/lib/ai";
 import { fileUrl } from "@/lib/uploads";
 import { SiteWalkPhotos } from "./site-walk";
+import { ProofsCard, ProofsProvider, type ProofPageData } from "./proofs";
+import { apparelOn } from "@/lib/apparel";
+import { artworksFor } from "@/lib/artwork";
+import { colorGroupIdOf, lineColorOf, quoteProofs } from "@/lib/proofs";
+import { storageDriver } from "@/lib/storage";
 
 // yyyy-mm-dd for <input type="date">, which only accepts that shape.
 function toDateInput(date: Date | null) {
@@ -63,7 +68,9 @@ export default async function QuoteBuilderPage({
     prisma.quote.findFirst({
       where: { id, organizationId },
       include: {
-        contact: { select: { id: true, name: true, email: true, phone: true, mobile: true, company: { select: { name: true } } } },
+        contact: {
+          select: { id: true, name: true, email: true, phone: true, mobile: true, companyId: true, company: { select: { name: true } } },
+        },
         deal: { select: { id: true, title: true, stage: true } },
         lineItems: {
           orderBy: { position: "asc" },
@@ -128,6 +135,78 @@ export default async function QuoteBuilderPage({
       quote.lineItems.map((item) => item.customUnitId),
     ),
   ]);
+
+  // The apparel pack (Nov 12, 2026): proofs on the quote's product lines.
+  const proofData = (await apparelOn(organizationId)) ? await loadProofData() : null;
+  async function loadProofData(): Promise<ProofPageData> {
+    const quoteRow = quote!;
+    const productIds = [...new Set(quoteRow.lineItems.flatMap((item) => (item.productId ? [item.productId] : [])))];
+    const [proofs, colorGroupId, org, products, artworks] = await Promise.all([
+      quoteProofs(organizationId, quoteRow.id),
+      colorGroupIdOf(organizationId),
+      prisma.organization.findUnique({ where: { id: organizationId }, select: { printLocationGroupId: true } }),
+      productIds.length
+        ? prisma.product.findMany({ where: { id: { in: productIds }, organizationId }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      artworksFor(organizationId, { contactId: quoteRow.contactId }),
+    ]);
+    const [colors, locations] = await Promise.all([
+      colorGroupId
+        ? prisma.variationOption.findMany({ where: { groupId: colorGroupId, organizationId }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      org?.printLocationGroupId
+        ? prisma.variationOption.findMany({
+            where: { groupId: org.printLocationGroupId, organizationId },
+            orderBy: [{ position: "asc" }, { name: "asc" }],
+            select: { id: true, name: true, archivedAt: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const proofOfLine = new Map(proofs.flatMap((proof) => proof.lineIds.map((lineId) => [lineId, proof.id] as const)));
+    return {
+      quoteId: quoteRow.id,
+      quoteNumber: quoteRow.number,
+      quoteLabel: `QUO-${quoteRow.number} ${quoteRow.title}`,
+      contact: {
+        name: quoteRow.contact.name,
+        email: quoteRow.contact.email,
+        phone: quoteRow.contact.mobile || quoteRow.contact.phone,
+      },
+      storageOn: storageDriver() !== null,
+      colorGroupId,
+      proofs,
+      lines: quoteRow.lineItems.flatMap((item) => {
+        if (!item.productId) return [];
+        const quantity = Number.isInteger(item.quantity) ? String(item.quantity) : item.quantity.toFixed(2);
+        return [
+          {
+            id: item.id,
+            productId: item.productId,
+            colorOptionId: lineColorOf(item.variations, colorGroupId),
+            label: `${quantity} × ${item.name}${item.variationText ? ` · ${item.variationText}` : ""}`,
+            proofId: proofOfLine.get(item.id) ?? null,
+          },
+        ];
+      }),
+      products: Object.fromEntries(
+        products.map((product) => [
+          product.id,
+          {
+            name: product.name,
+            pictures: (productLabels[product.id]?.pictures ?? []).map((picture) => ({
+              id: picture.id,
+              token: picture.token,
+              colorOptionId: picture.colorOptionId,
+            })),
+          },
+        ]),
+      ),
+      colors: Object.fromEntries(colors.map((color) => [color.id, color.name])),
+      locations: locations.map((location) => ({ id: location.id, name: location.name, archived: Boolean(location.archivedAt) })),
+      artworks,
+      artworkOwner: quoteRow.contact.companyId ? { companyId: quoteRow.contact.companyId } : { contactId: quoteRow.contactId },
+    };
+  }
 
   const publicPath = `/q/${quote.publicToken}`;
   const today = todayIso(timeZone);
@@ -248,6 +327,7 @@ export default async function QuoteBuilderPage({
         {/* Above the cards after it: every card is its own layer (the glass
             blur), so the Add from catalog list opening downward was drawn
             under the Payment table and lost its taps there. */}
+        <MaybeProofs data={proofData}>
         <Card lit className="z-20">
           <CardHeader
             title="Line items"
@@ -290,6 +370,9 @@ export default async function QuoteBuilderPage({
             siteWalk={siteWalkOn ? { photos: siteWalkPhotos } : null}
           />
         </Card>
+
+        {proofData && <ProofsCard />}
+        </MaybeProofs>
 
         {siteWalkPhotos.length > 0 && (
           <Card lit>
@@ -376,4 +459,8 @@ export default async function QuoteBuilderPage({
       </QuoteSaveProvider>
     </QuoteUnsavedProvider>
   );
+}
+
+function MaybeProofs({ data, children }: { data: ProofPageData | null; children: React.ReactNode }) {
+  return data ? <ProofsProvider data={data}>{children}</ProofsProvider> : <>{children}</>;
 }

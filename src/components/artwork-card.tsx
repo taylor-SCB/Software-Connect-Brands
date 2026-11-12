@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { upload } from "@vercel/blob/client";
+import { putStoredFile } from "@/lib/blob-put";
 import {
   checkArtworkNow,
   finishArtworkUpload,
@@ -24,19 +24,6 @@ import type { ArtworkOwner, ArtworkView } from "@/lib/artwork";
 // logo on a checkerboard, so a white logo shows; its name and ink note;
 // the printer's file to download; a warning when it looks like a famous
 // brand's logo (never a block; Taylor, Nov 12).
-
-async function put(driver: "local" | "vercel-blob", key: string, ticket: string, body: Blob, type: string) {
-  if (driver === "local") {
-    const response = await fetch(`/api/storage/local?t=${encodeURIComponent(ticket)}`, {
-      method: "PUT",
-      headers: { "Content-Type": type },
-      body,
-    });
-    if (!response.ok) throw new Error("The artwork didn't arrive. Add it again.");
-    return;
-  }
-  await upload(key, body, { access: "private", handleUploadUrl: "/api/storage/upload", clientPayload: ticket, contentType: type });
-}
 
 export const CHECKERBOARD =
   "repeating-conic-gradient(var(--tint-3) 0% 25%, transparent 0% 50%) 50% / 16px 16px";
@@ -70,7 +57,7 @@ export async function sendArtwork(input: {
     print: input.print,
   };
   try {
-    for (const file of started.files) await put(started.driver, file.key, file.ticket, bodies[file.role], file.type);
+    for (const file of started.files) await putStoredFile(started.driver, file.key, file.ticket, bodies[file.role], file.type);
   } catch (error) {
     return { error: error instanceof Error ? error.message : "The artwork didn't arrive. Add it again." };
   }
