@@ -847,6 +847,22 @@ const ago = (days) => `now() - interval '${days} days'`;
     }).length,
   );
   assert.equal(covered, 0, `${covered} tabs are covered on a contact's page`);
+  // And above a company's Call main line / Log / Book bar.
+  await pm.goto(`${BASE}/dashboard/companies/cmp_md_redbud`);
+  await pm.locator("[data-testid=company-phone-bar]").waitFor();
+  // The page fades in, and a moving layer carries its fixed bar with it.
+  await until(async () => (await pm.evaluate(() => document.getAnimations().filter((a) => a.playState === "running" && a.effect?.getTiming().iterations !== Infinity).length)) === 0, "the page settled");
+  const coveredCo = await pm.locator("[data-testid=phone-tab], [data-testid=phone-more]").evaluateAll((els) =>
+    els.filter((el) => {
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return !hit || !el.contains(hit);
+    }).length,
+  );
+  assert.equal(coveredCo, 0, `${coveredCo} tabs are covered on a company's page`);
+  const coBar = await pm.locator("[data-testid=company-phone-bar]").boundingBox();
+  const tabsBox = await pm.locator("[data-testid=phone-tabs]").boundingBox();
+  assert.ok(coBar.y + coBar.height <= tabsBox.y + 1, "the company's bar sits on top of the tab bar");
   // The active tab: words in the text colour, readable on the bar.
   await pm.goto(`${BASE}/dashboard/contacts`);
   const active = await pm.locator("[data-testid=phone-tab][aria-current=page]").evaluate((el) => [

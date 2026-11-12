@@ -186,7 +186,11 @@ export function PhoneBar({ mainLine, bookFor }: { mainLine: string | null; bookF
   return (
     <nav
       aria-label="Quick actions"
-      className="popover fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--hairline-3)] pb-[env(safe-area-inset-bottom)] lg:hidden"
+      // Above the phone's tab bar, not over it (audit, Nov 11, 2026): the
+      // dashboard layout sets --phone-tabbar-h below lg, and the tab bar
+      // already leaves room for the home indicator.
+      className="popover fixed inset-x-0 z-40 flex border-t border-[var(--hairline-3)] lg:hidden"
+      style={{ bottom: "var(--phone-tabbar-h, 0px)" }}
       data-testid="company-phone-bar"
     >
       {mainLine ? (

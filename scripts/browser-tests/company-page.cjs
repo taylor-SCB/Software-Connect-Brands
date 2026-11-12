@@ -660,7 +660,10 @@ async function contrastOf(locator) {
   const bar = phone.locator("[data-testid=company-phone-bar]");
   await bar.waitFor();
   const barBox = await bar.boundingBox();
-  assert.ok(Math.abs(barBox.y + barBox.height - 844) < 2, "the bar sits on the bottom edge");
+  // On the phone's tab bar, not over it (audit fixes, Nov 11, 2026).
+  const tabBarBox = await phone.locator("[data-testid=phone-tabs]").boundingBox();
+  assert.ok(Math.abs(barBox.y + barBox.height - tabBarBox.y) < 2, "the bar sits right on top of the tab bar");
+  assert.ok(Math.abs(tabBarBox.y + tabBarBox.height - 844) < 2, "the tab bar sits on the bottom edge");
   assert.deepEqual(
     (await bar.locator("a, button").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()),
     ["Call main line", "Log", "Book", "⋯ More"],

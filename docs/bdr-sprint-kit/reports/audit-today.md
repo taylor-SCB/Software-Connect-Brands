@@ -17,7 +17,7 @@ Branch `claude/audit-today`. Final audit of the BDR sprint, run as `AUDIT.md` se
 | Confirmed | 32 |
 | Refuted | 2 |
 | Fixed here | 26 |
-| Confirmed, for another area | 6 (D4, F2, F3, F4, F6, L6), plus three follow-ups for bugs fixed here (P1's company bar, C1's read side, F1's fingerprint) |
+| Confirmed, for another area | 6 (D4, F2, F3, F4, F6, L6), plus two follow-ups for bugs fixed here (C1's read side, F1's fingerprint) |
 
 Some findings were only partly refuted. The confirmed part was fixed and the refuted part is noted against each one.
 
@@ -136,13 +136,13 @@ Every proving step is in `scripts/browser-tests/myday.cjs` unless it says otherw
 
 ### The phone
 
-**P1 (high). The phone tab bar was covered on a contact's page.**
+**P1 (high). The phone tab bar was covered on a contact's page and a company's page.**
 - *Cause:* the contact's Call / Text / Log bar sits at `bottom: var(--phone-tabbar-h)`, and nothing set that variable.
 - *Fix:*
   - `layout.tsx` sets `--phone-tabbar-h` below lg (56px plus the safe-area inset);
   - `main` gets room for two stacked bars (`pb-36`).
-- The company page's bar is the other half; see "For another area".
-- *Step:* "audit fixes: the phone — …" checks every tab is the topmost element on a contact's page.
+- The company page's bar (`companies/[id]/sections.tsx`, the pages area's file, fixed here at Taylor's request on Nov 12) now sits at `bottom: var(--phone-tabbar-h, 0px)` like the contact bar, and leaves the home-indicator room to the tab bar. `company-page.cjs` had asserted the bar sat on the very bottom edge, which was the bug; it now checks the bar sits right on top of the tab bar, and the tab bar on the bottom edge.
+- *Step:* "audit fixes: the phone — …" checks every tab is the topmost element on a contact's page and on a company's page (which waits for the page's fade-in to finish first), and that the company bar sits above the tab bar. On the old company bar it failed with "5 tabs are covered on a company's page".
 
 **P2 (medium) and P3 (medium). The new sticky phone top bar covered other sticky headers.**
 - *Cause:* the top bar covered the Pipeline's sticky stage tabs and the day heading the week view scrolls to.
@@ -185,7 +185,6 @@ Every proving step is in `scripts/browser-tests/myday.cjs` unless it says otherw
 
 | Area | Finding | Where | What to do |
 |---|---|---|---|
-| pages | **P1, second half:** the company page's phone bar still covers the tab bar | `companies/[id]/sections.tsx:189` (`fixed bottom-0 z-40`) | Use `style={{ bottom: "var(--phone-tabbar-h, 0px)" }}`, as the contact bar does; the layout now sets the variable |
 | pages | **L6:** the log sheet's park caption hard-codes "6 tries, never reached" | `how-did-it-go.tsx:1094` | Owners can now set the limit from 1 to 50; use `ctx.tries` / `ctx.parkAfterTries` |
 | data | **D4:** `logEventDone` never checks `doneAt`, so Held tapped in two tabs writes two meeting activities (two tries and talks) and books a next step twice | `src/lib/calendar-auto.ts:~728` | Claim the row with `updateMany({ where: { id, doneAt: null } })` first |
 | data | **C1 / C5 read side:** `waitingMeetings` uses `at: row.on` even when the meeting has a calendar entry. Rows the calendar form wrote before this fix hold midnight UTC | `src/lib/meetings.ts:~461` | Use the entry's zoned moment (as `whenOf` already does) or backfill those rows from their entries. My Meetings card already reads the entry; Up next's "Met … how did it go?" still follows `waitingMeetings` |
@@ -203,7 +202,7 @@ Every suite passes.
 
 | Suite | Result |
 |---|---|
-| myday | 39 / 39, nine of them new audit steps |
+| myday | 39 / 39, nine of them new audit steps (re-run Nov 12 with the company bar check) |
 | calendar | 46 / 46 |
 | calendar-v2 | 42 / 42 (failed at step 10 on the base branch; see above) |
 | crews-time | 34 / 34 |
@@ -211,6 +210,7 @@ Every suite passes.
 | login-case | all steps pass |
 | overlay-readability | 16 / 16 |
 | companies-contacts | 29 / 29 |
+| company-page | 22 / 22 (Nov 12, after the company bar fix) |
 | pipeline-opportunities | 43 / 43 |
 | reports | 48 / 48 |
 | ai-assist | 28 / 28, one of them a new audit step |
