@@ -103,7 +103,7 @@ On branch `claude/sprint-numbers`, fast-forwarded to `origin/claude/sprint-final
 | account-types | PASS, 34 |
 | ai-assist | PASS, 26 |
 
-Not run: `products-load-test` (it needs the slow proxy). Its one changed line is the same `quote-save` swap.
+`products-load-test` was run separately through `slow-db-proxy.cjs` (8 ms each way) against the same production build: **PASS, all 10 steps.** The slowest step was saving the 200-line quote through the one Save: 5.01 s end to end, with the transaction open 3.69 s (its limit is 5 s; the notes recorded about 5 s and 3.8 s before). Pages were 0.12–0.83 s at 25,000 and 50,000 products. The 25,000-row import took 22.1 s, a sheet's Take all off 22.1 s and Put all back 64.7 s, and the 8,000 same-named tees took 3.1 s to preview and 8.0 s to import.
 
 ## Files touched outside the screen's own
 - `src/app/globals.css`: `.table-stack` and the quote Save bar's scroll padding.
