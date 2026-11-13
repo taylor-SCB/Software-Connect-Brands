@@ -643,6 +643,16 @@ let lastPage = null;
   await page.getByTestId("forecast-past-dates").waitFor();
   assert.equal(await rae.getByTestId("forecast-this").innerText(), "$3,000.00");
 
+  log("audit fixes (Nov 13): a past custom range's daily table has exactly its own days; dates that can't be used say so and stay in the boxes");
+  {
+    const days = Number(await page.getByTestId("stats-daily-table").getAttribute("data-days"));
+    assert.equal(days, 10, "ten days picked, ten days drawn: no extra day after To");
+  }
+  await page.goto(`${BASE}/dashboard/stats?from=${plusDays(TODAY, 20)}&to=${plusDays(TODAY, 5)}`);
+  await page.getByTestId("stats-dates-refused").waitFor();
+  assert.equal(await page.getByTestId("stats-from").inputValue(), plusDays(TODAY, 20));
+  assert.equal(await page.getByTestId("stats-to").inputValue(), plusDays(TODAY, 5));
+
   log("dates reaching ahead narrow the forecast to them, by rep, marked rough past next month; the AI sentence is kept for those dates; a rep filter keeps the dates, a period button drops them");
   const ahead = plusDays(TODAY, 60);
   await page.goto(`${BASE}/dashboard/stats?from=${TODAY}&to=${ahead}`);
@@ -763,6 +773,25 @@ let lastPage = null;
   await page.getByTestId("merge-dialog").waitFor();
   assert.equal(await page.getByTestId("merge-picked").locator("li").count(), 2);
   await page.keyboard.press("Escape");
+
+  log("audit fixes (Nov 13): the same name split by punctuation is found from either side, short names too; a shared host like facebook.com is no match");
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,website,"companyTypes","updatedAt") VALUES
+       ('ra_cb_dash',$1,'Bright-Line Property',NULL,'{}',now()),
+       ('ra_3m1',$1,'3M Co',NULL,'{}',now()),
+       ('ra_3m2',$1,'3M Co.',NULL,'{}',now()),
+       ('ra_fb1',$1,'Alpha Roofing','https://www.facebook.com/alpharoofing','{}',now()),
+       ('ra_fb2',$1,'Beta Paint','facebook.com/betapaint','{}',now())`,
+    [org],
+  );
+  await page.goto(`${BASE}/dashboard/companies/ra_co_bright`);
+  await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_dash]").waitFor();
+  await page.goto(`${BASE}/dashboard/companies/ra_3m1`);
+  await page.locator("[data-testid=company-lookalike][data-company-id=ra_3m2]").waitFor();
+  await page.goto(`${BASE}/dashboard/companies/ra_fb1`);
+  await page.getByTestId("company-header").waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(await page.getByTestId("company-lookalikes").count(), 0, "facebook.com is a shared host, not the same business");
 
   /* ------------------------------- the phone ------------------------------- */
 

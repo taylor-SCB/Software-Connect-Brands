@@ -1103,8 +1103,11 @@ website domain; phone, last 10 digits), with Merge these and Not the
 same business (`DuplicateDismissal.kind` "company", also hidden in Find
 duplicates; `dismissedFilter` in `duplicates.ts` serves both kinds); the
 website is matched through `Company_website_trgm_idx`
-(`20261113180000_ai_a_company_website_trgm`, in the Prisma schema so
-`migrate dev` keeps it). **Release B, contracts**: the rules for every check are
+and the name through the expression index `Company_name_key_idx` (both
+in `20261113180000_ai_a_company_website_trgm`; the website's is in the
+Prisma schema, the name key's can't be, so **`prisma migrate dev` will
+offer to drop `Company_name_key_idx`; take that line out**). A website on
+a shared host (facebook.com, a Google site, Yelp, Wix …) is no match. **Release B, contracts**: the rules for every check are
 pure in `src/lib/contract-checks.ts` (`scripts/contract-checks-check.ts`
 runs them). **Price check before Create** in the Coordinator
 (`check-actions.ts` under the tracker): under cost, under the starred
@@ -1332,10 +1335,11 @@ are all blocking before the first paying customer.
   if Taylor wants forecast-vs-actual (Nov 13, 2026).
 - **A forecast past the end of next month is rough.** Few deals are
   decided that far out; the panel says so in amber.
-- **"Looks like the same business" matches a name by its longest word
-  first.** Names whose punctuation splits that word ("A.B.C. Supply" vs
-  "ABC Supply") share Find duplicates' key but aren't suggested on the
-  company page; Find duplicates still groups them.
+- **A website on a shared host is no match on the company page only.**
+  "Looks like the same business" skips facebook.com, Google sites, Yelp,
+  Wix and the like (`SHARED_HOSTS` in `src/lib/lookalikes.ts`), but Find
+  duplicates' Same website still groups every Facebook-page company
+  together. Teach it the same list when someone complains.
 
 - **Artwork, proofs and the printer's files went through the local driver
   only.** The Blob path is first exercised on the live site; check
@@ -1994,7 +1998,7 @@ seeds and sends paperwork now gets calendar entries written for it, so
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
 
-**The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (30),
+**The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (36 since Nov 13),
 `ai-release-b.cjs` (34; runs `scripts/contract-checks-check.ts` first) and
 `ai-release-c.cjs` (29) answer as Claude through
 `scripts/browser-tests/fake-claude.cjs` (a helper, not a suite) on :3995,
