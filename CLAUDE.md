@@ -72,6 +72,13 @@ the model to follow.
 
 ## Hard rules
 
+- **One chat does the work. Never start side chats.** No separate cloud
+  sessions (`create_session`) for coding, testing, auditing or anything
+  else. Each one shows up in Taylor's chat list, and finished ones kept
+  waking up for days. The Nov 11, 2026 BDR sprint started 18 of them and he
+  called it "so fucking annoying" (Nov 13, 2026). Parallel work runs inside
+  the one chat, as subagents or a workflow. If that is too slow, say so and
+  let him decide; never work around it with more chats.
 - **There is exactly ONE website: `softwareconnectbrands.com`.** No staging
   site, no preview site, no second address. He asked for this explicitly
   after a testing site created a third URL and confused everything. Never
