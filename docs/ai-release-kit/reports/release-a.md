@@ -99,21 +99,21 @@ All four already existed in `AI_DAILY_CAPS`; none were added. Every call runs at
 
 Server built with `npx next build` and run through `run-suites.sh` against `scb_a`.
 
-Final run, after the audit fixes, on one build:
+Final run (Nov 13, 2026, after Taylor's answers), on one build:
 
 | Group | Suite | Result | Steps |
 |---|---|---|---|
 | ai | ai-assist | PASS | 28 |
-| ai | ai-release-a | PASS | 30 |
+| ai | ai-release-a | PASS | 34 |
 | plain | how-did-it-go | PASS | 24 |
 | plain | myday | PASS | 43 |
-| plain | health | PASS | 34 |
+| plain | health | PASS after a test fix | 34 |
 | plain | company-page | PASS | 24 |
 | plain | connected | PASS | 59 |
 | plain | crm-accounts | PASS | 22 |
 | plain | calendar-v2 | PASS | 42 |
-| plain | round2-pages | PASS on a solo rerun | 10 |
-| plain | pipeline-opportunities | PASS on a solo rerun | 59 |
+| plain | round2-pages | PASS after a test fix | 10 |
+| plain | pipeline-opportunities | PASS after a test fix | 59 |
 | plain | crm-pipeline-stats | PASS | 37 |
 | plain | calendar | PASS | 47 |
 | plain | overlay-readability | PASS | 16 |
@@ -127,6 +127,13 @@ In the group run, two suites failed on timing and passed when run alone:
 - `pipeline-opportunities` step 59 hit a 140 ms budget at 375 ms. This release doesn't touch the board's loading.
 
 Both passed in the first full run too.
+
+**Nov 13 rerun: three older suites needed test fixes.** None of them came from this release.
+
+- `health` step 23 and `pipeline-opportunities` step 33 assumed tomorrow is a working day. On a Friday the app correctly offers Monday, so both now expect the next working day.
+- `round2-pages` step 10 now allows half a pixel of rounding on a 44px check, which can read 43.99997px while the page fades in.
+- `pipeline-opportunities` step 53's 140 ms budget was missed at 149 ms and then 469 ms while hundreds of old test workspaces sat in the local database. It passed once they were cleared, as CLAUDE.md advises.
+
 
 At 200,000 contacts in `load-test`: a contact page with three lookalikes opened in 0.44 s; Find duplicates with a dismissed pair took 0.65 s by email and 0.28 s by phone; the slowest page overall was 1.22 s.
 
