@@ -1939,6 +1939,22 @@ that presses keys on the proof sheet's logo box waits for the sheet's own
 focus first** (`nudge()`): the sheet focuses its first button a frame after
 it opens and took the key press.
 
+**Run the `plain`, `email` and `reports` groups on a server with no AI key.**
+`next start` reads `.env`, and a `.env` that names a stand-in Claude
+(`ANTHROPIC_API_KEY` / `ANTHROPIC_ENDPOINT`, as the template and AI suites
+want) makes every Send for signature stop at "couldn't be read over" with
+Send anyway, so a dozen suites time out waiting for Mark signed. Export
+`ANTHROPIC_API_KEY= ANTHROPIC_ENDPOINT=` before `run-suites.sh` for those
+groups (an empty value in the environment wins over `.env`); the `ai` and
+`template` groups set their own.
+
+**Two suites fail on the live code too (Nov 13, 2026)**, found in the
+apparel full run and checked against a build of the live branch:
+`looks.cjs` step 31 ("the mini meter is a 44px target on touch", 31px) and
+`pipeline-opportunities.cjs` step 53's timing budget (40,000 meetingless
+tiles add 177–930 ms against 140). Neither touches the apparel pack; both
+are for the next session that works on the meter or the Pipeline.
+
 The apparel audit (Nov 12, 2026): 18 flagged, 15 distinct, 13 confirmed and
 fixed, 2 refuted. Lessons worth keeping:
 - **Compare stored JSON through the same reader on both sides.** Postgres
