@@ -115,3 +115,81 @@ export async function findLookalikes(
     reasons: [...(row.byEmail ? (["email"] as const) : []), ...(row.byPhone ? (["phone"] as const) : []), ...(row.byName ? (["name"] as const) : [])],
   }));
 }
+
+/* ------------------------- the same business? ------------------------- */
+
+// "Looks like the same business" on a company page (Taylor, Nov 13, 2026:
+// yes). Find duplicates' company rules: the same name ignoring case,
+// spaces and punctuation; the same website domain (no http, no www); the
+// same phone (last 10 digits). "Not the same business" is a
+// DuplicateDismissal of kind "company". One statement, each test through
+// an index first: the name's trigram index on its longest word, the
+// website's (20261113120000_ai_a_company_website_trgm), the phone digits'.
+
+export type CompanyLookalike = {
+  id: string;
+  name: string;
+  city: string | null;
+  state: string | null;
+  phone: string | null;
+  website: string | null;
+  reasons: ("name" | "domain" | "phone")[];
+};
+
+const companyKey = (name: string) => name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+export function websiteDomain(website: string | null | undefined) {
+  const match = (website ?? "").trim().match(/^([a-z]+:\/\/)?(www\.)?([^/:?#]+)/i);
+  const domain = match?.[3]?.toLowerCase() ?? "";
+  return domain.includes(".") ? domain : null;
+}
+
+export async function findCompanyLookalikes(
+  organizationId: string,
+  company: { id: string; name: string; website: string | null; phone: string | null },
+): Promise<CompanyLookalike[]> {
+  const key = companyKey(company.name);
+  const longest = (company.name.match(/[\p{L}\p{N}]+/gu) ?? []).sort((a, b) => b.length - a.length)[0] ?? "";
+  const domain = websiteDomain(company.website);
+  const phone = lastTen(company.phone);
+
+  const nameTest =
+    key.length >= 3 && longest.length >= 3
+      ? Prisma.sql`(c.name ILIKE ${`%${likeText(longest)}%`} AND lower(regexp_replace(c.name, '[^[:alnum:]]+', '', 'g')) = ${key})`
+      : Prisma.sql`false`;
+  const domainTest = domain
+    ? Prisma.sql`(c.website ILIKE ${`%${likeText(domain)}%`}
+        AND lower(regexp_replace(btrim(c.website), '^([a-z]+://)?(www\\.)?([^/:?#]+).*$', '\\3', 'i')) = ${domain})`
+    : Prisma.sql`false`;
+  const phoneTest = phone
+    ? Prisma.sql`(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g') LIKE ${`%${phone}%`}
+        AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = ${phone})`
+    : Prisma.sql`false`;
+  // A missing website or phone is NULL, not false.
+  const score = Prisma.sql`coalesce(${nameTest}, false)::int + coalesce(${domainTest}, false)::int + coalesce(${phoneTest}, false)::int`;
+
+  const rows = await prisma.$queryRaw<
+    { id: string; name: string; city: string | null; state: string | null; phone: string | null; website: string | null; byName: boolean; byDomain: boolean; byPhone: boolean }[]
+  >`
+    SELECT c.id, c.name, c.city, c.state, c.phone, c.website,
+           coalesce(${nameTest}, false) AS "byName", coalesce(${domainTest}, false) AS "byDomain", coalesce(${phoneTest}, false) AS "byPhone"
+      FROM "Company" c
+     WHERE c."organizationId" = ${organizationId}
+       AND c.id <> ${company.id}
+       AND (${nameTest} OR ${domainTest} OR ${phoneTest})
+       AND NOT EXISTS (
+         SELECT 1 FROM "DuplicateDismissal" d
+          WHERE d."organizationId" = ${organizationId} AND d.kind = 'company'
+            AND d."aId" = least(c.id COLLATE "C", ${company.id} COLLATE "C") AND d."bId" = greatest(c.id COLLATE "C", ${company.id} COLLATE "C")
+       )
+     ORDER BY ${score} DESC, c."createdAt", c.id
+     LIMIT ${LOOKALIKE_LIMIT}`;
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    city: row.city,
+    state: row.state,
+    phone: row.phone,
+    website: row.website,
+    reasons: [...(row.byName ? (["name"] as const) : []), ...(row.byDomain ? (["domain"] as const) : []), ...(row.byPhone ? (["phone"] as const) : [])],
+  }));
+}

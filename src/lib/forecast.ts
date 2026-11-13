@@ -60,7 +60,14 @@ export type ForecastDeal = {
   expectedOn: string;
   bucket: "this" | "next" | "later";
   long: boolean;
+  // Inside the picked dates, when Stats has a From–To reaching past today.
+  inWindow: boolean;
 };
+
+// Picked dates that reach past today (Taylor, Nov 13, 2026: the forecast
+// looks ahead, and a date filter shows just those dates). `from` is never
+// before today; past the end of next month the numbers are rough.
+export type ForecastWindow = { from: string; to: string; label: string; rough: boolean };
 
 export type RepForecast = {
   id: string;
@@ -69,6 +76,7 @@ export type RepForecast = {
   openCents: number;
   thisCents: number;
   nextCents: number;
+  windowCents: number;
   quotes: number;
   contracts: number;
   long: number;
@@ -80,7 +88,8 @@ export type Forecast = {
   thisMonth: string;
   nextMonth: string;
   rates: StageRate[];
-  totals: { thisCents: number; nextCents: number; deals: number; openCents: number };
+  totals: { thisCents: number; nextCents: number; windowCents: number; deals: number; openCents: number };
+  window: ForecastWindow | null;
   reps: RepForecast[];
   long: ForecastDeal[];
   // Open deals past OPEN_LIMIT, left out of the numbers.
@@ -106,15 +115,28 @@ function monthEnd(iso: string, ahead: number) {
   return new Date(Date.UTC(y, m - 1 + ahead + 1, 0)).toISOString().slice(0, 10);
 }
 
-export function repSentence(rep: Omit<RepForecast, "sentence">, months: { thisMonth: string; nextMonth: string }) {
+export function repSentence(rep: Omit<RepForecast, "sentence">, months: { thisMonth: string; nextMonth: string }, window: ForecastWindow | null = null) {
   if (rep.deals === 0) return `${rep.name} has no quotes or contracts out right now.`;
   const mix = [rep.quotes ? plural(rep.quotes, "quote") : null, rep.contracts ? plural(rep.contracts, "contract") : null].filter(Boolean).join(" and ");
   const long = rep.long ? ` ${plural(rep.long, "deal is", "deals are")} running past the usual time.` : "";
+  if (window) return `${rep.name} has ${mix} out worth ${formatCents(rep.openCents)}; about ${formatCents(rep.windowCents)} is likely to sign ${window.label}.${long}`;
   return `${rep.name} has ${mix} out worth ${formatCents(rep.openCents)}; about ${formatCents(rep.thisCents)} is likely to sign in ${months.thisMonth} and ${formatCents(rep.nextCents)} in ${months.nextMonth}.${long}`;
 }
 
-export async function loadForecast(organizationId: string, options: { today: string; repIds: string[]; timeZone: string }): Promise<Forecast> {
+const DAY_WORDS = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+export function forecastWindow(today: string, from: string, to: string): ForecastWindow | null {
+  if (to < today) return null;
+  const start = from < today ? today : from;
+  const words = (iso: string) => DAY_WORDS.format(new Date(`${iso}T12:00:00Z`));
+  return { from: start, to, label: `between ${words(start)} and ${words(to)}`, rough: to > monthEnd(today, 1) };
+}
+
+export async function loadForecast(
+  organizationId: string,
+  options: { today: string; repIds: string[]; timeZone: string; window?: ForecastWindow | null },
+): Promise<Forecast> {
   const { today, repIds, timeZone } = options;
+  const window = options.window ?? null;
   const since = new Date(Date.now() - 365 * DAY);
   const openWhere = { organizationId, stage: { in: [...FORECAST_STAGES] }, ...(repIds.length ? { ownerId: { in: repIds } } : {}) };
   const [changesNewest, firstChange, open, openCount] = await Promise.all([
@@ -229,13 +251,15 @@ export async function loadForecast(organizationId: string, options: { today: str
       expectedOn,
       bucket: expectedOn <= thisEnd ? "this" : expectedOn <= nextEnd ? "next" : "later",
       long,
+      inWindow: Boolean(window && expectedOn >= window.from && expectedOn <= window.to),
     };
   });
 
   const byRep = new Map<string, Omit<RepForecast, "sentence">>();
   for (const deal of deals) {
     const key = deal.repId ?? NO_REP;
-    const row = byRep.get(key) ?? { id: key, name: deal.rep, deals: 0, openCents: 0, thisCents: 0, nextCents: 0, quotes: 0, contracts: 0, long: 0 };
+    const row = byRep.get(key) ?? { id: key, name: deal.rep, deals: 0, openCents: 0, thisCents: 0, nextCents: 0, windowCents: 0, quotes: 0, contracts: 0, long: 0 };
+    if (deal.inWindow) row.windowCents += deal.weightedCents;
     row.deals += 1;
     row.openCents += deal.valueCents;
     if (deal.bucket === "this") row.thisCents += deal.weightedCents;
@@ -248,7 +272,7 @@ export async function loadForecast(organizationId: string, options: { today: str
   const months = { thisMonth, nextMonth };
   const reps = [...byRep.values()]
     .sort((a, b) => b.thisCents - a.thisCents || b.openCents - a.openCents || a.name.localeCompare(b.name))
-    .map((rep) => ({ ...rep, sentence: repSentence(rep, months) }));
+    .map((rep) => ({ ...rep, sentence: repSentence(rep, months, window) }));
 
   const lowConfidence = historyDays < CONFIDENT_AFTER_DAYS;
   const confidenceNote = lowConfidence
@@ -263,10 +287,12 @@ export async function loadForecast(organizationId: string, options: { today: str
     totals: {
       thisCents: deals.filter((deal) => deal.bucket === "this").reduce((sum, deal) => sum + deal.weightedCents, 0),
       nextCents: deals.filter((deal) => deal.bucket === "next").reduce((sum, deal) => sum + deal.weightedCents, 0),
+      windowCents: deals.filter((deal) => deal.inWindow).reduce((sum, deal) => sum + deal.weightedCents, 0),
       deals: deals.length,
       openCents: deals.reduce((sum, deal) => sum + deal.valueCents, 0),
     },
     reps,
+    window,
     long: deals.filter((deal) => deal.long).sort((a, b) => b.valueCents - a.valueCents).slice(0, 10),
     leftOut: Math.max(0, openCount - open.length),
     historyDays,
@@ -285,26 +311,30 @@ function repFacts(rep: RepForecast, forecast: Forecast) {
     quotesOut: rep.quotes,
     contractsOut: rep.contracts,
     openValue: formatCents(rep.openCents),
-    likelyThisMonth: { month: forecast.thisMonth, value: formatCents(rep.thisCents) },
-    likelyNextMonth: { month: forecast.nextMonth, value: formatCents(rep.nextCents) },
+    ...(forecast.window
+      ? { likelyInPickedDates: { dates: forecast.window.label, value: formatCents(rep.windowCents), rough: forecast.window.rough } }
+      : {
+          likelyThisMonth: { month: forecast.thisMonth, value: formatCents(rep.thisCents) },
+          likelyNextMonth: { month: forecast.nextMonth, value: formatCents(rep.nextCents) },
+        }),
     runningLong: rep.long,
     lowConfidence: forecast.lowConfidence,
   };
 }
 
-export function forecastKey(repIds: string[]) {
-  return `forecast:${[...repIds].sort().join(",") || "all"}`;
+export function forecastKey(repIds: string[], window: ForecastWindow | null = null) {
+  return `forecast:${[...repIds].sort().join(",") || "all"}${window ? `|${window.from}..${window.to}` : ""}`;
 }
 
 export function forecastFingerprint(forecast: Forecast) {
-  return fingerprintOf({ months: [forecast.thisMonth, forecast.nextMonth], reps: forecast.reps.map((rep) => repFacts(rep, forecast)) });
+  return fingerprintOf({ months: [forecast.thisMonth, forecast.nextMonth], window: forecast.window, reps: forecast.reps.map((rep) => repFacts(rep, forecast)) });
 }
 
 export type ForecastNotes = Record<string, string>;
 
 export async function storedForecastNotes(organizationId: string, repIds: string[], forecast: Forecast) {
   if (!aiConfigured() || forecast.reps.length === 0) return null;
-  return readWriting<ForecastNotes>(organizationId, forecastKey(repIds), forecastFingerprint(forecast));
+  return readWriting<ForecastNotes>(organizationId, forecastKey(repIds, forecast.window), forecastFingerprint(forecast));
 }
 
 const notesSchema = z.object({
@@ -332,7 +362,7 @@ export async function writeForecastNotes(input: {
     system:
       "You explain a small service business's sales forecast to its owner, one plain sentence per salesperson: what they have out and what is likely to sign when. " +
       "Use ONLY the numbers given for that person, written as they appear (rounding money to thousands like $12k is fine). Do not work out new numbers, totals or percentages. " +
-      "When lowConfidence is true, say the forecast is early. Answer with each person's id exactly as given.",
+      "When lowConfidence is true, say the forecast is early; when rough is true, say dates that far out are a rough guess. Answer with each person's id exactly as given.",
     prompt: `The forecast's numbers, one entry per salesperson, as JSON:\n${JSON.stringify(facts, null, 1)}\n\nWrite one sentence for each.`,
     schema: notesSchema,
     maxTokens: 2000,
@@ -356,6 +386,6 @@ export async function writeForecastNotes(input: {
     notes[row.id] = sentence;
   }
   if (dropped) console.warn(`[forecast] dropped ${dropped} AI sentence(s) that didn't match the numbers`);
-  await storeWriting(input.organizationId, forecastKey(input.repIds), forecastFingerprint(forecast), notes);
+  await storeWriting(input.organizationId, forecastKey(input.repIds, forecast.window), forecastFingerprint(forecast), notes);
   return { notes, dropped };
 }

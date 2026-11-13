@@ -178,6 +178,15 @@ let lastPage = null;
     [org, userId],
   );
   await sql(`INSERT INTO "ContactAccount" (id,"organizationId","contactId","companyId") VALUES ('ra_acct',$1,'ra_dana','ra_co_harbor')`, [org]);
+  await sql(`UPDATE "Company" SET website='https://www.brightline.com', phone='(512) 555-0900' WHERE id='ra_co_bright'`);
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,website,phone,city,state,"companyTypes","updatedAt") VALUES
+       ('ra_cb_name',$1,'BRIGHTLINE, Property',NULL,NULL,'Austin','TX','{}',now()),
+       ('ra_cb_web',$1,'BL Holdings','brightline.com/contact',NULL,NULL,NULL,'{}',now()),
+       ('ra_cb_phone',$1,'Front Office Co',NULL,'512.555.0900',NULL,NULL,'{}',now()),
+       ('ra_cb_no',$1,'Brightline Partners','https://brightlinepartners.com','(512) 555-0901',NULL,NULL,'{}',now())`,
+    [org],
+  );
   await sql(
     `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,outcome,body,marketing,"occurredAt") VALUES
        ('ra_a0',$1,'ra_dana',$2,'MEETING','HELD','Old meeting long ago',false,now() - interval '20 days'),
@@ -550,7 +559,9 @@ let lastPage = null;
     return {
       reps: reps.map((rep) =>
         rep.rep === "Rae Rep"
-          ? { id: rep.id, sentence: `Rae Rep has 1 contract out worth ${rep.openValue}; about ${rep.likelyThisMonth.value} looks likely in ${rep.likelyThisMonth.month}, but it's early.` }
+          ? rep.likelyInPickedDates
+            ? { id: rep.id, sentence: `Rae Rep has ${rep.likelyInPickedDates.value} likely ${rep.likelyInPickedDates.dates}, a rough guess.` }
+            : { id: rep.id, sentence: `Rae Rep has 1 contract out worth ${rep.openValue}; about ${rep.likelyThisMonth.value} looks likely in ${rep.likelyThisMonth.month}, but it's early.` }
           : { id: rep.id, sentence: "Taylor Test should close 7 deals soon." },
       ),
     };
@@ -620,6 +631,46 @@ let lastPage = null;
   assert.equal(await page.getByTestId("forecast-confidence").getAttribute("data-low"), null);
   assert.match(await page.getByTestId("forecast-confidence").innerText(), /Built from 100 days/);
 
+  log("Taylor, Nov 13: Stats' Custom dates. Past dates count what happened in them and leave the forecast on this month and next");
+  await page.goto(`${BASE}/dashboard/stats`);
+  await page.getByTestId("stats-custom-toggle").click();
+  await page.getByTestId("stats-from").fill(plusDays(TODAY, -10));
+  await page.getByTestId("stats-to").fill(plusDays(TODAY, -1));
+  await page.getByTestId("stats-custom-apply").click();
+  await page.waitForURL(new RegExp(`from=${plusDays(TODAY, -10)}&to=${plusDays(TODAY, -1)}`));
+  await page.getByTestId("forecast").waitFor();
+  assert.match(await page.getByTestId("stats-period-line").innerText(), /compared with the same number of days before/);
+  await page.getByTestId("forecast-past-dates").waitFor();
+  assert.equal(await rae.getByTestId("forecast-this").innerText(), "$3,000.00");
+
+  log("dates reaching ahead narrow the forecast to them, by rep, marked rough past next month; the AI sentence is kept for those dates; a rep filter keeps the dates, a period button drops them");
+  const ahead = plusDays(TODAY, 60);
+  await page.goto(`${BASE}/dashboard/stats?from=${TODAY}&to=${ahead}`);
+  await page.getByTestId("forecast").waitFor();
+  assert.equal(await rae.getByTestId("forecast-window").innerText(), "$3,000.00");
+  // The won-then-lost deal took Quote Sent to 25% (0 won, 1 lost, blended): $3,000 × 25%.
+  assert.equal(await taylor.getByTestId("forecast-window").innerText(), "$750.00", "Taylor's quote is expected in 30 days, inside the dates");
+  assert.equal(await rae.getByTestId("forecast-this").count(), 0);
+  const nextMonthEnd = (() => {
+    const [y, m] = TODAY.split("-").map(Number);
+    return new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10);
+  })();
+  assert.equal(await page.getByTestId("forecast-rough").count(), ahead > nextMonthEnd ? 1 : 0);
+  await page.locator("[data-testid=forecast-rep][data-rep=ra_rae] [data-testid=forecast-sentence][data-source=ai]").waitFor();
+  assert.match(await rae.getByTestId("forecast-sentence").innerText(), /a rough guess/);
+  assert.ok(await one(`SELECT 1 FROM "AiWriting" WHERE "organizationId"=$1 AND key=$2`, [org, `forecast:all|${TODAY}..${ahead}`]), "kept for these dates");
+  assert.match(claude.last("FORECAST_NOTE").text, /likelyInPickedDates/);
+  await page.goto(`${BASE}/dashboard/stats?from=${plusDays(TODAY, 31)}&to=${ahead}`);
+  await page.getByTestId("forecast").waitFor();
+  assert.equal(await taylor.getByTestId("forecast-window").innerText(), "$0.00", "expected before these dates");
+  await page.getByTestId("stats-filters").getByRole("link", { name: "Rae Rep" }).click();
+  await page.waitForURL(/reps=ra_rae/);
+  assert.match(page.url(), new RegExp(`from=${plusDays(TODAY, 31)}`));
+  await page.getByTestId("stats-filters").getByRole("link", { name: "7 days" }).click();
+  await page.waitForURL(/period=7d/);
+  assert.doesNotMatch(page.url(), /from=/);
+  await page.getByTestId("forecast-this").first().waitFor();
+
   /* --------------------------- A5 the same person? --------------------------- */
 
   log("Looks like the same person: the same email (other case), the same phone (other format), the same name at another company; Mike isn't");
@@ -679,6 +730,40 @@ let lastPage = null;
   assert.equal(await page.locator("[data-testid=lookalike]").count(), 5);
   await sql(`DELETE FROM "Contact" WHERE ("id" LIKE 'ra_line_%' OR id='ra_twin') AND "organizationId"=$1`, [org]);
 
+  log("Taylor, Nov 13: Looks like the same business on a company page: the same name (other case and punctuation), website (other form) and phone; Brightline Partners isn't");
+  await page.goto(`${BASE}/dashboard/companies/ra_co_bright`);
+  await page.getByTestId("company-lookalikes").waitFor();
+  const companyIds = await page.locator("[data-testid=company-lookalike]").evaluateAll((list) => list.map((row) => row.getAttribute("data-company-id")));
+  assert.deepEqual([...companyIds].sort(), ["ra_cb_name", "ra_cb_phone", "ra_cb_web"]);
+  assert.match(await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_name]").innerText(), /same name/);
+  assert.match(await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_web]").innerText(), /same website/);
+  assert.match(await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_phone]").innerText(), /same phone/);
+
+  log("Not the same business: gone, remembered, Undo brings it back; Find duplicates hides the pair; Merge these opens Merge Companies with both");
+  await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_name]").getByTestId("company-lookalike-dismiss").click();
+  await page.getByTestId("company-lookalike-notice").waitFor();
+  assert.equal(await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_name]").count(), 0);
+  assert.ok(await one(`SELECT 1 FROM "DuplicateDismissal" WHERE "organizationId"=$1 AND kind='company'`, [org]));
+  await page.getByTestId("company-lookalike-undo").click();
+  await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_name]").waitFor();
+  assert.equal(await one(`SELECT 1 FROM "DuplicateDismissal" WHERE "organizationId"=$1 AND kind='company'`, [org]), undefined);
+  await page.goto(`${BASE}/dashboard/companies/duplicates?by=name`);
+  await page.locator("[data-testid=dup-key]", { hasText: "brightlineproperty" }).waitFor();
+  await page.goto(`${BASE}/dashboard/companies/ra_co_bright`);
+  await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_name]").getByTestId("company-lookalike-dismiss").click();
+  await page.getByTestId("company-lookalike-notice").waitFor();
+  await page.reload();
+  await page.getByTestId("company-lookalikes").waitFor();
+  assert.equal(await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_name]").count(), 0, "still gone after a reload");
+  await page.goto(`${BASE}/dashboard/companies/duplicates?by=name`);
+  await page.locator("h1").first().waitFor();
+  assert.equal(await page.locator("[data-testid=dup-key]", { hasText: "brightlineproperty" }).count(), 0, "the pair is hidden in Find duplicates");
+  await page.goto(`${BASE}/dashboard/companies/ra_co_bright`);
+  await page.locator("[data-testid=company-lookalike][data-company-id=ra_cb_web]").getByRole("button", { name: "Merge these" }).click();
+  await page.getByTestId("merge-dialog").waitFor();
+  assert.equal(await page.getByTestId("merge-picked").locator("li").count(), 2);
+  await page.keyboard.press("Escape");
+
   /* ------------------------------- the phone ------------------------------- */
 
   log("phone width: the contact page, the brief, Up next's opener and the log sheet fit 390px with 44px targets");
@@ -692,6 +777,15 @@ let lastPage = null;
   assert.ok((await phonePage.evaluate(() => document.documentElement.scrollWidth)) <= 390, "no sideways scroll");
   const mergeTap = await phonePage.getByTestId("lookalikes").getByRole("button", { name: "Merge these" }).first().boundingBox();
   assert.ok(mergeTap.height >= 43.5, `audit fixes: Merge these is a 44px target (${mergeTap.height})`);
+  await phonePage.goto(`${BASE}/dashboard/companies/ra_co_bright`);
+  await phonePage.getByTestId("company-lookalikes").waitFor();
+  assert.ok((await phonePage.evaluate(() => document.documentElement.scrollWidth)) <= 390, "company page: no sideways scroll");
+  const companyMerge = await phonePage.getByTestId("company-lookalikes").getByRole("button", { name: "Merge these" }).first().boundingBox();
+  assert.ok(companyMerge.height >= 43.5, `company Merge these is a 44px target (${companyMerge.height})`);
+  await phonePage.goto(`${BASE}/dashboard/stats?from=${TODAY}&to=${plusDays(TODAY, 20)}`);
+  await phonePage.getByTestId("forecast").waitFor();
+  assert.ok((await phonePage.evaluate(() => document.documentElement.scrollWidth)) <= 390, "Stats with Custom open: no sideways scroll");
+  await phonePage.goto(`${BASE}/dashboard/contacts/ra_dana`);
   await phonePage.getByTestId("brief-me").click();
   await phonePage.getByTestId("brief-facts").waitFor();
   const sheet = await phonePage.getByTestId("brief-sheet").locator("[role=dialog]").first().boundingBox().catch(() => null);
@@ -747,6 +841,9 @@ let lastPage = null;
   assert.equal(await offPage.getByTestId("brief-rewrite").count(), 0);
   await offPage.getByTestId("brief-close").click();
   await offPage.getByTestId("lookalikes").waitFor();
+  await offPage.goto(`${NOAI_BASE}/dashboard/companies/ra_co_bright`);
+  await offPage.getByTestId("company-lookalikes").waitFor();
+  await offPage.goto(`${NOAI_BASE}/dashboard/contacts/ra_dana`);
   await offPage.getByTestId("log-bar").click();
   await offPage.getByTestId("log-mic").waitFor();
   await offPage.waitForTimeout(500);
