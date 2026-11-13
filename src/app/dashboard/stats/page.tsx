@@ -14,11 +14,13 @@ import { Columns } from "@/app/dashboard/reports/charts";
 import { FunnelBars, RepActivityBars, VelocityBars } from "./charts";
 import { Leaderboard } from "./leaderboard";
 import { ForecastReps } from "./forecast";
-import { loadForecast, storedForecastNotes } from "@/lib/forecast";
+import { forecastWindow, loadForecast, storedForecastNotes } from "@/lib/forecast";
+import { zonedMoment } from "@/lib/calendar-auto";
+import { addDays } from "@/lib/payments";
 import { aiConfigured } from "@/lib/ai";
 import { todayIso } from "@/lib/payments";
 
-type Params = Promise<{ period?: string; reps?: string }>;
+type Params = Promise<{ period?: string; reps?: string; from?: string; to?: string }>;
 
 // The funnel Stats shows (Nov 11, 2026): Interested is a side step a
 // person may skip, so it stays in the counts (and the Columns menu's
@@ -70,15 +72,31 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
   const asked = everyone ? [] : readIds(params.reps, 20);
   const repIds = asked.length ? asked : member && !everyone && params.reps === undefined ? [userId] : [];
   const timeZone = await getTimeZone();
+  const today = todayIso(timeZone);
+  // A custom From–To (Taylor, Nov 13, 2026), beside the period buttons.
+  // What has happened is counted up to today; the forecast takes whatever
+  // part of the dates is still ahead.
+  const custom = readCustomRange(params.from, params.to);
+  const range = custom
+    ? (() => {
+        const start = zonedMoment(custom.from, "00:00", timeZone);
+        const end = zonedMoment(addDays(custom.to, 1), "00:00", timeZone);
+        const now = new Date();
+        const to = end < now ? end : now;
+        return { from: start, to: to < start ? start : to };
+      })()
+    : undefined;
+  const window = custom ? forecastWindow(today, custom.from, custom.to) : null;
 
   await sweepStaleContracts(organizationId);
   const [stats, users, me, forecast] = await Promise.all([
-    loadStats(organizationId, { period, userIds: repIds, timeZone }),
+    loadStats(organizationId, { period, userIds: repIds, timeZone, range }),
     loadWorkspaceUsers(organizationId),
     readUiPrefsWithLegacy(userId),
-    // The forecast follows the rep filter (Members open on Me); it looks
-    // ahead, so the period picker doesn't apply to it.
-    loadForecast(organizationId, { today: todayIso(timeZone), repIds, timeZone }),
+    // The forecast follows the rep filter (Members open on Me). It looks
+    // ahead: the period buttons look back and leave it on this month and
+    // next; picked dates that reach past today narrow it to those dates.
+    loadForecast(organizationId, { today, repIds, timeZone, window }),
   ]);
   const forecastStored = await storedForecastNotes(organizationId, repIds, forecast);
   const t = stats.totals;
@@ -91,7 +109,11 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
   const href = (changes: { period?: string; reps?: string[] }) => {
     const search = new URLSearchParams();
     const nextPeriod = changes.period ?? period;
-    if (nextPeriod !== "30d") search.set("period", nextPeriod);
+    // Picking a period button leaves the custom dates; changing reps keeps them.
+    if (custom && !changes.period) {
+      search.set("from", custom.from);
+      search.set("to", custom.to);
+    } else if (nextPeriod !== "30d") search.set("period", nextPeriod);
     const nextReps = changes.reps ?? repIds;
     if (nextReps.length) search.set("reps", nextReps.join(","));
     // A Member's Everyone has to say so, or the page opens on them again.
@@ -117,11 +139,16 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
         <div className="min-w-0">
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-[var(--brand)]">Stats / Reporting</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">Sales command center</h1>
-          <p className="faint mt-1 text-sm">
-            Last {PERIODS[period].label}
+          <p className="faint mt-1 text-sm" data-testid="stats-period-line">
+            {custom ? `${dayWords(custom.from)} – ${dayWords(custom.to)}` : `Last ${PERIODS[period].label}`}
             {justMe ? " · just you" : repIds.length ? ` · ${repIds.length} ${repIds.length === 1 ? "rep" : "reps"}` : " · the whole team"} · compared with the{" "}
-            {PERIODS[period].label} before
+            {custom ? "same number of days before" : `${PERIODS[period].label} before`}
           </p>
+          {custom && custom.from > today && (
+            <p className="faint mt-1 text-xs" data-testid="stats-dates-ahead">
+              These dates are still ahead, so there is nothing to count yet. The forecast below covers them.
+            </p>
+          )}
           {talksSince && (
             <p className="faint mt-1 text-xs" data-testid="stats-talks-since">
               Talks counted from {talksSince}, when the app started recording how each touch went.
@@ -132,17 +159,18 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
 
       {/* One row of filters above everything they scope. */}
       <div className="mb-6 flex flex-wrap items-center gap-2" data-testid="stats-filters">
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Period">
+        <div className="flex flex-wrap items-start gap-1" role="group" aria-label="Period">
           {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
             <Link
               key={key}
               href={href({ period: key })}
-              className={`btn btn-sm pointer-coarse:min-h-11 ${key === period ? "btn-primary" : "btn-ghost"}`}
-              aria-current={key === period ? "true" : undefined}
+              className={`btn btn-sm pointer-coarse:min-h-11 ${key === period && !custom ? "btn-primary" : "btn-ghost"}`}
+              aria-current={key === period && !custom ? "true" : undefined}
             >
               {PERIODS[key].label}
             </Link>
           ))}
+          <CustomRange from={custom?.from ?? ""} to={custom?.to ?? ""} reps={params.reps ?? ""} active={Boolean(custom)} />
         </div>
         <span className="mx-1 hidden h-5 w-px bg-[var(--border)] sm:block" />
         <div className="flex flex-wrap gap-1" role="group" aria-label="Reps">
@@ -282,7 +310,11 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
 
       <Panel
         title="Forecast"
-        sub={`What's likely to sign in ${forecast.thisMonth} and ${forecast.nextMonth}, from quotes and contracts out now. Follows the rep filter, not the period.`}
+        sub={
+          forecast.window
+            ? `What's likely to sign ${forecast.window.label}, from quotes and contracts out now. Follows the picked dates and the rep filter.`
+            : `What's likely to sign in ${forecast.thisMonth} and ${forecast.nextMonth}, from quotes and contracts out now. Follows the rep filter; pick dates ahead of today to forecast those.`
+        }
         className="mt-4"
       >
         <div data-testid="forecast">
@@ -295,23 +327,46 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             {forecast.confidenceNote}
           </p>
           <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Mini label={`Likely in ${forecast.thisMonth}`} value={formatCents(forecast.totals.thisCents)} />
-            <Mini label={`Likely in ${forecast.nextMonth}`} value={formatCents(forecast.totals.nextCents)} />
+            {forecast.window ? (
+              <>
+                <Mini label={`Likely ${forecast.window.label}`} value={formatCents(forecast.totals.windowCents)} />
+                <Mini label="Days ahead in the dates" value={String(Math.round((Date.parse(forecast.window.to) - Date.parse(forecast.window.from)) / 86_400_000) + 1)} />
+              </>
+            ) : (
+              <>
+                <Mini label={`Likely in ${forecast.thisMonth}`} value={formatCents(forecast.totals.thisCents)} />
+                <Mini label={`Likely in ${forecast.nextMonth}`} value={formatCents(forecast.totals.nextCents)} />
+              </>
+            )}
             <Mini label={`Out now (${forecast.totals.deals})`} value={formatCents(forecast.totals.openCents)} />
             <Mini label="Running long" value={String(forecast.reps.reduce((sum, rep) => sum + rep.long, 0))} />
           </div>
+          {forecast.window?.rough && (
+            <p className="mb-2 text-xs text-[var(--warn)]" data-testid="forecast-rough">
+              Rough: past the end of {forecast.nextMonth} the forecast is a guess, since few deals are decided that far out.
+            </p>
+          )}
+          {custom && !forecast.window && (
+            <p className="faint mb-2 text-xs" data-testid="forecast-past-dates">
+              Those dates are behind us, so the forecast shows this month and next. The numbers above count what happened in them.
+            </p>
+          )}
           {forecast.leftOut > 0 && (
             <p className="mb-2 text-xs text-[var(--warn)]" data-testid="forecast-left-out">
               Counting the newest {(forecast.totals.deals).toLocaleString("en-US")} open deals; {forecast.leftOut.toLocaleString("en-US")} older ones are left out.
             </p>
           )}
           <ForecastReps
-            key={`${repIds.join(",") || "all"}|${forecastStored ? "kept" : "new"}|${forecast.reps.map((rep) => `${rep.id}:${rep.thisCents}:${rep.nextCents}:${rep.deals}`).join(",")}`}
+            key={`${repIds.join(",") || "all"}|${forecast.window ? `${forecast.window.from}..${forecast.window.to}` : "default"}|${forecastStored ? "kept" : "new"}|${forecast.reps.map((rep) => `${rep.id}:${rep.thisCents}:${rep.nextCents}:${rep.deals}`).join(",")}`}
             rows={forecast.reps.map((rep) => ({
               id: rep.id,
               name: rep.name,
-              thisCents: formatCents(rep.thisCents),
-              nextCents: formatCents(rep.nextCents),
+              columns: forecast.window
+                ? [{ label: "in the dates", value: formatCents(rep.windowCents), testId: "forecast-window" }]
+                : [
+                    { label: forecast.thisMonth, value: formatCents(rep.thisCents), testId: "forecast-this" },
+                    { label: forecast.nextMonth, value: formatCents(rep.nextCents), testId: "forecast-next" },
+                  ],
               open: formatCents(rep.openCents),
               deals: rep.deals,
               long: rep.long,
@@ -320,8 +375,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             repIds={repIds}
             ai={aiConfigured()}
             stored={forecastStored}
-            thisMonth={forecast.thisMonth}
-            nextMonth={forecast.nextMonth}
+            dates={forecast.window ? { from: custom!.from, to: custom!.to } : null}
           />
           {forecast.long.length > 0 && (
             <div className="mt-4" data-testid="forecast-long">
@@ -436,6 +490,48 @@ function Rate({ label, hint, value, testId }: { label: string; hint: string; val
       </div>
       <p className="faint mt-1.5 text-[0.66rem]">{hint}</p>
     </div>
+  );
+}
+
+// From–To in the address bar: real days, From on or before To, at most
+// three years apart. Anything else is ignored and the period buttons rule.
+function readCustomRange(from?: string, to?: string) {
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (!from || !to || !day.test(from) || !day.test(to)) return null;
+  const a = Date.parse(`${from}T12:00:00Z`);
+  const b = Date.parse(`${to}T12:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b) || a > b || b - a > 3 * 366 * 86_400_000) return null;
+  if (new Date(a).toISOString().slice(0, 10) !== from || new Date(b).toISOString().slice(0, 10) !== to) return null;
+  return { from, to };
+}
+
+function dayWords(iso: string) {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+// "Custom" beside the period buttons: two dates and Apply, as a plain form
+// (works before the page's JavaScript loads). The reps picked stay.
+function CustomRange({ from, to, reps, active }: { from: string; to: string; reps: string; active: boolean }) {
+  return (
+    <details className="relative" open={active || undefined} data-testid="stats-custom">
+      <summary className={`btn btn-sm pointer-coarse:min-h-11 cursor-pointer list-none ${active ? "btn-primary" : "btn-ghost"}`} data-testid="stats-custom-toggle">
+        Custom
+      </summary>
+      <form method="get" action="/dashboard/stats" className="mt-1 flex flex-wrap items-end gap-2" data-testid="stats-custom-form">
+        {reps && <input type="hidden" name="reps" value={reps} />}
+        <label className="text-xs">
+          <span className="faint block">From</span>
+          <input type="date" name="from" defaultValue={from} required className="input input-sm" data-testid="stats-from" />
+        </label>
+        <label className="text-xs">
+          <span className="faint block">To</span>
+          <input type="date" name="to" defaultValue={to} required className="input input-sm" data-testid="stats-to" />
+        </label>
+        <button type="submit" className="btn btn-primary btn-sm pointer-coarse:min-h-11" data-testid="stats-custom-apply">
+          Apply
+        </button>
+      </form>
+    </details>
   );
 }
 

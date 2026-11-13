@@ -39,17 +39,18 @@ export type DuplicateGroup = { key: string; count: number; ids: string[] };
 // are always shown (and never checked pair by pair). The check is skipped
 // outright while the workspace has marked nobody.
 const DISMISS_CHECK_UP_TO = 10;
+// Companies too since Nov 13, 2026 ("Not the same business").
 function dismissedFilter(kind: DuplicateKind, organizationId: string): Prisma.Sql {
-  if (kind !== "contacts") return Prisma.sql`true`;
+  const pair = kind === "contacts" ? "contact" : "company";
   return Prisma.sql`(
-    NOT EXISTS (SELECT 1 FROM "DuplicateDismissal" WHERE "organizationId" = ${organizationId} AND kind = 'contact')
+    NOT EXISTS (SELECT 1 FROM "DuplicateDismissal" WHERE "organizationId" = ${organizationId} AND kind = ${pair})
     OR n > ${DISMISS_CHECK_UP_TO}
     OR EXISTS (
       SELECT 1 FROM unnest(members) a, unnest(members) b
        WHERE a COLLATE "C" < b COLLATE "C"
          AND NOT EXISTS (
            SELECT 1 FROM "DuplicateDismissal" d
-            WHERE d."organizationId" = ${organizationId} AND d.kind = 'contact' AND d."aId" = a AND d."bId" = b
+            WHERE d."organizationId" = ${organizationId} AND d.kind = ${pair} AND d."aId" = a AND d."bId" = b
          )
     )
   )`;

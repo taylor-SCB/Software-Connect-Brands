@@ -18,6 +18,8 @@ import { dayInZone } from "@/lib/calendar-auto";
 import { AddPersonSearch } from "@/components/add-person-search";
 import { MergeButton } from "@/components/merge-button";
 import { LooksRightButton } from "./looks-right-button";
+import { CompanyLookalikes } from "./lookalikes";
+import { findCompanyLookalikes } from "@/lib/lookalikes";
 import { ActivityOverview } from "@/components/activity-overview";
 import { BalanceCard } from "@/components/balance-card";
 import { ProjectsCard } from "@/components/projects-card";
@@ -196,7 +198,7 @@ export default async function CompanyDetailPage({
   // What this company owes and what we owe them, for the Balance card.
   const balance = await loadBalance(organizationId, { companyId: company.id }, today);
 
-  const [upcoming, eventChoices, reps, lastTouch] = await Promise.all([
+  const [upcoming, eventChoices, reps, lastTouch, lookalikes] = await Promise.all([
     upcomingFor(organizationId, { companyId: company.id }, today),
     loadEventChoices(organizationId, userId),
     loadRepChoices(organizationId),
@@ -205,6 +207,8 @@ export default async function CompanyDetailPage({
       orderBy: { occurredAt: "desc" },
       select: { occurredAt: true },
     }),
+    // Looks like the same business (Nov 13, 2026): one statement, no AI.
+    findCompanyLookalikes(organizationId, company),
   ]);
 
   // The jobs won here, newest first.
@@ -512,6 +516,8 @@ export default async function CompanyDetailPage({
             </HeaderActions>
           </div>
         </header>
+
+        <CompanyLookalikes me={{ id: company.id, name: company.name, city: company.city, state: company.state }} rows={lookalikes} />
 
         {/* One column below lg that is never wider than the screen
             (Nov 10, 2026): a grid's lone implicit column grew to its widest

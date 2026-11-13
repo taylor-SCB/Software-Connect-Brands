@@ -436,6 +436,7 @@ model Company {
   // declared on the datasource above so migrate dev keeps them.
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_name_trgm_idx")
   @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_phone_trgm_idx")
+  @@index([website(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_website_trgm_idx")
   @@index([city(ops: raw("gin_trgm_ops"))], type: Gin, map: "Company_city_trgm_idx")
   @@index([organizationId, lastConnectAt])
 }
