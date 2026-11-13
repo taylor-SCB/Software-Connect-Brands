@@ -7,6 +7,7 @@ import { todayIso } from "@/lib/payments";
 import { formatCents, formatDateTime } from "@/lib/format";
 import { computeQuoteTotals } from "@/lib/quote-math";
 import { contractTotalCents } from "@/lib/contracts";
+import { recentSaves } from "@/lib/recent-saves";
 import { wholeDollars } from "@/lib/health";
 import { ACTIVITY_LABELS, OPEN_DEAL_STAGES, OPEN_PROJECT_STAGES, type ActivityTypeValue } from "@/lib/constants";
 import { dealValueCents, QUOTES_FOR_VALUE } from "@/lib/deals";
@@ -21,6 +22,7 @@ import { CADENCE_LABELS, cadencesFor, isCadence } from "@/lib/reports/subscripti
 import { ReportControls } from "./reports/report-controls";
 import { loadMyDay } from "./my-day/load";
 import { MyDayView, TeamTodayStrip } from "./my-day/my-day";
+import { PlannerBox } from "@/components/planner-box";
 import { MemberJumpIn } from "./my-day/jump-in";
 import { loadTeamToday } from "@/lib/reports/daily";
 import { subInsuranceFlags } from "@/lib/compliance";
@@ -96,6 +98,7 @@ async function loadOverview(organizationId: string, timeZone: string, repId: str
       where: { organizationId, ...myDeal, status: "SENT", payable: false },
       select: {
         discountCents: true,
+        quoteId: true,
         lineItems: { select: { quantity: true, unitPriceCents: true, discountCents: true } },
         quote: {
           select: {
@@ -109,36 +112,42 @@ async function loadOverview(organizationId: string, timeZone: string, repId: str
     prisma.contract.count({ where: { organizationId, ...myDeal, status: "SIGNED" } }),
     // Real touches only (Nov 10, 2026): a marketing blast would fill the
     // box; it has its own column on the lists and its own chart in Activity.
-    // Read wide enough to fold into 8 saves (one call logged on three
-    // people is three rows with one batchId).
-    prisma.activity.findMany({
-      where: { organizationId, marketing: false, occurredAt: { lte: new Date() }, ...(repId ? { userId: repId } : {}) },
-      orderBy: { occurredAt: "desc" },
-      take: 60,
-      include: {
-        contact: { select: { id: true, name: true, company: { select: { name: true } } } },
-        company: { select: { id: true, name: true } },
-        user: { select: { name: true } },
-      },
-    }),
+    // The 8 latest saves, picked before their rows are read (audit fix,
+    // Nov 12, 2026): one call on 100 people is one line, "+ 97".
+    recentSaves(organizationId, { userId: repId, to: new Date(), limit: 8 }),
     // What every customer still owes on signed paperwork, in one query.
     owedTotals(organizationId, todayIso(timeZone), repId),
     prisma.project.count({ where: { organizationId, ...myDeal, stage: { in: [...OPEN_PROJECT_STAGES] } } }),
   ]);
 
   const openDealValue = openDeals.reduce((sum, deal) => sum + dealValueCents(deal), 0);
-  const awaitingCents = awaitingContracts.reduce(
-    (sum, contract) =>
-      sum +
-      (contract.lineItems.length
-        ? contractTotalCents(contract.lineItems, contract.discountCents)
-        : contract.quote
-          ? computeQuoteTotals(contract.quote.lineItems, contract.quote).totalCents
-          : 0),
-    0,
-  );
+  // A quote counts once (audit fix, Nov 12, 2026): two row-less contracts
+  // on one quote (a Service Agreement and a Compliance Agreement) added it
+  // twice, and a row-less card beside contracts that do carry the quote's
+  // rows added it on top of them.
+  const rowlessQuotes = [...new Set(awaitingContracts.filter((c) => !c.lineItems.length && c.quoteId).map((c) => c.quoteId!))];
+  const quotesWithRows = rowlessQuotes.length
+    ? new Set(
+        (
+          await prisma.contract.findMany({
+            where: { organizationId, quoteId: { in: rowlessQuotes }, status: { in: ["DRAFT", "SENT", "SIGNED"] }, lineItems: { some: {} } },
+            select: { quoteId: true },
+          })
+        ).map((row) => row.quoteId!),
+      )
+    : new Set<string>();
+  const countedQuotes = new Set<string>();
+  let awaitingCents = 0;
+  for (const contract of awaitingContracts) {
+    if (contract.lineItems.length) {
+      awaitingCents += contractTotalCents(contract.lineItems, contract.discountCents);
+    } else if (contract.quote && contract.quoteId && !quotesWithRows.has(contract.quoteId) && !countedQuotes.has(contract.quoteId)) {
+      countedQuotes.add(contract.quoteId);
+      awaitingCents += computeQuoteTotals(contract.quote.lineItems, contract.quote).totalCents;
+    }
+  }
   const awaitingSignature = awaitingContracts.length;
-  const saves = foldSaves(recentActivity).slice(0, 8);
+  const saves = recentActivity;
   const quotedValue = sentQuotes.reduce(
     (sum, quote) => sum + computeQuoteTotals(quote.lineItems, quote).totalCents,
     0,
@@ -213,36 +222,6 @@ function OverviewTiles({ data }: { data: Overview }) {
 
 type RecentRow = Overview["saves"][number];
 
-// One line per save (BDR redesign, Round 2): a call logged on three people
-// is one line naming them — "Rebecca Sloan, Jason Tran · Magnolia · Priya".
-function foldSaves<
-  T extends {
-    id: string;
-    batchId: string | null;
-    type: string;
-    body: string;
-    occurredAt: Date;
-    contact: { id: string; name: string; company: { name: string } | null } | null;
-    company: { id: string; name: string } | null;
-    user: { name: string } | null;
-  },
->(rows: T[]) {
-  const saves: { key: string; first: T; people: { id: string; name: string }[]; company: { id: string | null; name: string } | null }[] = [];
-  const byKey = new Map<string, (typeof saves)[number]>();
-  for (const row of rows) {
-    const key = row.batchId ?? row.id;
-    let save = byKey.get(key);
-    if (!save) {
-      save = { key, first: row, people: [], company: null };
-      byKey.set(key, save);
-      saves.push(save);
-    }
-    if (row.contact && !save.people.some((person) => person.id === row.contact!.id)) save.people.push({ id: row.contact.id, name: row.contact.name });
-    if (!save.company) save.company = row.company ? { id: row.company.id, name: row.company.name } : row.contact?.company ? { id: null, name: row.contact.company.name } : null;
-  }
-  return saves;
-}
-
 function RecentActivityCard({ data, repId, timeZone, className = "" }: { data: Overview; repId: string | null; timeZone: string; className?: string }) {
   const { saves } = data;
   return (
@@ -280,7 +259,7 @@ function RecentActivityCard({ data, repId, timeZone, className = "" }: { data: O
                         </Link>
                       </span>
                     ))}
-                    {save.people.length > shown.length && <span className="faint"> +{save.people.length - shown.length}</span>}
+                    {save.peopleCount > shown.length && <span className="faint" data-testid="recent-more"> +{save.peopleCount - shown.length}</span>}
                     {save.company &&
                       (save.people.length === 0 && save.company.id ? (
                         <Link href={`/dashboard/companies/${save.company.id}`} className="font-medium hover:underline">
@@ -432,7 +411,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   // Rundown as before and open a rep's My day from Team today, read-only.
   // ?view=myday&rep=<id> is that read-only view (anyone may look: everyone
   // sees everyone); the person's own day is the only one they can act on.
-  if (params.view === "myday" || (member && !params.report && !params.view)) {
+  // Only a bare /dashboard (or ?view=myday) is My day: an address naming a
+  // rep is the Rundown for that rep (audit fix, Nov 12, 2026).
+  if (params.view === "myday" || (member && !params.report && !params.view && !params.rep)) {
     const target = params.rep && team.some((one) => one.id === params.rep) ? params.rep : userId;
     const repRow = team.find((one) => one.id === target);
     const [day, prefs] = await Promise.all([
@@ -555,7 +536,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   return (
     <div>
-      <ReportBar choice={choice} member={member} />
+      <ReportBar choice={choice} member={member} wholeTeam={params.rep === "all"} />
       {choice.report === "daily" ? (
         <OverviewSummary
           organizationId={organizationId}
@@ -567,6 +548,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           intro={
             <>
               {teamToday && <TeamTodayStrip team={teamToday} now={now} />}
+              {teamToday && <PlannerBox />}
               {subInsurance.length > 0 && <SubInsuranceCard items={subInsurance} />}
               {head}
             </>
@@ -589,7 +571,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 // breakdown go back to each report's own default. A Member's bar starts
 // with My day (BDR redesign, Nov 11, 2026), so their Daily Rundown tab
 // names itself in the address (a bare /dashboard is My day for them).
-function ReportBar({ choice, member, myDay = false }: { choice: ReportChoice; member: boolean; myDay?: boolean }) {
+function ReportBar({ choice, member, myDay = false, wholeTeam = false }: { choice: ReportChoice; member: boolean; myDay?: boolean; wholeTeam?: boolean }) {
   return (
     // A sideways segmented control on a phone, 44px targets (Round 2);
     // wrapping tabs from sm up.
@@ -615,7 +597,9 @@ function ReportBar({ choice, member, myDay = false }: { choice: ReportChoice; me
         let href = reportHref({ ...target, period: key === "daily" ? "today" : (readChoice({ report: key }, []).period) });
         if (member && key === "daily") {
           const query = href.split("?")[1];
-          href = `/dashboard?report=daily${query ? `&${query}` : ""}`;
+          // A Whole team pick stays Whole team (a Member's Rundown with no
+          // rep is their own; audit fix, Nov 12, 2026).
+          href = `/dashboard?report=daily${query ? `&${query}` : ""}${!choice.repId && wholeTeam ? "&rep=all" : ""}`;
         }
         return (
           <Link

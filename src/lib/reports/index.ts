@@ -43,11 +43,17 @@ export function readChoice(
   return { report, period, repId, by };
 }
 
-export function reportHref(choice: ReportChoice, path = "/dashboard") {
+// `explicit` (audit fix, Nov 12, 2026): a link that leaves the page — the
+// report email, My report emails — names the report and "Whole team"
+// (rep=all) outright. A bare /dashboard is a Member's My day and a Member's
+// Rundown with no rep is their own, so a link that relied on the defaults
+// opened the wrong screen for them.
+export function reportHref(choice: ReportChoice, path = "/dashboard", options: { explicit?: boolean } = {}) {
   const search = new URLSearchParams();
-  if (choice.report !== "daily") search.set("report", choice.report);
+  if (choice.report !== "daily" || options.explicit) search.set("report", choice.report);
   if (choice.report !== "daily" && choice.period !== DEFAULT_PERIOD[choice.report]) search.set("period", choice.period);
   if (choice.repId) search.set("rep", choice.repId);
+  else if (options.explicit) search.set("rep", "all");
   const offered = REPORT_BREAKDOWNS[choice.report];
   if (offered.length && choice.by !== offered[0]) search.set("by", choice.by);
   const query = search.toString();

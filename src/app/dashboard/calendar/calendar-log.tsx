@@ -7,8 +7,8 @@ import { colorForType, eventDays } from "@/lib/calendar";
 import { Card, CardHeader, Badge, FormError, EmptyState } from "@/components/ui";
 import { IconCalendar, IconCheck, IconTrash } from "@/components/icons";
 import { EventForm, type EventChoices } from "./event-form";
-import { EventSourceLink, ROW_BUTTON, RowConfirm, timeLabel, untickDeletesHistory, type EventView } from "./calendar-views";
-import { deleteEvent, setEventDone } from "./actions";
+import { EventSourceLink, ROW_BUTTON, RowConfirm, isDelegated, timeLabel, untickDeletesHistory, type EventView } from "./calendar-views";
+import { deleteEvent, handBackEvent, setEventDone } from "./actions";
 import { DoneBox, canLogOnDone } from "./done-box";
 
 // The timeline: two columns of rows, what has happened on the left and
@@ -144,7 +144,7 @@ function LogColumn({
 function LogRow({ event, choices, overdue = false }: { event: EventView; choices: EventChoices; overdue?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [ticking, setTicking] = useState(false);
-  const [confirming, setConfirming] = useState<"delete" | "untick" | null>(null);
+  const [confirming, setConfirming] = useState<"delete" | "untick" | "handback" | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
   const color = overdue ? "var(--danger)" : colorForType(event.type);
@@ -238,7 +238,7 @@ function LogRow({ event, choices, overdue = false }: { event: EventView; choices
             event={event}
             pending={pending}
             onYes={() =>
-              run(() => (confirming === "delete" ? deleteEvent(event.id) : setEventDone(event.id, false)))
+              run(() => (confirming === "delete" ? deleteEvent(event.id) : confirming === "handback" ? handBackEvent(event.id) : setEventDone(event.id, false)))
             }
             onCancel={() => setConfirming(null)}
             testId="log-confirm"
@@ -268,17 +268,30 @@ function LogRow({ event, choices, overdue = false }: { event: EventView; choices
         <button type="button" onClick={() => setEditing(true)} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} data-testid="log-edit">
           Edit
         </button>
+        {isDelegated(event, choices.me) ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirming(confirming === "handback" ? null : "handback")}
+            aria-expanded={confirming === "handback"}
+            className={`btn btn-ghost btn-sm ${ROW_BUTTON}`}
+            data-testid="log-handback"
+          >
+            Hand back
+          </button>
+        ) : (
         <button
-          type="button"
-          disabled={pending}
-          onClick={() => setConfirming(confirming === "delete" ? null : "delete")}
-          aria-label={`Take ${event.title} off the calendar`}
-          aria-expanded={confirming === "delete"}
-          className={`btn btn-ghost btn-sm !px-1.5 ${ROW_BUTTON}`}
-          data-testid="log-delete"
-        >
-          <IconTrash size={12} />
-        </button>
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirming(confirming === "delete" ? null : "delete")}
+            aria-label={`Take ${event.title} off the calendar`}
+            aria-expanded={confirming === "delete"}
+            className={`btn btn-ghost btn-sm !px-1.5 ${ROW_BUTTON}`}
+            data-testid="log-delete"
+          >
+            <IconTrash size={12} />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -41,6 +41,8 @@ export const AI_DAILY_CAPS = {
   JOB_QUESTION: 100, // a question answered from a job's own numbers, about 3 cents
   // The apparel pack (Nov 12, 2026).
   ARTWORK_CHECK: 100, // does an uploaded logo look like a famous brand's, about 1 cent; a warning only
+  // Planner AI (Nov 12, 2026): a description of leads turned into filter chips, under 1 cent.
+  PLANNER_FILTERS: 150,
 } as const;
 
 // How much meeting text one request carries at most.

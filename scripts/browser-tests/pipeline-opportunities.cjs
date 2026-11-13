@@ -1238,6 +1238,7 @@ async function openAddDeal(p) {
   await how.waitFor();
   assert.equal(await how.locator("[data-testid=log-type-PHONE_CALL]").getAttribute("aria-pressed"), "true", "set to Call");
   await how.locator("[data-testid=outcome-TALKED]").click();
+  await how.locator("[data-testid=outcome-save]").click();
   await page.getByTestId("log-saved").waitFor();
   assert.equal((await one(`SELECT outcome FROM "Activity" WHERE "contactId"='op_s_hana' AND type='PHONE_CALL'`)).outcome, "TALKED");
   await page.getByTestId("follow-up-skip").click();
@@ -1621,6 +1622,7 @@ async function openAddDeal(p) {
   await howChase.getByTestId("log-meeting-line").waitFor();
   assert.equal(await howChase.getByTestId("log-meeting-line").getAttribute("data-meeting-id"), "op_s_m_frisco", "this tile's meeting");
   await howChase.getByTestId("outcome-HELD").click();
+  await howChase.locator("[data-testid=outcome-save]").click();
   await page.getByTestId("log-saved").waitFor();
   assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_frisco'`)).outcome, "HELD");
   assert.equal((await one(`SELECT outcome FROM "OpportunityMeeting" WHERE id='op_s_m_lake'`)).outcome, null, "Lakewood's meeting untouched");
@@ -1664,6 +1666,7 @@ async function openAddDeal(p) {
   await howNed.waitFor();
   assert.equal(await howNed.getByTestId("log-type-MEETING").getAttribute("aria-pressed"), "true", "on Meeting");
   await howNed.getByTestId("outcome-HELD").click();
+  await howNed.locator("[data-testid=outcome-save]").click();
   await page.getByTestId("log-saved").waitFor();
   const nedMeetings = (
     await sql(`SELECT om."opportunityId" AS tile, om.outcome FROM "OpportunityMeeting" om JOIN "OpportunityContact" oc ON oc."opportunityId" = om."opportunityId" WHERE oc."contactId"='op_s_ned'`)

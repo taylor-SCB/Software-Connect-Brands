@@ -293,7 +293,8 @@ model User {
   statusChanges         StatusChange[]
   // Days on their calendar. SetNull, like the quotes: a teammate leaving
   // must not take the company's schedule with them.
-  calendarEvents        CalendarEvent[]
+  calendarEvents        CalendarEvent[]        @relation("CalendarEventOwner")
+  calendarEventsCreated CalendarEvent[]        @relation("CalendarEventCreator")
   uploadsSent           Upload[]               @relation("UploadedBy")
   photoLinksMade        ProjectPhotoLink[]     @relation("PhotoLinkCreatedBy")
   photoFoldersMade      PhotoFolder[]          @relation("PhotoFolderCreatedBy")
@@ -2697,7 +2698,12 @@ model CalendarEvent {
   // call it records. What the company view filters by. SetNull so a
   // removed user's days stay on the company's calendar as unassigned.
   ownerId        String?
-  owner          User?         @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  owner          User?         @relation("CalendarEventOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  // Who put it on the calendar (Planner AI, Nov 12, 2026). When it is not
+  // the owner the entry was delegated: the owner can't delete it, only hand
+  // it back. Null on rows from before, and on entries the app wrote.
+  createdById    String?
+  createdBy      User?         @relation("CalendarEventCreator", fields: [createdById], references: [id], onDelete: SetNull)
   // The paperwork or touchpoint this event was made from, when the app
   // made it rather than a person: a logged call, a quote going out and
   // its follow-up, a contract going out and being signed. Each cascades,

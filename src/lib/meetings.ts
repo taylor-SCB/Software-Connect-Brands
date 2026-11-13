@@ -263,6 +263,7 @@ async function writeMeetingEntry(
     data: {
       organizationId,
       ownerId: who.userId,
+      createdById: who.userId,
       type,
       title: `${type} · ${first.name}`,
       startOn: isoToDate(input.on)!,

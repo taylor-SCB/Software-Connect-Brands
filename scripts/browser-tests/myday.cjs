@@ -241,6 +241,7 @@ const ago = (days) => `now() - interval '${days} days'`;
   await sheet.waitFor();
   assert.match(await sheet.textContent(), /Ty/);
   await sheet.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await sheet.locator("[data-testid=outcome-save]").click();
   await page.locator("[data-testid=follow-up-save]").waitFor();
   await until(async () => (await sql(`SELECT count(*)::int n FROM "Activity" WHERE "contactId"='ctc_md_ty' AND outcome='NO_ANSWER'`)).rows[0].n === 2, "the no answer saved");
   await page.locator("[data-testid=follow-up-save]").click();
@@ -1014,6 +1015,173 @@ const ago = (days) => `now() - interval '${days} days'`;
   await sql(`DELETE FROM "Contact" WHERE id='ctc_md_ext'`);
   await auditM.close();
 
+
+
+  /* ------------------- audit fixes (session audit, Nov 12, 2026) ------------------- */
+  log("audit fixes (session audit): one call on 100 people is one line with its true count, and earlier saves stay on Done today and Recent activity");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","createdAt","updatedAt")
+       SELECT 'ctc_md_bulk' || g, $1, 'Bulk Person ' || lpad(g::text, 3, '0'), 'CONTACTED', NULL, now() - interval '40 days', now() FROM generate_series(1, 100) g`,
+      [org],
+    );
+    await sql(
+      `INSERT INTO "Activity" (id,"organizationId","contactId","userId",type,body,"occurredAt","batchId")
+       SELECT 'act_md_bulk' || g, $1, 'ctc_md_bulk' || g, $2, 'PHONE_CALL', 'Announcement call', now(), 'b_md_bulk' FROM generate_series(1, 100) g`,
+      [org, M],
+    );
+    await page.goto(`${BASE}/dashboard`);
+    const doneCard = page.locator("[data-testid=done-today]");
+    await doneCard.locator("> summary").click();
+    const lines = await doneCard.locator("[data-testid=done-row]").allTextContents();
+    assert.ok(lines.length >= 2, `earlier saves are still listed: ${lines.join(" | ")}`);
+    const bulk = lines.filter((line) => /Bulk Person/.test(line));
+    assert.equal(bulk.length, 1, `the 100-person save is one line: ${lines.join(" | ")}`);
+    assert.match(bulk[0], /Bulk Person \d+ \+ 99 · Phone Call/, `it reads "+ 99": ${bulk[0]}`);
+    assert.ok(lines.some((line) => /Ty Trying · Phone Call · No answer/.test(line)), "the morning's No answer is still there");
+    const teamMoney2 = page.locator("[data-testid=team-money]");
+    if ((await teamMoney2.getAttribute("open")) === null) await teamMoney2.locator("> summary").click();
+    const firstRecent = teamMoney2.locator("[data-testid=recent-row]").first();
+    await firstRecent.waitFor();
+    assert.equal((await firstRecent.locator("[data-testid=recent-more]").textContent()).trim(), "+97", "three named, +97 more");
+    assert.ok((await teamMoney2.locator("[data-testid=recent-row]").count()) >= 2, "the big save doesn't push every other line off");
+  }
+
+  log("audit fixes (session audit): a follow-up on several people is due for each of them, today and late");
+  {
+    await sql(
+      `INSERT INTO "Contact" (id,"organizationId",name,status,"ownerId","createdAt","updatedAt") VALUES
+         ('ctc_md_ann',$1,'Ann Attendee','CONTACTED',$2,now() - interval '20 days',now()),
+         ('ctc_md_bea',$1,'Bea Attendee','CONTACTED',$2,now() - interval '20 days',now()),
+         ('ctc_md_cal',$1,'Cal Attendee','CONTACTED',$2,now() - interval '20 days',now()),
+         ('ctc_md_dot',$1,'Dot Attendee','CONTACTED',$2,now() - interval '20 days',now())`,
+      [org, M],
+    );
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","ownerId","contactId","updatedAt") VALUES
+         ('ev_md_grp_today',$1,'Call · Ann Attendee','Call',$3::date,$2,'ctc_md_ann',now()),
+         ('ev_md_grp_late',$1,'Call · Cal Attendee','Call',$4::date,$2,'ctc_md_cal',now())`,
+      [org, M, TODAY, addDays(TODAY, -2)],
+    );
+    await sql(`INSERT INTO "_EventAttendees" ("A","B") VALUES ('ev_md_grp_today','ctc_md_bea'), ('ev_md_grp_late','ctc_md_dot')`);
+    await page.goto(`${BASE}/dashboard`);
+    await page.locator("[data-testid=up-next-all]").click().catch(() => {});
+    const cat = (id) => page.locator(`[data-testid=up-next-row][data-contact-id=${id}]`).getAttribute("data-category");
+    assert.equal(await cat("ctc_md_ann"), "today");
+    assert.equal(await cat("ctc_md_bea"), "today", "the second person on today's call is due too");
+    assert.equal(await cat("ctc_md_cal"), "late");
+    assert.equal(await cat("ctc_md_dot"), "late", "and on a late one, late too");
+  }
+
+  log("audit fixes (session audit): a Member's links that name a rep or the whole team open the Daily Rundown, not My day");
+  {
+    await page.goto(`${BASE}/dashboard?rep=${M}`);
+    await page.locator("[data-testid=report][data-report=daily]").waitFor();
+    assert.equal(await page.locator("[data-testid=my-day]").count(), 0);
+    await page.goto(`${BASE}/dashboard?report=daily&rep=all`);
+    await page.locator("[data-testid=report-scope]", { hasText: /Whole team$/ }).waitFor();
+    assert.match(await page.locator("[data-testid=report-tab][data-report=daily]").getAttribute("href"), /report=daily.*rep=all/, "Whole team stays whole team");
+    await sql(`INSERT INTO "ReportSubscription" (id,"organizationId","recipientId",report,cadence,"repId") VALUES ('rs_md_daily',$1,$2,'DAILY','DAILY',NULL)`, [org, M]);
+    await page.goto(`${BASE}/dashboard/settings/account`);
+    const emailLink = page.locator("[data-testid=my-report-email] a").first();
+    const href = await emailLink.getAttribute("href");
+    assert.match(href, /report=daily/);
+    assert.match(href, /rep=all/);
+    await emailLink.click();
+    await page.locator("[data-testid=report-scope]", { hasText: /Whole team$/ }).waitFor();
+    await sql(`DELETE FROM "ReportSubscription" WHERE id='rs_md_daily'`);
+  }
+
+  log("audit fixes (session audit): a calendar filter keeps a Member's Mine, Clear keeps it, the Team week shows everyone, Escape in a list keeps Filters open");
+  {
+    await sql(`UPDATE "User" SET "uiPrefs" = jsonb_set(COALESCE("uiPrefs",'{}'::jsonb), '{calendar}', '{"scope":"mine","view":"agenda"}'::jsonb) WHERE id=$1`, [M]);
+    await page.goto(`${BASE}/dashboard/calendar?view=week&on=${TODAY}&type=Call`);
+    await page.locator("[data-testid=cal-just-me][aria-pressed=true]").waitFor();
+    assert.equal(await page.locator("[data-testid=cal-everyone]").getAttribute("aria-pressed"), "false");
+    await page.getByRole("button", { name: "Clear", exact: true }).click();
+    await page.waitForURL((url) => !url.searchParams.has("type"));
+    await page.locator("[data-testid=cal-just-me][aria-pressed=true]").waitFor();
+    assert.equal((await sql(`SELECT "uiPrefs" FROM "User" WHERE id=$1`, [M])).rows[0].uiPrefs.calendar.scope, "mine", "Clear didn't overwrite Mine");
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","ownerId","updatedAt") VALUES ('ev_md_owner_walk',$1,'Owner site walk','Site walk',$2::date,$3,now())`,
+      [org, TODAY, taylor.id],
+    );
+    await page.goto(`${BASE}/dashboard/calendar?view=team&on=${TODAY}`);
+    await page.locator("[data-testid=team-grid]").waitFor();
+    assert.match(await page.locator(`[data-testid=team-row][data-row="u-${taylor.id}"]`).getAttribute("data-things"), /^[1-9]/, "a teammate's row shows their day under Mine");
+    await page.goto(`${BASE}/dashboard/calendar?view=agenda`);
+    await page.locator("[data-testid=cal-filters-open]").click();
+    await page.locator("[data-testid=cal-users]").click();
+    await page.getByRole("listbox", { name: "Users" }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("listbox", { name: "Users" }).waitFor({ state: "detached" });
+    assert.equal(await page.locator("[data-testid=cal-filters-sheet]").count(), 1, "the Filters sheet stays open");
+    await page.keyboard.press("Escape");
+    await page.locator("[data-testid=cal-filters-sheet]").waitFor({ state: "detached" });
+  }
+
+  log("audit fixes (session audit): Awaiting signature counts a quote once; the write-up's headline isn't cut at \"Dr.\"");
+  {
+    await sql(
+      `INSERT INTO "Deal" (id,"organizationId","contactId",title,stage,"ownerId","updatedAt") VALUES
+         ('deal_md_aw',$1,'ctc_md_quinn','Quinn upgrade','CONTRACT_SENT',$2,now()),
+         ('deal_md_draft',$1,'ctc_md_quinn','Quinn lobby','QUOTE_SENT',$2,now())`,
+      [org, taylor.id],
+    );
+    await sql(
+      `INSERT INTO "Quote" (id,"organizationId","contactId","dealId",number,title,status,"publicToken","updatedAt") VALUES
+         ('q_md_aw',$1,'ctc_md_quinn','deal_md_aw',9800,'Quinn upgrade quote','SENT','tok_md_aw_0123456789',now()),
+         ('q_md_draft',$1,'ctc_md_quinn','deal_md_draft',9801,'Quinn lobby quote','DRAFT','tok_md_draft_012345678',now())`,
+      [org],
+    );
+    await sql(
+      `INSERT INTO "QuoteLineItem" (id,"quoteId",name,quantity,"unitPriceCents",tag,position) VALUES
+         ('ql_md_aw','q_md_aw','Camera package',1,2000000,'MATERIALS',0),
+         ('ql_md_draft','q_md_draft','Lobby reader',1,50000,'MATERIALS',0)`,
+    );
+    await sql(
+      `INSERT INTO "Contract" (id,"organizationId","contactId","dealId","quoteId",number,title,body,status,payable,"publicToken","updatedAt") VALUES
+         ('con_md_svc',$1,'ctc_md_quinn','deal_md_aw','q_md_aw',9800,'Service Agreement','Body','SENT',false,'tok_md_con_svc_0123456',now()),
+         ('con_md_cmp',$1,'ctc_md_quinn','deal_md_aw','q_md_aw',9801,'Compliance Agreement','Body','SENT',false,'tok_md_con_cmp_0123456',now())`,
+      [org],
+    );
+    await sql(
+      `INSERT INTO "CalendarEvent" (id,"organizationId",title,type,"startOn","startTime","ownerId","updatedAt") VALUES ('ev_md_dr',$1,'Follow up · Dr. Smith','Call',$2::date,'06:00',$3,now())`,
+      [org, TODAY, taylor.id],
+    );
+    const own = await browser.newContext({ viewport: { width: 1440, height: 950 } });
+    const o2 = await own.newPage();
+    await login(o2, EMAIL);
+    await o2.locator("[data-testid=report][data-report=daily]").waitFor();
+    assert.equal(await o2.locator('[data-testid=money-tiles] [data-testid=stat-tile][data-label="Awaiting signature"] p.num').textContent(), "$20,000", "the $20,000 quote once, not twice");
+    const head = await o2.locator("[data-testid=report-narrative-headline]").textContent();
+    assert.doesNotMatch(head, /Dr\.$/, `headline cut at an abbreviation: ${head}`);
+    assert.match(head, /Dr\. Smith/);
+
+    log("audit fixes (session audit): on a phone the quote's pinned Next sits above the tab bar; on a tablet so does the Save bar");
+    const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await own.storageState() });
+    const ph = await phoneCtx.newPage();
+    await ph.goto(`${BASE}/dashboard/quotes/q_md_draft`);
+    const pinned = ph.locator(".dj-next[data-sticky]");
+    await pinned.waitFor();
+    // The page fades in; until it settles its transform holds fixed bars.
+    await until(async () => (await ph.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length)) === 0, "the page settled");
+    const tabs = await ph.locator("[data-testid=phone-tabs]").boundingBox();
+    const next = await pinned.boundingBox();
+    assert.ok(next.y + next.height <= tabs.y + 1, `the Next button (${next.y}+${next.height}) sits above the tabs (${tabs.y})`);
+    await phoneCtx.close();
+    const tabletCtx = await browser.newContext({ viewport: { width: 820, height: 1180 }, storageState: await own.storageState() });
+    const tb = await tabletCtx.newPage();
+    await tb.goto(`${BASE}/dashboard/quotes/q_md_draft`);
+    const saveBar = tb.locator("[data-testid=quote-save-bar]");
+    await saveBar.waitFor();
+    await until(async () => (await tb.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length)) === 0, "the page settled");
+    const tabBox = await tb.locator("[data-testid=phone-tabs]").boundingBox();
+    const stuck = parseFloat(await saveBar.evaluate((el) => getComputedStyle(el).bottom));
+    assert.ok(stuck >= tabBox.height - 1, `the Save bar sticks ${stuck}px up, above the ${tabBox.height}px tab bar (its 1px top line may meet it)`);
+    await tabletCtx.close();
+    await own.close();
+  }
 
   await browser.close();
   console.log(`\n${step} steps passed`);

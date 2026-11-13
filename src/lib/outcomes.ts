@@ -47,6 +47,13 @@ export const nextStepSchema = z.object({
   where: z.string().trim().max(200).optional(),
   note: z.string().trim().max(2000).optional(),
   opportunity: z.string().trim().max(100).optional(),
+  // A follow-up's further rows (Nov 12, 2026, Taylor): the follow-up step
+  // is a grid of up to 6 rows, a day and a kind each; the first is on / type
+  // above, these are the other five, written in the same save.
+  more: z
+    .array(z.object({ on: isoDay, type: z.enum(ACTIVITY_TYPES) }))
+    .max(5)
+    .optional(),
 });
 export type NextStep = z.infer<typeof nextStepSchema>;
 

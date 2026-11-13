@@ -16,6 +16,7 @@ import { giveBackLeads, takeUnownedLeads } from "./actions";
 import { smsHref, telHref } from "@/lib/dial";
 import { BriefMeButton } from "@/components/brief-me";
 import { OpenerLink } from "./opener";
+import { EntryActions } from "@/components/entry-actions";
 
 // Up next on My day (BDR redesign, Nov 11, 2026): one ranked list (the
 // order is rankUpNext's), 8 rows then "Show all n". Each row: the health
@@ -68,6 +69,32 @@ export function UpNextList({
     [how, today],
   );
 
+  // ✅ Done on a row's entry: How did it go? on that entry, so saving
+  // ticks it done and logs the touch (Planner AI, Nov 12, 2026).
+  const doneEntry = useCallback(
+    (item: UpNextItem) => {
+      if (!item.entry) return;
+      how.open({
+        event: {
+          id: item.entry.id,
+          type: item.entry.type,
+          title: item.entry.title,
+          notes: item.entry.notes,
+          startOn: item.entry.startOn,
+          startTime: item.entry.startTime,
+          contactId: item.id,
+          contactName: item.name,
+        },
+        name: item.name,
+        today,
+        opportunityId: item.opportunityId ?? undefined,
+        onSaved: () => setLogged((prev) => new Set(prev).add(item.id)),
+        onChanged: () => router.refresh(),
+      });
+    },
+    [how, today, router],
+  );
+
   const next = readOnly ? null : (items.find((item) => !logged.has(item.id)) ?? null);
 
   return (
@@ -105,6 +132,17 @@ export function UpNextList({
                   <BriefMeButton contactId={item.id} name={item.name} variant="link" testId="up-next-brief" />
                   {ai && !readOnly && <OpenerLink contactId={item.id} reason={item.reason} />}
                 </div>
+                {item.entry && !readOnly && (
+                  <div className="mt-1.5" data-testid="up-next-entry">
+                    <EntryActions
+                      compact
+                      entry={item.entry}
+                      today={today}
+                      onDone={() => doneEntry(item)}
+                      onChanged={() => router.refresh()}
+                    />
+                  </div>
+                )}
               </div>
               <div className="hidden w-36 shrink-0 md:block">
                 <LifecycleMeter health={item.health} size="mini" showCaption={false} />

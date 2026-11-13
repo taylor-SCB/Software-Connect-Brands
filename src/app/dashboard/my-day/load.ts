@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { OVERDUE_TYPES } from "@/lib/calendar-data";
 import { goneQuietOpportunities } from "@/lib/gone-quiet";
 import { waitingMeetings, type Waiting } from "@/lib/meetings";
+import { recentSaves } from "@/lib/recent-saves";
 import { healthSettings, loadContactHealth } from "@/lib/health-load";
 import { isoDiff, zoneDay, zoneTime, type LeadHealth } from "@/lib/health";
 import { addDaysIso, periodRange, zonedParts } from "@/lib/reports/period";
@@ -39,6 +40,19 @@ export type UpNextItem = {
   // The tile the row is about (the meeting waiting, else the one booked,
   // else their latest), handed to the log and booking sheets.
   opportunityId: string | null;
+  // The entry due (late or today) for Done / Reschedule / Delete (Planner
+  // AI, Nov 12, 2026); null when the row has nothing scheduled.
+  entry: UpNextEntry | null;
+};
+
+export type UpNextEntry = {
+  id: string;
+  title: string;
+  type: string;
+  notes: string;
+  startOn: string;
+  startTime: string | null;
+  delegatedBy: string | null;
 };
 
 export type MeetingItem = {
@@ -87,6 +101,7 @@ type CandidateRow = {
   meeting_oldest: Date | null;
   today_time: string | null;
   today_type: string | null;
+  due_eid: string | null;
   ahead: boolean;
   why: string[];
 };
@@ -120,11 +135,23 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
          WHERE c."organizationId" = ${organizationId} AND c."ownerId" = ${rep.id}
            AND c.status::text = ANY(${OPEN_STATUSES})
       ),
-      due_ev AS (
-        SELECT e."contactId" AS cid, e."startOn", e."startTime", e.type, ${meetingTypes} AS meeting
-          FROM "CalendarEvent" e
-          JOIN "Contact" c ON c.id = e."contactId"
+      -- Everyone on an entry: its person and everyone also expected
+      -- (audit fix, Nov 12, 2026: a follow-up from a call logged on three
+      -- people is one entry, the first person on it and the other two as
+      -- attendees, and only the first was due).
+      on_ev AS (
+        SELECT e.id AS eid, e."contactId" AS cid FROM "CalendarEvent" e
          WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."contactId" IS NOT NULL
+        UNION
+        SELECT e.id, ea."B" FROM "CalendarEvent" e JOIN "_EventAttendees" ea ON ea."A" = e.id
+         WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
+      ),
+      due_ev AS (
+        SELECT o.cid, e.id AS eid, e."startOn", e."startTime", e.type, ${meetingTypes} AS meeting
+          FROM "CalendarEvent" e
+          JOIN on_ev o ON o.eid = e.id
+          JOIN "Contact" c ON c.id = o.cid AND c."organizationId" = ${organizationId}
+         WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL
            AND e."startOn" <= ${today}::date AND (e."endOn" IS NULL OR e."endOn" <= ${today}::date)
            AND e.type = ANY(${OVERDUE_TYPES})
            AND (e."ownerId" = ${rep.id} OR c."ownerId" = ${rep.id})
@@ -135,7 +162,10 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
                MIN("startOn") FILTER (WHERE "startOn" < ${today}::date AND NOT meeting) AS late_oldest,
                MIN("startOn") FILTER (WHERE "startOn" < ${today}::date AND meeting) AS meeting_oldest,
                MIN("startTime") FILTER (WHERE "startOn" = ${today}::date AND NOT meeting) AS today_time,
-               (array_agg(type ORDER BY "startTime" NULLS LAST) FILTER (WHERE "startOn" = ${today}::date AND NOT meeting))[1] AS today_type
+               (array_agg(type ORDER BY "startTime" NULLS LAST) FILTER (WHERE "startOn" = ${today}::date AND NOT meeting))[1] AS today_type,
+               -- The entry the row's Done / Reschedule / Delete act on (Planner
+               -- AI, Nov 12, 2026): the oldest one due, not a meeting.
+               (array_agg(eid ORDER BY "startOn", "startTime" NULLS LAST, eid) FILTER (WHERE NOT meeting))[1] AS due_eid
           FROM due_ev
          GROUP BY cid
       ),
@@ -145,9 +175,10 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       -- contacts; a hashed subplan is 0.13 s). cid comes off a join to mine,
       -- so it is never NULL and NOT IN means exactly what NOT EXISTS did.
       ahead AS (
-        SELECT DISTINCT e."contactId" AS cid
+        SELECT DISTINCT o.cid
           FROM "CalendarEvent" e
-          JOIN mine m ON m.id = e."contactId"
+          JOIN on_ev o ON o.eid = e.id
+          JOIN mine m ON m.id = o.cid
          WHERE e."organizationId" = ${organizationId} AND e."doneAt" IS NULL AND e."startOn" > ${today}::date
       ),
       picked AS (
@@ -175,7 +206,7 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       ids AS (SELECT id, array_agg(why) AS why FROM picked GROUP BY id)
       SELECT c.id, c.name, co.name AS company, c.mobile, c.phone, c."imageUrl" AS image_url,
              c."createdAt" AS created_at, c."lastTouchAt" AS last_touch, c."lastConnectAt" AS last_connect,
-             d.late_oldest, d.meeting_oldest, d.today_time, d.today_type,
+             d.late_oldest, d.meeting_oldest, d.today_time, d.today_type, d.due_eid,
              c.id IN (SELECT cid FROM ahead WHERE cid IS NOT NULL) AS ahead, ids.why
         FROM ids
         JOIN "Contact" c ON c.id = ids.id AND c."organizationId" = ${organizationId}
@@ -214,23 +245,9 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
         company: { select: { name: true } },
       },
     }),
-    prisma.activity.findMany({
-      where: { organizationId, userId: rep.id, marketing: false, occurredAt: { gte: todayWindow.from, lte: now } },
-      orderBy: { occurredAt: "desc" },
-      take: 80,
-      select: {
-        id: true,
-        batchId: true,
-        type: true,
-        outcome: true,
-        body: true,
-        occurredAt: true,
-        contactId: true,
-        companyId: true,
-        contact: { select: { name: true } },
-        company: { select: { name: true } },
-      },
-    }),
+    // Saves first, then their rows (audit fix, Nov 12, 2026): one call on
+    // 100 people no longer fills the card and hides the morning's saves.
+    recentSaves(organizationId, { userId: rep.id, from: todayWindow.from, to: now, limit: 40 }),
     // The rep's own, in the statement (final audit, Nov 11, 2026): kept from
     // the workspace's 300 quietest, a rep's own dropped out past 300. Oldest
     // touch first, so the first row is the loudest.
@@ -246,6 +263,30 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
   ]);
 
   const byId = new Map(candidates.map((row) => [row.id, row]));
+  const dueIds = [...new Set(candidates.map((row) => row.due_eid).filter((id): id is string => Boolean(id)))];
+  const dueEntries = dueIds.length
+    ? await prisma.calendarEvent.findMany({
+        // Only entries on this rep's own calendar get the buttons: a
+        // teammate's follow-up on one of their people stays the teammate's.
+        where: { organizationId, id: { in: dueIds }, ownerId: rep.id },
+        select: { id: true, title: true, type: true, notes: true, startOn: true, startTime: true, ownerId: true, createdById: true, createdBy: { select: { name: true } } },
+      })
+    : [];
+  const entryOf = new Map<string, UpNextEntry>(
+    dueEntries.map((event) => [
+      event.id,
+      {
+        id: event.id,
+        title: event.title,
+        type: event.type,
+        notes: event.notes,
+        startOn: event.startOn.toISOString().slice(0, 10),
+        startTime: event.startTime,
+        // Delegated: on this rep's calendar, put there by someone else.
+        delegatedBy: event.ownerId === rep.id && event.createdById && event.createdById !== rep.id ? (event.createdBy?.name ?? "a teammate") : null,
+      },
+    ]),
+  );
   const input: UpNextCandidate[] = [];
   for (const row of candidates) {
     const one = health.get(row.id);
@@ -256,7 +297,9 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       health: one,
       lateDays: late ? Math.max(1, isoDiff(today, late)) : null,
       dueToday: row.today_type ? { time: row.today_time, kind: kindWord(row.today_type) } : null,
-      bookedAhead: row.ahead || one.nextText !== null || Boolean(waiting.get(row.id)?.ahead),
+      // Something booked on a LATER day (audit fix, Nov 12, 2026: health's
+      // nextText also counts today, which took a row due today off the list).
+      bookedAhead: row.ahead || Boolean(waiting.get(row.id)?.ahead),
       lastTalkDays: row.last_connect ? Math.max(0, isoDiff(today, zoneDay(row.last_connect, timeZone))) : null,
       // A meeting gone by that nobody answered, by the one rule (a bare
       // calendar entry with no booked meeting behind it is a follow-up).
@@ -279,6 +322,7 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
       park: entry.park,
       health: health.get(entry.id)!,
       opportunityId: tileOf(waiting.get(entry.id)),
+      entry: (entry.category === "late" || entry.category === "today") && row.due_eid ? (entryOf.get(row.due_eid) ?? null) : null,
     };
   });
   const groupCounts = new Map<string, number>();
@@ -385,26 +429,22 @@ export async function loadMyDay(organizationId: string, rep: { id: string; name:
   }
   meetingRows.sort((a, b) => a.on.localeCompare(b.on) || (a.time ?? "99:99").localeCompare(b.time ?? "99:99"));
 
-  // Done today: one line per save.
-  const seen = new Set<string>();
-  const doneItems: DoneItem[] = [];
-  for (const row of done) {
-    const key = row.batchId ?? row.id;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const others = done.filter((other) => (other.batchId ?? other.id) === key).length - 1;
+  // Done today: one line per save, with the save's true head count.
+  const doneItems: DoneItem[] = done.map((save) => {
+    const row = save.first;
     const who = row.contact?.name ?? row.company?.name ?? "Someone";
+    const others = Math.max(0, save.peopleCount - 1);
     const outcome = row.outcome ? ACTIVITY_OUTCOME_LABELS[row.outcome as ActivityOutcomeValue] : null;
-    doneItems.push({
-      key,
+    return {
+      key: save.key,
       at: zoneTime(row.occurredAt, timeZone),
       type: ACTIVITY_LABELS[row.type as ActivityTypeValue] ?? row.type,
       words: outcome ?? (row.body.length > 80 ? `${row.body.slice(0, 80).trimEnd()}…` : row.body),
       who: others > 0 ? `${who} + ${others}` : who,
       contactId: row.contactId,
       companyId: row.contactId ? null : row.companyId,
-    });
-  }
+    };
+  });
 
   // The loudest account gone quiet among this rep's opportunities.
   const top = quiet.opportunities[0];

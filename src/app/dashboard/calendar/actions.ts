@@ -191,7 +191,7 @@ export async function saveEvent(_prev: ActionState, formData: FormData): Promise
     });
   } else {
     const created = await prisma.calendarEvent.create({
-      data: { organizationId, ...data, attendees: { connect: attendees.map((row) => ({ id: row.id })) } },
+      data: { organizationId, ...data, createdById: userId, attendees: { connect: attendees.map((row) => ({ id: row.id })) } },
       select: { id: true },
     });
     eventId = created.id;
@@ -249,12 +249,15 @@ async function startJobOnFirstDatedDay(organizationId: string, projectId: string
 }
 
 export async function deleteEvent(eventId: string): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, userId } = await requireSession();
   const event = await prisma.calendarEvent.findFirst({
     where: { id: eventId, organizationId },
-    select: { id: true, title: true, projectId: true },
+    select: { id: true, title: true, projectId: true, ownerId: true, createdById: true },
   });
   if (!event) return { error: "That day is no longer on the calendar" };
+  // Delegated to you by a teammate (Taylor, Nov 12, 2026): it can be
+  // handed back to them, not deleted.
+  if (isDelegatedTo(event, userId)) return { error: "A teammate put this on your calendar. Hand it back to them instead of deleting it." };
 
   await prisma.calendarEvent.deleteMany({ where: { id: event.id, organizationId } });
   await startJobOnFirstDatedDay(organizationId, event.projectId);
@@ -644,4 +647,34 @@ export async function deleteTask(taskId: string): Promise<ActionState> {
   await prisma.projectTask.deleteMany({ where: { id: task.id, organizationId } });
   revalidateCalendar(task.projectId);
   return { success: "Removed" };
+}
+
+// On this person's calendar, put there by someone else who is still around
+// to take it back.
+function isDelegatedTo(event: { ownerId: string | null; createdById: string | null }, userId: string) {
+  return event.ownerId === userId && Boolean(event.createdById) && event.createdById !== userId;
+}
+
+// "Hand back": a delegated entry goes back onto the calendar of whoever put
+// it on yours (Taylor, Nov 12, 2026), after a Save / Cancel.
+export async function handBackEvent(eventId: string): Promise<ActionState> {
+  const { organizationId, userId } = await requireSession();
+  const parsed = idSchema.safeParse(eventId);
+  if (!parsed.success) return { error: "That day is no longer on the calendar" };
+  const event = await prisma.calendarEvent.findFirst({
+    where: { id: parsed.data, organizationId },
+    select: { id: true, title: true, projectId: true, ownerId: true, createdById: true, createdBy: { select: { name: true, removedAt: true } } },
+  });
+  if (!event) return { error: "That day is no longer on the calendar" };
+  if (!isDelegatedTo(event, userId) || !event.createdBy) return { error: "Only an entry a teammate put on your calendar can be handed back" };
+  if (event.createdBy.removedAt) return { error: `${event.createdBy.name} is no longer on this account, so it can't go back to them` };
+  const moved = await prisma.calendarEvent.updateMany({
+    where: { id: event.id, organizationId, ownerId: userId },
+    data: { ownerId: event.createdById },
+  });
+  if (!moved.count) return { error: "It has already moved" };
+  revalidateCalendar(event.projectId);
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/planner");
+  return { success: `Handed back to ${event.createdBy.name}` };
 }

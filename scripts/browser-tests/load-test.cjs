@@ -347,6 +347,25 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     assert.equal(sum, all, "every person is under exactly one pulse");
   }
 
+  log("Planner AI: the page, and Warm, Cold and Mix previews (state, plus title for warm and mix; Call + Email) at 200,000 contacts, inside budget");
+  await timed(page, "Planner page with its filter choices", `${BASE}/dashboard/planner`, "[data-testid=planner-generate]");
+  for (const kind of ["warm", "cold", "mix"]) {
+    // Cold: the seed never touches an Owner, so cold plans by state alone.
+    await page.goto(`${BASE}/dashboard/planner?${kind === "cold" ? "" : "title=Owner&"}state=TX`);
+    await page.getByTestId(`planner-kind-${kind}`).click();
+    await page.getByTestId("planner-add-row").click();
+    await page.getByTestId("planner-row-type-1").selectOption("EMAIL");
+    const previewStart = Date.now();
+    await page.getByTestId("planner-generate").click();
+    await page.getByTestId("planner-count").waitFor({ timeout: 60000 });
+    const previewSeconds = (Date.now() - previewStart) / 1000;
+    const found = await page.getByTestId("planner-person").count();
+    timings.push({ label: `Planner ${kind} preview`, seconds: previewSeconds });
+    console.log(`     ${previewSeconds.toFixed(2)}s  Planner ${kind} preview → ${found} people`);
+    assert.ok(found > 0 && found <= 50, `${kind}: ${found} people`);
+    assert.ok(previewSeconds <= BUDGET_S, `the ${kind} preview took ${previewSeconds.toFixed(2)}s`);
+  }
+
   log("audit fixes: My day, the Daily Rundown and the Agenda timed after the calendar seed, beside 100,000 done entries, through the open-entries index");
   // Final audit (Nov 11, 2026). My day was timed above, before any calendar
   // entry existed, so its due lookup was never measured. Every logged touch

@@ -751,6 +751,7 @@ async function contrastReport(page, scope) {
   assert.equal(await nosLine.getAttribute("data-meeting-id"), "hl_m_nos");
   assert.match(await nosLine.textContent(), /marked no-show/);
   await nosLog.locator("[data-testid=outcome-HELD]").click();
+  await nosLog.locator("[data-testid=outcome-save]").click();
   await page.locator("[data-testid=log-saved]").waitFor();
   assert.deepEqual(await meetingsOn("hl_nos_opp"), ["hl_m_nos:HELD"], "the no-show turned Held, no second meeting");
   assert.equal(await status("hl_nos"), "MEETING_COMPLETED");

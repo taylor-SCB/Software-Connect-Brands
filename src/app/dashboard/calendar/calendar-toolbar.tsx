@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { addDays } from "@/lib/payments";
@@ -9,6 +11,7 @@ import { useSearch } from "@/lib/use-search";
 import { FormError, FormSuccess } from "@/components/ui";
 import {
   IconCheck,
+  IconSparkles,
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
@@ -173,11 +176,9 @@ export function CalendarToolbar({
   const crewName = choices.crews.find((crew) => crew.id === filters.crewId)?.name ?? "…";
   const clearAll = () =>
     start(async () => {
-      // Clear means Team only when it is clearing who the days belong to
-      // (audit, Nov 11, 2026): a Member on their remembered Mine who adds a
-      // company filter and clears it meant "drop the company", not "show me
-      // the whole team from now on", which wrote over decision 17's Mine.
-      if (scope !== "team") await saveUiPref("calendar", "scope", "team");
+      // Clear takes the filters off and leaves Mine / Team as the person
+      // last set it (audit fix, Nov 12, 2026: it wrote Team over a
+      // remembered Mine).
       go({ crew: null, type: null, users: null, companies: null, contacts: null, projects: null });
       router.refresh();
     });
@@ -281,6 +282,12 @@ export function CalendarToolbar({
             <IconFilter size={12} />
             Filters{filterCount > 0 ? ` (${filterCount})` : ""}
           </button>
+          {/* Planner AI (Nov 12, 2026): plan calls, emails and texts for up
+              to 50 people onto your own calendar. */}
+          <Link href="/dashboard/planner" className="btn btn-ghost btn-sm pointer-coarse:min-h-11" data-testid="cal-planner">
+            <IconSparkles size={12} />
+            Planner
+          </Link>
           <button
             type="button"
             onClick={() => setAdding(true)}
@@ -581,14 +588,19 @@ function Dropdown({
     function onDown(event: MouseEvent) {
       if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
     }
+    // Escape closes this list only (audit fix, Nov 12, 2026): heard on the
+    // window in the capture phase, before the Filters sheet's own handler
+    // on document, and stopped there, so the sheet stays open.
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
     }
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [open, setOpen]);
 

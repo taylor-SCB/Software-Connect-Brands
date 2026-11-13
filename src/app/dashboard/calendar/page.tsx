@@ -75,16 +75,19 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   const anchor = view === "month" ? startOfMonth(asked) : startOfWeek(asked);
 
   const urlUsers = readIds(params.users);
-  const otherFilter = Boolean(params.crew || params.type || params.companies || params.contacts || params.projects);
   // ?scope=team is the whole team without naming anyone (the Daily
   // Rundown's whole-team "See all"; audit, Nov 11, 2026); it is not saved.
   const remembered =
     params.scope === "team" ? "team" : (prefChoice(prefs, "calendar", "scope", ["mine", "team"] as const) ?? (member ? "mine" : "team"));
+  // Audit fixes (Nov 12, 2026): a filter no longer drops a Member's Mine
+  // (picking a company showed the whole team's days and flipped the toggle
+  // to Team), and the Team week, a row per teammate, always reads everyone's
+  // days (under Mine every other row read empty, as if they were free).
   const scope: "mine" | "team" | "custom" = urlUsers.length
     ? urlUsers.length === 1 && urlUsers[0] === userId
       ? "mine"
       : "custom"
-    : otherFilter
+    : view === "team"
       ? "team"
       : remembered;
   const filters: EventFilters = {
