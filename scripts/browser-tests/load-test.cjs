@@ -347,10 +347,11 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
     assert.equal(sum, all, "every person is under exactly one pulse");
   }
 
-  log("Planner AI: the page, and Warm, Cold and Mix previews (title + state, Call + Email) at 200,000 contacts, inside budget");
+  log("Planner AI: the page, and Warm, Cold and Mix previews (state, plus title for warm and mix; Call + Email) at 200,000 contacts, inside budget");
   await timed(page, "Planner page with its filter choices", `${BASE}/dashboard/planner`, "[data-testid=planner-generate]");
   for (const kind of ["warm", "cold", "mix"]) {
-    await page.goto(`${BASE}/dashboard/planner?title=Owner&state=TX`);
+    // Cold: the seed never touches an Owner, so cold plans by state alone.
+    await page.goto(`${BASE}/dashboard/planner?${kind === "cold" ? "" : "title=Owner&"}state=TX`);
     await page.getByTestId(`planner-kind-${kind}`).click();
     await page.getByTestId("planner-add-row").click();
     await page.getByTestId("planner-row-type-1").selectOption("EMAIL");
