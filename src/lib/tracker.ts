@@ -97,6 +97,15 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
           // and what a money-in contract's own discount starts from.
           discountCents: true,
           discountPercent: true,
+          // The apparel pack: whether any proof on it has gone out, so a
+          // card can offer "Include the proofs".
+          _count: { select: { proofs: { where: { versions: { some: { status: { in: ["SENT", "APPROVED", "CHANGES"] } } } } } } },
+          proofs: {
+            where: { versions: { some: { status: { in: ["SENT", "CHANGES"] } } } },
+            select: { number: true },
+            orderBy: { number: "asc" },
+            take: 20,
+          },
           // The terms the customer was already shown, so a contract split
           // off this quote can start from them rather than a preset.
           payments: {
@@ -186,6 +195,9 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
       paymentTerms: quote.paymentTerms,
       discountCents: quote.discountCents,
       discountPercent: quote.discountPercent,
+      sentProofs: quote._count.proofs,
+      // Proofs still waiting for the customer's yes: a warning on the card.
+      unapprovedProofs: quote.proofs.map((proof) => proof.number),
       // Dates travel as yyyy-mm-dd: this crosses to a client component,
       // and a Date would have to be serialised anyway.
       payments: quote.payments.map((row) => ({

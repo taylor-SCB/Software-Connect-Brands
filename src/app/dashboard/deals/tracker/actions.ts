@@ -1,5 +1,6 @@
 "use server";
 
+import { attachContractProofs } from "@/lib/proofs";
 import { z } from "zod";
 import { purchaseOrderPrice } from "@/lib/po-pricing";
 import { redirect } from "next/navigation";
@@ -55,6 +56,9 @@ const columnSchema = z.object({
   // Money out (true: a purchase order we pay) or Money in (false: the
   // customer pays us). The grid defaults it from the template's type.
   payable: z.boolean(),
+  // The apparel pack: carry the quote's sent proofs (the customer's
+  // paperwork and the printer's order; never the blank-garment supplier's).
+  includeProofs: z.boolean().optional(),
   paymentTerms: z.string().trim().max(120).optional(),
   // Money off the whole contract, after each row's own discount.
   discount: discountInputSchema.optional(),
@@ -235,6 +239,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
   }
 
   const created: string[] = [];
+  const withProofs: string[] = [];
 
   await prisma.$transaction(async (tx) => {
     for (const plan of plans) {
@@ -357,6 +362,7 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
         select: { id: true },
       });
       created.push(contract.id);
+      if (column.includeProofs) withProofs.push(contract.id);
     }
 
     // When the deal is already an awarded job, its new paperwork belongs
@@ -377,6 +383,11 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       await refreshTotals(tx, organizationId, project.id);
     }
   });
+
+  // The apparel pack: the proofs go on after the contracts exist (a short
+  // write each, outside the transaction above). A contract whose rows have
+  // no sent proof simply carries none.
+  for (const contractId of withProofs) await attachContractProofs(organizationId, contractId);
 
   revalidateDeal(input.dealId, created);
   revalidatePath("/dashboard/contacts");

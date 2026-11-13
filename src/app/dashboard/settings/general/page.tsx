@@ -7,6 +7,7 @@ import { CompanyInfoForm } from "./form";
 import { AccountTypeCard } from "./account-type-card";
 import { QuietDaysCard } from "./quiet-days-card";
 import { TeamGoalsCard } from "./team-goals-card";
+import { ApparelCard } from "./apparel-card";
 
 // How long an answered type request is still mentioned on the card.
 const ANSWER_SHOWN_DAYS = 30;
@@ -78,6 +79,11 @@ export default async function CompanyGeneralPage() {
               : null
           }
         />
+      </Card>
+
+      <Card lit className="mb-5" id="apparel">
+        <CardHeader title="We do apparel / custom print" subtitle="For shops that print their customers' logos on what they sell." />
+        <ApparelCard on={organization.apparelOn} canEdit={canEdit} />
       </Card>
 
       <Card lit className="mb-5" id="team-goals">

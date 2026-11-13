@@ -51,6 +51,9 @@ type Column = {
   // someone sets it by hand, and then stays put.
   direction: Direction;
   directionSet: boolean;
+  // The apparel pack: carry the quote's sent proofs. Unset, it follows the
+  // direction (the customer's paperwork yes, a supplier's order no).
+  includeProofs?: boolean;
   paymentTerms: string;
   // Money off the whole contract, as typed. While `discountAuto` is on
   // the box follows the quote's own discount instead (see autoDiscount);
@@ -551,6 +554,7 @@ export function TrackerGrid({
           templateId: column.templateId || undefined,
           title: column.title || undefined,
           payable: column.direction === "out",
+          includeProofs: quote.sentProofs > 0 ? (column.includeProofs ?? column.direction === "in") : undefined,
           paymentTerms: column.paymentTerms || undefined,
           discount: discountPayload(columnDiscount(column)),
           schedule: rowsToInputs(column.schedule).map((row) => ({ ...row, terms: row.terms ?? null })),
@@ -888,6 +892,8 @@ export function TrackerGrid({
             quoteRows={quoteRows}
             quoteTotalCents={quoteTotalCents}
             canRemove={columns.length > 1}
+            proofsOn={quote.sentProofs > 0}
+            unapprovedProofs={quote.unapprovedProofs}
             onChange={(changes) => patch(column.key, changes)}
             onPickTemplate={(templateId) => pickTemplate(column, templateId)}
             onUntick={(lineId) => toggle(column.key, lineId)}
@@ -972,6 +978,8 @@ function ContractCard({
   quoteRows,
   quoteTotalCents,
   canRemove,
+  proofsOn,
+  unapprovedProofs,
   onChange,
   onPickTemplate,
   onUntick,
@@ -987,6 +995,10 @@ function ContractCard({
   quoteRows: ScheduleRowInput[] | null;
   quoteTotalCents: number;
   canRemove: boolean;
+  // The apparel pack: the quote has proofs that went out, and those still
+  // waiting for the customer's yes.
+  proofsOn: boolean;
+  unapprovedProofs: number[];
   onChange: (changes: Partial<Column>) => void;
   onPickTemplate: (templateId: string) => Partial<Column>;
   onUntick: (lineId: string) => void;
@@ -1143,6 +1155,27 @@ function ContractCard({
             <option value="out">{DIRECTION_LABEL.out} · we pay them</option>
           </select>
         </div>
+
+        {proofsOn && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={column.includeProofs ?? column.direction === "in"}
+              onChange={(event) => onChange({ includeProofs: event.target.checked })}
+              data-testid="column-include-proofs"
+            />
+            <span>
+              Include the proofs
+              <span className="faint block text-xs">For the customer and the printer, with the printer&apos;s files. Leave it off for the blank-garment supplier.</span>
+              {(column.includeProofs ?? column.direction === "in") && unapprovedProofs.length > 0 && (
+                <span className="mt-1 block text-xs text-[var(--warn)]" data-testid="column-unapproved-proofs">
+                  Proof {unapprovedProofs.join(", ")} isn&apos;t approved yet. It goes on marked &ldquo;don&apos;t print from this&rdquo;.
+                </span>
+              )}
+            </span>
+          </label>
+        )}
 
         <div>
           <label className="label" htmlFor={id("terms")}>Payment terms</label>

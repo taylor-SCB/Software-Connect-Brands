@@ -48,7 +48,13 @@ export type QuoteDocumentData = {
     variationText?: string | null;
     unitLabel?: string | null;
     pictureToken?: string | null;
+    // The apparel pack (Nov 12, 2026): the proof this line prints from,
+    // once it has been sent: its picture replaces the product's, captioned
+    // with where it stands.
+    proof?: { token: string; number: number; status: string } | null;
   }[];
+  // The customer's approval page (/pf/<token>), when proofs have gone out.
+  proofLink?: string | null;
   // A discount on the whole quote, under the lines' own: the cents, and
   // the percent it was typed as when it was one (printed beside it, as a
   // customer expects to see the rate they were given).
@@ -313,10 +319,10 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
             <tr key={item.id} className="border-b border-[#f3f4f6] align-top">
               <td className="py-3 pr-4">
                 <div className="flex items-start gap-3">
-                {item.pictureToken && (
+                {(item.proof?.token ?? item.pictureToken) && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={`/files/${item.pictureToken}?v=doc`}
+                    src={`/files/${item.proof?.token ?? item.pictureToken}?v=doc`}
                     alt=""
                     width={44}
                     height={44}
@@ -329,6 +335,17 @@ function SimpleQuote({ quote }: { quote: QuoteDocumentData }) {
                 {item.variationText && (
                   <p className="mt-0.5 text-xs font-medium text-[#374151]" data-testid="document-line-labels">
                     {item.variationText}
+                  </p>
+                )}
+                {item.proof && (
+                  <p className="mt-0.5 text-xs font-medium" data-testid="document-line-proof">
+                    {quote.proofLink ? (
+                      <a href={quote.proofLink} className="underline">
+                        Proof {item.proof.number}: {item.proof.status === "APPROVED" ? "approved" : item.proof.status === "CHANGES" ? "changes asked for" : "waiting for your approval"}
+                      </a>
+                    ) : (
+                      <>Proof {item.proof.number}: {item.proof.status === "APPROVED" ? "approved" : "waiting for your approval"}</>
+                    )}
                   </p>
                 )}
                 {item.description && (
@@ -517,10 +534,10 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
                 key={item.id}
                 className="doc-block flex flex-wrap items-start justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.03] p-4"
               >
-                {item.pictureToken && (
+                {(item.proof?.token ?? item.pictureToken) && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={`/files/${item.pictureToken}?v=doc`}
+                    src={`/files/${item.proof?.token ?? item.pictureToken}?v=doc`}
                     alt=""
                     width={48}
                     height={48}
@@ -547,6 +564,17 @@ function ModernQuote({ quote }: { quote: QuoteDocumentData }) {
                       {item.variationText}
                     </p>
                   )}
+                  {item.proof && (
+                  <p className="mt-1 text-xs font-medium text-white/80" data-testid="document-line-proof">
+                    {quote.proofLink ? (
+                      <a href={quote.proofLink} className="underline">
+                        Proof {item.proof.number}: {item.proof.status === "APPROVED" ? "approved" : item.proof.status === "CHANGES" ? "changes asked for" : "waiting for your approval"}
+                      </a>
+                    ) : (
+                      <>Proof {item.proof.number}: {item.proof.status === "APPROVED" ? "approved" : "waiting for your approval"}</>
+                    )}
+                  </p>
+                )}
                   {item.description && (
                     <p className="mt-1 text-xs text-white/55">{item.description}</p>
                   )}

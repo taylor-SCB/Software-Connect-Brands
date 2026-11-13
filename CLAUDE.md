@@ -661,7 +661,9 @@ account), approval from a link like contract signing, and the approved
 proof on the quote line and the printer's purchase order. **It is turned on
 by a switch in Settings ("We do apparel / custom print"), not an account
 type**, keeping the Oct 25 rule that the type turns no button on or off.
-Releases 4 (AI upload), 5 (publishing) and 6 (inventory) follow it.
+Releases 4 (AI upload), 5 (publishing) and 6 (inventory) follow it. **Built
+Nov 12, 2026** ("The apparel pack" below), with exact proofs; the AI
+renderings are the step after.
 
 **Mobile on contacts (Oct 27, 2026).** `Contact.mobile` is its own
 field, shown on the contact page and edit form, found by the list
@@ -1161,6 +1163,85 @@ paper of each kind (by when it runs out) has run out or runs out within
 card shows only when there is something to check, and it isn't in the
 report email.
 
+**The apparel pack (Nov 12, 2026; plan: the "Apparel Pack Plan" artifact,
+claude.ai/artifact/JCJqmooobKEuuBRnDApTpD).** Taylor's two calls: the proof
+is the customer's own logo placed exactly by the app on the product's real
+picture (AI photo-real renderings later), and a famous-looking logo is a
+**warning only** (no block, no "we're licensed" tick). **The switch**:
+Settings → General → "We do apparel / custom print" (Owners and Admins;
+`updateApparel`) and the operator's Turn on / Turn off on a workspace's
+/admin row (`setOrganizationApparel`); `Organization.apparelOn`. Off hides
+the Artwork card, the proof chips and the Proofs card, refuses anything
+new, and deletes nothing; /pf links keep answering. Turning it on makes the
+**Print location** label group (Front, Back, Left chest, Full front, Full
+back, Left sleeve, Right sleeve; `ensurePrintLocations` in
+`src/lib/apparel.ts`), adopting one already named so and bringing it back
+if retired; Labels & Units refuses to retire it while apparel is on.
+**Artwork** (`Artwork`, `src/lib/artwork.ts`, `src/lib/artwork-file.ts`,
+`src/components/artwork-card.tsx`): on a company page's Artwork card, or
+from the proof sheet (on the quote's company, or the contact when they
+have none); the file is read in the browser — PNG, JPEG, WebP, GIF, SVG
+(drawn through an `<img>`, so its scripts never run), PDF and Illustrator
+with a picture inside (unpdf, page one, at most 2,000 px) — into a preview
+with its transparency kept (WebP, PNG where the browser can't), a thumb,
+and a JPEG on **mid-grey** for the look-alike check; EPS, PSD, TIFF,
+CorelDRAW and Illustrator saved without PDF content are kept as the
+printer's file and ask for a PNG or JPEG of the logo. The **printer's
+file** is kept byte for byte (octet-stream, up to 50 MB). Artwork pictures
+and files are served **only to the workspace's own people**
+(`/dashboard/artwork/<id>/picture`, `/print` as an attachment); customers
+and printers only ever see proofs. Remove keeps artwork a proof uses
+(`removedAt`); merges move it. The **look-alike check** (`ARTWORK_CHECK`,
+100 a day) reads the stored grey copy, reuses an answer for the same
+picture (`checkHash`), shows "Looks like X's logo. Make sure you're allowed
+to print it." and is asked again for unchecked artwork when proofs are
+sent. **Proofs** (`src/lib/proofs.ts`, `proof-shared.ts`, `proof-draw.ts`;
+the quote's `proofs.tsx` and `proof-sheet.tsx`): a `Proof` is one design
+on one garment colour on one quote, keyed by (product, Color option);
+`ProofVersion` holds its picture and answer, `ProofPanel` one per print
+location (up to four: location, artwork, base = a product picture or a
+plain garment front/back in a colour, placement as fractions). A product
+line shows "+ Proof" (saved lines only) or its proof's chip; the sheet ticks
+the lines of that product and colour (sizes share a proof; a line on
+another proof shows "On Proof 2"), offers "Use Proof n" for a second line of
+the same garment, "Use an approved proof from an earlier order" (copied as
+a **draft** that shares the files; `copiedFrom` says where it came from),
+and draws the panels into one picture in the browser on Save (display and thumb like a product picture, plus an 800 px JPEG document copy that contracts and their PDFs print). A product
+picture of another colour is captioned "Shown on White; printed on Navy";
+with no picture in the line's Color it is drawn on a plain garment.
+`QuoteLineItem.proofId` joins a line, and **counts only while the line's
+product and Color still match** (every reader checks); a quote save drops
+mismatches and joins a new or changed line to its garment's one proof when
+the other lines of it agree (`syncLineProofs`). Editing a draft replaces its
+picture (a second tab's save of the same draft is refused by its token); editing a sent one makes the next version, and the customer keeps
+seeing the old one until **Send proofs** (its own share sheet — Copy link,
+Text, Email, Just mark them sent — never marks the quote sent), which marks
+the drafts SENT and every older version SUPERSEDED. **The approval page
+`/pf/<token>`** (`Quote.proofToken`, one per quote): each sent proof big,
+what it is for, no prices; Approve (typed name + "I've checked the
+spelling, colors and placement") or Ask for changes (a note); every write
+is guarded — only the newest version, still SENT, on this quote, while the
+workspace is active; a proof with a newer draft reads "Being updated".
+**Mark approved** by hand on the Proofs card (approved on the phone).
+Calendar: "Proof changes · <who>" open for the rep while any answer is
+"change it", "Proofs approved · <who>" done when the last one is approved
+(`syncProofEvents`). The **customer's quote** shows a line's sent proof in
+place of the product picture, captioned and linked to /pf. **Contracts**
+carry picked proofs (`ContractProof`, with a "covers" snapshot of the
+lines): the Coordinator card's "Include the proofs" (on for money in, off
+for money out; warns when one isn't approved) and a draft contract's Proofs
+card; the document's Proofs section shows each with "Approved by …" or a red
+"Not approved yet: don't print from this"; a **money-out contract that is
+out or signed** offers each panel's printer's file
+(`/c/<token>/print/<versionId>?p=<panel>`), only for a version that was
+approved, and a signed one keeps its file after a newer version, marked
+"since replaced … check before printing". Order materials never adds
+proofs (the blank-garment supplier). Deleting a quote keeps the proofs a
+contract carries (quote-less) and sweeps the rest (`sweepProofs`).
+Migration `20261113120000_apparel_pack` adds tables, one enum and nullable
+or defaulted columns only, so Instant Rollback stays safe.
+`apparel-pack.cjs` (37 steps) covers it.
+
 **Planner AI (Nov 12, 2026; Taylor's plan v2).** `/dashboard/planner`,
 opened from the Calendar toolbar's **Planner** (`cal-planner`), the
 dashboard's box (`PlannerBox`, `src/components/planner-box.tsx`, on My day
@@ -1226,6 +1307,28 @@ The same clock applies to the gaps below. They are not urgent this week; they
 are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
+
+- **Artwork, proofs and the printer's files went through the local driver
+  only.** The Blob path is first exercised on the live site; check
+  `[storage]` in the runtime logs after the first artwork upload.
+- **The proof is exact, not photo-real.** The logo is laid flat on the
+  product's picture or a plain garment; folds and fabric aren't drawn. AI
+  renderings at about $2 an image are the next step (Taylor, Nov 12).
+- **A plain garment is one t-shirt shape** (front and back); hoodies, hats
+  and bags need a product picture to look right.
+- **The look-alike check is a warning, by Taylor's call**, and only as good
+  as one look at a small grey copy; it can miss a mark or flag a school's
+  own.
+- **A replaced artwork's tile is the new one.** The version a customer
+  approved keeps its own artwork (download it from the quote's Proofs card).
+- **Order materials and a cancelled purchase order:** a cancelled PO's rows
+  still count as ordered, so a corrected printer's order is made on the
+  Coordinator, not Order materials (found in the apparel critique; not
+  changed).
+- **Nobody is emailed when a customer answers a proof.** The calendar entry
+  and the Proofs card are the signal; the coach's link is shared by hand.
+- **Proof answers aren't counted against anything.** The coach's link has
+  no rate limit; every write is guarded and repeats change nothing.
 
 - **Report emails need `CRON_SECRET` in Vercel.** The hourly clock is
   refused without it, by design. Add it (any long random value) under
@@ -1669,7 +1772,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Forty-nine** (Nov 12, 2026; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
+suite, and the delete-confirmation suite. **Fifty** (Nov 12, 2026, `apparel-pack.cjs` the fiftieth; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1873,7 +1976,7 @@ prompt text: `claude.reply(kind, value)`, `refuse`, `cutOff`, `garbage`,
 so an answer whose own JSON has a `text` key goes as
 `{ text: JSON.stringify(value), stop: "end_turn" }`. Each starts its own
 keyless server from the same build for its "AI off" steps (`NOAI_PORT`
-3116, 3117 and 3127). Run them with `run-suites.sh "ai:ai-assist,ai-release-a,ai-release-b,ai-release-c"`.
+3116, 3117 and 3127). Run them with `run-suites.sh "ai:ai-assist,ai-release-a,ai-release-b,ai-release-c,apparel-pack"`.
 Release A's suite fakes speech with an init script defining
 `window.webkitSpeechRecognition` (`FAKE_SPEECH`). A suite that sends a
 contract waits for the send to land (Mark signed, or the database), never
@@ -1882,6 +1985,49 @@ creates contracts on the Coordinator gets the price-check list whenever a
 rule fires: assert it (`price-check-item` `data-code`), then
 `price-check-create-anyway`. `load-test.cjs` seeds contact ids as `lp`
 plus 8 digits because a later step reads `right(id, 2)::int`.
+
+`apparel-pack.cjs` (Nov 12, 2026, 37 steps; seven "audit fixes" steps) starts the stand-in
+Claude on `FAKE_CLAUDE_PORT` (default 3995) for the look-alike check, so it
+runs in the runner's `ai` group, and needs `STORAGE_DRIVER=local`. **A suite
+that presses keys on the proof sheet's logo box waits for the sheet's own
+focus first** (`nudge()`): the sheet focuses its first button a frame after
+it opens and took the key press.
+
+**Run the `plain`, `email` and `reports` groups on a server with no AI key.**
+`next start` reads `.env`, and a `.env` that names a stand-in Claude
+(`ANTHROPIC_API_KEY` / `ANTHROPIC_ENDPOINT`, as the template and AI suites
+want) makes every Send for signature stop at "couldn't be read over" with
+Send anyway, so a dozen suites time out waiting for Mark signed. Export
+`ANTHROPIC_API_KEY= ANTHROPIC_ENDPOINT=` before `run-suites.sh` for those
+groups (an empty value in the environment wins over `.env`); the `ai` and
+`template` groups set their own.
+
+**Three suites fail on the live code too (Nov 13, 2026)**, found in the
+apparel full run and checked against a build of the live branch:
+`looks.cjs` step 31 ("the mini meter is a 44px target on touch", 31px),
+`pipeline-opportunities.cjs` step 53's timing budget (40,000 meetingless
+tiles add 177–930 ms against 140) and `planner.cjs` step 21 (the Planned
+list's Done button is 25.6px tall on a phone, not 44). None touches the
+apparel pack; each is for the next session that works on the meter, the
+Pipeline or the Planner.
+
+The apparel audit (Nov 12, 2026): 18 flagged, 15 distinct, 13 confirmed and
+fixed, 2 refuted. Lessons worth keeping:
+- **Compare stored JSON through the same reader on both sides.** Postgres
+  jsonb hands an object's keys back in its own order (shortest first), so
+  `JSON.stringify(raw) !== JSON.stringify(readSnapshot(raw))` is always true
+  and every labelled line looked "changed".
+- **A draft edited in place keeps its id**, so a stale-tab guard on the id
+  alone lets the second save win; guard on what changes per save (the
+  token).
+- **Anything printed into a PDF uses a JPEG copy.** Headless Chrome
+  re-encodes WebP losslessly at full size, and a few proofs passed the 4 MB
+  cap.
+- **A component kept mounted across a refresh keeps its state**: a
+  "thanks" that replaces the form hid the proofs still waiting.
+- **Dates in a client component go through `formatDate(..., timeZone)`**,
+  never `toLocaleDateString`: the server and the browser disagreed and React
+  threw a hydration error.
 
 `ai-assist.cjs` (Nov 10, 2026) answers as Claude on :3995 (set
 `ANTHROPIC_API_KEY=test-key` and `ANTHROPIC_ENDPOINT=http://localhost:3995`

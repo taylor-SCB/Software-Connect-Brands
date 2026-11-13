@@ -37,6 +37,7 @@ export default async function AdminPage() {
       name: true,
       status: true,
       accountType: true,
+      apparelOn: true,
       createdBy: { select: { name: true } },
       createdAt: true,
       reviewedAt: true,

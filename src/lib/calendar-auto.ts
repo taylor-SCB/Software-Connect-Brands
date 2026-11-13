@@ -353,6 +353,84 @@ export async function syncQuoteEvents(organizationId: string, quoteId: string, a
   }
 }
 
+/* --------------------------------- Proofs ---------------------------------- */
+
+// The apparel pack (Nov 12, 2026). Called whenever a proof on the quote is
+// answered or sent. "Proof changes · <who>" is an open entry for the rep
+// while any proof's answer is "change it"; "Proofs approved · <who>" is
+// ticked done on the day the last waiting proof was approved, and stays as
+// history if a new version is sent after it.
+export type ProofAnswerState = {
+  number: number;
+  status: "SENT" | "APPROVED" | "CHANGES";
+  approvedAt: Date | null;
+  changesAt: Date | null;
+  changesByName: string | null;
+  changesNote: string | null;
+};
+
+// `versions`: the answerable version of every proof still on the quote's
+// lines (worked out by src/lib/proofs.ts, which knows which lines count).
+export async function syncProofEvents(organizationId: string, quoteId: string, versions: ProofAnswerState[]) {
+  const quote = await prisma.quote.findFirst({
+    where: { id: quoteId, organizationId },
+    select: {
+      id: true,
+      number: true,
+      title: true,
+      dealId: true,
+      contactId: true,
+      leadSalesRepId: true,
+      contact: { select: { name: true, companyId: true } },
+    },
+  });
+  if (!quote) return;
+  const { timeZone } = await settingsOf(organizationId);
+  const ownerId = quote.leadSalesRepId ?? (await fallbackOwner(organizationId, { quoteId: quote.id }));
+  const label = `QUO-${quote.number} ${quote.title}`;
+  const who = { dealId: quote.dealId, contactId: quote.contactId, companyId: quote.contact.companyId };
+
+  const changes = versions.filter((version) => version.status === "CHANGES");
+  if (changes.length) {
+    const latest = changes.reduce((a, b) => ((a.changesAt?.getTime() ?? 0) >= (b.changesAt?.getTime() ?? 0) ? a : b));
+    await putMilestone({
+      organizationId,
+      type: "Proof changes",
+      title: `Proof changes · ${quote.contact.name}`,
+      notes: [
+        label,
+        ...changes.map(
+          (version) =>
+            `Proof ${version.number}: ${version.changesByName ?? "They"} asked for changes${version.changesNote ? ` — ${version.changesNote}` : ""}`,
+        ),
+      ].join("\n"),
+      startOn: dayInZone(latest.changesAt ?? new Date(), timeZone),
+      ownerId,
+      done: false,
+      quoteId: quote.id,
+      ...who,
+    });
+  } else {
+    await dropOpenMilestones(organizationId, { quoteId: quote.id }, ["Proof changes"]);
+  }
+
+  const approved = versions.filter((version) => version.status === "APPROVED");
+  if (approved.length && approved.length === versions.length) {
+    const last = approved.reduce((a, b) => ((a.approvedAt?.getTime() ?? 0) >= (b.approvedAt?.getTime() ?? 0) ? a : b));
+    await putMilestone({
+      organizationId,
+      type: "Proofs approved",
+      title: `Proofs approved · ${quote.contact.name}`,
+      notes: label,
+      startOn: dayInZone(last.approvedAt ?? new Date(), timeZone),
+      ownerId,
+      done: true,
+      quoteId: quote.id,
+      ...who,
+    });
+  }
+}
+
 /* -------------------------------- Contracts -------------------------------- */
 
 // Called whenever a contract's status changes. Sent: "Contract sent" and

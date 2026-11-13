@@ -27,6 +27,7 @@ import { CatalogPicker } from "./catalog-picker";
 import { MeetingDraftButton } from "./meeting-draft";
 import { SiteWalkButton, type SiteWalkPhoto } from "./site-walk";
 import { useQuoteSaveAll, useQuoteSaveSection } from "./quote-save";
+import { LineProofChip } from "./proofs";
 import { useReportUnsavedLines } from "./mark-sent";
 import type { DraftedLine } from "../ai-actions";
 import {
@@ -907,6 +908,9 @@ export function LineItemsEditor({
                         </div>
                       );
                     })()}
+
+                    {/* The apparel pack: this line's proof, or "+ Proof". */}
+                    {!readOnly && <LineProofChip lineId={row.id} productId={row.productId} picks={row.picks} unsaved={dirty} />}
 
                     {tagHasUnits(row.tag) && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">

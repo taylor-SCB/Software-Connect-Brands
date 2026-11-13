@@ -4,6 +4,7 @@ import { PUBLIC_IMAGE_KINDS } from "@/lib/uploads";
 import { streamObject, streamStoredFile, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 import { readPicture } from "@/lib/product-images";
+import { readProofPicture } from "@/lib/proofs";
 
 // A file streamed from this site's own address can never run script.
 const SANDBOXED = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox";
@@ -141,7 +142,7 @@ async function viaViewLink(
 // new picture is a new row and a new token), so the CDN keeps them.
 async function productPicture(token: string, variant: string | null) {
   const picture = await readPicture(token, variant === "thumb" || variant === "doc" ? variant : null);
-  if (!picture) return new Response("Not found", { status: 404 });
+  if (!picture) return proofPicture(token, variant);
   return new Response(picture.body, {
     headers: {
       "Content-Type": picture.type,
@@ -149,6 +150,32 @@ async function productPicture(token: string, variant: string | null) {
       "Content-Disposition": "inline",
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400, s-maxage=31536000, immutable",
+    },
+  });
+}
+
+// The apparel pack (Nov 12, 2026): a proof version's picture. A draft is
+// the workspace's own (its files change when it is edited, so never
+// cached); a sent one is open to anyone with the link while the workspace
+// is active, cached briefly so pausing it takes effect.
+async function proofPicture(token: string, variant: string | null) {
+  const proof = await readProofPicture(token, variant === "thumb" || variant === "doc" ? variant : null);
+  if (!proof) return new Response("Not found", { status: 404 });
+  if (proof.draft) {
+    const session = await auth();
+    if (session?.user?.organizationId !== proof.organizationId) return new Response("Not found", { status: 404 });
+  } else if (!proof.active) {
+    return new Response("Not found", { status: 404 });
+  }
+  const file = await proof.open();
+  if (!file) return new Response("Not found", { status: 404 });
+  return new Response(file.body, {
+    headers: {
+      "Content-Type": proof.type,
+      ...(file.size !== null ? { "Content-Length": String(file.size) } : {}),
+      "Content-Disposition": "inline",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": proof.draft ? "private, no-store" : "public, max-age=300",
     },
   });
 }

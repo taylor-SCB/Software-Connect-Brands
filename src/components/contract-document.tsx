@@ -42,6 +42,23 @@ export type ContractDocumentData = {
   payments?: { id: string; label: string; amountCents: number; dueOn: Date | null; terms?: string | null; paidAt: Date | null }[];
   paymentTerms?: string | null;
   senderSignerName?: string | null;
+  // The apparel pack (Nov 12, 2026): the proofs this contract carries, read
+  // live, and where the printer's files download from (a money-out
+  // contract that is out or signed only).
+  proofs?: {
+    versionId: string;
+    token: string;
+    number: number;
+    version: number;
+    productName: string;
+    colorLabel: string | null;
+    covers: string;
+    status: string;
+    approvedByName: string | null;
+    approvedAt: string | null;
+    panels: { position: number; locationLabel: string; artworkName: string; inkNote: string | null; shownOn: string | null; hasPrintFile: boolean }[];
+  }[];
+  proofDownloadBase?: string | null;
 };
 
 // Contract bodies are plain text by design — rendering them as HTML would
@@ -179,6 +196,62 @@ export function ContractDocument({ contract }: { contract: ContractDocumentData 
               </tr>
             </tfoot>
           </table>
+        </section>
+      )}
+
+      {(contract.proofs?.length ?? 0) > 0 && (
+        <section className="mt-8" data-testid="document-proofs">
+          <h2 className="text-[0.65rem] font-semibold uppercase tracking-widest text-[#9ca3af]">Proofs</h2>
+          <div className="mt-2 space-y-4">
+            {contract.proofs!.map((proof) => (
+              <div key={proof.versionId} className="break-inside-avoid rounded-lg border border-[#e5e7eb] p-3" data-testid="document-proof" data-proof={proof.number}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-[0.86rem] font-semibold">
+                    Proof {proof.number}
+                    {proof.version > 1 ? ` (v${proof.version})` : ""} · {proof.productName}
+                    {proof.colorLabel ? ` · ${proof.colorLabel}` : ""}
+                  </p>
+                  <p
+                    className={`text-[0.75rem] font-semibold ${proof.status === "APPROVED" ? "text-[#15803d]" : "text-[#b91c1c]"}`}
+                    data-testid="document-proof-status"
+                  >
+                    {proof.status === "APPROVED"
+                      ? `Approved by ${proof.approvedByName ?? "the customer"}${proof.approvedAt ? ` · ${formatDate(proof.approvedAt, zone)}` : ""}`
+                      : proof.status === "SUPERSEDED"
+                        ? proof.approvedAt
+                          ? `Approved by ${proof.approvedByName ?? "the customer"}, since replaced by a newer version: check before printing`
+                          : "Replaced by a newer version: don't print from this"
+                        : "Not approved yet: don't print from this"}
+                  </p>
+                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/files/${proof.token}?v=doc`}
+                  alt=""
+                  className="mt-2 h-auto max-h-80 w-auto max-w-full rounded border border-[#f3f4f6] bg-white"
+                  data-testid="document-proof-picture"
+                />
+                {proof.covers && <p className="mt-2 text-[0.75rem] text-[#6b7280]">For {proof.covers}</p>}
+                <ul className="mt-1 space-y-0.5 text-[0.78rem]">
+                  {proof.panels.map((panel) => (
+                    <li key={panel.position}>
+                      <span className="font-medium">{panel.locationLabel}:</span> {panel.artworkName}
+                      {panel.inkNote ? ` · ${panel.inkNote}` : ""}
+                      {panel.shownOn ? ` · shown on ${panel.shownOn}` : ""}
+                      {contract.proofDownloadBase && panel.hasPrintFile && proof.approvedAt && (
+                        <>
+                          {" · "}
+                          <a href={`${contract.proofDownloadBase}/${proof.versionId}?p=${panel.position}`} className="underline" data-testid="document-print-file">
+                            Download the print file
+                          </a>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 

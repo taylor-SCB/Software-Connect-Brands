@@ -747,6 +747,29 @@ emails the owner a link to set their own password (Resend invite until
 they log in); and **Account type changes** lists workspaces' requests to
 change type, with Approve and Decline.
 
+**Apparel and custom print** (Nov 12, 2026) — turned on per workspace by
+"We do apparel / custom print" on Settings → General (or by the operator on
+/admin); off, none of it shows and nothing is deleted. A customer's logos
+live on their company page's **Artwork** card: AI, EPS, PDF, SVG, PNG or
+JPEG, the file kept exactly as sent for the printer, a picture of it made in
+the browser with its transparency kept, and a warning (never a block) when
+it looks like a famous brand's mark. On a quote, each product line offers
+**+ Proof**: the logo is placed on the product's own picture, or a plain
+garment in its colour, one panel per print location (Front, Back, Left
+chest…, a label list of its own), dragged and sized by hand; sizes of one
+colour share a proof, and a re-order can reuse last season's approved one.
+**Send proofs** shares one link (`/pf/<token>`) where the customer approves
+each proof with their name or asks for changes; the rep's calendar shows
+either. The customer's quote shows the proof in place of the product
+picture. Contracts carry the proofs the shop picks ("Include the proofs"):
+the customer's Sales Order and the printer's purchase order, never the
+blank-garment supplier's; a printer's order that is out or signed offers
+the approved artwork's files to download. Code: `src/lib/apparel.ts`,
+`src/lib/artwork.ts` (+ `artwork-file.ts` in the browser), `src/lib/proofs.ts`
+(+ `proof-shared.ts`, `proof-draw.ts`), `src/app/pf/`, and the quote's
+`proofs.tsx` / `proof-sheet.tsx`. Tested by
+`scripts/browser-tests/apparel-pack.cjs`.
+
 ## How multi-tenancy works
 
 Every row that belongs to a business carries an `organizationId`, and every

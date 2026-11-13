@@ -22,6 +22,7 @@ import { advanceDealStage } from "@/lib/deals";
 import { syncQuoteEvents } from "@/lib/calendar-auto";
 import { quoteExpired } from "@/lib/quote-accept";
 import { computeSchedule, isoToDate } from "@/lib/payments";
+import { sweepProofs, syncLineProofs } from "@/lib/proofs";
 import { applyQuoteDiscount, lockQuote, repriceQuotePayments } from "@/lib/quote-payments";
 import { discountInputSchema, type DiscountInputValue } from "@/lib/schedule-input";
 import { computeQuoteTotals, lineGrossCents, resolveDiscount } from "@/lib/quote-math";
@@ -544,6 +545,24 @@ export async function saveLineItems(
     // (Nov 6, 2026), too close for a live database a little further away.
   }, { timeout: 20_000, maxWait: 10_000 });
 
+  // The apparel pack: lines whose product or Color moved off their proof let
+  // go of it, and a new or changed line joins its garment's one proof.
+  // Outside the transaction: it reads the lines as just saved.
+  const touched = lines
+    .filter((line) => {
+      const before = existingById.get(line.id);
+      // Both read back through readSnapshot: the stored jsonb hands its keys
+      // back in its own order, so a raw comparison called every labelled
+      // line changed and re-joined lines taken off a proof (audit, Nov 12).
+      return (
+        !before ||
+        before.productId !== line.productId ||
+        JSON.stringify(readSnapshot(before.variations)) !== JSON.stringify(line.variations)
+      );
+    })
+    .map((line) => line.id);
+  await syncLineProofs(organizationId, quote.id, touched);
+
   revalidatePath(`/dashboard/quotes/${quote.id}`);
   revalidatePath("/dashboard/quotes");
   if (createdProducts > 0) revalidatePath("/dashboard/products");
@@ -914,6 +933,9 @@ export async function deleteQuote(_prev: ActionState, formData: FormData): Promi
       await deleteObject(photo.storageDriver, photo.storageKey);
     }
   }
+  // The apparel pack: its proofs that no contract carries go, files and all
+  // (a contract's keep living, quote-less, for the printer).
+  await sweepProofs(organizationId);
   revalidatePath("/dashboard/quotes");
   redirect("/dashboard/quotes");
 }

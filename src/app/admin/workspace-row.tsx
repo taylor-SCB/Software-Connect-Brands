@@ -5,7 +5,7 @@ import { StatusBadge } from "@/components/ui";
 import { IconMail, IconPhone, IconSend, IconTrash } from "@/components/icons";
 import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABELS, type AccountTypeValue } from "@/lib/account-types";
 import type { ActionState } from "@/lib/forms";
-import { setOrganizationStatus, deleteOrganization, resendOwnerInvite, setOrganizationType } from "./actions";
+import { setOrganizationStatus, deleteOrganization, resendOwnerInvite, setOrganizationType, setOrganizationApparel } from "./actions";
 
 type Person = {
   name: string;
@@ -21,6 +21,8 @@ export type AdminWorkspace = {
   name: string;
   status: string;
   accountType: AccountTypeValue;
+  // "We do apparel / custom print" (Nov 12, 2026).
+  apparelOn: boolean;
   // The operator who made it from Create Account; null for a signup.
   createdByName: string | null;
   createdAt: string;
@@ -77,6 +79,21 @@ function TypeSelect({ organizationId, accountType }: { organizationId: string; a
           </option>
         ))}
       </select>
+    </form>
+  );
+}
+
+// The apparel switch, for the operator (Hauffs Sports' account is made
+// from Create Account): posts the state wanted, never "flip it".
+function ApparelToggle({ organizationId, on }: { organizationId: string; on: boolean }) {
+  return (
+    <form action={setOrganizationApparel} className="flex items-center gap-1.5">
+      <input type="hidden" name="organizationId" value={organizationId} />
+      <input type="hidden" name="apparelOn" value={on ? "false" : "true"} />
+      <span className="faint text-xs">Apparel {on ? "on" : "off"}</span>
+      <button type="submit" className="btn btn-ghost btn-sm" data-testid="workspace-apparel">
+        {on ? "Turn off" : "Turn on"}
+      </button>
     </form>
   );
 }
@@ -171,6 +188,7 @@ export function WorkspaceRow({ organization }: { organization: AdminWorkspace })
 
         <div className="flex flex-wrap items-center gap-2">
           <TypeSelect organizationId={organization.id} accountType={organization.accountType} />
+          <ApparelToggle organizationId={organization.id} on={organization.apparelOn} />
           {organization.status === "PENDING" && (
             <>
               <StatusButton organizationId={organization.id} status="ACTIVE" variant="primary">
