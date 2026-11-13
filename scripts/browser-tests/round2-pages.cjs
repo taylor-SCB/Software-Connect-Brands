@@ -377,7 +377,9 @@ const at = (days, time) => `((($1::date + ${days}) + time '${time}') AT TIME ZON
   assert.equal(await meter.locator(".lm-names").isVisible(), false, "the step names are hidden on a phone");
   const open = meter.locator("[data-testid=lifecycle-steps-open]");
   const openBox = await open.boundingBox();
-  assert.ok(openBox.height >= 44, `All steps is a 44px target (${openBox.height})`);
+  // Measured while .fade-up may still be moving the page, a 44px box can
+  // read 43.99997px (fixed Nov 13, 2026); half a pixel covers the rounding.
+  assert.ok(openBox.height >= 43.5, `All steps is a 44px target (${openBox.height})`);
   await open.tap();
   const steps = phone.locator("[data-testid=lifecycle-steps-sheet]");
   await steps.waitFor();
