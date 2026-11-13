@@ -124,7 +124,7 @@ export async function findLookalikes(
 // same phone (last 10 digits). "Not the same business" is a
 // DuplicateDismissal of kind "company". One statement, each test through
 // an index first: the name's trigram index on its longest word, the
-// website's (20261113120000_ai_a_company_website_trgm), the phone digits'.
+// website's (20261113180000_ai_a_company_website_trgm), the phone digits'.
 
 export type CompanyLookalike = {
   id: string;
