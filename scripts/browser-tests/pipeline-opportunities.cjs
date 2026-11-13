@@ -1152,7 +1152,15 @@ async function openAddDeal(p) {
   await reschedule.getByTestId("reschedule-day").first().click();
   await reschedule.getByTestId("reschedule-save").click();
   await page.locator("[data-testid=meeting-group-coming] [data-testid=pipeline-tile][data-id='op_s_opp_hana']").waitFor();
-  assert.equal((await hana.getByTestId("tile-line").innerText()).trim(), "Meeting tomorrow 10:00 AM");
+  // The first day chip is the next working day: tomorrow, or Monday from
+  // a Friday or a weekend (fixed Nov 13, 2026, a Friday).
+  {
+    const today = zoneDayOf(new Date());
+    const weekdayOf = (iso) => new Date(`${iso}T12:00:00Z`).getUTCDay();
+    const ahead = weekdayOf(today) === 5 ? 3 : weekdayOf(today) === 6 ? 2 : 1;
+    const words = ahead === 1 ? "tomorrow" : "Mon";
+    assert.equal((await hana.getByTestId("tile-line").innerText()).trim(), `Meeting ${words} 10:00 AM`);
+  }
   assert.equal((await one(`SELECT count(*)::int n FROM "OpportunityMeeting" WHERE "opportunityId"='op_s_opp_hana'`)).n, 2, "the missed one stays, marked");
 
   log("Sprint: moving a meeting still ahead to Meeting Completed asks 'This meeting is <day>. Did it happen early?'; No keeps it, Yes holds it");
