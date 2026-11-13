@@ -594,11 +594,16 @@ async function contrastReport(page, scope) {
   await open(page, "hl_try");
   await page.locator("[data-testid=next-follow-up]").click();
   const follow = page.locator("[data-testid=next-follow-up-menu]");
-  await follow.locator(`[data-testid=follow-day-${shift(TODAY, 1)}]`).click();
+  // The first chip is the next working day (Monday after a Friday or a
+  // weekend; dayChips in how-did-it-go/dates.ts), so tomorrow isn't
+  // offered on a Friday or Saturday (fixed Nov 13, 2026, a Friday).
+  let firstDay = shift(TODAY, 1);
+  while ([0, 6].includes(new Date(`${firstDay}T12:00:00Z`).getUTCDay())) firstDay = shift(firstDay, 1);
+  await follow.locator(`[data-testid=follow-day-${firstDay}]`).click();
   await follow.locator("[data-testid=follow-save]").click();
   await toast.getByText(/on the calendar/).waitFor();
   await until(
-    async () => (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "organizationId"=$1 AND "contactId"='hl_try' AND "doneAt" IS NULL AND "startOn" = $2::date`, [org, shift(TODAY, 1)])).n === 1,
+    async () => (await one(`SELECT count(*)::int n FROM "CalendarEvent" WHERE "organizationId"=$1 AND "contactId"='hl_try' AND "doneAt" IS NULL AND "startOn" = $2::date`, [org, firstDay])).n === 1,
     "follow-up on the calendar",
   );
   await open(page, "hl_try");
