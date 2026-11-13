@@ -52,22 +52,35 @@ Branch `claude/ai-release-a`, made from `claude/ai-release` (eecf676). Suite: `s
 Everything in release-a.md is built. Two small departures from the brief:
 
 - **Brief me on the Agenda is in the open row, not the row itself.** The Agenda row's own button bar was already full on a phone, so Brief me sits in the entry card that opens when the row is tapped. Week and month entries show it straight away.
-- **Fill it in is two taps.** See Questions.
+- **Fill it in is two taps**, which Taylor confirmed on Nov 13.
+- **The forecast doesn't show how it did over a past stretch**, because past forecasts aren't saved. See Questions, item 2.
 
 ## Questions for Taylor
 
-1. **Fill it in from my words: one Save or two?** Today the person taps Save (it logs the touch with the picked outcome), and step 2 opens with the next step and day already picked for a second Save. One Save for both is possible, but then the next step is written without being looked at. My recommendation is to keep two, because it matches how the sheet already works.
-2. **Should the forecast follow the period filter?** It looks ahead (this month and next), so I left it on the rep filter only.
-3. **Should a company page get "Looks like the same business"?** The table is ready for it (`DuplicateDismissal.kind`), but release-a.md asked for contacts only.
+All three were answered by Taylor on Nov 13, 2026, and the answers are built:
+
+1. **Fill it in from my words stays two taps.** One Save logs the touch, and step 2 opens with the next step already picked. No change was needed.
+2. **The forecast looks ahead, and a date filter narrows it.** Stats' period picker now also has a **Custom** From–To range (a plain form under the Custom button; the rep filter is kept).
+   - The past part of the picked dates is counted like any period, and compared with the same number of days before.
+   - The part still ahead narrows the forecast to just those dates, by rep. It is marked "Rough" past the end of next month, and the AI sentence is kept per set of dates.
+   - Dates entirely in the past leave the forecast on this month and next, and say so.
+   - The period buttons drop the custom dates; the rep filter keeps them.
+   - Not built: "how the forecast did" over a past stretch. Yesterday's forecasts aren't saved, so comparing them with what signed would mean starting to save a snapshot each day. That's worth a word with Taylor if he wants it.
+3. **Duplicate check on company pages: built.** A "Looks like the same business" card under a company's header, using Find duplicates' company rules:
+   - the same name, ignoring case, spaces and punctuation
+   - the same website domain
+   - the same phone (last 10 digits)
+   
+   Each match offers Merge these (Merge Companies with both picked) and Not the same business (remembered, with Undo, and also hidden in Find duplicates).
 
 ## Database changes
 
-Migration `20261112120100_ai_a_writings_and_pairs`. It only adds tables and is safe for existing rows.
+Two migrations, both only adding things, so they are safe for existing rows: `20261112120100_ai_a_writings_and_pairs` adds the two tables below, and `20261113120000_ai_a_company_website_trgm` adds a trigram index on `Company.website`, for the company check.
 
 | Table | Before | After |
 |---|---|---|
-| `AiWriting` | none | organizationId, key ("brief:<contactId>", "opener:<contactId>:<userId>", "forecast:<reps or all>"), fingerprint, body (JSON), createdAt, updatedAt. Unique (organizationId, key). |
-| `DuplicateDismissal` | none | organizationId, kind ("contact"), aId < bId (byte order, compared with COLLATE "C"), userId, createdAt. Unique (organizationId, kind, aId, bId). |
+| `AiWriting` | none | organizationId, key ("brief:<contactId>", "opener:<contactId>:<userId>", "forecast:<reps or all>[|from..to]"), fingerprint, body (JSON), createdAt, updatedAt. Unique (organizationId, key). |
+| `DuplicateDismissal` | none | organizationId, kind ("contact" or "company"), aId < bId (byte order, compared with COLLATE "C"), userId, createdAt. Unique (organizationId, kind, aId, bId). |
 
 No existing table or column was changed. `Organization` gains two relation fields, which don't touch the database.
 
@@ -185,3 +198,10 @@ The first full run, before the audit fixes, also passed every suite above except
 - **Suites:**
   - fake-claude's `reply()` treats any object with a string `text` field as a raw reply, so an answer with a `text` key (the opener's) must be sent as `{ text: JSON.stringify(value), stop: "end_turn" }`
   - `load-test.cjs` seeds contact ids as `lp` plus 8 digits because a later step reads `right(id, 2)::int`
+- **Stats' Custom dates (Nov 13, 2026)** come in as `?from=&to=` (`readCustomRange` in `stats/page.tsx`; at most three years, From on or before To).
+  - `loadStats` takes `range`, counted up to now and compared with the same length before.
+  - `forecastWindow(today, from, to)` narrows the forecast to the part still ahead, marked `rough` past the end of next month; `forecastKey` carries the dates.
+  - A period button drops the dates; a rep link keeps them.
+- **Looks like the same business (Nov 13, 2026)** is `findCompanyLookalikes` in `src/lib/lookalikes.ts`, using Find duplicates' company rules (name, website domain, phone), and `DuplicateDismissal.kind` "company".
+  - `dismissedFilter` in `duplicates.ts` covers both kinds.
+  - `Company_website_trgm_idx` is in the Prisma schema, so `migrate dev` won't try to drop it.
