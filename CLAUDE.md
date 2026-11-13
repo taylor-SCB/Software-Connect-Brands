@@ -2002,12 +2002,14 @@ Send anyway, so a dozen suites time out waiting for Mark signed. Export
 groups (an empty value in the environment wins over `.env`); the `ai` and
 `template` groups set their own.
 
-**Two suites fail on the live code too (Nov 13, 2026)**, found in the
+**Three suites fail on the live code too (Nov 13, 2026)**, found in the
 apparel full run and checked against a build of the live branch:
-`looks.cjs` step 31 ("the mini meter is a 44px target on touch", 31px) and
+`looks.cjs` step 31 ("the mini meter is a 44px target on touch", 31px),
 `pipeline-opportunities.cjs` step 53's timing budget (40,000 meetingless
-tiles add 177–930 ms against 140). Neither touches the apparel pack; both
-are for the next session that works on the meter or the Pipeline.
+tiles add 177–930 ms against 140) and `planner.cjs` step 21 (the Planned
+list's Done button is 25.6px tall on a phone, not 44). None touches the
+apparel pack; each is for the next session that works on the meter, the
+Pipeline or the Planner.
 
 The apparel audit (Nov 12, 2026): 18 flagged, 15 distinct, 13 confirmed and
 fixed, 2 refuted. Lessons worth keeping:
