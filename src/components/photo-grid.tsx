@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { PhotoTagPicker } from "@/components/photo-tag-picker";
-import { IconDownload, IconTag, IconTrash, IconX } from "@/components/icons";
+import { IconDownload, IconSparkles, IconTag, IconTrash, IconX } from "@/components/icons";
+import { PunchListButton } from "@/components/punch-list";
+import type { TagSuggestionView } from "@/lib/photo-tag-suggestions";
+import { fetchPicture, pictureForAi } from "@/lib/ai-picture";
+import { acceptTagSuggestions, dismissTagSuggestion, suggestPhotoTags } from "@/app/dashboard/projects/photo-ai-actions";
 import type { PhotoAccess } from "@/lib/job-photos";
 import type { PhotoTagOption } from "@/lib/photo-tags";
 import { addPhotoTag, deletePhoto, placePhoto, setPhotoTags } from "@/app/dashboard/projects/photo-actions";
@@ -36,14 +40,108 @@ export function PhotoGrid({
   access,
   canTag = false,
   staff,
+  ai = null,
 }: {
   items: PhotoItem[];
   tags: PhotoTagOption[];
   access: PhotoAccess;
   canTag?: boolean;
   staff?: { projectId: string; folderId: string | null; folders: { id: string; name: string }[] };
+  // Release C (Nov 12, 2026), staff with AI on: each photo's stored tag
+  // suggestions (dashed chips to accept), and the crew-link photos to ask
+  // about now (`auto`), since nobody in the app has opened them yet.
+  ai?: { suggestions: Record<string, TagSuggestionView>; auto: string[] } | null;
 }) {
-  const [tags, setTags] = useState(initialTags);
+  const router = useRouter();
+  // The workspace's lists as the page last sent them, plus any tag added
+  // here since (+ Add in the tag editor). A refresh after a suggestion's
+  // new label is accepted brings that tag in through the prop (audit fix,
+  // Nov 12, 2026: the list was copied once and never followed the prop).
+  const [addedTags, setAddedTags] = useState<PhotoTagOption[]>([]);
+  const tags = [...initialTags, ...addedTags.filter((tag) => !initialTags.some((each) => each.id === tag.id))];
+  // Select mode (staff): pick photos for Suggest tags, Accept all or the
+  // punch list.
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [aiBusy, startAi] = useTransition();
+  const [aiNote, setAiNote] = useState<{ text: string; error?: boolean } | null>(null);
+  const autoRan = useRef(false);
+
+  // Crew-link photos get their suggestions the first time someone in the
+  // app opens the job (Taylor's call 2's link, Release C). One request a
+  // photo; the server's claim row means a second tab asks nothing.
+  useEffect(() => {
+    if (!ai || !staff || autoRan.current || ai.auto.length === 0) return;
+    autoRan.current = true;
+    const wanted = items.filter((item) => ai.auto.includes(item.id));
+    if (!wanted.length) return;
+    void (async () => {
+      setAiNote({ text: `Suggesting tags for ${wanted.length} new crew ${wanted.length === 1 ? "photo" : "photos"}…` });
+      let error = "";
+      for (const item of wanted) {
+        try {
+          const base64 = await pictureForAi(await fetchPicture(item.src));
+          const result = await suggestPhotoTags(staff.projectId, item.id, base64);
+          if ("error" in result) error = result.error;
+        } catch (caught) {
+          error = caught instanceof Error ? caught.message : "A photo couldn't be read.";
+        }
+      }
+      setAiNote(error ? { text: `Tag suggestions: ${error}`, error: true } : { text: "Tag suggestions are on the crew's photos. Tap one to add it." });
+      router.refresh();
+    })();
+  }, [ai, staff, items, router]);
+
+  function suggestPicked() {
+    if (!staff) return;
+    const wanted = items.filter((item) => picked.includes(item.id) && drawable(item.mimeType));
+    if (!wanted.length) return setAiNote({ text: "Pick photos first (videos are skipped).", error: true });
+    startAi(async () => {
+      let error = "";
+      let done = 0;
+      for (const item of wanted) {
+        setAiNote({ text: `Suggesting tags… ${done + 1} of ${wanted.length}` });
+        try {
+          const base64 = await pictureForAi(await fetchPicture(item.src));
+          const result = await suggestPhotoTags(staff.projectId, item.id, base64, true);
+          if ("error" in result) error = result.error;
+        } catch (caught) {
+          error = caught instanceof Error ? caught.message : "A photo couldn't be read.";
+        }
+        done += 1;
+      }
+      startAi(() => setAiNote(error ? { text: error, error: true } : { text: `Suggestions are on ${wanted.length} ${wanted.length === 1 ? "photo" : "photos"}.` }));
+      router.refresh();
+    });
+  }
+
+  function accept(uploadIds: string[], parts: ("type" | "location" | "new")[]) {
+    if (!staff) return;
+    startAi(async () => {
+      const result = await acceptTagSuggestions(
+        staff.projectId,
+        uploadIds.map((uploadId) => ({ uploadId, parts })),
+      );
+      startAi(() =>
+        setAiNote(
+          result.error
+            ? { text: result.error, error: true }
+            : uploadIds.length > 1
+              ? { text: `Added ${result.accepted} ${result.accepted === 1 ? "tag" : "tags"}.` }
+              : null,
+        ),
+      );
+      router.refresh();
+    });
+  }
+
+  function dismiss(uploadId: string, part: "type" | "location" | "new") {
+    if (!staff) return;
+    startAi(async () => {
+      await dismissTagSuggestion(staff.projectId, uploadId, part);
+      router.refresh();
+    });
+  }
   const [filter, setFilter] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [placing, setPlacing] = useState<{ item: PhotoItem; mode: "move" | "clone" } | null>(null);
@@ -59,7 +157,7 @@ export function PhotoGrid({
 
   async function addTag(kind: PhotoTagOption["kind"], name: string) {
     const result = await addPhotoTag(access, kind, name);
-    if (!("error" in result)) setTags((current) => (current.some((tag) => tag.id === result.id) ? current : [...current, result]));
+    if (!("error" in result)) setAddedTags((current) => (current.some((tag) => tag.id === result.id) ? current : [...current, result]));
     return result;
   }
 
@@ -67,8 +165,64 @@ export function PhotoGrid({
     return <p className="faint py-6 text-center text-sm" data-testid="photo-grid-empty">No photos or videos here yet.</p>;
   }
 
+  const pickedWithSuggestions = picked.filter((id) => {
+    const each = ai?.suggestions[id];
+    return each && (each.type || each.location || each.newLabel);
+  });
+
   return (
     <div className="space-y-4" data-testid="photo-grid">
+      {staff && (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="photo-select-bar">
+          <button
+            type="button"
+            onClick={() => {
+              setSelecting(!selecting);
+              setPicked([]);
+            }}
+            aria-pressed={selecting}
+            className={`btn btn-sm ${selecting ? "btn-primary" : "btn-ghost"}`}
+            data-testid="photo-select"
+          >
+            {selecting ? "Done" : "Select"}
+          </button>
+          {selecting && (
+            <>
+              <button type="button" onClick={() => setPicked(picked.length === shown.length ? [] : shown.map((item) => item.id))} className="btn btn-ghost btn-sm" data-testid="photo-select-all">
+                {picked.length === shown.length ? "Clear" : "Select all"}
+              </button>
+              <span className="faint text-xs" data-testid="photo-picked-count">
+                {picked.length} picked
+              </span>
+              {ai && (
+                <>
+                  <button type="button" onClick={suggestPicked} disabled={aiBusy || picked.length === 0} className="btn btn-ghost btn-sm" data-testid="photo-suggest">
+                    <IconSparkles size={13} />
+                    Suggest tags
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => accept(pickedWithSuggestions, ["type", "location", "new"])}
+                    disabled={aiBusy || pickedWithSuggestions.length === 0}
+                    className="btn btn-ghost btn-sm"
+                    data-testid="photo-accept-all"
+                  >
+                    Accept all
+                  </button>
+                  {picked.length > 0 && (
+                    <PunchListButton projectId={staff.projectId} picked={picked} label="Check these against the scope" testId="photo-punch" />
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {aiNote && (
+        <p className={`text-xs ${aiNote.error ? "text-[var(--danger)]" : "faint"}`} role="status" data-testid="photo-ai-note">
+          {aiNote.text}
+        </p>
+      )}
       {used.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" data-testid="photo-filters">
           <span className="faint mr-1 text-xs">Show</span>
@@ -103,10 +257,23 @@ export function PhotoGrid({
         {shown.map((item) => (
           <li
             key={item.id}
-            className="flex flex-col overflow-hidden rounded-lg border border-[var(--border)]"
+            className={`relative flex min-w-0 flex-col overflow-hidden rounded-lg border ${picked.includes(item.id) ? "border-[var(--brand)] ring-2 ring-[var(--brand)]" : "border-[var(--border)]"}`}
             data-testid="media-item"
             data-name={item.fileName}
+            data-id={item.id}
           >
+            {selecting && (
+              <label className="absolute left-1 top-1 z-10 flex h-11 w-11 items-center justify-center rounded-md bg-[var(--overlay)]">
+                <input
+                  type="checkbox"
+                  className="h-5 w-5"
+                  checked={picked.includes(item.id)}
+                  onChange={(event) => setPicked(event.target.checked ? [...picked, item.id] : picked.filter((id) => id !== item.id))}
+                  aria-label={`Pick ${item.name}`}
+                  data-testid="media-pick"
+                />
+              </label>
+            )}
             {item.mimeType.startsWith("video/") ? (
               <video src={item.src} controls preload="metadata" playsInline className="aspect-square w-full bg-black object-cover" />
             ) : drawable(item.mimeType) ? (
@@ -137,6 +304,14 @@ export function PhotoGrid({
                     </span>
                   ))}
               </div>
+              {ai && staff && (
+                <SuggestionChips
+                  suggestion={ai.suggestions[item.id]}
+                  busy={aiBusy}
+                  onAccept={(part) => accept([item.id], [part])}
+                  onDismiss={(part) => dismiss(item.id, part)}
+                />
+              )}
 
               {editing === item.id ? (
                 <TagEditor
@@ -189,6 +364,57 @@ export function PhotoGrid({
           onClose={() => setPlacing(null)}
         />
       )}
+    </div>
+  );
+}
+
+// A stored suggestion as dashed chips: tap to add that tag, × to say no.
+// A new label reads "New:" and is only made when tapped.
+function SuggestionChips({
+  suggestion,
+  busy,
+  onAccept,
+  onDismiss,
+}: {
+  suggestion: TagSuggestionView | undefined;
+  busy: boolean;
+  onAccept: (part: "type" | "location" | "new") => void;
+  onDismiss: (part: "type" | "location" | "new") => void;
+}) {
+  if (!suggestion) return null;
+  const chips = [
+    suggestion.type ? { part: "type" as const, label: suggestion.type.name } : null,
+    suggestion.location ? { part: "location" as const, label: suggestion.location.name } : null,
+    suggestion.newLabel ? { part: "new" as const, label: `New: ${suggestion.newLabel.name}` } : null,
+  ].filter((chip): chip is { part: "type" | "location" | "new"; label: string } => chip !== null);
+  if (!chips.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1" data-testid="media-suggestions">
+      <span className="sr-only">Suggested tags:</span>
+      {chips.map((chip) => (
+        <span key={chip.part} className="inline-flex items-stretch rounded border border-dashed border-[var(--border-strong)] text-[0.7rem]" data-testid="media-suggestion" data-part={chip.part} data-name={chip.label}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onAccept(chip.part)}
+            className="min-h-11 px-1.5 hover:bg-[var(--hover)] lg:min-h-7"
+            title="Add this tag"
+            data-testid="media-suggestion-accept"
+          >
+            + {chip.label}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onDismiss(chip.part)}
+            aria-label={`Dismiss ${chip.label}`}
+            className="faint min-h-11 min-w-8 border-l border-dashed border-[var(--border-strong)] px-1 hover:bg-[var(--hover)] lg:min-h-7 lg:min-w-6"
+            data-testid="media-suggestion-dismiss"
+          >
+            ×
+          </button>
+        </span>
+      ))}
     </div>
   );
 }

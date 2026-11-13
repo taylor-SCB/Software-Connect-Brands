@@ -123,8 +123,9 @@ export async function findLookalikes(
 // spaces and punctuation; the same website domain (no http, no www); the
 // same phone (last 10 digits). "Not the same business" is a
 // DuplicateDismissal of kind "company". One statement, each test through
-// an index first: the name's trigram index on its longest word, the
-// website's (20261113120000_ai_a_company_website_trgm), the phone digits'.
+// an index: the name's key, the website's trigram index (both in
+// 20261113180000_ai_a_company_website_trgm), the phone digits'. A website
+// on a shared host (facebook.com and the like) is no match.
 
 export type CompanyLookalike = {
   id: string;
@@ -136,26 +137,41 @@ export type CompanyLookalike = {
   reasons: ("name" | "domain" | "phone")[];
 };
 
-const companyKey = (name: string) => name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+// Hosts many small businesses share (a Facebook page, a Google site, a
+// Yelp listing): the same host there says nothing about being one business
+// (audit fix, Nov 13, 2026), so the website rule skips them.
+const SHARED_HOSTS = new Set(
+  (
+    "facebook.com fb.com m.facebook.com instagram.com linkedin.com twitter.com x.com youtube.com tiktok.com google.com " +
+    "sites.google.com business.site g.page maps.google.com goo.gl yelp.com nextdoor.com angi.com angieslist.com homeadvisor.com " +
+    "houzz.com thumbtack.com bbb.org mapquest.com linktr.ee wix.com wixsite.com squarespace.com godaddysites.com weebly.com " +
+    "wordpress.com blogspot.com square.site carrd.co"
+  ).split(" "),
+);
+
 export function websiteDomain(website: string | null | undefined) {
   const match = (website ?? "").trim().match(/^([a-z]+:\/\/)?(www\.)?([^/:?#]+)/i);
   const domain = match?.[3]?.toLowerCase() ?? "";
-  return domain.includes(".") ? domain : null;
+  if (!domain.includes(".")) return null;
+  // A site on a shared host (acme.wixsite.com is fine; facebook.com is not).
+  if (SHARED_HOSTS.has(domain)) return null;
+  return domain;
 }
 
 export async function findCompanyLookalikes(
   organizationId: string,
   company: { id: string; name: string; website: string | null; phone: string | null },
 ): Promise<CompanyLookalike[]> {
-  const key = companyKey(company.name);
-  const longest = (company.name.match(/[\p{L}\p{N}]+/gu) ?? []).sort((a, b) => b.length - a.length)[0] ?? "";
   const domain = websiteDomain(company.website);
   const phone = lastTen(company.phone);
 
-  const nameTest =
-    key.length >= 3 && longest.length >= 3
-      ? Prisma.sql`(c.name ILIKE ${`%${likeText(longest)}%`} AND lower(regexp_replace(c.name, '[^[:alnum:]]+', '', 'g')) = ${key})`
-      : Prisma.sql`false`;
+  // The name's key is worked out in SQL on both sides, exactly as Find
+  // duplicates does (audit fix, Nov 13, 2026: a JS key and a longest-word
+  // prefilter missed "Bright-Line" from "Brightline", "3M Co" and names
+  // with ₂ or Σ), through the expression index
+  // Company_name_key_idx (20261113180000_ai_a_company_website_trgm).
+  const nameTest = Prisma.sql`(lower(regexp_replace(c.name, '[^[:alnum:]]+', '', 'g')) = lower(regexp_replace(${company.name}::text, '[^[:alnum:]]+', '', 'g'))
+        AND lower(regexp_replace(c.name, '[^[:alnum:]]+', '', 'g')) <> '')`;
   const domainTest = domain
     ? Prisma.sql`(c.website ILIKE ${`%${likeText(domain)}%`}
         AND lower(regexp_replace(btrim(c.website), '^([a-z]+://)?(www\\.)?([^/:?#]+).*$', '\\3', 'i')) = ${domain})`

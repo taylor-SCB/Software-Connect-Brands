@@ -40,7 +40,7 @@ export async function MyReportEmails({ organizationId, userId }: { organizationI
                 <li key={sub.id} className="flex items-center justify-between gap-3 py-2" data-testid="my-report-email">
                   <span className="min-w-0">
                     {report ? (
-                      <Link href={reportHref({ report, period: "today", repId: sub.repId, by: "rep" })} className="link">
+                      <Link href={reportHref({ report, period: "today", repId: sub.repId, by: "rep" }, "/dashboard", { explicit: true })} className="link">
                         {REPORT_LABELS[report]}
                       </Link>
                     ) : (

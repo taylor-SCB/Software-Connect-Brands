@@ -120,7 +120,7 @@ export async function setCrewActive(crewId: string, active: boolean): Promise<Ac
 // Deleting is refused once they have worked, because it would take the
 // cost off a job's budget. Retire them instead.
 export async function deleteCrew(crewId: string): Promise<ActionState> {
-  const { organizationId } = await requireSession();
+  const { organizationId, role } = await requireSession();
   const crew = await prisma.crew.findFirst({
     where: { id: crewId, organizationId },
     select: { id: true, name: true, _count: { select: { timeEntries: true } } },
@@ -133,8 +133,22 @@ export async function deleteCrew(crewId: string): Promise<ActionState> {
       } of work. Retire them instead — deleting would take that cost off the jobs.`,
     };
   }
-  await prisma.crew.deleteMany({ where: { id: crew.id, organizationId } });
+  // Their compliance files go with them (Release B): left behind, a
+  // subcontractor's COI would read as the workspace's own. Company files
+  // are an Owner's or Admin's to remove, so a Member can't take them this
+  // way either (audit fix).
+  if (role !== "OWNER" && role !== "ADMIN") {
+    const files = await prisma.complianceInfo.count({ where: { organizationId, crewId: crew.id } });
+    if (files > 0) {
+      return { error: `${crew.name} has compliance files on their card. Ask an owner or admin to delete the crew, or retire them instead.` };
+    }
+  }
+  await prisma.$transaction([
+    prisma.upload.deleteMany({ where: { organizationId, kind: "COMPLIANCE", compliance: { crewId: crew.id } } }),
+    prisma.crew.deleteMany({ where: { id: crew.id, organizationId } }),
+  ]);
   revalidateCrews();
+  revalidatePath("/dashboard/settings/compliance");
   return { success: `${crew.name} removed` };
 }
 

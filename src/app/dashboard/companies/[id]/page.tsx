@@ -1,3 +1,7 @@
+import { ArtworkCard } from "@/components/artwork-card";
+import { apparelOn } from "@/lib/apparel";
+import { artworksFor } from "@/lib/artwork";
+import { storageDriver } from "@/lib/storage";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
@@ -210,6 +214,11 @@ export default async function CompanyDetailPage({
     // Looks like the same business (Nov 13, 2026): one statement, no AI.
     findCompanyLookalikes(organizationId, company),
   ]);
+
+  // The apparel pack (Nov 12, 2026): the company's logos, for proofs.
+  const apparel = await apparelOn(organizationId);
+  const artworks = apparel ? await artworksFor(organizationId, { companyId: company.id }) : [];
+  const storageOn = storageDriver() !== null;
 
   // The jobs won here, newest first.
   const projects = await prisma.project.findMany({
@@ -764,6 +773,8 @@ export default async function CompanyDetailPage({
             )}
 
             <ProjectsCard projects={projects} />
+
+            {apparel && <ArtworkCard owner={{ companyId: company.id }} artworks={artworks} storageOn={storageOn} />}
 
             <FoldCard
               mode="closed"

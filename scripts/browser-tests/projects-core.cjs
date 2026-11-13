@@ -166,8 +166,14 @@ async function signAs(browser, token, name) {
   await page.locator("#col-2-company").selectOption("cmp_sup_pj");
   await page.locator("#col-2-contact").selectOption("ctc_sup_pj");
   await page.getByRole("checkbox", { name: "Put Smart locks on Contract B" }).check();
+  // The purchase order starts at the $90 catalog cost, not the quote's
+  // $150 (Taylor, Nov 12, 2026), and the card says so before Create.
+  assert.match(await page.getByTestId("po-pricing-note").textContent(), /At your catalog cost/);
+  assert.equal(await page.locator("[data-testid=column-total]").nth(1).textContent(), "$1,800.00", "20 locks at $90");
   await page.locator("[data-testid=create-contracts]").click();
+  // So Release B's price check has nothing to say, and Create goes through.
   await page.waitForURL(/created=\d+/);
+  assert.equal(await page.getByTestId("price-check").count(), 0);
 
   const contracts = (await sql(
     `SELECT id, number, payable, "publicToken" FROM "Contract" WHERE "organizationId"=$1 ORDER BY number`,
@@ -176,6 +182,11 @@ async function signAs(browser, token, name) {
   const sales = contracts.find((row) => !row.payable);
   const order = contracts.find((row) => row.payable);
   assert.ok(sales && order, "one contract each way");
+  assert.deepEqual(
+    (await sql(`SELECT "unitPriceCents", "discountCents" FROM "ContractLineItem" WHERE "contractId"=$1`, [order.id])).rows,
+    [{ unitPriceCents: 9000, discountCents: 0 }],
+    "the supplier is asked for the catalog cost, not the customer's price",
+  );
 
   log("no job exists until the customer signs");
   assert.equal(Number((await sql(`SELECT count(*) FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0].count), 0);
@@ -184,7 +195,10 @@ async function signAs(browser, token, name) {
   for (const contract of [sales, order]) {
     await page.goto(`${BASE}/dashboard/contracts/${contract.id}`);
     await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-    await page.getByText(/Sent/).first().waitFor();
+    // "Sent" can already be on the page, and sending reads the contract
+    // over first (Release B): wait for the button that only exists once
+    // the status has really changed.
+    await page.locator("[data-testid=mark-signed]").first().waitFor();
   }
   await signAs(browser, order.publicToken, "Sam Rep");
   assert.equal(Number((await sql(`SELECT count(*) FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0].count), 0);
@@ -246,12 +260,12 @@ async function signAs(browser, token, name) {
     `SELECT "awardedCents","spentCents","committedCents" FROM "Project" WHERE id=$1`,
     [project.id],
   )).rows[0];
-  assert.equal(numbers.committedCents, 300000, "the $3,000 order is committed");
+  assert.equal(numbers.committedCents, 180000, "the $1,800 order (20 locks at the $90 cost) is committed");
   assert.equal(numbers.spentCents, 0, "nothing paid out yet");
   assert.equal(
     Number(await page.locator("[data-testid=project-left]").textContent().then((t) => t.replace(/[^0-9]/g, ""))),
-    220000,
-    "Left is $2,200.00 — awarded less committed",
+    340000,
+    "Left is $3,400.00 — awarded less committed",
   );
   await shot(page, "02-budget-bar");
 
@@ -262,18 +276,18 @@ async function signAs(browser, token, name) {
   )).rows[0];
   await page.goto(`${BASE}/dashboard/contracts/${order.id}`);
   await page.locator("[data-testid=payment-money]").first().locator("[data-testid=record-payment]").click();
-  await page.locator("[data-testid=payment-amount-input]").fill("1000");
+  await page.locator("[data-testid=payment-amount-input]").fill("500");
   await page.locator("[data-testid=payment-save]").click();
-  await page.getByText(/\$1,000\.00 recorded/).waitFor();
+  await page.getByText(/\$500\.00 recorded/).waitFor();
   const paid = (await sql(
     `SELECT "spentCents","committedCents","awardedCents" FROM "Project" WHERE id=$1`,
     [project.id],
   )).rows[0];
-  assert.equal(paid.spentCents, 100000);
-  assert.equal(paid.committedCents, 200000);
+  assert.equal(paid.spentCents, 50000);
+  assert.equal(paid.committedCents, 130000);
   assert.equal(
     paid.awardedCents - paid.spentCents - paid.committedCents,
-    220000,
+    340000,
     "Left does not move when a commitment is paid",
   );
   assert.ok(orderRow.id, "the purchase order had a payment row to record against");
@@ -294,7 +308,7 @@ async function signAs(browser, token, name) {
   )).rows[0];
   assert.equal(collected.billedCents, salesRow.amountCents === 520000 ? 520000 : collected.billedCents);
   assert.equal(collected.receivedCents, 200000, "the customer's payment is collected");
-  assert.equal(collected.spentCents, 100000, "and is not confused with money going out");
+  assert.equal(collected.spentCents, 50000, "and is not confused with money going out");
 
   /* ------------------------------ Moving a row ------------------------------ */
 
@@ -577,7 +591,10 @@ async function signAs(browser, token, name) {
   // Mark as sent: the stored budget has to pick the order up.
   await page.goto(`${BASE}/dashboard/contracts/con_pj_po`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" can already be on the page, and sending reads the contract
+  // over first (Release B): wait for the button that only exists once
+  // the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   for (let tries = 0; tries < 40; tries += 1) {
     const now = (await sql(`SELECT "committedCents" FROM "Project" WHERE id=$1`, [project.id])).rows[0]
       .committedCents;

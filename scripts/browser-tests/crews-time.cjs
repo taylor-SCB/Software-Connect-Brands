@@ -145,7 +145,10 @@ async function cents(locator) {
   // The public page only offers a signature once the agreement is out.
   await page.goto(`${BASE}/dashboard/contracts/${sales.id}`);
   await page.getByRole("button", { name: /Mark as sent|Send for signature/ }).first().click();
-  await page.getByText(/Sent/).first().waitFor();
+  // "Sent" is already on the page as pipeline text, and sending now reads
+  // the contract over first (Release B): wait for the button that only
+  // exists once the status has really changed.
+  await page.locator("[data-testid=mark-signed]").first().waitFor();
   await signAs(browser, sales.publicToken, "Dana Ruiz");
   const projectId = (await sql(`SELECT id FROM "Project" WHERE "organizationId"=$1`, [org])).rows[0].id;
   assert.ok(projectId, "signing the agreement made the job");

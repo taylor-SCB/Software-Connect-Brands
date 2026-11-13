@@ -1,5 +1,7 @@
 "use server";
 
+import { setApparel } from "@/lib/apparel";
+
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -166,4 +168,19 @@ export async function updateTeamGoals(_prev: ActionState, formData: FormData): P
   revalidatePath("/dashboard");
   const set = [parsed.data.weeklyTryGoal, parsed.data.weeklyTalkGoal, parsed.data.weeklyMeetingGoal].filter((value) => value !== null).length;
   return { success: set ? `Saved: ${set} weekly ${set === 1 ? "goal" : "goals"}, try limit ${parsed.data.parkAfterTries}` : `Saved: no weekly goals, try limit ${parsed.data.parkAfterTries}` };
+}
+
+// "We do apparel / custom print" (the apparel pack, Nov 12, 2026). Owners
+// and admins only, like the rest of this page. Turning it on makes the
+// Print location list; turning it off hides the apparel screens and
+// deletes nothing.
+export async function updateApparel(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const session = await requireAdminSession();
+  if (!session.allowed) return { error: "Only owners and admins can change this." };
+  const wanted = formData.get("apparelOn") === "true";
+  const result = await setApparel(session.organizationId, wanted);
+  if ("error" in result) return { error: result.error };
+  revalidatePath(PATH);
+  revalidatePath("/dashboard", "layout");
+  return { success: wanted ? "Apparel is on." : "Apparel is off. Nothing was deleted." };
 }

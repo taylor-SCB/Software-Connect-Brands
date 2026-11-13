@@ -6,6 +6,8 @@ import {
   IconCheck,
   IconLayers,
 } from "@/components/icons";
+import { requireSession } from "@/lib/session";
+import { workspaceComplianceFlagCount } from "@/lib/compliance";
 
 export type CompanyTile = "general" | "branding" | "users" | "compliance" | "marketing";
 
@@ -19,7 +21,12 @@ export const COMPANY_TILES: { key: CompanyTile; href: string; label: string; blu
   { key: "marketing", href: "/dashboard/settings/marketing", label: "Marketing", blurb: "Brochures and materials", Icon: IconLayers },
 ];
 
-export function CompanyTiles({ current }: { current: CompanyTile }) {
+export async function CompanyTiles({ current }: { current: CompanyTile }) {
+  // Release B, the compliance watchdog: the Compliance tile says how many
+  // of the workspace's own papers have run out, run out within 30 days or
+  // are made out to another name.
+  const { organizationId } = await requireSession();
+  const flagged = await workspaceComplianceFlagCount(organizationId);
   return (
     <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" role="tablist" aria-label="Company Information">
       {COMPANY_TILES.map(({ key, href, label, blurb, Icon }) => {
@@ -57,6 +64,11 @@ export function CompanyTiles({ current }: { current: CompanyTile }) {
               <span className="faint block text-[0.7rem] leading-snug" data-testid="settings-tile-blurb">
                 {blurb}
               </span>
+              {key === "compliance" && flagged > 0 && (
+                <span className="mt-1 block text-[0.7rem] font-semibold leading-snug text-[var(--danger)]" data-testid="compliance-tile-flag">
+                  {flagged} need{flagged === 1 ? "s" : ""} a look
+                </span>
+              )}
             </span>
           </Link>
         );

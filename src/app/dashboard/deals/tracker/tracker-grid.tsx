@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { purchaseOrderPrice } from "@/lib/po-pricing";
 import { formatCents, dollarsToCents, centsToDollarInput } from "@/lib/format";
 import { lineGrossCents, lineTotalCents } from "@/lib/quote-math";
 import { MAX_TRACKER_COLUMNS } from "@/lib/contracts";
@@ -32,6 +33,9 @@ import {
   updateQuoteLine,
   type SplitInput,
 } from "./actions";
+import { checkContractPrices, explainPriceCheck, type PriceCheckInput } from "./check-actions";
+import { PriceCheckPanel } from "./price-check-panel";
+import type { CheckProblem } from "@/lib/contract-checks";
 
 const NEW = "__new__";
 
@@ -47,6 +51,9 @@ type Column = {
   // someone sets it by hand, and then stays put.
   direction: Direction;
   directionSet: boolean;
+  // The apparel pack: carry the quote's sent proofs. Unset, it follows the
+  // direction (the customer's paperwork yes, a supplier's order no).
+  includeProofs?: boolean;
   paymentTerms: string;
   // Money off the whole contract, as typed. While `discountAuto` is on
   // the box follows the quote's own discount instead (see autoDiscount);
@@ -279,6 +286,10 @@ export function TrackerGrid({
   const [error, setError] = useState<string | undefined>();
   const [pending, startTransition] = useTransition();
   const [rowPending, startRow] = useTransition();
+  // B1, the price check before Create (Release B): what the rules found,
+  // Claude's plainer lines as they arrive, and "Create anyway" for one go.
+  const [check, setCheck] = useState<{ problems: CheckProblem[]; lines: Record<string, string>; explaining: boolean; note?: string; shape: string } | null>(null);
+  const checkRun = useRef(0);
   // Saves of row prices still in flight, awaited before contracts are
   // made so a price typed a moment ago is what goes on them.
   const inFlight = useRef(new Set<Promise<unknown>>());
@@ -343,8 +354,20 @@ export function TrackerGrid({
     setColumns((all) => (all.length > 1 ? all.filter((column) => column.key !== key) : all));
   }
 
+  // A row as a contract card adds it up: on a purchase order at the
+  // catalog cost, without the customer's line discount, the way Create
+  // makes it (po-pricing.ts); on anything else at the quote's price.
+  function cardNet(direction: Direction, id: string) {
+    if (direction !== "out") return lineNet(id);
+    const value = live.get(id);
+    const row = rowsById.get(id);
+    if (!value || !row) return 0;
+    const price = purchaseOrderPrice({ ...value, product: row.product });
+    return lineTotalCents(value.quantity, price.unitPriceCents, price.discountCents);
+  }
+
   function columnSubtotal(column: Column) {
-    return column.selected.reduce((sum, id) => sum + lineNet(id), 0);
+    return column.selected.reduce((sum, id) => sum + cardNet(column.direction, id), 0);
   }
 
   // What a contract's discount starts as, until someone types in its box:
@@ -490,8 +513,9 @@ export function TrackerGrid({
 
   /* -------------------------------- Creating -------------------------------- */
 
-  function submit() {
+  function submit(anyway = false) {
     setError(undefined);
+    if (!anyway) setCheck(null);
     startTransition(async () => {
       // Anything typed into a row, or into the quote's discount box, and
       // not yet on the quote goes there first, so the contracts copy the
@@ -530,6 +554,7 @@ export function TrackerGrid({
           templateId: column.templateId || undefined,
           title: column.title || undefined,
           payable: column.direction === "out",
+          includeProofs: quote.sentProofs > 0 ? (column.includeProofs ?? column.direction === "in") : undefined,
           paymentTerms: column.paymentTerms || undefined,
           discount: discountPayload(columnDiscount(column)),
           schedule: rowsToInputs(column.schedule).map((row) => ({ ...row, terms: row.terms ?? null })),
@@ -537,10 +562,64 @@ export function TrackerGrid({
           lineItemIds: column.selected,
         })),
       };
+      // The price check (B1): no problems, no list and no extra click.
+      if (!anyway) {
+        const checkInput: PriceCheckInput = {
+          dealId,
+          quoteId: quote.id,
+          columns: payload.columns.map((column) => ({
+            payable: column.payable,
+            discount: column.discount,
+            schedule: column.schedule,
+            scheduleFromQuote: column.scheduleFromQuote,
+            lineItemIds: column.lineItemIds,
+          })),
+        };
+        const found = await checkContractPrices(checkInput).catch(() => null);
+        if (found && "problems" in found && found.problems.length > 0) {
+          const run = ++checkRun.current;
+          start(() => setCheck({ problems: found.problems, lines: {}, explaining: found.ai, shape: gridShape() }));
+          if (found.ai) {
+            // In the background: the list is already showing in the
+            // rules' words and never waits on this.
+            void explainPriceCheck(checkInput)
+              .catch(() => ({ error: "The AI didn't answer." }))
+              .then((explained) => {
+                if (run !== checkRun.current) return;
+                setCheck((current) =>
+                  current
+                    ? "error" in explained
+                      ? { ...current, explaining: false, note: explained.error }
+                      : { ...current, explaining: false, lines: explained.lines }
+                    : current,
+                );
+              });
+          }
+          return;
+        }
+      }
       const result = await createSplitContracts(payload);
       if (result?.error) setError(result.error);
     });
   }
+
+  // State set after an await inside the transition isn't part of it.
+  function start(update: () => void) {
+    startTransition(update);
+  }
+
+  // What the price check looked at: the cards and the rows' prices. A list
+  // left up after either changes no longer describes the grid, and
+  // "Create anyway" would accept problems it never showed (audit fix), so
+  // it goes and the next Create checks again.
+  function gridShape() {
+    return JSON.stringify({
+      columns: columns.map((column) => [column.selected, column.direction, columnDiscount(column), column.schedule]),
+      edits: Object.fromEntries(Object.entries(edits).map(([id, edit]) => [id, [edit.quantityInput, edit.priceInput, edit.discount]])),
+      quoteDiscount: quoteDiscount.state,
+    });
+  }
+  if (check && !pending && check.shape !== gridShape()) setCheck(null);
 
   function setCancelled(lineId: string, cancelled: boolean) {
     const form = new FormData();
@@ -808,11 +887,13 @@ export function TrackerGrid({
             index={index}
             pickers={pickers}
             rows={quote.lineItems}
-            lineNet={lineNet}
+            lineNet={(id) => cardNet(column.direction, id)}
             discount={columnDiscount(column)}
             quoteRows={quoteRows}
             quoteTotalCents={quoteTotalCents}
             canRemove={columns.length > 1}
+            proofsOn={quote.sentProofs > 0}
+            unapprovedProofs={quote.unapprovedProofs}
             onChange={(changes) => patch(column.key, changes)}
             onPickTemplate={(templateId) => pickTemplate(column, templateId)}
             onUntick={(lineId) => toggle(column.key, lineId)}
@@ -840,9 +921,27 @@ export function TrackerGrid({
         </div>
         <div className="flex flex-col items-end gap-2">
           <FormError message={error} />
+          {check && (
+            <PriceCheckPanel
+              problems={check.problems}
+              lines={check.lines}
+              explaining={check.explaining}
+              note={check.note}
+              pending={pending}
+              onCreateAnyway={() => {
+                checkRun.current += 1;
+                setCheck(null);
+                submit(true);
+              }}
+              onBack={() => {
+                checkRun.current += 1;
+                setCheck(null);
+              }}
+            />
+          )}
           <button
             type="button"
-            onClick={submit}
+            onClick={() => submit()}
             disabled={pending || ticked === 0}
             className="btn btn-primary"
             data-testid="create-contracts"
@@ -879,6 +978,8 @@ function ContractCard({
   quoteRows,
   quoteTotalCents,
   canRemove,
+  proofsOn,
+  unapprovedProofs,
   onChange,
   onPickTemplate,
   onUntick,
@@ -894,6 +995,10 @@ function ContractCard({
   quoteRows: ScheduleRowInput[] | null;
   quoteTotalCents: number;
   canRemove: boolean;
+  // The apparel pack: the quote has proofs that went out, and those still
+  // waiting for the customer's yes.
+  proofsOn: boolean;
+  unapprovedProofs: number[];
   onChange: (changes: Partial<Column>) => void;
   onPickTemplate: (templateId: string) => Partial<Column>;
   onUntick: (lineId: string) => void;
@@ -1051,6 +1156,27 @@ function ContractCard({
           </select>
         </div>
 
+        {proofsOn && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={column.includeProofs ?? column.direction === "in"}
+              onChange={(event) => onChange({ includeProofs: event.target.checked })}
+              data-testid="column-include-proofs"
+            />
+            <span>
+              Include the proofs
+              <span className="faint block text-xs">For the customer and the printer, with the printer&apos;s files. Leave it off for the blank-garment supplier.</span>
+              {(column.includeProofs ?? column.direction === "in") && unapprovedProofs.length > 0 && (
+                <span className="mt-1 block text-xs text-[var(--warn)]" data-testid="column-unapproved-proofs">
+                  Proof {unapprovedProofs.join(", ")} isn&apos;t approved yet. It goes on marked &ldquo;don&apos;t print from this&rdquo;.
+                </span>
+              )}
+            </span>
+          </label>
+        )}
+
         <div>
           <label className="label" htmlFor={id("terms")}>Payment terms</label>
           <select
@@ -1096,6 +1222,9 @@ function ContractCard({
               </button>
             ))
           )}
+          {column.direction === "out" && selectedRows.length > 0 && (
+            <PoPricingNote rows={selectedRows} />
+          )}
         </div>
         <div className="mt-2 space-y-1 text-sm">
           <div className="flex items-center justify-between">
@@ -1138,5 +1267,20 @@ function ContractCard({
         />
       </div>
     </div>
+  );
+}
+
+// On a purchase order card: the rows are at the catalog cost, and any row
+// with no cost on file is at the quote's price (po-pricing.ts).
+function PoPricingNote({ rows }: { rows: TrackerQuote["lineItems"] }) {
+  const noCost = rows.filter((row) => !(row.product && row.product.costCents > 0)).length;
+  return (
+    <p className="faint w-full text-xs" data-testid="po-pricing-note">
+      {noCost === rows.length
+        ? "No cost on file for these rows, so they're at the quote's price. Check the supplier's price."
+        : noCost > 0
+          ? `At your catalog cost. ${noCost} ${noCost === 1 ? "row has" : "rows have"} no cost on file and ${noCost === 1 ? "is" : "are"} at the quote's price.`
+          : "At your catalog cost, not the customer's price."}
+    </p>
   );
 }

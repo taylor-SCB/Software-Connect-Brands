@@ -531,6 +531,10 @@ async function closeFilters(page) {
   assert.equal(await page.locator("[data-testid=log-previous]").getAttribute("data-count"), "0", "neither past day is mine now");
   assert.match(await page.locator("[data-testid=log-upcoming]").textContent(), /Call · Dana Ruiz/, "my upcoming days are (the call I scheduled)");
   assert.equal(await page.locator("[data-testid=log-upcoming]").locator("text=Sam Teammate").count(), 0);
+  // Mine is remembered and a filter keeps it (audit fix, Nov 12, 2026): put
+  // Everyone back so the filter steps below see the whole team's days.
+  await page.locator("[data-testid=cal-everyone]").click();
+  await page.locator("[data-testid=cal-everyone][aria-pressed=true]").waitFor();
 
   log("picking users: Sam alone, then Sam plus Unassigned");
   await page.goto(`${BASE}/dashboard/calendar?layout=log&users=usr_calv2_sam`);

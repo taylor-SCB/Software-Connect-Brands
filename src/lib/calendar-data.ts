@@ -36,6 +36,8 @@ const EVENT_SELECT = {
   company: { select: { name: true } },
   contact: { select: { name: true } },
   owner: { select: { name: true } },
+  createdById: true,
+  createdBy: { select: { name: true } },
   quote: { select: { number: true } },
   contract: { select: { number: true } },
   attendees: { orderBy: { name: "asc" as const }, select: { id: true, name: true } },
@@ -70,6 +72,8 @@ export function toEventView(event: {
   company: { name: string } | null;
   contact: { name: string } | null;
   owner: { name: string } | null;
+  createdById?: string | null;
+  createdBy?: { name: string } | null;
   quote: { number: number } | null;
   contract: { number: number } | null;
   attendees: { id: string; name: string }[];
@@ -98,6 +102,8 @@ export function toEventView(event: {
     companyName: event.company?.name ?? null,
     contactName: event.contact?.name ?? null,
     ownerName: event.owner?.name ?? null,
+    createdById: event.createdById ?? null,
+    createdByName: event.createdBy?.name ?? null,
     attendeeNames: event.attendees.map((row) => row.name),
     doneAt: event.doneAt ? event.doneAt.toISOString() : null,
     auto: event.auto,

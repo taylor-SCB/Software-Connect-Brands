@@ -5,14 +5,21 @@ import { PageHeader, Card, CardHeader } from "@/components/ui";
 import { CompanyTiles } from "../company-tiles";
 import { DocumentUploadForm } from "../document-upload-form";
 import { DocumentList } from "../document-list";
+import { aiConfigured } from "@/lib/ai";
 
 export default async function CompliancePage() {
   const session = await requireSession();
   const timeZone = await getTimeZone();
   const canEdit = session.role === "OWNER" || session.role === "ADMIN";
 
+  const organization = await prisma.organization.findUnique({ where: { id: session.organizationId }, select: { name: true } });
+  // The workspace's own papers; a subcontractor's sit on their crew card.
   const documents = await prisma.upload.findMany({
-    where: { organizationId: session.organizationId, kind: "COMPLIANCE" },
+    where: {
+      organizationId: session.organizationId,
+      kind: "COMPLIANCE",
+      OR: [{ compliance: null }, { compliance: { crewId: null } }],
+    },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -23,6 +30,7 @@ export default async function CompliancePage() {
       expiresOn: true,
       publicToken: true,
       createdAt: true,
+      compliance: { select: { namedInsured: true, insurer: true, policyNumber: true, limits: true } },
     },
   });
 
@@ -40,7 +48,7 @@ export default async function CompliancePage() {
         {canEdit && (
           <Card lit>
             <CardHeader title="Upload a file" subtitle="Files stay private to your workspace." />
-            <DocumentUploadForm kind="COMPLIANCE" />
+            <DocumentUploadForm kind="COMPLIANCE" aiOn={aiConfigured()} />
           </Card>
         )}
 
@@ -50,6 +58,7 @@ export default async function CompliancePage() {
             documents={documents}
             timeZone={timeZone}
             canEdit={canEdit}
+            expectedName={organization?.name ?? null}
             emptyTitle="No compliance files yet"
             emptyBody="Upload your W-9, COI and licenses so they are one click away when a customer asks."
           />

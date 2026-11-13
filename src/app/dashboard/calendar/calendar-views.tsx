@@ -21,7 +21,7 @@ import { formatDay } from "@/lib/format";
 import { Card, CardHeader, Badge, FormError, EmptyState } from "@/components/ui";
 import { IconCalendar, IconTrash, IconCheck, IconHardHat } from "@/components/icons";
 import { EventForm, type EventChoices, type EventFormValues } from "./event-form";
-import { deleteEvent, moveEvent, setEventDone } from "./actions";
+import { deleteEvent, handBackEvent, moveEvent, setEventDone } from "./actions";
 import { DoneBox, canLogOnDone } from "./done-box";
 import { useHowDidItGo } from "@/components/how-did-it-go/how-did-it-go";
 import { saveUiPref } from "../prefs-actions";
@@ -37,6 +37,9 @@ export type EventView = EventFormValues & {
   companyName: string | null;
   scopeName: string | null;
   ownerName: string | null;
+  // Who put it on the calendar (Planner AI, Nov 12, 2026).
+  createdById?: string | null;
+  createdByName?: string | null;
   attendeeNames: string[];
   doneAt: string | null;
   auto: boolean;
@@ -130,6 +133,12 @@ function whoseHistory(event: EventView) {
 // unticking one whose history line would go with it. Same look as the
 // app's other inline deletes (DeleteButton): a red box, the question,
 // Yes and Cancel; Escape backs out.
+// Put on my calendar by a teammate (Planner AI, Nov 12, 2026; Taylor): it
+// can't be deleted, only handed back to whoever made it.
+export function isDelegated(event: Pick<EventView, "ownerId" | "createdById">, me: string) {
+  return Boolean(me) && event.ownerId === me && Boolean(event.createdById) && event.createdById !== me;
+}
+
 export function RowConfirm({
   kind,
   event,
@@ -138,7 +147,7 @@ export function RowConfirm({
   onCancel,
   testId,
 }: {
-  kind: "delete" | "untick";
+  kind: "delete" | "untick" | "handback";
   event: EventView;
   pending: boolean;
   onYes: () => void;
@@ -156,13 +165,17 @@ export function RowConfirm({
   return (
     <div
       role="group"
-      aria-label={kind === "delete" ? "Confirm delete" : "Confirm not done"}
+      aria-label={kind === "delete" ? "Confirm delete" : kind === "handback" ? "Confirm hand back" : "Confirm not done"}
       className="mt-1.5 space-y-2 rounded-lg border border-[rgb(251_113_133/0.35)] bg-[rgb(251_113_133/0.08)] px-3 py-2"
       data-testid={testId}
       data-kind={kind}
     >
       <p className="text-xs font-medium">
-        {kind === "delete" ? "Take this off the calendar?" : "Mark it not done?"}
+        {kind === "delete"
+          ? "Take this off the calendar?"
+          : kind === "handback"
+            ? `${event.createdByName ?? "A teammate"} put this on your calendar. Hand it back to them?`
+            : "Mark it not done?"}
       </p>
       {kind === "untick" && (
         <p className="faint text-[0.7rem] leading-relaxed">
@@ -174,11 +187,21 @@ export function RowConfirm({
           type="button"
           disabled={pending}
           onClick={onYes}
-          className={`btn btn-danger btn-sm ${ROW_BUTTON}`}
+          className={`btn ${kind === "handback" ? "btn-primary" : "btn-danger"} btn-sm ${ROW_BUTTON}`}
           data-testid={`${testId}-yes`}
         >
           {kind === "delete" && <IconTrash size={12} />}
-          {kind === "delete" ? (pending ? "Deleting…" : "Yes, delete") : pending ? "Saving…" : "Yes, not done"}
+          {kind === "delete"
+            ? pending
+              ? "Deleting…"
+              : "Yes, delete"
+            : kind === "handback"
+              ? pending
+                ? "Handing back…"
+                : "Hand back"
+              : pending
+                ? "Saving…"
+                : "Yes, not done"}
         </button>
         <button type="button" onClick={onCancel} className={`btn btn-ghost btn-sm ${ROW_BUTTON}`} data-testid={`${testId}-no`}>
           Cancel
@@ -498,7 +521,7 @@ export function EventCard({
   const [moving, setMoving] = useState(false);
   const [ticking, setTicking] = useState(false);
   // The trash and an untick that would delete a history line ask first.
-  const [confirming, setConfirming] = useState<"delete" | "untick" | null>(null);
+  const [confirming, setConfirming] = useState<"delete" | "untick" | "handback" | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
   const color = colorForType(event.type);
@@ -636,17 +659,30 @@ export function EventCard({
         >
           Move
         </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => setConfirming(confirming === "delete" ? null : "delete")}
-          aria-label={`Take ${event.title} off the calendar`}
-          aria-expanded={confirming === "delete"}
-          className={`btn btn-ghost btn-sm !px-1.5 ${ROW_BUTTON}`}
-          data-testid="event-delete"
-        >
-          <IconTrash size={12} />
-        </button>
+        {isDelegated(event, choices.me) ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirming(confirming === "handback" ? null : "handback")}
+            aria-expanded={confirming === "handback"}
+            className={`btn btn-ghost btn-sm ${ROW_BUTTON}`}
+            data-testid="event-handback"
+          >
+            Hand back
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirming(confirming === "delete" ? null : "delete")}
+            aria-label={`Take ${event.title} off the calendar`}
+            aria-expanded={confirming === "delete"}
+            className={`btn btn-ghost btn-sm !px-1.5 ${ROW_BUTTON}`}
+            data-testid="event-delete"
+          >
+            <IconTrash size={12} />
+          </button>
+        )}
         {wantsBrief(event) && <BriefMeButton contactId={event.contactId!} name={event.contactName ?? undefined} testId="event-brief" />}
       </div>
 
@@ -656,7 +692,7 @@ export function EventCard({
           event={event}
           pending={pending}
           onYes={() =>
-            run(() => (confirming === "delete" ? deleteEvent(event.id) : setEventDone(event.id, false)))
+            run(() => (confirming === "delete" ? deleteEvent(event.id) : confirming === "handback" ? handBackEvent(event.id) : setEventDone(event.id, false)))
           }
           onCancel={() => setConfirming(null)}
           testId="event-confirm"

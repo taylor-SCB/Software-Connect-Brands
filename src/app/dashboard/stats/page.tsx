@@ -77,6 +77,9 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
   // What has happened is counted up to today; the forecast takes whatever
   // part of the dates is still ahead.
   const custom = readCustomRange(params.from, params.to);
+  // Dates that were sent and couldn't be used say so (audit fix, Nov 13,
+  // 2026: the page fell back to 30 days in silence).
+  const refused = !custom && (params.from || params.to) ? { from: params.from ?? "", to: params.to ?? "" } : null;
   const range = custom
     ? (() => {
         const start = zonedMoment(custom.from, "00:00", timeZone);
@@ -144,6 +147,11 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             {justMe ? " · just you" : repIds.length ? ` · ${repIds.length} ${repIds.length === 1 ? "rep" : "reps"}` : " · the whole team"} · compared with the{" "}
             {custom ? "same number of days before" : `${PERIODS[period].label} before`}
           </p>
+          {refused && (
+            <p className="mt-1 text-xs text-[var(--warn)]" role="status" data-testid="stats-dates-refused">
+              Those dates couldn&apos;t be used: From has to be on or before To, and no more than three years apart. Showing the last {PERIODS[period].label} instead.
+            </p>
+          )}
           {custom && custom.from > today && (
             <p className="faint mt-1 text-xs" data-testid="stats-dates-ahead">
               These dates are still ahead, so there is nothing to count yet. The forecast below covers them.
@@ -170,7 +178,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
               {PERIODS[key].label}
             </Link>
           ))}
-          <CustomRange from={custom?.from ?? ""} to={custom?.to ?? ""} reps={params.reps ?? ""} active={Boolean(custom)} />
+          <CustomRange from={custom?.from ?? refused?.from ?? ""} to={custom?.to ?? refused?.to ?? ""} reps={params.reps ?? ""} active={Boolean(custom || refused)} />
         </div>
         <span className="mx-1 hidden h-5 w-px bg-[var(--border)] sm:block" />
         <div className="flex flex-wrap gap-1" role="group" aria-label="Reps">
@@ -238,7 +246,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Params
             testId="stats-daily"
           />
           <ShowNumbers testId="stats-daily-numbers">
-            <table className="table table-stack text-xs" data-testid="stats-daily-table">
+            <table className="table table-stack text-xs" data-testid="stats-daily-table" data-days={stats.daily.length}>
               <thead>
                 <tr>
                   <th>Day</th>

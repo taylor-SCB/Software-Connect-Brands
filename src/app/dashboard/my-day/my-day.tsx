@@ -10,6 +10,7 @@ import { UpNextList } from "./up-next";
 import { MeetingsCard } from "./meetings";
 import { MemberJumpIn } from "./jump-in";
 import { Greeting } from "./greeting";
+import { PlannerBox } from "@/components/planner-box";
 import { RememberedDetails } from "./remembered-details";
 
 // My day (BDR redesign, Nov 11, 2026; decision 9): a Member's first
@@ -47,6 +48,8 @@ export function MyDayView({
         <p className="faint text-xs">{readOnly ? `${day.rep.name}'s day · read-only` : "My day"}</p>
         <Greeting text={day.greeting} ai={ai && !readOnly} />
       </div>
+
+      {!readOnly && <PlannerBox />}
 
       <Card lit className="min-w-0">
         <CardHeader title={readOnly ? "Their week" : "My week"} subtitle={rate === null ? "Monday to today" : `Monday to today · ${rate}% of tries were talks`} />

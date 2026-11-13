@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { QuoteDocument } from "@/components/quote-document";
 import { IconDownload } from "@/components/icons";
 import { linePicture, picturesFor } from "@/lib/product-images";
+import { lineProofPictures } from "@/lib/proofs";
 import { customUnitLabel, readSnapshot } from "@/lib/variation-shared";
 import { formatDate } from "@/lib/format";
 import { AcceptQuoteForm } from "./accept-form";
@@ -32,6 +33,9 @@ export default async function PublicQuotePage({
   const quote = await prisma.quote.findUnique({
     where: { publicToken: token },
     select: {
+      id: true,
+      // The apparel pack: the approval page's link, once proofs went out.
+      proofToken: true,
       number: true,
       title: true,
       template: true,
@@ -112,6 +116,9 @@ export default async function PublicQuotePage({
         quote.lineItems.flatMap((item) => (item.productId ? [item.productId] : [])),
       )
     : new Map();
+  // The apparel pack (Nov 12, 2026): a line's proof, once it has gone out,
+  // takes the product picture's place. Drafts never print.
+  const proofs = await lineProofPictures(quote.organization.id, quote.id);
   const lineItems = quote.lineItems.map((item) => {
     const picture = linePicture(
       {
@@ -134,6 +141,7 @@ export default async function PublicQuotePage({
       variationText: item.variationText,
       unitLabel: customUnitLabel(item),
       pictureToken: picture?.token ?? null,
+      proof: proofs.get(item.id) ?? null,
     };
   });
 
@@ -157,6 +165,7 @@ export default async function PublicQuotePage({
           payments: quote.hidePaymentTable ? [] : quote.payments,
           paymentTerms: quote.hidePaymentTable ? null : quote.paymentTerms,
           salesRep: quote.leadSalesRep,
+          proofLink: quote.proofToken && proofs.size ? `/pf/${quote.proofToken}` : null,
         }}
       />
 

@@ -661,7 +661,9 @@ account), approval from a link like contract signing, and the approved
 proof on the quote line and the printer's purchase order. **It is turned on
 by a switch in Settings ("We do apparel / custom print"), not an account
 type**, keeping the Oct 25 rule that the type turns no button on or off.
-Releases 4 (AI upload), 5 (publishing) and 6 (inventory) follow it.
+Releases 4 (AI upload), 5 (publishing) and 6 (inventory) follow it. **Built
+Nov 12, 2026** ("The apparel pack" below), with exact proofs; the AI
+renderings are the step after.
 
 **Mobile on contacts (Oct 27, 2026).** `Contact.mobile` is its own
 field, shown on the contact page and edit form, found by the list
@@ -996,7 +998,12 @@ Text · Book · Log, "N new leads nobody owns · Take 10" with Undo, Meetings
 with Held / No-show, and Team & money folded. Owners and Admins keep the
 Daily Rundown with **Team today** on top (`loadTeamToday`, `repNumbers`;
 `sellingReps()` is the one definition of who counts as a rep; all in
-`src/lib/reports/daily.ts`). A Member's Rundown is Me unless `rep=all`. The
+`src/lib/reports/daily.ts`). A Member's Rundown is Me unless `rep=all`, and an address naming any rep
+is the Rundown, never My day; links that leave the page (the report email,
+My report emails) use `reportHref(choice, path, { explicit: true })`, which
+names `report=daily` and `rep=all` outright. Done today and Recent activity
+read whole saves through `recentSaves()` (`src/lib/recent-saves.ts`), never
+"the newest N rows, then fold". The
 Rundown's four money tiles are whole dollars (`wholeDollars`). The
 calendar gains the **Agenda** (the default for a Member and a phone), a
 [Mine | Team] toolbar with View and Filters, and "+ New" as a sheet. **The
@@ -1034,6 +1041,272 @@ read it with `readUiPrefs`, or `readUiPrefsWithLegacy` where the first
 build's top-level keys may still be stored (`src/lib/user-prefs.ts`). Schema:
 the `20261111*` migrations.
 
+**The AI release (Nov 12, 2026; plan: the "AI Release Plan" artifact,
+claude.ai/artifact/NbGqNjF9vjCskNhPb9XKLd).** Taylor picked seventeen AI
+items from earlier sessions and think tanks once `ANTHROPIC_API_KEY` was
+set (Nov 11, 2026), built as three releases on `claude/ai-release-a`,
+`-b` and `-c` and merged on `claude/ai-release-final`. The same rules as
+"AI assist": every answer is a suggestion a person accepts, every AI
+control hides without the key, every call is `askClaude` with its kind
+and `AI_DAILY_CAPS` (fifteen new kinds), and every answer is checked
+against what was sent (ids offered, labels on the lists, snippets found
+in the source, numbers through `inventedNumbers`). Taylor's four calls on
+the plan: openers go on My day's Up next (no Call List page); installers
+send receipts through the crew link, held until an Owner or Admin
+approves; site-walk photos are kept and move into the job; the compliance
+watchdog covers his subs' COIs too. **Groundwork**: `askClaude` takes
+`AiPart`s (pictures as base64 JPEG made small in the browser, PDFs, text
+documents; at most 20 pictures and 24 MB of base64, refused in words
+before the allowance is spent) and a `timeoutMs`; to a stand-in endpoint
+(`ANTHROPIC_ENDPOINT`) it adds an `x-scb-ai-kind` header, never to
+Anthropic. **Release A, sales and calendar**: **Brief me**
+(`src/lib/brief.ts`, `BriefMeButton` in `src/components/brief-me.tsx`) on
+the contact page header, Call and Meeting entries with a person (the
+week/month entry card and the open Agenda row), Up next rows and the
+Pipeline panel's Primary POC: facts by rules with no key, five lines and
+an ask by Claude checked with `inventedNumbers` / `factCounts` and
+`inventedNames` (`src/lib/ai-writing.ts`), "Couldn't write the brief this
+time." over the facts on a failed check. Written words are kept in
+`AiWriting` (`readWriting` / `storeWriting` / `fingerprintOf`; keys
+`brief:<contactId>`, `opener:<contactId>:<userId>`,
+`forecast:<reps or all>`). **Draft an opener** on Up next rows only
+(`my-day/opener.tsx`), on a tap. **Say it, don't type it** in How did it
+go? (`how-did-it-go/mic.tsx`, `voice-actions.ts`, `voice-options.ts`):
+the browser's own speech recognition fills the notes box (nothing
+recorded or sent by us); "Fill it in from my words" picks only from
+`voiceChips(type)` / `voiceNextSteps(chip)` and the sheet re-checks
+against `nextChoices`; it stays two Saves (outcome, then the next step
+already picked), the coordinator's call. **The Stats forecast**
+(`src/lib/forecast.ts`, `stats/forecast.tsx`): this month and next by rep
+from open deals at Quote Sent and Contract Sent, the workspace's own
+rates (deals Won or Lost now) and usual days, "Running past the usual
+time", Low confidence until 90 days of history, the rep filter only (it
+looks ahead), the newest 5,000 open deals. **Looks like the same person**
+(`src/lib/lookalikes.ts`, no AI) under the contact header: same email,
+phone digits or name at another company, with Merge these,
++ Additional Account and Not the same person (`DuplicateDismissal`,
+smaller id first by byte order, `pairKey`; also hides that pair in Find
+duplicates). **Taylor's Nov 13, 2026 calls on Release A**: Fill it in
+stays two Saves. Stats' period buttons gain **Custom** (`?from=&to=`,
+`readCustomRange` in `stats/page.tsx`; at most three years, From on or
+before To; a plain GET form that keeps the rep filter): the part of the
+dates already behind is counted like any period (`loadStats`' `range`,
+compared with the same number of days before), and the part still ahead
+narrows the forecast to those dates by rep (`forecastWindow(today, from,
+to)`, `windowCents`; marked **rough** past the end of next month;
+`forecastKey` carries the dates). Dates wholly behind leave the forecast
+on this month and next and say so; a period button drops the dates, a
+rep link keeps them. **Looks like the same business** under a company's
+header (`findCompanyLookalikes`, `companies/[id]/lookalikes.tsx`): Find
+duplicates' company rules (name ignoring case, spaces and punctuation;
+website domain; phone, last 10 digits), with Merge these and Not the
+same business (`DuplicateDismissal.kind` "company", also hidden in Find
+duplicates; `dismissedFilter` in `duplicates.ts` serves both kinds); the
+website is matched through `Company_website_trgm_idx`
+and the name through the expression index `Company_name_key_idx` (both
+in `20261113180000_ai_a_company_website_trgm`; the website's is in the
+Prisma schema, the name key's can't be, so **`prisma migrate dev` will
+offer to drop `Company_name_key_idx`; take that line out**). A website on
+a shared host (facebook.com, a Google site, Yelp, Wix …) is no match. **Release B, contracts**: the rules for every check are
+pure in `src/lib/contract-checks.ts` (`scripts/contract-checks-check.ts`
+runs them). **Price check before Create** in the Coordinator
+(`check-actions.ts` under the tracker): under cost, under the starred
+minimum, a different unit, a discount past the margin, a schedule that
+doesn't add up, a purchase order row above catalog cost; "Create anyway".
+**Read before send**: `checkBeforeSend` in `contracts/ai-actions.ts`;
+**every Send for signature is `SendContractButton`**, never another send
+form (it still posts `setContractStatus`). **The redline reader**
+(`redline-reader.tsx`): Word read in the browser (tracked changes from
+`<w:ins>` / `<w:del>`), PDF or photos sent as files, each change's
+snippet found exactly once or listed "Couldn't place this one", Accept /
+Reject into a draft; the copy kept in `ContractFile`, written in 2.5 MB
+pieces by `addRedlineChunk`'s raw `||` append and omitted from every query
+by default. **Dates in this contract** on a signed contract: duties with
+their snippet, ticked into calendar entries of type "Contract date"
+(`ensureEventType`). **The compliance watchdog**: `ComplianceInfo` beside
+`Upload` (`src/lib/compliance.ts`, `compliance-shared.ts`), on Settings →
+Compliance (the workspace's own, `crewId` null) and on a sub crew's card
+(`crewId`; deleting the crew deletes them; a Member can't), flags on the
+tile, the crews list and a job where that crew is scheduled. What PRICE_CHECK,
+SEND_CHECK, REDLINE and CONTRACT_DATES wrote is kept in `AiAnswer` by
+(organization, kind, key) with a fingerprint. **Release C, jobs**:
+pictures are made small by `src/lib/ai-picture.ts` (`pictureForAi`,
+`picturesForAi` under 3.6 MB a request), job photos read through
+`/files/<token>?stream=1` (staff only, sandboxed by a
+Content-Security-Policy), and checked server-side as JPEG
+(`jpegFromBase64`, `readAiImages` in `src/lib/job-ai.ts`); workspace words
+go in through `fenced()`. **Tags from the picture**: `PhotoTagSuggestion`,
+one row per photo written before Claude is asked (the claim), dashed
+chips on the tile, crew-link photos asked about on the next staff visit
+(12 a visit, 30 days). **Punch list** and **Ask the job a question**
+(`src/lib/job-facts.ts`; dates written as words because `withoutDates`
+leaves ISO dates in) in an "Ask about this job" card on the job's Budget
+page; the punch list also from Files → Select. **The close-out photo
+report**: `PhotoReport`, edited at `/dashboard/projects/[id]/report`
+beside Close out (which is unchanged), shared at **`/jr/<token>`** (never
+`/p`, the crew link), its photos only through
+`/jr/<token>/photo/<id>` while shared, in the report, never SVG, sandboxed.
+**Site walk to quote**: "Draft from photos" on a draft quote, two asks
+(what it sees and the words to search, then lines from
+`catalogCandidates` under the rules of Draft lines from the meeting, now
+shared in `src/lib/drafted-lines.ts`); the photos are Uploads with
+`quoteId` (cascade) and `projectId` null, shown to the team only, moved
+into the job's Main folder by `moveSiteWalkPhotos` inside
+`awardFromContract` (all of the deal's quotes when the job is first made,
+the signed paperwork's own quote after that). **Receipts**: Add receipt on
+the Money tab makes a paid bill by `makeReceiptBill`
+(`src/lib/receipts.ts`): a signed, payable Purchase Order titled "Receipt —
+Store" on one scope (goods + Sales tax), one payment row settled on the
+receipt's day, the store found or made as a supplier company (with a
+"<Store> receipts" contact, since a contract needs one) inside that
+transaction under an advisory lock, the photo in the job's "Receipts"
+folder; so Spent ties out through paperwork. The crew link's **Send a
+receipt** makes a `JobReceipt` PENDING (30 waiting a job at most) that
+counts nowhere until an Owner or Admin approves it on the Money tab.
+Migrations `20261112120100_ai_a_writings_and_pairs`,
+`20261112120200_ai_b_contracts` and `20261112120300_ai_c_jobs` add new
+tables, one new enum type and the nullable `Upload.quoteId` only; no
+existing value changed, so Instant Rollback stays safe.
+**Taylor's two follow-ups (Nov 12, 2026).** **A purchase order made on the
+Contract Coordinator starts at the catalog cost**, without the customer's
+line discount, the way Order materials does: `purchaseOrderPrice` in
+`src/lib/po-pricing.ts` is read by Create (`deals/tracker/actions.ts`), the
+price check (`check-actions.ts`) and the card (`tracker-grid.tsx`, which
+gets `product.costCents` per row from `src/lib/tracker.ts` and says "At
+your catalog cost" in `po-pricing-note`); so "above catalog cost" no longer
+fires on Coordinator POs. **"Subcontractor insurance to check"** on the
+Daily Rundown for Owners and Admins (`subInsuranceFlags` in
+`src/lib/compliance.ts`, `SubInsuranceCard` in
+`src/app/dashboard/reports/sub-insurance.tsx`, loaded beside Team today in
+`src/app/dashboard/page.tsx`): active subcontractor crews whose newest
+paper of each kind (by when it runs out) has run out or runs out within
+30 days, expired first; a name mismatch stays on the crew card only; the
+card shows only when there is something to check, and it isn't in the
+report email.
+
+**The apparel pack (Nov 12, 2026; plan: the "Apparel Pack Plan" artifact,
+claude.ai/artifact/JCJqmooobKEuuBRnDApTpD).** Taylor's two calls: the proof
+is the customer's own logo placed exactly by the app on the product's real
+picture (AI photo-real renderings later), and a famous-looking logo is a
+**warning only** (no block, no "we're licensed" tick). **The switch**:
+Settings → General → "We do apparel / custom print" (Owners and Admins;
+`updateApparel`) and the operator's Turn on / Turn off on a workspace's
+/admin row (`setOrganizationApparel`); `Organization.apparelOn`. Off hides
+the Artwork card, the proof chips and the Proofs card, refuses anything
+new, and deletes nothing; /pf links keep answering. Turning it on makes the
+**Print location** label group (Front, Back, Left chest, Full front, Full
+back, Left sleeve, Right sleeve; `ensurePrintLocations` in
+`src/lib/apparel.ts`), adopting one already named so and bringing it back
+if retired; Labels & Units refuses to retire it while apparel is on.
+**Artwork** (`Artwork`, `src/lib/artwork.ts`, `src/lib/artwork-file.ts`,
+`src/components/artwork-card.tsx`): on a company page's Artwork card, or
+from the proof sheet (on the quote's company, or the contact when they
+have none); the file is read in the browser — PNG, JPEG, WebP, GIF, SVG
+(drawn through an `<img>`, so its scripts never run), PDF and Illustrator
+with a picture inside (unpdf, page one, at most 2,000 px) — into a preview
+with its transparency kept (WebP, PNG where the browser can't), a thumb,
+and a JPEG on **mid-grey** for the look-alike check; EPS, PSD, TIFF,
+CorelDRAW and Illustrator saved without PDF content are kept as the
+printer's file and ask for a PNG or JPEG of the logo. The **printer's
+file** is kept byte for byte (octet-stream, up to 50 MB). Artwork pictures
+and files are served **only to the workspace's own people**
+(`/dashboard/artwork/<id>/picture`, `/print` as an attachment); customers
+and printers only ever see proofs. Remove keeps artwork a proof uses
+(`removedAt`); merges move it. The **look-alike check** (`ARTWORK_CHECK`,
+100 a day) reads the stored grey copy, reuses an answer for the same
+picture (`checkHash`), shows "Looks like X's logo. Make sure you're allowed
+to print it." and is asked again for unchecked artwork when proofs are
+sent. **Proofs** (`src/lib/proofs.ts`, `proof-shared.ts`, `proof-draw.ts`;
+the quote's `proofs.tsx` and `proof-sheet.tsx`): a `Proof` is one design
+on one garment colour on one quote, keyed by (product, Color option);
+`ProofVersion` holds its picture and answer, `ProofPanel` one per print
+location (up to four: location, artwork, base = a product picture or a
+plain garment front/back in a colour, placement as fractions). A product
+line shows "+ Proof" (saved lines only) or its proof's chip; the sheet ticks
+the lines of that product and colour (sizes share a proof; a line on
+another proof shows "On Proof 2"), offers "Use Proof n" for a second line of
+the same garment, "Use an approved proof from an earlier order" (copied as
+a **draft** that shares the files; `copiedFrom` says where it came from),
+and draws the panels into one picture in the browser on Save (display and thumb like a product picture, plus an 800 px JPEG document copy that contracts and their PDFs print). A product
+picture of another colour is captioned "Shown on White; printed on Navy";
+with no picture in the line's Color it is drawn on a plain garment.
+`QuoteLineItem.proofId` joins a line, and **counts only while the line's
+product and Color still match** (every reader checks); a quote save drops
+mismatches and joins a new or changed line to its garment's one proof when
+the other lines of it agree (`syncLineProofs`). Editing a draft replaces its
+picture (a second tab's save of the same draft is refused by its token); editing a sent one makes the next version, and the customer keeps
+seeing the old one until **Send proofs** (its own share sheet — Copy link,
+Text, Email, Just mark them sent — never marks the quote sent), which marks
+the drafts SENT and every older version SUPERSEDED. **The approval page
+`/pf/<token>`** (`Quote.proofToken`, one per quote): each sent proof big,
+what it is for, no prices; Approve (typed name + "I've checked the
+spelling, colors and placement") or Ask for changes (a note); every write
+is guarded — only the newest version, still SENT, on this quote, while the
+workspace is active; a proof with a newer draft reads "Being updated".
+**Mark approved** by hand on the Proofs card (approved on the phone).
+Calendar: "Proof changes · <who>" open for the rep while any answer is
+"change it", "Proofs approved · <who>" done when the last one is approved
+(`syncProofEvents`). The **customer's quote** shows a line's sent proof in
+place of the product picture, captioned and linked to /pf. **Contracts**
+carry picked proofs (`ContractProof`, with a "covers" snapshot of the
+lines): the Coordinator card's "Include the proofs" (on for money in, off
+for money out; warns when one isn't approved) and a draft contract's Proofs
+card; the document's Proofs section shows each with "Approved by …" or a red
+"Not approved yet: don't print from this"; a **money-out contract that is
+out or signed** offers each panel's printer's file
+(`/c/<token>/print/<versionId>?p=<panel>`), only for a version that was
+approved, and a signed one keeps its file after a newer version, marked
+"since replaced … check before printing". Order materials never adds
+proofs (the blank-garment supplier). Deleting a quote keeps the proofs a
+contract carries (quote-less) and sweeps the rest (`sweepProofs`).
+Migration `20261113120000_apparel_pack` adds tables, one enum and nullable
+or defaulted columns only, so Instant Rollback stays safe.
+`apparel-pack.cjs` (37 steps) covers it.
+
+**Planner AI (Nov 12, 2026; Taylor's plan v2).** `/dashboard/planner`,
+opened from the Calendar toolbar's **Planner** (`cal-planner`), the
+dashboard's box (`PlannerBox`, `src/components/planner-box.tsx`, on My day
+and the Owner's Daily Rundown; `?q=` words) and the Contacts list's **Plan
+outreach** (`plan-outreach`, carrying title / industry / type / status /
+state / never=1). Owner-only: it books only on the signed-in person's own
+calendar (`ownerId` = `createdById` = them) and never changes a contact's
+owner. **Plan**: words turned into filter chips by `plannerFromText`
+(`PLANNER_FILTERS`, 150 a day; only values the workspace has, via
+`plannerChoices` / `cleanCriteria`), or picked by hand (Job title, Industry,
+Company type, Stage, State, City, Never contacted); a required **Warm**
+(a logged touch, `lastTouchAt`; latest talk first) / **Cold** (none; newest
+first) / **Mix** (alternating, topped up); up to 6 rows of date + Call /
+Email / Text (Email and Text are reminders; nothing is sent); Generate
+(`previewPlanner`) gives up to 50, at most 3 a company; tick boxes; Create
+(`createPlannerBatch`) re-checks the rules and writes one entry per person
+per row in one `createMany`, batchId `plan:<id>`, one batch a minute per
+person; one Undo (`undoPlannerBatch`, only entries not yet ticked done).
+**Who can be planned** (`eligible` in `src/lib/planner.ts`): not Won, Lost,
+Not interested or Archived; nothing open on anyone's calendar for them
+today or later; theirs, unowned, or a teammate's only when that lead also
+has no logged touch in 45 days; a phone for Call / Text rows, an email for
+Email rows. **Planned** tab (`loadPlanned`, 300 at most): open planner
+entries by day, overdue first. **Row buttons** (`EntryActions`,
+`src/components/entry-actions.tsx`) on Planned and on My day's Up next rows
+that have an entry due on the rep's own calendar (`UpNextItem.entry`):
+✅ Done opens How did it go? on the entry, 📅 Reschedule (day + optional
+time, Save / Cancel, `rescheduleEntry`), red trash (Delete / Cancel). **A
+delegated entry** (`CalendarEvent.createdById`, new, set by every place a
+person puts something on a calendar; delegated = on my calendar, made by
+someone else) can't be deleted (`deleteEvent` refuses): **Hand back**
+(`handBackEvent`) puts it on its maker's calendar, also on the calendar's
+cards and log rows (`isDelegated`). **Done everywhere** (Taylor): in the
+shared How did it go? sheet a chip now *picks* (aria-pressed), the notes
+take focus, and `outcome-save` / `outcome-cancel` decide; Fill it in's own
+Save still saves at once, and Book / Reschedule chips still open their
+step. The next step's follow-up takes up to 6 rows (`next-add-row`,
+`next-row-day-n` / `next-row-type-n`; `NextStep.more`, written in the same
+save); its Skip reads **Cancel** (keeps the touch, no follow-up).
+**Suites that tap an outcome chip must click `outcome-save` after it.**
+Migration `20261112150000_planner_calendar_creator` adds the nullable
+column only. `planner.cjs` (21 steps, in the "ai" group) covers it;
+`load-test.cjs` times the page and the three previews at 200,000.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -1056,14 +1329,51 @@ are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
 
+- **The Stats forecast never says how it did.** Past forecasts aren't
+  saved, so Custom dates wholly behind today count what happened but
+  can't compare it with what was forecast. A daily snapshot is the fix
+  if Taylor wants forecast-vs-actual (Nov 13, 2026).
+- **A forecast past the end of next month is rough.** Few deals are
+  decided that far out; the panel says so in amber.
+- **A website on a shared host is no match on the company page only.**
+  "Looks like the same business" skips facebook.com, Google sites, Yelp,
+  Wix and the like (`SHARED_HOSTS` in `src/lib/lookalikes.ts`), but Find
+  duplicates' Same website still groups every Facebook-page company
+  together. Teach it the same list when someone complains.
+
+- **Artwork, proofs and the printer's files went through the local driver
+  only.** The Blob path is first exercised on the live site; check
+  `[storage]` in the runtime logs after the first artwork upload.
+- **The proof is exact, not photo-real.** The logo is laid flat on the
+  product's picture or a plain garment; folds and fabric aren't drawn. AI
+  renderings at about $2 an image are the next step (Taylor, Nov 12).
+- **A plain garment is one t-shirt shape** (front and back); hoodies, hats
+  and bags need a product picture to look right.
+- **The look-alike check is a warning, by Taylor's call**, and only as good
+  as one look at a small grey copy; it can miss a mark or flag a school's
+  own.
+- **A replaced artwork's tile is the new one.** The version a customer
+  approved keeps its own artwork (download it from the quote's Proofs card).
+- **Order materials and a cancelled purchase order:** a cancelled PO's rows
+  still count as ordered, so a corrected printer's order is made on the
+  Coordinator, not Order materials (found in the apparel critique; not
+  changed).
+- **Nobody is emailed when a customer answers a proof.** The calendar entry
+  and the Proofs card are the signal; the coach's link is shared by hand.
+- **Proof answers aren't counted against anything.** The coach's link has
+  no rate limit; every write is guarded and repeats change nothing.
+
 - **Report emails need `CRON_SECRET` in Vercel.** The hourly clock is
   refused without it, by design. Add it (any long random value) under
   Settings → Environment Variables, all environments, then redeploy. Email
   itself (`RESEND_API_KEY`, `EMAIL_FROM`) must be on too.
-- **Report write-ups are rules-written until `ANTHROPIC_API_KEY` is set.**
-  They are still useful prose; AI ones cost about a cent each and are
-  written only when a report's numbers change, capped at 60 a workspace a
-  day.
+- **`ANTHROPIC_API_KEY` is set in Vercel, Production only (Nov 11,
+  2026, by Taylor, with a monthly spend limit on the Anthropic account as
+  the backstop).** Every AI feature is on in the live site. Each was tested
+  only against a stand-in Claude; the first real answers are on the live
+  site. Report write-ups cost about a cent each and are written only when
+  a report's numbers change, capped at 60 a workspace a day; without the
+  key they fall back to rules-written prose.
 - **Reports count from what is recorded.** A deal's win or loss is dated
   by `Deal.stageChangedAt` (a deal won and then moved out of Won is not a
   win); the Pipeline's "what moved" only knows `StatusChange` rows (from
@@ -1076,15 +1386,15 @@ are all blocking before the first paying customer.
   zone; its period picker is hidden. The gone-quiet list uses the real
   clock, so the cron's test clock does not move it.
 
-- **Suggest fields needs `ANTHROPIC_API_KEY` in Vercel** (`DEPLOY.md`).
-  Without it the button simply isn't shown. It sends the agreement's
+- **Suggest fields runs on the site's key** (`DEPLOY.md`).
+  Without the key the button simply isn't shown. It sends the agreement's
   text to Claude (claude-opus-5-5, server-side fallback on) and costs
   about a cent on a short agreement, up to about 40 cents on a
   60,000-character one, on the site's own key. 20 a day per workspace
   caps it at roughly $8 a workspace a day; a spend limit on the
   Anthropic account is the backstop.
-- **The Pipeline, quote and import AI helpers wait on `ANTHROPIC_API_KEY`
-  in Vercel too** (Nov 10, 2026). Until it is set, Draft a follow-up,
+- **The Pipeline, quote and import AI helpers run on the same key**
+  (Nov 10, 2026). Without it, Draft a follow-up,
   Suggest from meeting notes, Draft lines from the meeting, the import's
   "Suggest where they go" and "Suggest label" don't show; Gone quiet, the
   import's duplicate flags and the rule-based label chips need no key.
@@ -1099,6 +1409,22 @@ are all blocking before the first paying customer.
   candidate, so it comes back as a typed "Price needed" line. A catalog
   of tens of thousands narrows to the 300 first word matches before the
   best 40 are picked.
+- **AI release costs sit on Taylor's key for every workspace** (Nov 12,
+  2026), capped per workspace per day in `AI_DAILY_CAPS`; if one workspace
+  used every cap of the three releases in a day it would cost about $48 on
+  top of about $20 for the AI before them. Photos cost most (a punch list
+  or a close-out report about 15 cents, a tag about a cent a photo).
+- **A Coordinator purchase order row with no cost on file keeps the
+  quote's price** (a typed line, or a product nobody priced): the card says
+  "No cost on file … at the quote's price. Check the supplier's price."
+  Every row with a catalog cost is at that cost (Taylor, Nov 12, 2026).
+- **A site-walk photo's file stays in Blob when its contact or deal is
+  deleted** (the rows cascade; only Delete quote removes the files), the
+  same gap as deleting a workspace or a job.
+- **Contract dates count business days without holidays**, the redline
+  reader sees a Word copy's tracked changes but not its comments, and the
+  compliance flags compare UTC days (as the compliance list always has).
+
 - **The meeting suggestion's next step is copy-only**, and its value only
   fills a deal's value box: an opportunity with no deal has nowhere to
   keep either until it is converted.
@@ -1456,6 +1782,11 @@ are all blocking before the first paying customer.
   sheet and the Meetings card each draw their own "Saved · Undo", and two
   can show in the same spot for up to ten seconds. The contact page and the
   Pipeline have one slot each (`onToast`).
+- **Planner entries made before Nov 12, 2026 and app-written entries have
+  no maker** (`createdById` null), so they never count as delegated and can
+  be deleted as before. The planner's Email and Text rows are reminders; it
+  sends nothing. Its 45-day rule reads `lastTouchAt`, so a teammate's lead
+  with only marketing sends counts as quiet.
 - **The one-to-one email has no daily cap of its own.** Decision 16 keeps it
   out of the 40 a day, so only Resend's plan limit, shared by every
   workspace, stands behind it.
@@ -1474,7 +1805,7 @@ the same bugs in about ten minutes.
 
 Three browser suites live in the session scratchpad, not the repo (they
 should be moved in): the 21-step CRM regression, the approval/operator
-suite, and the delete-confirmation suite. **Forty-six** (Nov 11, 2026; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
+suite, and the delete-confirmation suite. **Fifty** (Nov 12, 2026, `apparel-pack.cjs` the fiftieth; `slow-db-proxy.cjs` beside them is a helper, not a suite; among them `looks.cjs`, 17 steps, Nov 10, 2026: Dark and Light from the sidebar switch, the page not moving for it, kept after a reload and a second login, no flash with JavaScript off, seven pages photographed and their text contrast-checked in each, the signed-out pages following the browser's cookie and a saved look winning over it, the phone, the brand colour, the customer's copy untouched) are checked in at
 `scripts/browser-tests/` with run instructions at the top of each file:
 the 27-step products + ratesheets suite, the 21-step companies +
 contacts suite (Sept 9, 2026), the 21-step contracts suite and the
@@ -1666,6 +1997,70 @@ seeds and sends paperwork now gets calendar entries written for it, so
 **scope any `CalendarEvent` lookup to the type it means** — the old
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
+
+**The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (36 since Nov 13),
+`ai-release-b.cjs` (34; runs `scripts/contract-checks-check.ts` first) and
+`ai-release-c.cjs` (29) answer as Claude through
+`scripts/browser-tests/fake-claude.cjs` (a helper, not a suite) on :3995,
+which picks each reply by the request's `x-scb-ai-kind` header, never by
+prompt text: `claude.reply(kind, value)`, `refuse`, `cutOff`, `garbage`,
+`fail(kind, status)`, `last(kind)` (its `text`, `images`, `documents`).
+**`reply()` sends any object with a string `text` field as a raw reply**,
+so an answer whose own JSON has a `text` key goes as
+`{ text: JSON.stringify(value), stop: "end_turn" }`. Each starts its own
+keyless server from the same build for its "AI off" steps (`NOAI_PORT`
+3116, 3117 and 3127). Run them with `run-suites.sh "ai:ai-assist,ai-release-a,ai-release-b,ai-release-c,apparel-pack"`.
+Release A's suite fakes speech with an init script defining
+`window.webkitSpeechRecognition` (`FAKE_SPEECH`). A suite that sends a
+contract waits for the send to land (Mark signed, or the database), never
+for the word "Sent": the send reads the contract over first. A suite that
+creates contracts on the Coordinator gets the price-check list whenever a
+rule fires: assert it (`price-check-item` `data-code`), then
+`price-check-create-anyway`. `load-test.cjs` seeds contact ids as `lp`
+plus 8 digits because a later step reads `right(id, 2)::int`.
+
+`apparel-pack.cjs` (Nov 12, 2026, 37 steps; seven "audit fixes" steps) starts the stand-in
+Claude on `FAKE_CLAUDE_PORT` (default 3995) for the look-alike check, so it
+runs in the runner's `ai` group, and needs `STORAGE_DRIVER=local`. **A suite
+that presses keys on the proof sheet's logo box waits for the sheet's own
+focus first** (`nudge()`): the sheet focuses its first button a frame after
+it opens and took the key press.
+
+**Run the `plain`, `email` and `reports` groups on a server with no AI key.**
+`next start` reads `.env`, and a `.env` that names a stand-in Claude
+(`ANTHROPIC_API_KEY` / `ANTHROPIC_ENDPOINT`, as the template and AI suites
+want) makes every Send for signature stop at "couldn't be read over" with
+Send anyway, so a dozen suites time out waiting for Mark signed. Export
+`ANTHROPIC_API_KEY= ANTHROPIC_ENDPOINT=` before `run-suites.sh` for those
+groups (an empty value in the environment wins over `.env`); the `ai` and
+`template` groups set their own.
+
+**Three suites fail on the live code too (Nov 13, 2026)**, found in the
+apparel full run and checked against a build of the live branch:
+`looks.cjs` step 31 ("the mini meter is a 44px target on touch", 31px),
+`pipeline-opportunities.cjs` step 53's timing budget (40,000 meetingless
+tiles add 177–930 ms against 140) and `planner.cjs` step 21 (the Planned
+list's Done button is 25.6px tall on a phone, not 44). None touches the
+apparel pack; each is for the next session that works on the meter, the
+Pipeline or the Planner.
+
+The apparel audit (Nov 12, 2026): 18 flagged, 15 distinct, 13 confirmed and
+fixed, 2 refuted. Lessons worth keeping:
+- **Compare stored JSON through the same reader on both sides.** Postgres
+  jsonb hands an object's keys back in its own order (shortest first), so
+  `JSON.stringify(raw) !== JSON.stringify(readSnapshot(raw))` is always true
+  and every labelled line looked "changed".
+- **A draft edited in place keeps its id**, so a stale-tab guard on the id
+  alone lets the second save win; guard on what changes per save (the
+  token).
+- **Anything printed into a PDF uses a JPEG copy.** Headless Chrome
+  re-encodes WebP losslessly at full size, and a few proofs passed the 4 MB
+  cap.
+- **A component kept mounted across a refresh keeps its state**: a
+  "thanks" that replaces the form hid the proofs still waiting.
+- **Dates in a client component go through `formatDate(..., timeZone)`**,
+  never `toLocaleDateString`: the server and the browser disagreed and React
+  threw a hydration error.
 
 `ai-assist.cjs` (Nov 10, 2026) answers as Claude on :3995 (set
 `ANTHROPIC_API_KEY=test-key` and `ANTHROPIC_ENDPOINT=http://localhost:3995`
@@ -1961,10 +2356,12 @@ what is still open is in Known gaps. Lessons worth keeping:
   (`ResponsiveList`). The server picks by user agent and the width decides
   after load: at a narrow viewport without `isMobile`, wait for
   `contact-card` / `company-card`.
-- **The calendar remembers Mine** (`calendar.scope`) for a bare address
-  only. A suite that clicks Mine clicks Team after it, or later bare visits
-  show one person's days. A filter other than Users ignores the remembered
-  Mine, so a shared link means the same thing to everyone.
+- **The calendar remembers Mine** (`calendar.scope`) whenever the address
+  names no users, filters included (session audit, Nov 12, 2026: a filter
+  used to drop a Member's Mine and flip the toggle to Team). Clear takes
+  the filters off and leaves Mine / Team alone; the Team week always reads
+  everyone. A suite that clicks Mine clicks Team after it, or later visits
+  show one person's days.
 - **A "Search people and companies" button is on every page**, so
   `getByLabel("Search people…")` needs `{ exact: true }`.
 - **The Agenda draws at most 60 entries a day** (`loadAgenda` in

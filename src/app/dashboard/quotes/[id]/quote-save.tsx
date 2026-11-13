@@ -109,7 +109,7 @@ export function QuoteSaveBar() {
   if (!enabled) return null;
   return (
     <div
-      className="popover sticky bottom-0 z-30 mt-5 flex items-center justify-end gap-3 rounded-t-xl border-t border-[var(--hairline-3)] px-5 py-3 max-sm:hidden"
+      className="popover sticky bottom-[var(--phone-tabbar-h,0px)] z-30 mt-5 flex items-center justify-end gap-3 rounded-t-xl border-t border-[var(--hairline-3)] px-5 py-3 max-sm:hidden"
       data-testid="quote-save-bar"
     >
       <p className="mr-auto min-w-0 truncate text-sm" role="status" data-testid="quote-save-status">

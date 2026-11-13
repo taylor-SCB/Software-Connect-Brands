@@ -22,6 +22,7 @@ export function Sheet({
   formRef,
   onSubmit,
   formTestId,
+  wide = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -38,6 +39,9 @@ export function Sheet({
   formRef?: Ref<HTMLFormElement>;
   onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
   formTestId?: string;
+  // A wider dialog from sm up, for a sheet with a picture beside its
+  // choices (the apparel pack's proof sheet). Still a bottom sheet on a phone.
+  wide?: boolean;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
@@ -113,7 +117,7 @@ export function Sheet({
         role="dialog"
         aria-modal="true"
         aria-label={label ?? (typeof title === "string" ? title : undefined)}
-        className="card popover flex max-h-[92dvh] w-full min-w-0 flex-col rounded-b-none rounded-t-2xl sm:max-h-[88vh] sm:max-w-lg sm:rounded-2xl"
+        className={`card popover flex max-h-[92dvh] w-full min-w-0 flex-col rounded-b-none rounded-t-2xl sm:max-h-[88vh] ${wide ? "sm:max-w-4xl" : "sm:max-w-lg"} sm:rounded-2xl`}
         data-testid={testId}
       >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--hairline-3)] px-4 pb-3 pt-4 sm:px-5">

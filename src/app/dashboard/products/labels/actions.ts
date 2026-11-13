@@ -146,6 +146,16 @@ export async function setGroupRetired(groupId: string, retired: boolean): Promis
   });
   if (!group) return { error: "That group is gone. Reload the page." };
   if (group.kind !== "CUSTOM") return { error: "Unit, Color and Size are always there." };
+  if (retired) {
+    // The apparel pack: proofs pick their print location from this group.
+    const org = await prisma.organization.findUnique({
+      where: { id: session.organizationId },
+      select: { apparelOn: true, printLocationGroupId: true },
+    });
+    if (org?.apparelOn && org.printLocationGroupId === group.id) {
+      return { error: "Proofs use this list for their print location. Turn apparel off in Settings → General first." };
+    }
+  }
   await prisma.variationGroup.update({ where: { id: group.id }, data: { archivedAt: retired ? new Date() : null } });
   refresh();
   return { ok: true };

@@ -9,6 +9,8 @@ import { PhotoTagPicker } from "@/components/photo-tag-picker";
 import type { PhotoAccess } from "@/lib/job-photos";
 import type { PhotoTagOption } from "@/lib/photo-tags";
 import { addPhotoTag, finishPhotoUpload, startPhotoUpload } from "@/app/dashboard/projects/photo-actions";
+import { suggestPhotoTags } from "@/app/dashboard/projects/photo-ai-actions";
+import { pictureForAi } from "@/lib/ai-picture";
 
 type Row = { id: number; name: string; percent: number; state: "waiting" | "sending" | "done" | "failed"; error?: string };
 
@@ -58,6 +60,7 @@ export function MediaUploader({
   askName = false,
   canAddTags = true,
   testId = "media",
+  suggestTags = null,
 }: {
   access: PhotoAccess;
   folderId?: string | null;
@@ -65,6 +68,10 @@ export function MediaUploader({
   askName?: boolean;
   canAddTags?: boolean;
   testId?: string;
+  // Release C (C1): AI on and the workspace's own people uploading. Each
+  // photo sent is read for a suggested Photo Type and Location once it
+  // has arrived; the suggestions show as dashed chips on its tile.
+  suggestTags?: { projectId: string } | null;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +81,7 @@ export function MediaUploader({
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [suggesting, setSuggesting] = useState<string>();
 
   function update(id: number, patch: Partial<Row>) {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)));
@@ -111,6 +119,7 @@ export function MediaUploader({
       ...current,
     ]);
     setBusy(true);
+    const toSuggest: { uploadId: string; file: File }[] = [];
 
     for (const { id, file } of queued) {
       update(id, { state: "sending" });
@@ -138,6 +147,7 @@ export function MediaUploader({
         });
         if (done.error) throw new Error(done.error);
         update(id, { state: "done", percent: 100 });
+        if (suggestTags && done.id && /^image\/(jpeg|png|webp|gif)$/.test(type)) toSuggest.push({ uploadId: done.id, file });
       } catch (caught) {
         update(id, { state: "failed", error: caught instanceof Error ? caught.message : "Upload failed" });
       }
@@ -146,6 +156,25 @@ export function MediaUploader({
     setBusy(false);
     if (inputRef.current) inputRef.current.value = "";
     router.refresh();
+
+    // One photo a request, after they have all arrived, so suggestions
+    // never hold up the next upload. A photo that can't be drawn is
+    // skipped; "Suggest tags" on the tile can ask again.
+    if (suggestTags && toSuggest.length) {
+      let failed = "";
+      for (const [index, entry] of toSuggest.entries()) {
+        setSuggesting(`Suggesting tags… ${index + 1} of ${toSuggest.length}`);
+        try {
+          const base64 = await pictureForAi(entry.file);
+          const result = await suggestPhotoTags(suggestTags.projectId, entry.uploadId, base64);
+          if ("error" in result) failed = result.error;
+        } catch (caught) {
+          failed = caught instanceof Error ? caught.message : "A photo couldn't be read.";
+        }
+      }
+      setSuggesting(failed ? `Tag suggestions: ${failed}` : "Tag suggestions are on the photos below. Tap one to add it.");
+      router.refresh();
+    }
   }
 
   const sent = rows.filter((row) => row.state === "done").length;
@@ -204,6 +233,11 @@ export function MediaUploader({
       </button>
 
       <FormError message={error} />
+      {suggesting && (
+        <p className="faint text-xs" aria-live="polite" data-testid={`${testId}-suggesting`}>
+          {suggesting}
+        </p>
+      )}
 
       {rows.length > 0 && (
         <div className="space-y-2" aria-live="polite">

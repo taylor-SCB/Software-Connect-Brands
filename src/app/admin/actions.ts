@@ -1,5 +1,7 @@
 "use server";
 
+import { setApparel } from "@/lib/apparel";
+
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -308,5 +310,18 @@ export async function decideAccountTypeRequest(formData: FormData) {
       data: { accountType: request.toType },
     });
   });
+  revalidatePath("/admin");
+}
+
+// The apparel switch, set by the operator from a workspace's row (the
+// apparel pack, Nov 12, 2026). The same as the workspace's own switch on
+// Settings → General.
+export async function setOrganizationApparel(formData: FormData) {
+  await requireSuperAdmin();
+  const parsed = z
+    .object({ organizationId: z.string().min(1), apparelOn: z.enum(["true", "false"]) })
+    .safeParse({ organizationId: formData.get("organizationId"), apparelOn: formData.get("apparelOn") });
+  if (!parsed.success) return;
+  await setApparel(parsed.data.organizationId, parsed.data.apparelOn === "true");
   revalidatePath("/admin");
 }

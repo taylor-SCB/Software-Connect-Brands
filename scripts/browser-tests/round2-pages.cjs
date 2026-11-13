@@ -284,6 +284,7 @@ const at = (days, time) => `((($1::date + ${days}) + time '${time}') AT TIME ZON
   await page.locator("[data-testid=log-bar]").click();
   const form = page.locator("[data-testid=log-activity-form]");
   await form.locator("[data-testid=outcome-NO_ANSWER]").click();
+  await form.locator("[data-testid=outcome-save]").click();
   await page.locator("[data-testid=follow-up-skip]").click();
   await toast.getByText(/Saved · No answer/).waitFor();
   assert.equal(await toast.count(), 1);

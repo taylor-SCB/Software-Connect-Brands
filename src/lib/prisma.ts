@@ -36,7 +36,7 @@ function createPrismaClient() {
     // scalar by default, which would pull each upload's whole file through
     // the server just to list its name. Opt out globally; the download
     // route selects `data` explicitly.
-    omit: { linkedRatesheet: { data: true }, upload: { data: true }, ratesheetImportIssue: { data: true } },
+    omit: { linkedRatesheet: { data: true }, upload: { data: true }, ratesheetImportIssue: { data: true }, contractFile: { data: true } },
   });
 }
 

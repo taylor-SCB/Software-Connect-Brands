@@ -1,9 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { PUBLIC_IMAGE_KINDS } from "@/lib/uploads";
-import { streamObject, viewUrl } from "@/lib/storage";
+import { streamObject, streamStoredFile, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
 import { readPicture } from "@/lib/product-images";
+import { readProofPicture } from "@/lib/proofs";
+
+// A file streamed from this site's own address can never run script.
+const SANDBOXED = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox";
 
 // Streams an uploaded file. Images (logos, avatars) are served to anyone
 // with the link, because they are drawn on the quote or contract a
@@ -49,6 +53,29 @@ export async function GET(
     if (session?.user?.organizationId !== file.organizationId) {
       return new Response("Not found", { status: 404 });
     }
+  }
+
+  // ?stream=1 (Release C, Nov 12, 2026): the workspace's own people get a
+  // stored photo through this server instead of a redirect to the store,
+  // so the browser can draw it on a canvas to make it small for the AI.
+  if (file.storageKey && new URL(request.url).searchParams.get("stream") === "1") {
+    const session = await auth();
+    if (session?.user?.organizationId !== file.organizationId) return new Response("Not found", { status: 404 });
+    const streamed = await streamStoredFile(file.storageDriver, file.storageKey);
+    if (!streamed) return new Response("Not found", { status: 404 });
+    return new Response(streamed.body, {
+      headers: {
+        "Content-Type": file.mimeType,
+        ...(streamed.size !== null ? { "Content-Length": String(streamed.size) } : {}),
+        "X-Content-Type-Options": "nosniff",
+        // The type is whatever the uploader's browser said, and a crew link
+        // can upload. Served from this site's own address, an SVG opened
+        // on its own could run script as the signed-in person; sandboxed,
+        // it can't (Release C audit, Nov 12, 2026).
+        "Content-Security-Policy": SANDBOXED,
+        "Cache-Control": "private, no-store",
+      },
+    });
   }
 
   if (file.storageKey) {
@@ -115,7 +142,7 @@ async function viaViewLink(
 // new picture is a new row and a new token), so the CDN keeps them.
 async function productPicture(token: string, variant: string | null) {
   const picture = await readPicture(token, variant === "thumb" || variant === "doc" ? variant : null);
-  if (!picture) return new Response("Not found", { status: 404 });
+  if (!picture) return proofPicture(token, variant);
   return new Response(picture.body, {
     headers: {
       "Content-Type": picture.type,
@@ -123,6 +150,32 @@ async function productPicture(token: string, variant: string | null) {
       "Content-Disposition": "inline",
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400, s-maxage=31536000, immutable",
+    },
+  });
+}
+
+// The apparel pack (Nov 12, 2026): a proof version's picture. A draft is
+// the workspace's own (its files change when it is edited, so never
+// cached); a sent one is open to anyone with the link while the workspace
+// is active, cached briefly so pausing it takes effect.
+async function proofPicture(token: string, variant: string | null) {
+  const proof = await readProofPicture(token, variant === "thumb" || variant === "doc" ? variant : null);
+  if (!proof) return new Response("Not found", { status: 404 });
+  if (proof.draft) {
+    const session = await auth();
+    if (session?.user?.organizationId !== proof.organizationId) return new Response("Not found", { status: 404 });
+  } else if (!proof.active) {
+    return new Response("Not found", { status: 404 });
+  }
+  const file = await proof.open();
+  if (!file) return new Response("Not found", { status: 404 });
+  return new Response(file.body, {
+    headers: {
+      "Content-Type": proof.type,
+      ...(file.size !== null ? { "Content-Length": String(file.size) } : {}),
+      "Content-Disposition": "inline",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": proof.draft ? "private, no-store" : "public, max-age=300",
     },
   });
 }

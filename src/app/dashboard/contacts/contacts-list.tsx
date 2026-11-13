@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { Card, EmptyState, StatusBadge } from "@/components/ui";
 import { ListHeader } from "@/components/list-header";
-import { IconPlus, IconUsers, IconNote, IconGlobe, IconMessage, IconMail, IconPhone, IconCalendar } from "@/components/icons";
+import { IconPlus, IconUsers, IconNote, IconGlobe, IconMessage, IconMail, IconPhone, IconCalendar, IconSparkles } from "@/components/icons";
 import { INDIVIDUAL_COMPANY_TYPE } from "@/lib/constants";
 import { parseListParams, listHref, pageWindow, PRESET_LABELS, type ListLock } from "@/lib/list-params";
 import { PAGE_SIZES } from "@/lib/constants";
@@ -108,6 +108,17 @@ export async function ContactsList({
   const repName = (owner: { name: string; removedAt: Date | null } | null) =>
     owner ? (owner.removedAt ? `${owner.name} (removed)` : owner.name) : null;
   const presetName = params.preset ? PRESET_LABELS.contacts[params.preset] : null;
+  // Plan outreach (Planner AI, Nov 12, 2026): the Planner opened with this
+  // list's filters it understands (title, industry, type, stage, state,
+  // never touched). It drops any it can't match to the workspace's values.
+  const plan = new URLSearchParams();
+  for (const value of params.titles) plan.append("title", value);
+  for (const value of params.industries) plan.append("industry", value);
+  for (const value of params.types) plan.append("type", value);
+  for (const value of lock.interested ? ["INTERESTED"] : params.statuses) plan.append("status", value);
+  for (const value of params.states) plan.append("state", value);
+  if (params.act === "never" || params.preset === "never") plan.set("never", "1");
+  const planHref = `/dashboard/planner${plan.size ? `?${plan}` : ""}`;
 
   return (
     <div className="relative min-w-0">
@@ -123,6 +134,10 @@ export async function ContactsList({
             <span className="hidden md:contents">
               <EmailButton />
             </span>
+            <Link href={planHref} className="btn btn-ghost btn-sm min-h-[44px] md:min-h-0" data-testid="plan-outreach">
+              <IconSparkles size={13} />
+              <span className="max-md:sr-only">Plan outreach</span>
+            </Link>
             <CleanUpMenu
               kind="contacts"
               reps={reps}
