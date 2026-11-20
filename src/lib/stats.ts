@@ -259,10 +259,12 @@ function rollUpReached(steps: Map<string, Set<string>>) {
 
 export async function loadStats(
   organizationId: string,
-  options: { period: PeriodKey; userIds: string[]; timeZone: string },
+  // `range` is a custom From–To picked on Stats (Nov 13, 2026): it
+  // replaces the period, and is compared with the same length before it.
+  options: { period: PeriodKey; userIds: string[]; timeZone: string; range?: { from: Date; to: Date } },
 ): Promise<StatsSnapshot> {
-  const to = new Date();
-  const span = PERIODS[options.period].days * 86_400_000;
+  const to = options.range?.to ?? new Date();
+  const span = options.range ? Math.max(0, options.range.to.getTime() - options.range.from.getTime()) : PERIODS[options.period].days * 86_400_000;
   const from = new Date(to.getTime() - span);
   const previousFrom = new Date(from.getTime() - span);
   const only = options.userIds.length ? new Set(options.userIds) : null;
@@ -378,7 +380,9 @@ export async function loadStats(
     const key = dayFormat.format(new Date(at));
     if (!dayKeys.includes(key)) dayKeys.push(key);
   }
-  const lastKey = dayFormat.format(to);
+  // A custom range ends at midnight after its To (audit fix, Nov 13, 2026):
+  // that midnight is the next day, so the last day is read a moment before.
+  const lastKey = dayFormat.format(options.range ? new Date(Math.max(from.getTime(), to.getTime() - 1)) : to);
   if (!dayKeys.includes(lastKey)) dayKeys.push(lastKey);
   const byDay = new Map(dayKeys.map((day) => [day, { day, total: 0, talks: 0, byType: emptyActivities() }]));
   for (const entry of touches) {

@@ -115,3 +115,97 @@ export async function findLookalikes(
     reasons: [...(row.byEmail ? (["email"] as const) : []), ...(row.byPhone ? (["phone"] as const) : []), ...(row.byName ? (["name"] as const) : [])],
   }));
 }
+
+/* ------------------------- the same business? ------------------------- */
+
+// "Looks like the same business" on a company page (Taylor, Nov 13, 2026:
+// yes). Find duplicates' company rules: the same name ignoring case,
+// spaces and punctuation; the same website domain (no http, no www); the
+// same phone (last 10 digits). "Not the same business" is a
+// DuplicateDismissal of kind "company". One statement, each test through
+// an index: the name's key, the website's trigram index (both in
+// 20261113180000_ai_a_company_website_trgm), the phone digits'. A website
+// on a shared host (facebook.com and the like) is no match.
+
+export type CompanyLookalike = {
+  id: string;
+  name: string;
+  city: string | null;
+  state: string | null;
+  phone: string | null;
+  website: string | null;
+  reasons: ("name" | "domain" | "phone")[];
+};
+
+// Hosts many small businesses share (a Facebook page, a Google site, a
+// Yelp listing): the same host there says nothing about being one business
+// (audit fix, Nov 13, 2026), so the website rule skips them.
+const SHARED_HOSTS = new Set(
+  (
+    "facebook.com fb.com m.facebook.com instagram.com linkedin.com twitter.com x.com youtube.com tiktok.com google.com " +
+    "sites.google.com business.site g.page maps.google.com goo.gl yelp.com nextdoor.com angi.com angieslist.com homeadvisor.com " +
+    "houzz.com thumbtack.com bbb.org mapquest.com linktr.ee wix.com wixsite.com squarespace.com godaddysites.com weebly.com " +
+    "wordpress.com blogspot.com square.site carrd.co"
+  ).split(" "),
+);
+
+export function websiteDomain(website: string | null | undefined) {
+  const match = (website ?? "").trim().match(/^([a-z]+:\/\/)?(www\.)?([^/:?#]+)/i);
+  const domain = match?.[3]?.toLowerCase() ?? "";
+  if (!domain.includes(".")) return null;
+  // A site on a shared host (acme.wixsite.com is fine; facebook.com is not).
+  if (SHARED_HOSTS.has(domain)) return null;
+  return domain;
+}
+
+export async function findCompanyLookalikes(
+  organizationId: string,
+  company: { id: string; name: string; website: string | null; phone: string | null },
+): Promise<CompanyLookalike[]> {
+  const domain = websiteDomain(company.website);
+  const phone = lastTen(company.phone);
+
+  // The name's key is worked out in SQL on both sides, exactly as Find
+  // duplicates does (audit fix, Nov 13, 2026: a JS key and a longest-word
+  // prefilter missed "Bright-Line" from "Brightline", "3M Co" and names
+  // with ₂ or Σ), through the expression index
+  // Company_name_key_idx (20261113180000_ai_a_company_website_trgm).
+  const nameTest = Prisma.sql`(lower(regexp_replace(c.name, '[^[:alnum:]]+', '', 'g')) = lower(regexp_replace(${company.name}::text, '[^[:alnum:]]+', '', 'g'))
+        AND lower(regexp_replace(c.name, '[^[:alnum:]]+', '', 'g')) <> '')`;
+  const domainTest = domain
+    ? Prisma.sql`(c.website ILIKE ${`%${likeText(domain)}%`}
+        AND lower(regexp_replace(btrim(c.website), '^([a-z]+://)?(www\\.)?([^/:?#]+).*$', '\\3', 'i')) = ${domain})`
+    : Prisma.sql`false`;
+  const phoneTest = phone
+    ? Prisma.sql`(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g') LIKE ${`%${phone}%`}
+        AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = ${phone})`
+    : Prisma.sql`false`;
+  // A missing website or phone is NULL, not false.
+  const score = Prisma.sql`coalesce(${nameTest}, false)::int + coalesce(${domainTest}, false)::int + coalesce(${phoneTest}, false)::int`;
+
+  const rows = await prisma.$queryRaw<
+    { id: string; name: string; city: string | null; state: string | null; phone: string | null; website: string | null; byName: boolean; byDomain: boolean; byPhone: boolean }[]
+  >`
+    SELECT c.id, c.name, c.city, c.state, c.phone, c.website,
+           coalesce(${nameTest}, false) AS "byName", coalesce(${domainTest}, false) AS "byDomain", coalesce(${phoneTest}, false) AS "byPhone"
+      FROM "Company" c
+     WHERE c."organizationId" = ${organizationId}
+       AND c.id <> ${company.id}
+       AND (${nameTest} OR ${domainTest} OR ${phoneTest})
+       AND NOT EXISTS (
+         SELECT 1 FROM "DuplicateDismissal" d
+          WHERE d."organizationId" = ${organizationId} AND d.kind = 'company'
+            AND d."aId" = least(c.id COLLATE "C", ${company.id} COLLATE "C") AND d."bId" = greatest(c.id COLLATE "C", ${company.id} COLLATE "C")
+       )
+     ORDER BY ${score} DESC, c."createdAt", c.id
+     LIMIT ${LOOKALIKE_LIMIT}`;
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    city: row.city,
+    state: row.state,
+    phone: row.phone,
+    website: row.website,
+    reasons: [...(row.byName ? (["name"] as const) : []), ...(row.byDomain ? (["domain"] as const) : []), ...(row.byPhone ? (["phone"] as const) : [])],
+  }));
+}

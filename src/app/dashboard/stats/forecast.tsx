@@ -12,8 +12,8 @@ import type { ForecastNotes } from "@/lib/forecast";
 export type ForecastRepRow = {
   id: string;
   name: string;
-  thisCents: string;
-  nextCents: string;
+  // The money columns: this month and next, or the picked dates.
+  columns: { label: string; value: string; testId: string }[];
   open: string;
   deals: number;
   long: number;
@@ -25,15 +25,13 @@ export function ForecastReps({
   repIds,
   ai,
   stored,
-  thisMonth,
-  nextMonth,
+  dates,
 }: {
   rows: ForecastRepRow[];
   repIds: string[];
   ai: boolean;
   stored: ForecastNotes | null;
-  thisMonth: string;
-  nextMonth: string;
+  dates: { from: string; to: string } | null;
 }) {
   const [notes, setNotes] = useState<ForecastNotes | null>(stored);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +41,7 @@ export function ForecastReps({
   function ask(force: boolean) {
     start(async () => {
       start(() => setError(null));
-      const result = await forecastNotes(repIds, force);
+      const result = await forecastNotes(repIds, force, dates);
       start(() => {
         if ("error" in result) setError(result.error);
         else setNotes(result.notes);
@@ -74,14 +72,14 @@ export function ForecastReps({
               </div>
               <div className="min-w-0">
                 <p className="num flex flex-wrap gap-x-4 text-sm">
-                  <span>
-                    <span className="faint text-xs">{thisMonth} </span>
-                    <span className="font-semibold" data-testid="forecast-this">{row.thisCents}</span>
-                  </span>
-                  <span>
-                    <span className="faint text-xs">{nextMonth} </span>
-                    <span className="font-semibold" data-testid="forecast-next">{row.nextCents}</span>
-                  </span>
+                  {row.columns.map((column) => (
+                    <span key={column.testId}>
+                      <span className="faint text-xs">{column.label} </span>
+                      <span className="font-semibold" data-testid={column.testId}>
+                        {column.value}
+                      </span>
+                    </span>
+                  ))}
                   <span>
                     <span className="faint text-xs">out </span>
                     {row.open}

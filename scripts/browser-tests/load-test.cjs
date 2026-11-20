@@ -281,6 +281,20 @@ async function timed(page, label, url, ready, budget = BUDGET_S) {
   );
   await timed(page, "Duplicate contacts by email, one pair marked not the same", `${BASE}/dashboard/contacts/duplicates?by=email`, "h1");
   await timed(page, "Duplicate contacts by phone, one pair marked not the same", `${BASE}/dashboard/contacts/duplicates?by=phone`, "h1");
+  // Looks like the same business (Nov 13, 2026): a company page among 40,000.
+  const twinCo = (await sql(`SELECT name FROM "Company" WHERE id='lc00000002'`)).rows[0];
+  await sql(`UPDATE "Company" SET website='https://www.lc-two.example.test', phone='(737) 555-0202' WHERE id='lc00000002'`);
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,website,phone,"companyTypes","updatedAt") VALUES
+       ('lc90000001',$1,upper($2),NULL,NULL,'{}',now()),
+       ('lc90000002',$1,'Web Twin','lc-two.example.test/about',NULL,'{}',now()),
+       ('lc90000003',$1,'Phone Twin Co',NULL,'737.555.0202','{}',now())`,
+    [org, twinCo.name],
+  );
+  await timed(page, "A company page with three lookalikes", `${BASE}/dashboard/companies/lc00000002`, "[data-testid=company-lookalike]");
+  assert.equal(await page.locator("[data-testid=company-lookalike]").count(), 3);
+  await sql(`INSERT INTO "DuplicateDismissal" (id,"organizationId",kind,"aId","bId") VALUES ('lk_dismiss_co',$1,'company','lc00000002','lc90000001')`, [org]);
+  await timed(page, "Duplicate companies by name, one pair marked not the same", `${BASE}/dashboard/companies/duplicates?by=name`, "h1");
 
   log("Sprint: the lists' presets, sorts and scopes at 200,000 contacts, with 3,000 calendar entries late, ahead and this week");
   await sql(

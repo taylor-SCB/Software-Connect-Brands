@@ -1086,7 +1086,28 @@ looks ahead), the newest 5,000 open deals. **Looks like the same person**
 phone digits or name at another company, with Merge these,
 + Additional Account and Not the same person (`DuplicateDismissal`,
 smaller id first by byte order, `pairKey`; also hides that pair in Find
-duplicates). **Release B, contracts**: the rules for every check are
+duplicates). **Taylor's Nov 13, 2026 calls on Release A**: Fill it in
+stays two Saves. Stats' period buttons gain **Custom** (`?from=&to=`,
+`readCustomRange` in `stats/page.tsx`; at most three years, From on or
+before To; a plain GET form that keeps the rep filter): the part of the
+dates already behind is counted like any period (`loadStats`' `range`,
+compared with the same number of days before), and the part still ahead
+narrows the forecast to those dates by rep (`forecastWindow(today, from,
+to)`, `windowCents`; marked **rough** past the end of next month;
+`forecastKey` carries the dates). Dates wholly behind leave the forecast
+on this month and next and say so; a period button drops the dates, a
+rep link keeps them. **Looks like the same business** under a company's
+header (`findCompanyLookalikes`, `companies/[id]/lookalikes.tsx`): Find
+duplicates' company rules (name ignoring case, spaces and punctuation;
+website domain; phone, last 10 digits), with Merge these and Not the
+same business (`DuplicateDismissal.kind` "company", also hidden in Find
+duplicates; `dismissedFilter` in `duplicates.ts` serves both kinds); the
+website is matched through `Company_website_trgm_idx`
+and the name through the expression index `Company_name_key_idx` (both
+in `20261113180000_ai_a_company_website_trgm`; the website's is in the
+Prisma schema, the name key's can't be, so **`prisma migrate dev` will
+offer to drop `Company_name_key_idx`; take that line out**). A website on
+a shared host (facebook.com, a Google site, Yelp, Wix …) is no match. **Release B, contracts**: the rules for every check are
 pure in `src/lib/contract-checks.ts` (`scripts/contract-checks-check.ts`
 runs them). **Price check before Create** in the Coordinator
 (`check-actions.ts` under the tracker): under cost, under the starred
@@ -1307,6 +1328,18 @@ The same clock applies to the gaps below. They are not urgent this week; they
 are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
+
+- **The Stats forecast never says how it did.** Past forecasts aren't
+  saved, so Custom dates wholly behind today count what happened but
+  can't compare it with what was forecast. A daily snapshot is the fix
+  if Taylor wants forecast-vs-actual (Nov 13, 2026).
+- **A forecast past the end of next month is rough.** Few deals are
+  decided that far out; the panel says so in amber.
+- **A website on a shared host is no match on the company page only.**
+  "Looks like the same business" skips facebook.com, Google sites, Yelp,
+  Wix and the like (`SHARED_HOSTS` in `src/lib/lookalikes.ts`), but Find
+  duplicates' Same website still groups every Facebook-page company
+  together. Teach it the same list when someone complains.
 
 - **Artwork, proofs and the printer's files went through the local driver
   only.** The Blob path is first exercised on the live site; check
@@ -1965,7 +1998,7 @@ seeds and sends paperwork now gets calendar entries written for it, so
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
 
-**The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (30),
+**The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (36 since Nov 13),
 `ai-release-b.cjs` (34; runs `scripts/contract-checks-check.ts` first) and
 `ai-release-c.cjs` (29) answer as Claude through
 `scripts/browser-tests/fake-claude.cjs` (a helper, not a suite) on :3995,
