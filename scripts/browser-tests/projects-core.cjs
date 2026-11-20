@@ -167,13 +167,8 @@ async function signAs(browser, token, name) {
   await page.locator("#col-2-contact").selectOption("ctc_sup_pj");
   await page.getByRole("checkbox", { name: "Put Smart locks on Contract B" }).check();
   await page.locator("[data-testid=create-contracts]").click();
-  // Release B's price check before Create: say what it found, then go ahead.
-  {
-    await page.getByTestId("price-check").waitFor();
-    const found = await page.getByTestId("price-check-item").evaluateAll((items) => items.map((item) => item.dataset.code));
-    assert.deepEqual(found, ["PO_OVER_COST"], "the purchase order copies the quote's $150 sell price, above the $90 catalog cost");
-    await page.getByTestId("price-check-create-anyway").click();
-  }
+  // The purchase order is priced at the locks' catalog cost (Nov 20, 2026),
+  // so the price check has nothing to say and Create goes straight through.
   await page.waitForURL(/created=\d+/);
 
   const contracts = (await sql(
@@ -253,12 +248,12 @@ async function signAs(browser, token, name) {
     `SELECT "awardedCents","spentCents","committedCents" FROM "Project" WHERE id=$1`,
     [project.id],
   )).rows[0];
-  assert.equal(numbers.committedCents, 300000, "the $3,000 order is committed");
+  assert.equal(numbers.committedCents, 180000, "the order is committed at the locks' catalog cost: 20 × $90 = $1,800");
   assert.equal(numbers.spentCents, 0, "nothing paid out yet");
   assert.equal(
     Number(await page.locator("[data-testid=project-left]").textContent().then((t) => t.replace(/[^0-9]/g, ""))),
-    220000,
-    "Left is $2,200.00 — awarded less committed",
+    340000,
+    "Left is $3,400.00 — awarded less committed",
   );
   await shot(page, "02-budget-bar");
 
@@ -277,10 +272,10 @@ async function signAs(browser, token, name) {
     [project.id],
   )).rows[0];
   assert.equal(paid.spentCents, 100000);
-  assert.equal(paid.committedCents, 200000);
+  assert.equal(paid.committedCents, 80000);
   assert.equal(
     paid.awardedCents - paid.spentCents - paid.committedCents,
-    220000,
+    340000,
     "Left does not move when a commitment is paid",
   );
   assert.ok(orderRow.id, "the purchase order had a payment row to record against");

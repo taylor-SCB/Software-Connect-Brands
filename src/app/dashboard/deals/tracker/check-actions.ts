@@ -90,7 +90,16 @@ async function findProblems(organizationId: string, raw: PriceCheckInput): Promi
   const columns: PriceCheckColumn[] = [];
   input.columns.forEach((column, index) => {
     if (column.lineItemIds.length === 0) return;
-    const lines = column.lineItemIds.map((id) => lineById.get(id)).filter((line) => line !== undefined);
+    // Priced the way createSplitContracts will: a purchase order row at
+    // its catalog cost, with no customer discount, when there is one.
+    const lines = column.lineItemIds
+      .map((id) => lineById.get(id))
+      .filter((line) => line !== undefined)
+      .map((line) =>
+        column.payable && line.product && line.product.costCents > 0
+          ? { ...line, unitPriceCents: line.product.costCents, discountCents: 0 }
+          : line,
+      );
     const subtotalCents = contractSubtotalCents(lines);
     const discount = resolveDiscount(column.discount ?? { percent: null, cents: 0 }, subtotalCents);
     const totalCents = contractTotalCents(lines, discount.discountCents);

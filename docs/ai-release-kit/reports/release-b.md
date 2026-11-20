@@ -43,14 +43,19 @@ Anything else is dropped. A duty with no date to pin is listed under "No date gi
 
 ## Not built, and why
 
-- **A rule that a Coordinator purchase order should be priced at cost.** Taylor's brief asked for the flag (a money-out row above catalog cost), and it is built. But the Coordinator copies the quote's *sell* price onto every PO row, so every Coordinator PO with any markup now shows the price check; see Questions.
 - **Holidays in business days**: Monday to Friday only.
 - **Daily caps unchanged**: every kind used is already in `AI_DAILY_CAPS`; none added.
 
+## Decided after the report (Nov 20, 2026)
+
+Taylor left it to me: **a purchase order made on the Contract Coordinator is now priced at the product's catalog cost**, with no customer discount, the way Order materials always has. Before, it copied the customer's sell price onto the supplier's paperwork, and the job's budget then counted the markup as money committed. A row with no cost on file keeps the quote's price. The card on the Coordinator shows the cost total before Create, and the price check prices it the same way.
+- Code: `createSplitContracts` (tracker `actions.ts`), the grid's `cardLineNet`, `check-actions.ts`, and `costCents` on the tracker's quote rows (`src/lib/tracker.ts`).
+- projects-core's job numbers moved with it: the locks order is committed at $1,800 (20 × $90), not $3,000, and Left is $3,400.
+- Re-run after the change, all PASS: ai-release-b 34, projects-core 26, project-money 23, deal-tracker 46, money-payments 28, crews-time 34, calendar 47, calendar-v2 42, products-scale 18, variations-pictures 30, quotes-improvement, contracts 27.
+
 ## Questions for Taylor
 
-1. **Purchase orders made on the Contract Coordinator copy the quote's sell price.** The new price check now flags each such row ("ordered at $3,000, above the catalog cost of $1,800"), as you asked. Should the Coordinator start a PO row at the catalog cost instead, like Order materials does? That would make the warning rare and right. (Recommended: yes.)
-2. **A subcontractor's COI expiring**: today it shows on their card, the crews list and the jobs they're on. Do you also want it on My day / the Daily Rundown, so nobody has to open the job to see it?
+1. **A subcontractor's COI expiring**: today it shows on their card, the crews list and the jobs they're on. Do you also want it on My day / the Daily Rundown, so nobody has to open the job to see it?
 
 ## Database changes
 
@@ -116,7 +121,8 @@ The "AI off" steps run inside ai-release-b against a second server it starts its
 - `src/app/dashboard/contracts/[id]/body-form.tsx` (draft from the redline reader).
 - Suites changed without weakening them:
   - `calendar`, `crews-time`, `money-payments`, `products-scale`: after Send, wait for Mark signed (it exists only once sent) instead of the word "Sent", which was already on the page and raced the new read-over.
-  - `projects-core`, `variations-pictures`: assert the exact price-check list (a PO at sell price; two lines carrying an older build's Each over the product's Box of 12), then Create anyway.
+  - `variations-pictures`: asserts the exact price-check list (two lines carrying an older build's Each over the product's Box of 12), then Create anyway.
+  - `projects-core`: the purchase order now goes straight through at cost; its committed and Left numbers follow ($1,800 and $3,400).
   - `contracts` step 23: wait for the signature in the database instead of the button vanishing (it turns into "Signing…" first; it failed every run here).
 
 ## Session audit
@@ -142,7 +148,7 @@ Flagged 24, distinct 23, confirmed 18, refuted 5. All 18 are fixed. The fixes ar
 | Server PDF page count counted incremental saves | page tree `/Count` | suite PDF step still passes |
 | Member deleting a crew took its compliance files | `deleteCrew` refuses for a Member | suite "audit fixes: a Member can't delete…" |
 | Sub changed to own crew hid its papers | crews page loads every crew's | suite "audit fixes: a subcontractor changed…" |
-| PO rows at sell price flag on every Coordinator PO | kept as the brief asks; question 1 | projects-core asserts it |
+| PO rows at sell price flag on every Coordinator PO | PO rows priced at catalog cost (Nov 20) | projects-core: Create goes straight through, committed $1,800 |
 
 ## Notes for CLAUDE.md
 
@@ -157,3 +163,4 @@ Flagged 24, distinct 23, confirmed 18, refuted 5. All 18 are fixed. The fixes ar
 - **A suite that creates contracts on the Coordinator gets the price-check list** whenever a row is under cost or minimum, a unit differs, a discount passes the margin, a schedule doesn't add up, or a PO row sits above catalog cost. Assert the list (`price-check-item` `data-code`), then `price-check-create-anyway`.
 - **A subcontractor's compliance files belong to their crew** (`ComplianceInfo.crewId`). Settings → Compliance and its tile show only the workspace's own (`crewId` null). Deleting a crew deletes them; a Member can't.
 - Known gaps: business days ignore holidays. A Word copy is read as text, so tracked changes come only from `<w:ins>` / `<w:del>`, not comments. A PDF over 100 pages hidden in compressed object streams is caught only by the browser's count. The compliance flags compare UTC days (as the list always has).
+- **A Coordinator purchase order is priced at catalog cost** (Nov 20, 2026, Taylor's call left to Claude): rows with a product cost take that cost and no line discount; rows without one keep the quote's price. Never copy the sell price onto a supplier's paperwork.

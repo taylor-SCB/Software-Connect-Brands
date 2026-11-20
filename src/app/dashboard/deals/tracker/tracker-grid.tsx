@@ -350,8 +350,21 @@ export function TrackerGrid({
     setColumns((all) => (all.length > 1 ? all.filter((column) => column.key !== key) : all));
   }
 
+  // What a row comes to on a card: the quote's price on money in; on a
+  // purchase order the catalog cost, with no customer discount, when the
+  // product has one (Nov 20, 2026: a supplier is paid cost, not our sell
+  // price, as Order materials always has).
+  function cardLineNet(column: Column, id: string) {
+    if (column.direction === "out") {
+      const row = rowsById.get(id);
+      const value = live.get(id);
+      if (row?.costCents && value) return Math.round(value.quantity * row.costCents);
+    }
+    return lineNet(id);
+  }
+
   function columnSubtotal(column: Column) {
-    return column.selected.reduce((sum, id) => sum + lineNet(id), 0);
+    return column.selected.reduce((sum, id) => sum + cardLineNet(column, id), 0);
   }
 
   // What a contract's discount starts as, until someone types in its box:
@@ -870,7 +883,7 @@ export function TrackerGrid({
             index={index}
             pickers={pickers}
             rows={quote.lineItems}
-            lineNet={lineNet}
+            lineNet={(id) => cardLineNet(column, id)}
             discount={columnDiscount(column)}
             quoteRows={quoteRows}
             quoteTotalCents={quoteTotalCents}

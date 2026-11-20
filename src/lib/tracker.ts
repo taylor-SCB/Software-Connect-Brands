@@ -116,6 +116,8 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
               tag: true,
               cancelledAt: true,
               variationText: true,
+              // What a purchase order row is priced at (Nov 20, 2026).
+              product: { select: { costCents: true } },
               contractLines: {
                 select: {
                   contract: { select: { id: true, number: true, status: true, title: true, type: true } },
@@ -205,6 +207,9 @@ export async function loadTrackerDeal(organizationId: string, dealId: string) {
         tag: item.tag,
         // "Black · L", so two sizes of one product can be told apart.
         variationText: item.variationText,
+        // The catalog cost a purchase order buys this row at; null when
+        // there is none on file, and the row keeps the quote's price.
+        costCents: item.product && item.product.costCents > 0 ? item.product.costCents : null,
         cancelled: Boolean(item.cancelledAt),
         // Only contracts still standing count; a cancelled or declined
         // one has let the row go.

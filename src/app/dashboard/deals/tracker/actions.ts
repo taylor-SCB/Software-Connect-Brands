@@ -168,16 +168,22 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       return { error: `${label}: a ticked row has been cancelled. Restore it first.` };
     }
 
-    const lineItems = lines.map((line, position) => ({
+    const lineItems = lines.map((line, position) => {
+      // A purchase order buys the row at its catalog cost, not at our sell
+      // price, and the customer's discount isn't the supplier's (Nov 20,
+      // 2026; Order materials has always priced at cost). A row with no
+      // cost on file keeps the quote's price.
+      const atCost = column.payable && line.product !== null && line.product.costCents > 0;
+      return {
       quoteLineItemId: line.id,
       name: line.name,
       description: line.description,
       quantity: line.quantity,
-      unitPriceCents: line.unitPriceCents,
+      unitPriceCents: atCost ? line.product!.costCents : line.unitPriceCents,
       // The line's own discount travels with its price: the contract
       // asks for what the quote line comes to.
-      discountCents: line.discountCents,
-      discountPercent: line.discountPercent,
+      discountCents: atCost ? 0 : line.discountCents,
+      discountPercent: atCost ? null : line.discountPercent,
       tag: line.tag,
       // Copied like the tag is, so the job's budget can split itself by
       // scope of work and show the expected cost, and neither changes
@@ -188,7 +194,8 @@ export async function createSplitContracts(raw: SplitInput): Promise<ActionState
       // line has them.
       ...contractRowLabels(line),
       position,
-    }));
+      };
+    });
     // The whole-contract discount is worked out here against the rows as
     // stored, and capped at the subtotal, so no contract can total less
     // than nothing.
