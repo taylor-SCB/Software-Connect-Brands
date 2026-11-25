@@ -2172,6 +2172,17 @@ list's Done button is 25.6px tall on a phone, not 44). None touches the
 apparel pack; each is for the next session that works on the meter, the
 Pipeline or the Planner.
 
+**Three more fail on the live code (Nov 25, 2026)**, found in Pipeline AI
+Release 1's full run, failing twice there and the same way on a build of
+the live branch (d34f27b), so they predate it: `quotes-improvement.cjs`
+step 54 ("the Save bar is at the foot of the window", now every run, not
+once in a while), `looks.cjs` stopping after step 17 (`page.goto` to
+/dashboard comes back `ERR_ABORTED`: the deleted-person browser of step 17
+is signed out since "Removed means signed out"), and `reports.cjs` step 30
+(the forced Monday-6am run sends nothing at all). Planner step 21 passed
+in this run. Each is for the next session that works on quotes, looks or
+reports.
+
 The apparel audit (Nov 12, 2026): 18 flagged, 15 distinct, 13 confirmed and
 fixed, 2 refuted. Lessons worth keeping:
 - **Compare stored JSON through the same reader on both sides.** Postgres
