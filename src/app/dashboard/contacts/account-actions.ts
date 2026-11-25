@@ -164,7 +164,19 @@ export async function quickAddContactToCompany(input: {
       [{ key: "p0", name: parsed.data.name, title: null, email: parsed.data.email || null, phone: parsed.data.phone || null, companyKey: "c0" }],
       new Map([["c0", [company.id]]]),
     );
-    if (match?.candidates.length) return { dupes: match.candidates };
+    // Only people at this company are offered: "Use them" ticks or claims
+    // for this company, and someone elsewhere can't be (claimActivities
+    // refuses them; the picker would log on someone the page never shows).
+    const ids = match?.candidates.map((row) => row.id) ?? [];
+    const linked = ids.length
+      ? new Set(
+          (await prisma.contactAccount.findMany({ where: { organizationId, companyId: company.id, contactId: { in: ids } }, select: { contactId: true } })).map(
+            (row) => row.contactId,
+          ),
+        )
+      : new Set<string>();
+    const here = (match?.candidates ?? []).filter((row) => row.companyId === company.id || linked.has(row.id));
+    if (here.length) return { dupes: here };
   }
 
   const contact = await prisma.contact.create({

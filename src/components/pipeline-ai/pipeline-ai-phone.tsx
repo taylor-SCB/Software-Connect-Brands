@@ -12,7 +12,8 @@ import { PipelineAiBar } from "./pipeline-ai-bar";
 // while AI is switched on (the layout decides).
 export function PipelineAiPhoneButton() {
   const [open, setOpen] = useState(false);
-  const busy = useRef(false);
+  // A read or save in flight: closing would lose its answer and its Undo.
+  const [busy, setBusy] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
   const [openedOn, setOpenedOn] = useState(pathname);
@@ -26,7 +27,7 @@ export function PipelineAiPhoneButton() {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy.current) {
+      if (event.key === "Escape" && !busy) {
         setOpen(false);
         button.current?.focus();
       }
@@ -38,7 +39,7 @@ export function PipelineAiPhoneButton() {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
     };
-  }, [open]);
+  }, [open, busy]);
 
   return (
     <>
@@ -74,6 +75,7 @@ export function PipelineAiPhoneButton() {
                     setOpen(false);
                     button.current?.focus();
                   }}
+                  disabled={busy}
                   className="btn btn-ghost btn-sm h-11 w-11 justify-center !p-0"
                   aria-label="Close"
                   data-testid="pai-sheet-close"
@@ -81,12 +83,7 @@ export function PipelineAiPhoneButton() {
                   <IconX size={16} />
                 </button>
               </div>
-              <PipelineAiBar
-                autoFocus
-                onBusy={(value) => {
-                  busy.current = value;
-                }}
-              />
+              <PipelineAiBar autoFocus onBusy={setBusy} />
             </div>
           </div>,
           document.body,

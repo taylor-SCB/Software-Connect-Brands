@@ -446,9 +446,21 @@ let lastPage = null;
   assert.match(draftAsk.text, /<words>\nShe wants a quote for 12 4MP dome cameras\.\n<\/words>/);
   assert.match(draftAsk.text, /pai_cam \| 4MP Dome Camera \| SKU CAM-4MP \| \$189\.00/);
   const quoteId = page.url().split("/").pop().split("?")[0];
+  assert.equal((await one(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId])).n, 0, "nothing saved until Save");
+  log("review fixes: after a save the quote still drafts from what was said (?from= stays, ?draft= goes)");
+  await page.getByTestId("quote-save").click();
+  await until(async () => (await one(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId])).n === 1, "the drafted line saved");
+  await page.reload();
+  assert.match(page.url(), /\?from=/);
+  assert.match(await page.getByTestId("quote-draft-meeting").innerText(), /Draft lines from what you said/);
+  await page.getByTestId("quote-draft-meeting").click();
+  await page.getByTestId("quote-draft-info").waitFor();
+  assert.equal(await page.getByTestId("quote-draft-error").count(), 0);
+  assert.match(claude.last("QUOTE_DRAFT").text, /Already on it: 12 × 4MP Dome Camera/);
+  await page.goto(`${BASE}/dashboard/quotes/${quoteId}`);
+  await sql(`DELETE FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId]);
   const q = await one(`SELECT q.status, d.stage, o.stage AS opp FROM "Quote" q JOIN "Deal" d ON d.id=q."dealId" JOIN "Opportunity" o ON o."dealId"=d.id WHERE q.id=$1`, [quoteId]);
   assert.deepEqual(q, { status: "DRAFT", stage: "LEAD", opp: "MEETING_COMPLETED" });
-  assert.equal((await one(`SELECT count(*)::int n FROM "QuoteLineItem" WHERE "quoteId"=$1`, [quoteId])).n, 0, "nothing saved until Save");
 
   log("Sue's tile is a deal now: a later card says so, offers none, and its Save makes no second deal (the AI's guess isn't sent)");
   await page.goto(`${BASE}/dashboard/deals`);
@@ -497,6 +509,94 @@ let lastPage = null;
   await picker.locator("[data-testid=company-person-save]").click();
   await picker.locator("[data-testid=company-person-chip][aria-checked=true]", { hasText: "Zed Newman" }).waitFor();
   assert.equal(await picker.getByTestId("pai-same").count(), 0, "nobody like Zed: no box");
+  await page.keyboard.press("Escape");
+
+  log("review fixes: a new person on a meeting that joins a tile past Meeting Set goes with Undo, not 'kept'");
+  await page.goto(`${BASE}/dashboard/deals`);
+  claude.reply("ACTIVITY_AI", {
+    companies: [],
+    people: [person("Sue Lee"), person("Ray Newell")],
+    entries: [entry({ type: "MEETING", outcome: "HELD", notes: "Walked the site with Sue and Ray.", people: [0, 1] })],
+  });
+  await readIt("Met Sue Lee and Ray Newell today, walked the site.");
+  await cards.first().waitFor();
+  assert.equal(await cards.first().locator("[data-testid=pai-person][data-key=p1]").getAttribute("data-pick"), "new");
+  await cards.first().getByTestId("pai-save").click();
+  await until(async () => /Logged on 2 contacts/.test(await toastWords().catch(() => "")), "saved");
+  const ray = await one(`SELECT id FROM "Contact" WHERE "organizationId"=$1 AND name='Ray Newell'`, [org]);
+  assert.ok((await one(`SELECT count(*)::int n FROM "OpportunityContact" WHERE "contactId"=$1`, [ray.id])).n >= 1, "Ray joined Sue's tile");
+  await page.getByTestId("log-toast-undo").click();
+  await until(async () => /^Undone$/.test((await toastWords().catch(() => "")).trim()), "Undone, nothing kept");
+  assert.equal((await one(`SELECT count(*)::int n FROM "Contact" WHERE id=$1`, [ray.id])).n, 0);
+
+  log("review fixes: the best matches are never cut by 25 older look-alikes (a business by its exact name, a person by email)");
+  await sql(
+    `INSERT INTO "Company" (id,"organizationId",name,"companyTypes","createdAt","updatedAt")
+       SELECT 'pai_prem_'||g, $1, 'Premier Group '||g, '{}', now() - interval '30 days' + g * interval '1 minute', now() FROM generate_series(1,26) g`,
+    [org],
+  );
+  await sql(`INSERT INTO "Company" (id,"organizationId",name,"companyTypes","updatedAt") VALUES ('pai_premier',$1,'Premier','{}',now())`, [org]);
+  await sql(
+    `INSERT INTO "Contact" (id,"organizationId",name,"createdAt","updatedAt")
+       SELECT 'pai_js_'||g, $1, 'John Smithers '||g, now() - interval '30 days' + g * interval '1 minute', now() FROM generate_series(1,26) g`,
+    [org],
+  );
+  await sql(`INSERT INTO "Contact" (id,"organizationId",name,email,"updatedAt") VALUES ('pai_jemail',$1,'J. Smith','john@x.com',now())`, [org]);
+  claude.reply("ACTIVITY_AI", {
+    companies: [company("Premier")],
+    people: [person("Pat Quinn", 0), person("John Smith", null, { email: "john@x.com" })],
+    entries: [entry({ outcome: "TALKED", notes: "Talked with Pat.", people: [0] }), entry({ kind: "LOG", type: "EMAIL", outcome: "SENT", notes: "Emailed John.", people: [1] })],
+  });
+  await readIt("Talked to Pat Quinn at Premier. Emailed John Smith at john@x.com.");
+  await until(async () => (await cards.count()) === 2, "two cards");
+  const premier = cards.nth(0).locator("[data-testid=pai-company][data-key=c0]");
+  assert.equal(await premier.getAttribute("data-pick"), "found");
+  assert.equal(await premier.getByTestId("pai-company-switch").inputValue(), "pai_premier");
+  assert.equal(await cards.nth(1).locator("[data-testid=pai-person][data-key=p1]").getAttribute("data-pick"), "found");
+  assert.equal(await cards.nth(1).getByTestId("pai-person-switch").inputValue(), "pai_jemail", "the email match, not an older same-named one");
+  await bar.getByTestId("pai-clear").click();
+
+  log("review fixes: a name only inside another word, and a phone made of separate numbers, are dropped");
+  claude.reply("ACTIVITY_AI", {
+    companies: [],
+    people: [person("Ann"), person("Bob Smith", null, { phone: "450-2153" })],
+    entries: [entry({ outcome: "TALKED", notes: "Talked about the annual contract.", people: [0, 1] })],
+  });
+  await readIt("Talked to Bob Smith about the annual contract, 12 cameras at 450, meet 2/15 at 3.");
+  await cards.first().waitFor();
+  assert.equal(await cards.first().locator("[data-testid=pai-person]").count(), 1, "no Ann");
+  assert.equal(await cards.first().locator("[data-testid=pai-person][data-key=p0]").innerText().then((text) => /450/.test(text)), false, "no made-up phone");
+  assert.match(await bar.getByTestId("pai-dropped").innerText(), /things I heard/);
+  await bar.getByTestId("pai-cancel").first().click();
+
+  log("review fixes: after an Undo, a person that save made is new again on the sentence's other card");
+  claude.reply("ACTIVITY_AI", {
+    companies: [],
+    people: [person("Kim Diaz")],
+    entries: [entry({ type: "MEETING", outcome: "HELD", notes: "Met Kim.", people: [0] }), entry({ kind: "NOTE", type: null, notes: "Kim's birthday is in May.", noteLabel: "BIRTHDAY", people: [0] })],
+  });
+  await readIt("Met Kim Diaz today. Kim's birthday is in May.");
+  await until(async () => (await cards.count()) === 2, "two cards");
+  await cards.nth(0).getByTestId("pai-save").click();
+  await until(async () => (await cards.count()) === 1, "the meeting saved");
+  assert.match(await cards.first().getByTestId("pai-person-state").innerText(), /Just added/);
+  await page.getByTestId("log-toast-undo").click();
+  await until(async () => /Undone/.test(await toastWords().catch(() => "")), "Undone");
+  await until(async () => /New/.test(await cards.first().getByTestId("pai-person-state").innerText()), "Kim is new again");
+  await cards.first().getByTestId("pai-save").click();
+  await until(async () => (await cards.count()) === 0, "the note saved");
+  assert.equal((await one(`SELECT count(*)::int n FROM "Note" n JOIN "Contact" c ON c.id=n."contactId" WHERE c.name='Kim Diaz' AND c."organizationId"=$1`, [org])).n, 1);
+
+  log("review fixes: the company page's box only offers this company's people (Sue is at another company)");
+  await page.goto(`${BASE}/dashboard/companies/pai_co_acme`);
+  await page.locator("[data-testid=company-log-toggle]").click();
+  const picker2 = page.locator("[data-testid=log-activity-form] [data-testid=company-people-picker]");
+  await picker2.locator("[data-testid=company-person-add]").click();
+  await picker2.getByLabel("New contact name").fill("Sue Lee");
+  await picker2.locator("[data-testid=company-person-save]").click();
+  await picker2.locator("[data-testid=company-person-chip][aria-checked=true]", { hasText: "Sue Lee" }).waitFor();
+  assert.equal(await picker2.getByTestId("pai-same").count(), 0);
+  assert.equal((await one(`SELECT count(*)::int n FROM "Contact" WHERE "organizationId"=$1 AND name='Sue Lee' AND "companyId"='pai_co_acme'`, [org])).n, 1);
   await page.keyboard.press("Escape");
 
   log("the ✦ on a phone opens the bar from any page; a call saved there");

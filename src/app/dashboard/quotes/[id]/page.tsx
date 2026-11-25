@@ -372,8 +372,10 @@ export default async function QuoteBuilderPage({
                 ? {
                     auto: (draftParam === "meeting" || (draftParam === "words" && Boolean(fromParam))) && quote.lineItems.length === 0,
                     // Activity AI's Build Quote (Pipeline AI, Nov 25, 2026): the
-                    // lines come from the words that save logged.
-                    fromBatch: draftParam === "words" && typeof fromParam === "string" ? fromParam.slice(0, 200) : null,
+                    // lines come from the words that save logged. ?from= stays
+                    // in the address after the first draft (only ?draft= goes),
+                    // so the button keeps reading those words after a save.
+                    fromBatch: typeof fromParam === "string" && fromParam ? fromParam.slice(0, 200) : null,
                   }
                 : null
             }

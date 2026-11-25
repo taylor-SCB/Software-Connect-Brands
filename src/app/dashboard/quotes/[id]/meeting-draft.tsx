@@ -55,7 +55,7 @@ export function MeetingDraftButton({
     // as Next's docs show, so its router takes the new address too (audit
     // fix, Nov 10, 2026): passing Next's own state skipped that, and the
     // next save put ?draft=meeting back in the address bar.
-    window.history.replaceState(null, "", window.location.pathname);
+    window.history.replaceState(null, "", fromBatch ? `${window.location.pathname}?from=${encodeURIComponent(fromBatch)}` : window.location.pathname);
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
   }, [auto]);

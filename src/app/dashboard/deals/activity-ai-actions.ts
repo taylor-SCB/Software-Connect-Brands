@@ -192,12 +192,14 @@ export async function saveActivityCard(input: z.input<typeof saveSchema>): Promi
   if (card.kind !== "NOTE" && !type) return { ok: false, error: "Pick what kind of touch it was" };
   const day = card.day && DAY.test(card.day) ? card.day : null;
   if (card.kind === "BOOK" && type !== "MEETING") return { ok: false, error: "Only a meeting can be booked" };
+  if (card.kind === "SCHEDULE" && type === "MEETING") return { ok: false, error: "A meeting ahead is booked, not scheduled" };
   if ((card.kind === "BOOK" || card.kind === "SCHEDULE") && people.length === 0) return { ok: false, error: "Who is it with? A booking needs a person." };
   if (card.kind === "BOOK" && (!day || day < today)) return { ok: false, error: "Pick today or a day ahead for the meeting" };
   if (card.kind === "SCHEDULE" && (!day || day <= today)) return { ok: false, error: "Pick a day ahead for it" };
   if (card.kind === "LOG" && day && day > today) return { ok: false, error: "That day is still ahead. Schedule it instead of logging it." };
   if (card.kind === "NOTE" && !card.notes) return { ok: false, error: "Write the note first" };
-  const wantsDeal = card.kind === "LOG" && card.deal !== "NONE";
+  // No deal off a no-show or a Not interested, whatever the card sends.
+  const wantsDeal = card.kind === "LOG" && card.deal !== "NONE" && card.outcome !== "NO_SHOW" && card.interest !== "NOT_INTERESTED";
   if (wantsDeal && people.length === 0) return { ok: false, error: "A deal needs a person on it" };
   if (wantsDeal && card.deal === "PRICED" && !card.valueCents) return { ok: false, error: "Enter the price you gave them" };
 
@@ -306,142 +308,160 @@ export async function saveActivityCard(input: z.input<typeof saveSchema>): Promi
   };
   const newWords = createdKeys.length ? ` · ${createdKeys.length} new ${createdKeys.length === 1 ? "record" : "records"}` : "";
 
-  // A note: on each person, or on the business.
-  if (card.kind === "NOTE") {
-    const batchId = contactIds.length > 1 ? randomUUID() : null;
-    const notes = await prisma.note.createManyAndReturn({
-      data: (contactIds.length ? contactIds.map((id) => ({ contactId: id, companyId: null })) : [{ contactId: null, companyId }]).map((target) => ({
-        organizationId,
-        ...target,
-        authorId: userId,
-        body: card.notes,
-        label: card.noteLabel,
-        batchId,
-      })),
-      select: { id: true },
-    });
-    revalidate();
-    return { ok: true, words: `Note added${newWords}`, undo: sign(null, notes.map((row) => row.id)), created: createdKeys };
-  }
-
-  // A meeting ahead: booked like every meeting.
-  if (card.kind === "BOOK") {
-    const booked = await bookMeeting({
-      contactId: contactIds[0],
-      on: day!,
-      time: card.time ?? undefined,
-      withContactIds: contactIds.slice(1),
-      where: card.where ?? undefined,
-      note: card.notes || undefined,
-      opportunity: "auto",
-    });
-    if (booked.error || !booked.batchId) {
-      await takeBack();
-      return { ok: false, error: booked.error ?? "The meeting couldn't be booked" };
-    }
-    revalidate();
-    return { ok: true, words: `${booked.success ?? "Booked"}${newWords}`, undo: sign(booked.batchId), created: createdKeys, opportunityId: booked.opportunityId ?? null };
-  }
-
-  // A touch that happened, or one on a day ahead: the log form's own save.
-  const form = new FormData();
-  if (contactIds.length) {
-    form.set("contactId", contactIds[0]);
-    for (const id of contactIds.slice(1)) form.append("extraContactIds", id);
-  } else if (companyId) {
-    form.set("companyId", companyId);
-    // With the business and nobody named: it waits on the company's page
-    // under "<who> Bypassed" to be claimed, as the company page's box does.
-    form.set("bypass", "1");
-  }
-  form.set("type", type!);
-  form.set("body", card.notes || (card.kind === "SCHEDULE" ? ACTIVITY_LABELS[type!] : ""));
-  form.set("occurredOn", day ?? today);
-  if (card.time) form.set("atTime", card.time);
-  if (card.kind === "LOG") {
-    if (card.outcome) form.set("outcome", card.outcome);
-    if (card.interest && contactIds.length) form.set("mark", card.interest);
-    if (card.interest === "NOT_INTERESTED" && card.reason) form.set("reason", card.reason);
-  }
-  if (!form.get("body") && !card.outcome && !card.interest) form.set("body", ACTIVITY_LABELS[type!]);
-  const logged = await logActivity({}, form);
-  if (logged.error || !logged.batchId) {
-    await takeBack();
-    return { ok: false, error: logged.error ?? "That couldn't be logged" };
-  }
-  const batchId = logged.batchId;
-
-  // Make it a deal (decisions 6 and 12): the Pipeline's own convert, joined
-  // to this save so its Undo takes the deal back too. Off a meeting it is
-  // that meeting's tile; off a call, text or email it is Add deal's path
-  // (the tile waits at Meeting Completed until the quote is sent).
-  let quoteUrl: string | undefined;
-  let opportunityId: string | null = logged.opportunityId ?? null;
-  const notices: string[] = [];
-  if (wantsDeal && contactIds.length) {
-    const title = card.dealTitle || "New deal";
-    let dealId: string | null = null;
-    // Off a call, text or email, a tile with its meeting still to come is
-    // left alone: converting it would mark that meeting held.
-    const waiting = opportunityId
-      ? null
-      : await prisma.opportunityContact.findFirst({
-          where: { contactId: contactIds[0], role: { not: "HIDDEN" }, opportunity: { organizationId, stage: "MEETING_SET", dealId: null } },
-          select: { opportunity: { select: { title: true } } },
-        });
-    // Nor is a second deal made for someone whose open tile has one.
-    const hasDeal = opportunityId
-      ? await prisma.opportunity.findFirst({ where: { id: opportunityId, organizationId, deal: { stage: { notIn: ["LEAD"] } } }, select: { title: true } })
-      : await prisma.opportunityContact
-          .findFirst({
-            where: { contactId: contactIds[0], role: { not: "HIDDEN" }, opportunity: { organizationId, ...OPEN_OPPORTUNITY, dealId: { not: null } } },
-            select: { opportunity: { select: { title: true } } },
-          })
-          .then((row) => row?.opportunity ?? null);
-    if (hasDeal) {
-      notices.push(`${hasDeal.title} is already a deal`);
-    } else if (waiting) {
-      notices.push(`The deal wasn't made: ${waiting.opportunity.title} has a meeting still to come. Make it a deal from the tile after the meeting.`);
-    } else if (!opportunityId) {
-      const deal = await prisma.deal.create({
-        data: { organizationId, contactId: contactIds[0], title, valueCents: 0, ownerId: userId },
+  // Everything from here goes through other saves; one that throws part
+  // way (the database, a timeout) takes back what this card wrote rather
+  // than leave a half-made contact for a retry to double.
+  let savedBatch: string | null = null;
+  const act = async (): Promise<SaveResult> => {
+    // A note: on each person, or on the business.
+    if (card.kind === "NOTE") {
+      const batchId = contactIds.length > 1 ? randomUUID() : null;
+      const notes = await prisma.note.createManyAndReturn({
+        data: (contactIds.length ? contactIds.map((id) => ({ contactId: id, companyId: null })) : [{ contactId: null, companyId }]).map((target) => ({
+          organizationId,
+          ...target,
+          authorId: userId,
+          body: card.notes,
+          label: card.noteLabel,
+          batchId,
+        })),
         select: { id: true },
       });
-      dealId = deal.id;
-      opportunityId = await ensureOpportunityForDeal({ organizationId, userId, batchId: joinedBatchId(batchId) }, deal.id);
+      revalidate();
+      return { ok: true, words: `Note added${newWords}`, undo: sign(null, notes.map((row) => row.id)), created: createdKeys };
     }
-    if (hasDeal || waiting) {
-      // Nothing more: the touch is saved, the tile stays as it is.
-    } else if (!opportunityId) notices.push("The deal couldn't be put on the Pipeline");
-    else if (card.deal === "PRICED") {
-      const converted = await convertOpportunity({ id: opportunityId, mode: "manual", stage: "QUOTE_SENT", title, valueCents: card.valueCents ?? 0, batchId });
-      if (converted.error) notices.push(converted.error);
-      else notices.push(`Deal at Quote Sent for ${formatCents(card.valueCents ?? 0)}`);
-    } else {
-      if (!dealId) {
-        const converted = await convertOpportunity({ id: opportunityId, mode: "quote", stage: "QUOTE_SENT", title, valueCents: 0, batchId });
+
+    // A meeting ahead: booked like every meeting.
+    if (card.kind === "BOOK") {
+      const booked = await bookMeeting({
+        contactId: contactIds[0],
+        on: day!,
+        time: card.time ?? undefined,
+        withContactIds: contactIds.slice(1),
+        where: card.where ?? undefined,
+        note: card.notes || undefined,
+        opportunity: "auto",
+      });
+      if (booked.error || !booked.batchId) {
+        await takeBack();
+        return { ok: false, error: booked.error ?? "The meeting couldn't be booked" };
+      }
+      revalidate();
+      return { ok: true, words: `${booked.success ?? "Booked"}${newWords}`, undo: sign(booked.batchId), created: createdKeys, opportunityId: booked.opportunityId ?? null };
+    }
+
+    // A touch that happened, or one on a day ahead: the log form's own save.
+    const form = new FormData();
+    if (contactIds.length) {
+      form.set("contactId", contactIds[0]);
+      for (const id of contactIds.slice(1)) form.append("extraContactIds", id);
+    } else if (companyId) {
+      form.set("companyId", companyId);
+      // With the business and nobody named: it waits on the company's page
+      // under "<who> Bypassed" to be claimed, as the company page's box does.
+      form.set("bypass", "1");
+    }
+    form.set("type", type!);
+    form.set("body", card.notes || (card.kind === "SCHEDULE" ? ACTIVITY_LABELS[type!] : ""));
+    form.set("occurredOn", day ?? today);
+    if (card.time) form.set("atTime", card.time);
+    if (card.kind === "LOG") {
+      if (card.outcome) form.set("outcome", card.outcome);
+      if (card.interest && contactIds.length) form.set("mark", card.interest);
+      if (card.interest === "NOT_INTERESTED" && card.reason) form.set("reason", card.reason);
+    }
+    if (!form.get("body") && !card.outcome && !card.interest) form.set("body", ACTIVITY_LABELS[type!]);
+    const logged = await logActivity({}, form);
+    if (logged.error || !logged.batchId) {
+      await takeBack();
+      return { ok: false, error: logged.error ?? "That couldn't be logged" };
+    }
+    const batchId = logged.batchId;
+    savedBatch = batchId;
+
+    // Make it a deal (decisions 6 and 12): the Pipeline's own convert, joined
+    // to this save so its Undo takes the deal back too. Off a meeting it is
+    // that meeting's tile; off a call, text or email it is Add deal's path
+    // (the tile waits at Meeting Completed until the quote is sent).
+    let quoteUrl: string | undefined;
+    let quoteAttempted = false;
+    let opportunityId: string | null = logged.opportunityId ?? null;
+    const notices: string[] = [];
+    if (wantsDeal && contactIds.length) {
+      const title = card.dealTitle || "New deal";
+      let dealId: string | null = null;
+      // Off a call, text or email, a tile with its meeting still to come is
+      // left alone: converting it would mark that meeting held.
+      const waiting = opportunityId
+        ? null
+        : await prisma.opportunityContact.findFirst({
+            where: { contactId: contactIds[0], role: { not: "HIDDEN" }, opportunity: { organizationId, stage: "MEETING_SET", dealId: null } },
+            select: { opportunity: { select: { title: true } } },
+          });
+      // Nor is a second deal made for someone whose open tile has one.
+      const hasDeal = opportunityId
+        ? await prisma.opportunity.findFirst({ where: { id: opportunityId, organizationId, deal: { stage: { notIn: ["LEAD"] } } }, select: { title: true } })
+        : await prisma.opportunityContact
+            .findFirst({
+              where: { contactId: contactIds[0], role: { not: "HIDDEN" }, opportunity: { organizationId, ...OPEN_OPPORTUNITY, dealId: { not: null } } },
+              select: { opportunity: { select: { title: true } } },
+            })
+            .then((row) => row?.opportunity ?? null);
+      if (hasDeal) {
+        notices.push(`${hasDeal.title} is already a deal`);
+      } else if (waiting) {
+        notices.push(`The deal wasn't made: ${waiting.opportunity.title} has a meeting still to come. Make it a deal from the tile after the meeting.`);
+      } else if (!opportunityId) {
+        const deal = await prisma.deal.create({
+          data: { organizationId, contactId: contactIds[0], title, valueCents: 0, ownerId: userId },
+          select: { id: true },
+        });
+        dealId = deal.id;
+        opportunityId = await ensureOpportunityForDeal({ organizationId, userId, batchId: joinedBatchId(batchId) }, deal.id);
+      }
+      if (hasDeal || waiting) {
+        // Nothing more: the touch is saved, the tile stays as it is.
+      } else if (!opportunityId) notices.push("The deal couldn't be put on the Pipeline");
+      else if (card.deal === "PRICED") {
+        const converted = await convertOpportunity({ id: opportunityId, mode: "manual", stage: "QUOTE_SENT", title, valueCents: card.valueCents ?? 0, batchId });
         if (converted.error) notices.push(converted.error);
-        dealId = converted.dealId ?? null;
-      }
-      if (dealId) {
-        const started = await startQuoteForDeal({ dealId, contactId: contactIds[0] });
-        if ("error" in started) notices.push(started.error);
-        else quoteUrl = `/dashboard/quotes/${started.quoteId}?draft=words&from=${encodeURIComponent(batchId)}`;
+        else notices.push(`Deal at Quote Sent for ${formatCents(card.valueCents ?? 0)}`);
+      } else {
+        // Build Quote: a deal is made and its quote opens; no Undo past here.
+        quoteAttempted = true;
+        if (!dealId) {
+          const converted = await convertOpportunity({ id: opportunityId, mode: "quote", stage: "QUOTE_SENT", title, valueCents: 0, batchId });
+          if (converted.error) notices.push(converted.error);
+          dealId = converted.dealId ?? null;
+        }
+        if (dealId) {
+          const started = await startQuoteForDeal({ dealId, contactId: contactIds[0] });
+          if ("error" in started) notices.push(started.error);
+          else quoteUrl = `/dashboard/quotes/${started.quoteId}?draft=words&from=${encodeURIComponent(batchId)}`;
+        }
       }
     }
-  }
-  revalidate();
-  const words = [logged.success ?? "Logged", ...notices].join(" · ") + newWords;
-  return {
-    ok: true,
-    words: quoteUrl ? `${words} · opening the quote` : words,
-    // Build Quote has gone on to make a quote: the toast isn't offered, the
-    // quote page's Delete is the way back.
-    undo: quoteUrl ? null : sign(batchId),
-    created: createdKeys,
-    quoteUrl,
-    opportunityId,
+    revalidate();
+    const words = [logged.success ?? "Logged", ...notices].join(" · ") + newWords;
+    return {
+      ok: true,
+      words: quoteUrl ? `${words} · opening the quote` : words,
+      // Build Quote has gone on to make a quote: the toast isn't offered, the
+      // quote page's Delete is the way back.
+      undo: quoteAttempted ? null : sign(batchId),
+      created: createdKeys,
+      quoteUrl,
+      opportunityId,
+    };
   };
+  try {
+    return await act();
+  } catch (error) {
+    console.error("[activity-ai] save failed", error);
+    if (savedBatch) await undoLogCore(organizationId, savedBatch, { userId, canManage: true }).catch(() => null);
+    await takeBack().catch(() => null);
+    return { ok: false, error: "That didn't save, and nothing from it was kept. Try again." };
+  }
 }
 
 // ---- Undo ---------------------------------------------------------------
@@ -487,7 +507,6 @@ export async function undoActivityCard(token: string): Promise<{ success?: strin
             quotes: true,
             contracts: true,
             opportunities: true,
-            opportunityLogs: true,
             events: true,
             attending: true,
             emailSends: true,
@@ -504,6 +523,9 @@ export async function undoActivityCard(token: string): Promise<{ success?: strin
       },
     });
     if (!row) continue;
+    // Their Opportunity Created / Deal Created lines aren't counted: a
+    // meeting on a tile already past Meeting Set writes them, Undo leaves
+    // them, and they go with the contact.
     if (Object.values(row._count).some((count) => count > 0)) {
       kept.push(row.name);
       continue;

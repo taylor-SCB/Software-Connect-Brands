@@ -48,7 +48,7 @@ const stamp = () => Date.now();
 
 const chip = (on: boolean) => `btn btn-sm min-h-11 sm:min-h-0 ${on ? "btn-primary" : "btn-ghost"}`;
 
-type Toast = { batchId: string; words: string; at: number; token: string };
+type Toast = { batchId: string; words: string; at: number; token: string; created: { key: string; kind: "person" | "company"; id: string }[] };
 
 export function PipelineAiBar({ autoFocus = false, onBusy }: { autoFocus?: boolean; onBusy?: (busy: boolean) => void }) {
   const router = useRouter();
@@ -188,7 +188,7 @@ export function PipelineAiBar({ autoFocus = false, onBusy }: { autoFocus?: boole
       dropCard(card.id);
       // Keyed by the save's own token: card ids repeat from one sentence to the
       // next, and the toast remembers which save it already undid.
-      if (result.undo) setToast({ batchId: result.undo, words: result.words, at: stamp(), token: result.undo });
+      if (result.undo) setToast({ batchId: result.undo, words: result.words, at: stamp(), token: result.undo, created: result.created });
       else setToast(null);
       if (result.quoteUrl) {
         router.push(result.quoteUrl);
@@ -203,7 +203,17 @@ export function PipelineAiBar({ autoFocus = false, onBusy }: { autoFocus?: boole
   }
 
 
-  const onUndone = useCallback(() => router.refresh(), [router]);
+  // An Undo takes back what that save made: on the cards still open those
+  // people and businesses are new again (Save checks them once more).
+  const made = toast?.created;
+  const onUndone = useCallback(() => {
+    for (const row of made ?? []) {
+      const drop = <T extends { id: string }>(list: T[]) => list.filter((each) => each.id !== row.id);
+      if (row.kind === "person") setPeople((all) => all.map((each) => (each.key === row.key ? { ...each, pick: { kind: "new" }, candidates: drop(each.candidates) } : each)));
+      else setCompanies((all) => all.map((each) => (each.key === row.key ? { ...each, pick: { kind: "new" }, candidates: drop(each.candidates) } : each)));
+    }
+    router.refresh();
+  }, [made, router]);
   const closeToast = useCallback(() => setToast(null), []);
   const token = toast?.token;
   const undo = useCallback(() => undoActivityCard(token ?? ""), [token]);

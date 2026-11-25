@@ -141,10 +141,24 @@ export function activityPrompt(input: { words: string; today: string; now: strin
 const TOKEN = /[^\p{L}\p{N}]+/u;
 const cleanName = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
 
-// Every word of the value (two letters or more) is in what was said.
+// Every word of the value (two letters or more) is a whole word that was
+// said: "Ann" isn't in "annual", nor "Al" in "called".
 function saidIn(lower: string, value: string) {
+  const said = new Set(lower.split(TOKEN).filter(Boolean));
   const tokens = value.toLowerCase().split(TOKEN).filter((token) => token.length >= 2);
-  return tokens.length > 0 && tokens.every((token) => lower.includes(token));
+  return tokens.length > 0 && tokens.every((token) => said.has(token));
+}
+
+// The phone numbers said, as digits: each run of digits written as one
+// number ("(512) 555-0101", "512.555.0101"), never digits from separate
+// numbers run together ("12 cameras at 450, meet 2/15 at 3").
+function phonesSaid(words: string) {
+  return [...words.matchAll(/\+?\d[\d ().-]{5,}\d/g)].map((match) => match[0].replace(/\D/g, "")).filter((digits) => digits.length >= 7);
+}
+function phoneWasSaid(phones: string[], raw: string | null) {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  if (digits.length < 7) return false;
+  return phones.some((said) => said === digits || (said.length >= 10 && digits.length >= 10 && said.slice(-10) === digits.slice(-10)));
 }
 
 // What was said, with spoken emails written out ("bob at acme dot com").
@@ -172,7 +186,7 @@ export type CheckedAnswer = {
 export function checkAnswer(answer: ActivityAnswer, words: string, today: string): CheckedAnswer {
   const lower = words.toLowerCase();
   const emailText = spokenEmails(lower);
-  const digits = words.replace(/\D/g, "");
+  const phones = phonesSaid(words);
   let dropped = 0;
 
   // Businesses: a name said in the words; details only when said too.
@@ -184,7 +198,7 @@ export function checkAnswer(answer: ActivityAnswer, words: string, today: string
       dropped += 1;
       return;
     }
-    const phone = row.phone && row.phone.replace(/\D/g, "").length >= 7 && digits.includes(row.phone.replace(/\D/g, "")) ? row.phone.trim().slice(0, 40) : null;
+    const phone = row.phone && phoneWasSaid(phones, row.phone) ? row.phone.trim().slice(0, 40) : null;
     const domain = websiteDomain(row.website);
     const website = row.website && domain && lower.includes(domain) ? row.website.trim().slice(0, 200) : null;
     const city = row.city && saidIn(lower, row.city) ? row.city.trim().slice(0, 120) : null;
@@ -209,8 +223,7 @@ export function checkAnswer(answer: ActivityAnswer, words: string, today: string
       return;
     }
     const email = row.email && emailText.includes(row.email.trim().toLowerCase()) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email.trim()) ? row.email.trim().toLowerCase().slice(0, 200) : null;
-    const phoneDigits = (row.phone ?? "").replace(/\D/g, "");
-    const phone = phoneDigits.length >= 7 && digits.includes(phoneDigits) ? row.phone!.trim().slice(0, 40) : null;
+    const phone = row.phone && phoneWasSaid(phones, row.phone) ? row.phone.trim().slice(0, 40) : null;
     const title = row.title && saidIn(lower, row.title) ? row.title.trim().slice(0, 120) : null;
     if ((row.email && !email) || (row.phone && !phone) || (row.title && !title)) dropped += 1;
     const companyKey = row.company !== null && companyIndex.has(row.company) ? companyIndex.get(row.company)! : null;
@@ -389,7 +402,10 @@ export async function matchCompanies(organizationId: string, companies: KeyedCom
         FROM "Company" c
        WHERE c."organizationId" = ${organizationId}
          AND (${keyTest} OR ${strippedTest} OR ${wordsTest} OR ${domainTest} OR ${phoneTest})
-       ORDER BY c."createdAt", c.id
+       -- The strong ones first, so 25 older look-alikes never push the real
+       -- one past the limit.
+       ORDER BY (coalesce(${keyTest}, false) OR coalesce(${strippedTest}, false) OR coalesce(${domainTest}, false) OR coalesce(${phoneTest}, false)) DESC,
+                c."createdAt", c.id
        LIMIT 25`;
     const candidates: CompanyCandidate[] = rows.map((row) => {
       const strong = row.byName || row.byDomain || row.byPhone;
@@ -455,7 +471,11 @@ export async function matchPeople(organizationId: string, people: KeyedPerson[],
         LEFT JOIN "Company" co ON co.id = c."companyId"
        WHERE c."organizationId" = ${organizationId}
          AND (${emailTest} OR ${phoneTest} OR ${nameTest} OR ${firstTest})
-       ORDER BY c."createdAt", c.id
+       -- Same email or phone, then the exact name, then the rest: the best
+       -- matches are never cut by 25 older loose ones.
+       ORDER BY (coalesce(${emailTest}, false) OR coalesce(${phoneTest}, false)) DESC,
+                (lower(regexp_replace(btrim(c.name), '\\s+', ' ', 'g')) = ${name}) DESC,
+                c."createdAt", c.id
        LIMIT 25`;
     const firstAtCompany = rows.filter((row) => words.length === 1 && row.companyId && atCompanies.includes(row.companyId) && cleanName(row.name).startsWith(words[0]));
     const candidates: (PersonCandidate & { rank: number })[] = rows.map((row) => {
