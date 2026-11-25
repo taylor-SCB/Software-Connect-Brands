@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { formatCents, formatDate } from "@/lib/format";
 import { inviteState, ratesheetState, type InviteState } from "@/lib/ratesheets";
 import {
@@ -98,8 +98,7 @@ export default async function PartnerRatesheetPage({
   const needsOwner = sheetState !== "ACTIVE" || (viaShareLink && ratesheet.visibility !== "PUBLIC");
   let isOwnerPreview = false;
   if (needsOwner) {
-    const session = await auth();
-    isOwnerPreview = session?.user?.organizationId === ratesheet.organization.id;
+    isOwnerPreview = (await activeOrganizationId()) === ratesheet.organization.id;
   }
   if (viaShareLink && ratesheet.visibility !== "PUBLIC" && !isOwnerPreview) notFound();
 

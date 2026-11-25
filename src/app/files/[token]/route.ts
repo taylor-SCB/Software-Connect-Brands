@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { PUBLIC_IMAGE_KINDS } from "@/lib/uploads";
 import { streamObject, streamStoredFile, viewUrl } from "@/lib/storage";
 import { findPhotoLink, isMediaMime } from "@/lib/job-photos";
@@ -49,8 +49,7 @@ export async function GET(
 
   const isImage = PUBLIC_IMAGE_KINDS.includes(file.kind);
   if (!isImage && !(await viaViewLink(request, file))) {
-    const session = await auth();
-    if (session?.user?.organizationId !== file.organizationId) {
+    if ((await activeOrganizationId()) !== file.organizationId) {
       return new Response("Not found", { status: 404 });
     }
   }
@@ -59,8 +58,7 @@ export async function GET(
   // stored photo through this server instead of a redirect to the store,
   // so the browser can draw it on a canvas to make it small for the AI.
   if (file.storageKey && new URL(request.url).searchParams.get("stream") === "1") {
-    const session = await auth();
-    if (session?.user?.organizationId !== file.organizationId) return new Response("Not found", { status: 404 });
+    if ((await activeOrganizationId()) !== file.organizationId) return new Response("Not found", { status: 404 });
     const streamed = await streamStoredFile(file.storageDriver, file.storageKey);
     if (!streamed) return new Response("Not found", { status: 404 });
     return new Response(streamed.body, {
@@ -162,8 +160,7 @@ async function proofPicture(token: string, variant: string | null) {
   const proof = await readProofPicture(token, variant === "thumb" || variant === "doc" ? variant : null);
   if (!proof) return new Response("Not found", { status: 404 });
   if (proof.draft) {
-    const session = await auth();
-    if (session?.user?.organizationId !== proof.organizationId) return new Response("Not found", { status: 404 });
+    if ((await activeOrganizationId()) !== proof.organizationId) return new Response("Not found", { status: 404 });
   } else if (!proof.active) {
     return new Response("Not found", { status: 404 });
   }

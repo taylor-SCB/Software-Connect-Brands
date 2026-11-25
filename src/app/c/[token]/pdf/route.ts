@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { renderPdf, baseUrlFromRequest, safeFilename, PdfTooLargeError } from "@/lib/pdf";
 
 export const runtime = "nodejs";
@@ -28,8 +28,7 @@ export async function GET(
   }
 
   if (contract.status === "DRAFT") {
-    const session = await auth();
-    if (session?.user?.organizationId !== contract.organizationId) {
+    if ((await activeOrganizationId()) !== contract.organizationId) {
       return new Response("Not found", { status: 404 });
     }
   }

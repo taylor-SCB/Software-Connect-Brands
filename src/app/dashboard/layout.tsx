@@ -9,6 +9,7 @@ import Link from "next/link";
 import { logout } from "./actions";
 import { themeFor } from "@/lib/theme";
 import { LookSwitch } from "@/components/look-switch";
+import { SessionWatch } from "@/components/session-watch";
 
 export default async function DashboardLayout({
   children,
@@ -47,6 +48,9 @@ export default async function DashboardLayout({
           floating menus, dialogs — which sit outside this shell and lost the
           tenant's colour. Server-rendered, so there is no flash, and gone
           when the dashboard is left. Only a plain hex colour is written. */}
+      {/* Signs this tab out by itself when its person is removed or the
+          workspace paused, without waiting for a click (Nov 25, 2026). */}
+      <SessionWatch userId={session.userId} />
       {brandOnBody && <style data-brand-on-body>{`body{--brand:${brandOnBody}}`}</style>}
       {/* The phone tab bar's height, for any bar that sits above it (audit,
           Nov 11, 2026): the contact page's Call / Text / Log bar reads it

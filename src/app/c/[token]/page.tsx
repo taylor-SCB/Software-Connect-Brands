@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { ContractDocument } from "@/components/contract-document";
 import { contractProofs } from "@/lib/proofs";
 import { IconDownload } from "@/components/icons";
@@ -45,8 +45,7 @@ export default async function PublicContractPage({
   // Drafts stay private; the owning team can still preview their own.
   let isOwnerPreview = false;
   if (contract.status === "DRAFT") {
-    const session = await auth();
-    isOwnerPreview = session?.user?.organizationId === contract.organization.id;
+    isOwnerPreview = (await activeOrganizationId()) === contract.organization.id;
     if (!isOwnerPreview) notFound();
   }
 
@@ -55,8 +54,7 @@ export default async function PublicContractPage({
   const proofs = await contractProofs(contract.id, contract.organization.id);
   // A cancelled contract's link stops working for the customer.
   if (contract.status === "CANCELLED" && !isOwnerPreview) {
-    const session = await auth();
-    if (session?.user?.organizationId !== contract.organization.id) notFound();
+    if ((await activeOrganizationId()) !== contract.organization.id) notFound();
   }
 
   return (

@@ -10,6 +10,7 @@ const STATUS_NOTICES: Record<string, string> = {
   pending: "Your workspace is still waiting to be approved.",
   paused: "This workspace has been paused. Get in touch and we'll sort it out.",
   rejected: "This workspace isn't active.",
+  removed: "This login was taken off its workspace. Ask the account owner if that's a mistake.",
 };
 
 export default async function LoginPage({

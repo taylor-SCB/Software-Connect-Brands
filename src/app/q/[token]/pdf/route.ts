@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { renderPdf, baseUrlFromRequest, safeFilename, PdfTooLargeError } from "@/lib/pdf";
 
 // Headless Chrome needs the Node runtime and more than the default budget.
@@ -30,8 +30,7 @@ export async function GET(
 
   // Same visibility rule as the page itself: drafts are owner-only.
   if (quote.status === "DRAFT") {
-    const session = await auth();
-    if (session?.user?.organizationId !== quote.organizationId) {
+    if ((await activeOrganizationId()) !== quote.organizationId) {
       return new Response("Not found", { status: 404 });
     }
   }

@@ -1,4 +1,4 @@
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { readArtworkPicture } from "@/lib/artwork";
 
 // The apparel pack: an artwork's picture, for the workspace's own people
@@ -6,8 +6,7 @@ import { readArtworkPicture } from "@/lib/artwork";
 // customer and the printer see proofs, never this. ?v=thumb or ?v=check.
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const session = await auth();
-  const organizationId = session?.user?.organizationId;
+  const organizationId = await activeOrganizationId();
   if (!organizationId || !id || id.length > 60) return new Response("Not found", { status: 404 });
   const variant = new URL(request.url).searchParams.get("v");
   const picture = await readArtworkPicture(organizationId, id, variant === "thumb" || variant === "check" ? variant : null);

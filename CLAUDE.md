@@ -1307,6 +1307,29 @@ Migration `20261112150000_planner_calendar_creator` adds the nullable
 column only. `planner.cjs` (21 steps, in the "ai" group) covers it;
 `load-test.cjs` times the page and the three previews at 200,000.
 
+**Removed means signed out (Nov 25, 2026).** Taylor removed a sales
+contractor and asked that an open tab force-log him out. Before this a
+removed person's tab kept its page until they clicked, Back brought pages
+back, and document links they had opened kept downloading on their old
+login cookie. Now `sessionState()` in `src/lib/session.ts` is the one
+answer to "is this browser still let in?", read from the database
+(removed, or the workspace not ACTIVE), never from the cookie alone:
+`requireSession`, `activeOrganizationId()` (the `/files` links, artwork
+files, and the owner's previews of draft quotes, contracts, their PDFs and
+ratesheets) and `/api/session` all use it. `SessionWatch`
+(`src/components/session-watch.tsx`, in the dashboard layout) asks
+`/api/session` when a tab opens, every minute while it is in view, on
+focus and on Back; a turned-away tab goes to `/session-ended`, a page whose
+form posts `endSession` at once: it wipes the login cookie and lands on
+`/login?status=removed` (or paused, pending, rejected) with the reason. It
+is a page, not a route handler, because a save's redirect is followed by
+the app's own navigation, which stalled on a route handler with the cookie
+still set. A link to `/session-ended` signs nobody out (the reason comes
+from the database; someone still let in goes back to the dashboard). If
+someone else has signed in on the browser since, the tab is drawn again for
+them. A tab already open on code from before this release only signs out
+on its next click. `removed-user.cjs` (12 steps, plain group) covers it.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 

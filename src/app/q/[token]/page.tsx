@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { activeOrganizationId } from "@/lib/session";
 import { QuoteDocument } from "@/components/quote-document";
 import { IconDownload } from "@/components/icons";
 import { linePicture, picturesFor } from "@/lib/product-images";
@@ -100,8 +100,7 @@ export default async function PublicQuotePage({
   // world — but the team that owns it can still preview their own work.
   let isOwnerPreview = false;
   if (quote.status === "DRAFT") {
-    const session = await auth();
-    isOwnerPreview = session?.user?.organizationId === quote.organization.id;
+    isOwnerPreview = (await activeOrganizationId()) === quote.organization.id;
     if (!isOwnerPreview) notFound();
   }
 
