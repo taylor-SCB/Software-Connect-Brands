@@ -10,6 +10,8 @@ import { claimActivities } from "@/app/dashboard/companies/actions";
 import { undoClaim } from "@/app/dashboard/companies/[id]/claim-actions";
 import type { CompanyPerson } from "@/components/company-people-picker";
 import { FormError } from "@/components/ui";
+import { SameBox } from "@/components/pipeline-ai/same-box";
+import type { PersonCandidate } from "@/lib/activity-ai-shared";
 
 const ACTIVITY_ICONS = {
   TEXT: IconMessage,
@@ -203,6 +205,8 @@ function ClaimBox({
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", email: "", phone: "" });
   const [error, setError] = useState<string | undefined>();
+  // People who look like the one being added (Pipeline AI plan, bug 1).
+  const [dupes, setDupes] = useState<PersonCandidate[] | null>(null);
   const [pending, start] = useTransition();
 
   const q = query.trim();
@@ -220,10 +224,15 @@ function ClaimBox({
       }
     });
 
-  const addNew = () =>
+  const addNew = (confirmed = false) =>
     start(async () => {
       setError(undefined);
-      const result = await quickAddContactToCompany({ companyId, ...draft });
+      const result = await quickAddContactToCompany({ companyId, ...draft, confirmed });
+      if (result.dupes) {
+        const found = result.dupes;
+        start(() => setDupes(found));
+        return;
+      }
       if (result.error || !result.contact) {
         setError(result.error ?? "Couldn't add that contact");
         return;
@@ -292,7 +301,10 @@ function ClaimBox({
         <div className="grid gap-2 sm:grid-cols-[1fr_1fr_8rem_auto]">
           <input
             value={draft.name}
-            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+            onChange={(event) => {
+              setDupes(null);
+              setDraft({ ...draft, name: event.target.value });
+            }}
             placeholder="Name"
             aria-label="New contact name"
             maxLength={120}
@@ -301,7 +313,10 @@ function ClaimBox({
           />
           <input
             value={draft.email}
-            onChange={(event) => setDraft({ ...draft, email: event.target.value })}
+            onChange={(event) => {
+              setDupes(null);
+              setDraft({ ...draft, email: event.target.value });
+            }}
             placeholder="Email · optional"
             aria-label="New contact email"
             type="email"
@@ -309,16 +324,28 @@ function ClaimBox({
           />
           <input
             value={draft.phone}
-            onChange={(event) => setDraft({ ...draft, phone: event.target.value })}
+            onChange={(event) => {
+              setDupes(null);
+              setDraft({ ...draft, phone: event.target.value });
+            }}
             placeholder="Phone · optional"
             aria-label="New contact phone"
             type="tel"
             className="input input-sm"
           />
-          <button type="button" onClick={addNew} disabled={pending || !draft.name.trim()} className="btn btn-primary btn-sm" data-testid="claim-add-save">
+          <button type="button" onClick={() => addNew()} disabled={pending || !draft.name.trim()} className="btn btn-primary btn-sm" data-testid="claim-add-save">
             {pending ? "Adding…" : "Add and claim"}
           </button>
         </div>
+      )}
+      {adding && dupes && (
+        <SameBox
+          what="person"
+          said={draft.name.trim()}
+          rows={dupes.map((row) => ({ id: row.id, line: [row.name, row.companyName, row.email, row.phone].filter(Boolean).join(" · "), reason: row.reason }))}
+          onUse={(id) => claim(id)}
+          onNew={() => addNew(true)}
+        />
       )}
       <FormError message={error} />
       {pending && !adding && <p className="faint text-xs">Moving…</p>}

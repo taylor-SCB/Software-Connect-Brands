@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { IconCheck, IconPlus, IconSearch, IconX } from "@/components/icons";
 import { useSearch } from "@/lib/use-search";
 import { quickAddContactToCompany } from "@/app/dashboard/contacts/account-actions";
+import { SameBox } from "@/components/pipeline-ai/same-box";
+import type { PersonCandidate } from "@/lib/activity-ai-shared";
 
 export type CompanyPerson = { id: string; name: string; email: string | null; phone: string | null };
 
@@ -43,6 +45,8 @@ export function CompanyPeoplePicker({
   const [made, setMade] = useState<CompanyPerson[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [pending, start] = useTransition();
+  // People who look like the one being added (Pipeline AI plan, bug 1).
+  const [dupes, setDupes] = useState<PersonCandidate[] | null>(null);
 
   const q = query.trim();
   const { results } = useSearch<CompanyPerson>(q ? `/dashboard/contacts/search?companyId=${companyId}&q=${encodeURIComponent(q)}` : null);
@@ -62,21 +66,42 @@ export function CompanyPeoplePicker({
     update(next, false);
   }
 
-  function addNew() {
+  function addNew(confirmed = false) {
     setError(undefined);
     start(async () => {
-      const result = await quickAddContactToCompany({ companyId, ...draft });
+      const result = await quickAddContactToCompany({ companyId, ...draft, confirmed });
+      if (result.dupes) {
+        const found = result.dupes;
+        start(() => setDupes(found));
+        return;
+      }
       if (result.error || !result.contact) {
         setError(result.error ?? "Couldn't add that contact");
         return;
       }
       const person = result.contact;
-      setMade((prev) => [person, ...prev]);
-      update(new Map(picked).set(person.id, person), false);
-      setDraft({ name: "", email: "", phone: "" });
-      setAdding(false);
-      setQuery("");
+      start(() => {
+        setMade((prev) => [person, ...prev]);
+        update(new Map(picked).set(person.id, person), false);
+        setDraft({ name: "", email: "", phone: "" });
+        setAdding(false);
+        setDupes(null);
+        setQuery("");
+      });
     });
+  }
+
+  // "Use them": tick the person already here instead of adding another.
+  function useExisting(id: string) {
+    const row = dupes?.find((each) => each.id === id);
+    if (!row) return;
+    const person: CompanyPerson = { id: row.id, name: row.name, email: row.email, phone: row.phone };
+    setMade((prev) => [person, ...prev.filter((each) => each.id !== person.id)]);
+    update(new Map(picked).set(person.id, person), false);
+    setDraft({ name: "", email: "", phone: "" });
+    setAdding(false);
+    setDupes(null);
+    setQuery("");
   }
 
   return (
@@ -168,7 +193,10 @@ export function CompanyPeoplePicker({
         <div className="grid gap-2 sm:grid-cols-[1fr_1fr_8rem_auto_auto]" data-testid="company-person-new">
           <input
             value={draft.name}
-            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+            onChange={(event) => {
+              setDupes(null);
+              setDraft({ ...draft, name: event.target.value });
+            }}
             placeholder="Name"
             aria-label="New contact name"
             maxLength={120}
@@ -184,7 +212,10 @@ export function CompanyPeoplePicker({
           />
           <input
             value={draft.email}
-            onChange={(event) => setDraft({ ...draft, email: event.target.value })}
+            onChange={(event) => {
+              setDupes(null);
+              setDraft({ ...draft, email: event.target.value });
+            }}
             placeholder="Email · optional"
             aria-label="New contact email"
             type="email"
@@ -192,19 +223,39 @@ export function CompanyPeoplePicker({
           />
           <input
             value={draft.phone}
-            onChange={(event) => setDraft({ ...draft, phone: event.target.value })}
+            onChange={(event) => {
+              setDupes(null);
+              setDraft({ ...draft, phone: event.target.value });
+            }}
             placeholder="Phone · optional"
             aria-label="New contact phone"
             type="tel"
             className="input input-sm"
           />
-          <button type="button" onClick={addNew} disabled={pending || !draft.name.trim()} className="btn btn-primary btn-sm" data-testid="company-person-save">
+          <button type="button" onClick={() => addNew()} disabled={pending || !draft.name.trim()} className="btn btn-primary btn-sm" data-testid="company-person-save">
             {pending ? "Adding…" : "Add"}
           </button>
-          <button type="button" onClick={() => setAdding(false)} aria-label="Cancel new contact" className="btn btn-ghost btn-sm">
+          <button
+            type="button"
+            onClick={() => {
+              setAdding(false);
+              setDupes(null);
+            }}
+            aria-label="Cancel new contact"
+            className="btn btn-ghost btn-sm"
+          >
             <IconX size={12} />
           </button>
         </div>
+      )}
+      {adding && dupes && (
+        <SameBox
+          what="person"
+          said={draft.name.trim()}
+          rows={dupes.map((row) => ({ id: row.id, line: [row.name, row.companyName, row.email, row.phone].filter(Boolean).join(" · "), reason: row.reason }))}
+          onUse={useExisting}
+          onNew={() => addNew(true)}
+        />
       )}
       {bypass && (
         <p className="faint text-xs" data-testid="company-bypass-note">

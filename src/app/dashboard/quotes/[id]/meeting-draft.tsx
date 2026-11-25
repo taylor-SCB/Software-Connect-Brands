@@ -2,13 +2,25 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { IconSparkles } from "@/components/icons";
-import { draftQuoteLines, type DraftedLine } from "../ai-actions";
+import { draftQuoteLines, draftQuoteLinesFromLog, type DraftedLine } from "../ai-actions";
 
 // "Draft lines from the meeting" (Nov 10, 2026): asks for lines drawn
 // from the opportunity's meeting notes and hands them to the editor,
 // which adds them unsaved for review. `auto` runs it once on arrival, when
-// the person ticked it on the Pipeline's Build Quote.
-export function MeetingDraftButton({ quoteId, auto, onLines }: { quoteId: string; auto: boolean; onLines: (lines: DraftedLine[]) => void }) {
+// the person ticked it on the Pipeline's Build Quote. With `fromBatch`
+// (Activity AI's Build Quote, Nov 25, 2026) it drafts from the words that
+// save logged instead, and says so.
+export function MeetingDraftButton({
+  quoteId,
+  auto,
+  fromBatch = null,
+  onLines,
+}: {
+  quoteId: string;
+  auto: boolean;
+  fromBatch?: string | null;
+  onLines: (lines: DraftedLine[]) => void;
+}) {
   const [pending, start] = useTransition();
   const [message, setMessage] = useState<{ error?: string; info?: string }>({});
   const ran = useRef(false);
@@ -16,7 +28,7 @@ export function MeetingDraftButton({ quoteId, auto, onLines }: { quoteId: string
   function run() {
     setMessage({});
     start(async () => {
-      const result = await draftQuoteLines(quoteId);
+      const result = fromBatch ? await draftQuoteLinesFromLog(quoteId, fromBatch) : await draftQuoteLines(quoteId);
       if ("error" in result) {
         setMessage({ error: result.error });
         return;
@@ -25,7 +37,7 @@ export function MeetingDraftButton({ quoteId, auto, onLines }: { quoteId: string
       const typed = result.lines.filter((line) => line.kind === "typed").length;
       const parts = [
         result.lines.length === 0
-          ? "Nothing in the notes to add."
+          ? `Nothing in ${fromBatch ? "your words" : "the notes"} to add.`
           : `Added ${result.lines.length} ${result.lines.length === 1 ? "line" : "lines"} below. Check them, then Save.`,
         typed ? `${typed} ${typed === 1 ? "needs a price" : "need prices"}.` : "",
         result.dropped
@@ -52,7 +64,7 @@ export function MeetingDraftButton({ quoteId, auto, onLines }: { quoteId: string
     <span className="inline-flex flex-wrap items-center gap-2">
       <button type="button" onClick={run} disabled={pending} className="btn btn-ghost btn-sm" data-testid="quote-draft-meeting">
         <IconSparkles size={13} />
-        {pending ? "Reading the meeting…" : "Draft lines from the meeting"}
+        {pending ? (fromBatch ? "Reading your words…" : "Reading the meeting…") : fromBatch ? "Draft lines from what you said" : "Draft lines from the meeting"}
       </button>
       {message.error && (
         <span className="text-xs text-[var(--danger)]" data-testid="quote-draft-error">

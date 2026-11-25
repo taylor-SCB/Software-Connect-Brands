@@ -18,12 +18,16 @@ export function UndoToast({
   saved,
   onDone,
   onUndone,
+  undo,
 }: {
   saved: { batchId: string; words: string; href?: string | null; hrefLabel?: string; at: number } | null;
   // The ten seconds are up, or it was closed.
   onDone: () => void;
   // Undo worked; the sheet may want to reopen what was saved.
   onUndone?: () => void;
+  // Takes the save back some other way than undoLog(batchId): Activity AI's
+  // cards also take back the contacts and companies they made (Nov 25, 2026).
+  undo?: () => Promise<{ success?: string; error?: string }>;
 }) {
   const router = useRouter();
   const [state, setState] = useState<{ batchId: string | null; text: string | null; error?: string }>({ batchId: null, text: null });
@@ -65,12 +69,12 @@ export function UndoToast({
             disabled={pending}
             onClick={() =>
               start(async () => {
-                const result = await undoLog(saved.batchId);
+                const result = undo ? await undo() : await undoLog(saved.batchId);
                 if (result.error) {
                   setState({ batchId: saved.batchId, text: null, error: result.error });
                   return;
                 }
-                setState({ batchId: saved.batchId, text: "Undone" });
+                setState({ batchId: saved.batchId, text: result.success && undo ? result.success : "Undone" });
                 router.refresh();
                 onUndone?.();
               })

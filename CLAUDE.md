@@ -1330,6 +1330,82 @@ someone else has signed in on the browser since, the tab is drawn again for
 them. A tab already open on code from before this release only signs out
 on its next click. `removed-user.cjs` (12 steps, plain group) covers it.
 
+**Pipeline AI, Release 1: Activity AI (Nov 25, 2026; plan: the "Pipeline
+AI Plan" artifact, claude.ai/artifact/CkFYv3W3hfx8UA2ZZoZzff).** Taylor's
+framework: one bar on the Pipeline that takes typed or spoken words
+(Activity AI) and, in Release 2, an uploaded quote (Quote Upload AI); both
+may create contacts and companies after a duplicate check. He took every
+recommendation on Nov 25, 2026 ("go with your recs and order"), so these
+are settled: (1) uploads are the business's own quotes to customers, sell
+prices; a supplier's quote is Release 4's AI ratesheet upload; (2) an
+uploaded quote already sent lands at Quote Sent, otherwise Draft; accepted
+or signed ones wait; (3) products made from a quote are Active at the
+quote's price with no cost, flagged "No cost yet"; tax, shipping and
+discount lines never become products; (4) a contact or company the AI
+creates gets the person logging it as its rep, changeable on the card (the
+first exception to the Nov 10 "nothing sets a rep on its own" rule);
+(5) words about the future book a meeting or put a call on the calendar,
+and nothing else is ever added ("no follow up logic"); (6) a deal may start
+off a call with no meeting, the way Add deal does; (7) two things in one
+sentence are two cards, saved one at a time; (8) the bar is on the
+Pipeline and behind a ✦ in the phone's top bar on every page; My day keeps
+the Planner box; (9) notes, Personal ones included, are cards too; (10)
+every product gets a Source from Release 2 on, with a filter; (11) new
+quotes start with Settings' payment terms (Release 2); (12) Quote from a
+sentence: Build Quote drafts priced lines from the words; (13) bulk upload
+of old quotes comes later. Build order: Activity AI, then Quote Upload AI.
+**What Release 1 is**: the bar (`src/components/pipeline-ai/
+pipeline-ai-bar.tsx`, above the Pipeline's filters and on an empty board;
+`pipeline-ai-phone.tsx` is the ✦ sheet in `dashboard/layout.tsx`, closing
+when the page changes) takes words or the mic (`MicButton`, now with a
+`testId`). `readActivityWords` (`deals/activity-ai-actions.ts`, kind
+`ACTIVITY_AI`, 400 a day) asks Claude for businesses, people and entries
+(`answerSchema`, `activitySystemPrompt`, `activityPrompt` with three weeks
+of dates around today, in `src/lib/activity-ai.ts`), and `checkAnswer`
+throws out anything not in the words (a name or business whose words weren't
+said, an email or phone not said, an outcome not of its type, a number in
+the notes, which then keep the words as said; a value is checked with
+"grand" read as thousand) and fixes the kind by the day (a LOG ahead
+becomes BOOK or SCHEDULE; a business alone is always a try, Front desk on a
+call). People and businesses are found by the app, not the AI
+(`matchCompanies`, `matchPeople`: email, phone's last 10 digits, the exact
+name at the same business, a name with "LLC/Inc/Co" dropped, website,
+phone; a first name at the business; a first name alone is only ever
+offered). A strong match is Found; two equally good name matches, or only
+weak ones, open the "Is this the same person?" box (`same-box.tsx`) and
+Save waits on it. People and businesses are shared by every card from the
+sentence (Sue picked once is Sue on the next card; one made by a save is
+Found on the rest). `saveActivityCard` checks new ones again unless the box
+was answered (`pick.confirmed`), makes businesses then people (Added by and
+rep set), and saves through the existing doors only: `logActivity` by
+FormData for LOG and SCHEDULE (company-only with `bypass=1`), `bookMeeting`
+(opportunity "auto") for BOOK, Note rows for NOTE. A deal (LOG with a
+person, not a no-show or Not interested): off a held meeting it is that
+tile's `convertOpportunity`; off a call, text or email it is Add deal's path
+(`ensureOpportunityForDeal`, its ladder rows joined to the save) then
+`convertOpportunity` for a price given (Quote Sent at that value), joined to
+the save (`batchId`) so its Undo takes the deal back. Never a second deal
+on a tile that has one, and never off a call while the person's tile has
+its meeting still to come (converting would mark that meeting held); the
+card says which and sends no deal past it (`dealAllowed`). Build Quote
+starts the quote (`startQuoteForDeal`) and opens it at
+`?draft=words&from=<batchId>`, where `MeetingDraftButton` (`fromBatch`)
+runs `draftQuoteLinesFromLog`: that save's own words, the meeting draft's
+rules (catalog prices only, "Price needed" otherwise; `draftLinesFrom` in
+`quotes/ai-actions.ts` is now shared). **Undo**: a save's toast carries a
+signed token (`src/lib/activity-ai-token.ts`, 30 minutes) and
+`undoActivityCard` runs `undoLogCore` on the batch, deletes its notes, then
+each contact and company it made while nothing else is on it (every
+relation counted); `UndoToast` takes an `undo` prop for this and is keyed
+by the token. Build Quote offers no Undo (the quote is made; Delete quote is
+the way back). **Bug fixes from the plan**: "Add New Contact" on a company
+page's log form and in the claim box asks about look-alikes first
+(`quickAddContactToCompany` returns `dupes` unless `confirmed`; bug 1), and
+`askClaude` gives the day's allowance back when the AI service never
+answered (a timeout, a rate limit, an outage; a refusal or a cut-off answer
+still counts; bug 6). No schema change: Instant Rollback stays safe.
+`pipeline-ai-activity.cjs` (ai group) covers it.
+
 See `README.md` for how those work and `DEPLOY.md` for anything to do with
 the live site.
 
@@ -1351,6 +1427,26 @@ The same clock applies to the gaps below. They are not urgent this week; they
 are all blocking before the first paying customer.
 
 ## Known gaps — say so rather than implying otherwise
+
+- **Activity AI was tested against a stand-in Claude only** (Nov 25,
+  2026). The first real readings are on the live site, on the site's key
+  (about 2 cents each, 400 a workspace a day). A sentence that names
+  nobody gets "I couldn't tell who that was with".
+- **Activity AI books on whichever open tile the person is on**
+  (`bookMeeting` "auto"), like the Book meeting sheet's default; there is
+  no tile picker on the card.
+- **An Activity AI deal never starts off a call while the person's tile has
+  a meeting still to come**, and never a second deal on a tile with one.
+  The card says so; the tile is converted from the Pipeline after the
+  meeting.
+- **Build Quote from the bar has no Undo**: the deal and its quote are
+  made and the quote opens. Delete quote on the quote page is the way back.
+- **Nothing marks an activity as logged by AI.** It counts exactly like a
+  typed one; AI use is counted per workspace in `AiRequest` (kind
+  `ACTIVITY_AI`), which is what billing would meter.
+- **Closing the phone's ✦ sheet ends its toast**, so Undo is gone with it.
+- **Quote Upload AI (Release 2) isn't built yet.** The bar has no upload
+  button until it is.
 
 - **The Stats forecast never says how it did.** Past forecasts aren't
   saved, so Custom dates wholly behind today count what happened but
@@ -2021,6 +2117,15 @@ seeds and sends paperwork now gets calendar entries written for it, so
 calendar suite's first-row read picked up "Contract sent" instead of the
 install it booked.
 
+**Pipeline AI's suite (Nov 25, 2026)**: `pipeline-ai-activity.cjs` (20
+steps, in the `ai` group; it starts a keyless server on `NOAI_PORT`, default
+3131, for its AI-off step) answers as Claude through `fake-claude.cjs`
+(`ACTIVITY_AI`, `QUOTE_DRAFT`). A card's people and businesses are keyed by
+their place in the kept lists, so a name the check drops moves the next one
+up to `p0`. **A suite that adds a contact on a company page with a name
+like one already there now gets the "Is this the same person?" box**
+(`pai-same`, `pai-same-use`, `pai-same-new`) and must answer it.
+
 **The AI release's suites (Nov 12, 2026)**: `ai-release-a.cjs` (36 since Nov 13),
 `ai-release-b.cjs` (34; runs `scripts/contract-checks-check.ts` first) and
 `ai-release-c.cjs` (29) answer as Claude through
@@ -2032,7 +2137,7 @@ prompt text: `claude.reply(kind, value)`, `refuse`, `cutOff`, `garbage`,
 so an answer whose own JSON has a `text` key goes as
 `{ text: JSON.stringify(value), stop: "end_turn" }`. Each starts its own
 keyless server from the same build for its "AI off" steps (`NOAI_PORT`
-3116, 3117 and 3127). Run them with `run-suites.sh "ai:ai-assist,ai-release-a,ai-release-b,ai-release-c,apparel-pack"`.
+3116, 3117 and 3127). Run them with `run-suites.sh "ai:ai-assist,ai-release-a,ai-release-b,ai-release-c,apparel-pack,planner,pipeline-ai-activity"`.
 Release A's suite fakes speech with an init script defining
 `window.webkitSpeechRecognition` (`FAKE_SPEECH`). A suite that sends a
 contract waits for the send to land (Mark signed, or the database), never

@@ -37,7 +37,17 @@ const MicGlyph = ({ size = 14 }: { size?: number }) => (
 // Sent to the notes box to stop listening (Fill it in does).
 export const MIC_STOP = "scb-mic-stop";
 
-export function MicButton({ target, onWords, disabled }: { target: RefObject<HTMLTextAreaElement | null>; onWords: (text: string) => void; disabled?: boolean }) {
+export function MicButton({
+  target,
+  onWords,
+  disabled,
+  testId = "log-mic",
+}: {
+  target: RefObject<HTMLTextAreaElement | null>;
+  onWords: (text: string) => void;
+  disabled?: boolean;
+  testId?: string;
+}) {
   const [listening, setListening] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const live = useRef<Recognition | null>(null);
@@ -113,14 +123,14 @@ export function MicButton({ target, onWords, disabled }: { target: RefObject<HTM
         disabled={disabled}
         aria-pressed={listening}
         className={`btn btn-sm min-h-11 sm:min-h-0 ${listening ? "btn-primary" : "btn-ghost"}`}
-        data-testid="log-mic"
+        data-testid={testId}
         data-listening={listening ? "" : undefined}
       >
         <MicGlyph size={13} />
         {listening ? "Listening… tap to stop" : "Say it"}
       </button>
       {hint && (
-        <span className="faint text-xs" role="status" data-testid="log-mic-hint">
+        <span className="faint text-xs" role="status" data-testid={`${testId}-hint`}>
           {hint}
         </span>
       )}

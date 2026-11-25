@@ -53,10 +53,10 @@ export default async function QuoteBuilderPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ draft?: string }>;
+  searchParams: Promise<{ draft?: string; from?: string }>;
 }) {
   const { id } = await params;
-  const { draft: draftParam } = await searchParams;
+  const { draft: draftParam, from: fromParam } = await searchParams;
   const { organizationId } = await requireSession();
 
   const timeZone = await getTimeZone();
@@ -367,7 +367,16 @@ export default async function QuoteBuilderPage({
             serviceTypes={serviceTypes}
             suppliers={suppliers}
             platformSuppliers={platformSuppliers}
-            meetingDraft={fromOpportunity ? { auto: draftParam === "meeting" && quote.lineItems.length === 0 } : null}
+            meetingDraft={
+              fromOpportunity
+                ? {
+                    auto: (draftParam === "meeting" || (draftParam === "words" && Boolean(fromParam))) && quote.lineItems.length === 0,
+                    // Activity AI's Build Quote (Pipeline AI, Nov 25, 2026): the
+                    // lines come from the words that save logged.
+                    fromBatch: draftParam === "words" && typeof fromParam === "string" ? fromParam.slice(0, 200) : null,
+                  }
+                : null
+            }
             siteWalk={siteWalkOn ? { photos: siteWalkPhotos } : null}
           />
         </Card>

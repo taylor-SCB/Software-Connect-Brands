@@ -10,6 +10,8 @@ import { logout } from "./actions";
 import { themeFor } from "@/lib/theme";
 import { LookSwitch } from "@/components/look-switch";
 import { SessionWatch } from "@/components/session-watch";
+import { PipelineAiPhoneButton } from "@/components/pipeline-ai/pipeline-ai-phone";
+import { aiConfigured } from "@/lib/ai";
 
 export default async function DashboardLayout({
   children,
@@ -138,6 +140,7 @@ export default async function DashboardLayout({
           the top of the screen too. The tab bar stays. */}
       <div className="relative z-30 flex items-center gap-2 border-b border-[var(--hairline-3)] bg-[var(--bg)] px-3 py-2 lg:hidden" data-testid="phone-top-bar">
         <p className="min-w-0 flex-1 truncate text-sm font-semibold">{organization.name}</p>
+        {aiConfigured() && <PipelineAiPhoneButton />}
         <GlobalSearch className="btn btn-ghost btn-sm h-11 w-11 shrink-0 !p-0" testId="phone-search" />
         <Link href="/dashboard/settings/account" className="flex h-11 w-11 shrink-0 items-center justify-center" aria-label="My Account">
           <Avatar url={session.avatarUrl} name={session.name} size={30} round />

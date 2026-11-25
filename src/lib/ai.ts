@@ -68,9 +68,10 @@ function toBlocks(parts: AiPart[]): ContentBlock[] | { error: string } {
 
 export type AiResult<T> = { data: T } | { error: string };
 
-// Takes one of the day's allowance for this kind, or says it is used up.
-// Each request counts the rows up to its own, so two at once on the last
-// one give it to exactly one; the loser's row is taken back.
+// Takes one of the day's allowance for this kind, or says it is used up
+// (null). Each request counts the rows up to its own, so two at once on the
+// last one give it to exactly one; the loser's row is taken back. Returns
+// the row, so a request the AI service never answered can give it back.
 async function takeAllowance(organizationId: string, userId: string | null, kind: string, perDay: number) {
   const row = await prisma.aiRequest.create({ data: { organizationId, userId, kind }, select: { id: true, createdAt: true } });
   const used = await prisma.aiRequest.count({
@@ -78,9 +79,17 @@ async function takeAllowance(organizationId: string, userId: string | null, kind
   });
   if (used > perDay) {
     await prisma.aiRequest.delete({ where: { id: row.id } });
-    return false;
+    return null;
   }
-  return true;
+  return row.id;
+}
+
+// The AI service didn't answer (a timeout, a rate limit, an outage): that
+// request used nothing, so it doesn't count against the day (Pipeline AI
+// plan, bug 6, Nov 25, 2026). An answer that came back, even a refusal or a
+// cut-off one, was paid for and still counts.
+async function giveBackAllowance(id: string) {
+  await prisma.aiRequest.deleteMany({ where: { id } }).catch(() => null);
 }
 
 export async function askClaude<S extends z.ZodType>(input: {
@@ -102,7 +111,8 @@ export async function askClaude<S extends z.ZodType>(input: {
   if (!aiConfigured()) return { error: "AI isn't switched on for this site yet." };
   const content = typeof input.prompt === "string" ? input.prompt : toBlocks(input.prompt);
   if (typeof content !== "string" && "error" in content) return { error: content.error };
-  if (!(await takeAllowance(input.organizationId, input.userId ?? null, input.kind, input.perDay))) {
+  const allowance = await takeAllowance(input.organizationId, input.userId ?? null, input.kind, input.perDay);
+  if (!allowance) {
     return { error: "Today's AI allowance for this is used up. It resets over the next 24 hours." };
   }
   const endpoint = process.env.ANTHROPIC_ENDPOINT || undefined;
@@ -132,6 +142,7 @@ export async function askClaude<S extends z.ZodType>(input: {
       return { error: "The AI's answer came back unreadable. Try again." };
     }
   } catch (error) {
+    await giveBackAllowance(allowance);
     if (error instanceof Anthropic.RateLimitError) return { error: "Too many AI requests just now. Try again in a minute." };
     if (error instanceof Anthropic.APIConnectionTimeoutError) return { error: "The AI took too long to answer. Try again." };
     if (error instanceof Anthropic.APIError) return { error: "The AI service didn't answer. Try again." };

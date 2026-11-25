@@ -43,6 +43,10 @@ export const AI_DAILY_CAPS = {
   ARTWORK_CHECK: 100, // does an uploaded logo look like a famous brand's, about 1 cent; a warning only
   // Planner AI (Nov 12, 2026): a description of leads turned into filter chips, under 1 cent.
   PLANNER_FILTERS: 150,
+  // Pipeline AI (Nov 25, 2026). Activity AI: a typed or spoken sentence read
+  // into cards to log, book, schedule or note, about 2 cents (about $8 a
+  // workspace a day at most).
+  ACTIVITY_AI: 400,
 } as const;
 
 // How much meeting text one request carries at most.

@@ -23,6 +23,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { PipelineBoard, type BoardTile } from "./pipeline-board";
 import { PipelineFilters } from "./pipeline-filters";
 import { PipelineMore } from "./pipeline-more";
+import { PipelineAiBar } from "@/components/pipeline-ai/pipeline-ai-bar";
 import { groupOf, meetingFocus, meetingSortKey, tileAction, tileLine, type TileMeeting } from "./tile-line";
 
 // The Pipeline (Sept 30, 2026; one tile per opportunity since Oct 27,
@@ -343,6 +344,10 @@ export default async function DealsPage({
         subtitle={`${inMeetings.toLocaleString()} in meetings · ${formatCents(openValue)} in quotes and contracts out`}
         actions={<PipelineMore showArchived={showArchived} archivedCount={archivedCount} />}
       />
+
+      {/* Pipeline AI (Nov 25, 2026): type or say what happened. Shown on an
+          empty board too, so a new workspace can start its Pipeline here. */}
+      {aiConfigured() && <PipelineAiBar />}
 
       {anyAtAll === 0 ? (
         <Card lit>

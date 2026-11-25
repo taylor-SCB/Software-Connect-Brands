@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { findOrCreateCompany, normalizeState } from "@/lib/companies";
+import { matchPeople } from "@/lib/activity-ai";
+import type { PersonCandidate } from "@/lib/activity-ai-shared";
 
 // "+ Additional Account" and the company page's Add person search: one
 // person tied to more than one business. The contact's own `company` is
@@ -136,18 +138,34 @@ const quickSchema = z.object({
 // "+ Add new contact" inside the company page's activity form: a person
 // made on the spot at this company, handed back so the form can tick
 // them straight away. The rest of their details wait for their own page.
+// Someone who looks like a person already here (the same email or phone,
+// the same name at this company or elsewhere, or a first name at this
+// company) is handed back as `dupes` first, unless `confirmed` says the
+// "Is this someone you already have?" box was answered "No, add new"
+// (Pipeline AI plan, bug 1, Nov 25, 2026: two Bob Smiths at Acme happened
+// without anyone being asked).
 export async function quickAddContactToCompany(input: {
   companyId: string;
   name: string;
   email?: string;
   phone?: string;
-}): Promise<{ error?: string; contact?: { id: string; name: string; email: string | null; phone: string | null } }> {
+  confirmed?: boolean;
+}): Promise<{ error?: string; dupes?: PersonCandidate[]; contact?: { id: string; name: string; email: string | null; phone: string | null } }> {
   const { organizationId, userId } = await requireSession();
   const parsed = quickSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the new contact's details" };
 
   const company = await prisma.company.findFirst({ where: { id: parsed.data.companyId, organizationId }, select: { id: true } });
   if (!company) return { error: "Company not found" };
+
+  if (input.confirmed !== true) {
+    const [match] = await matchPeople(
+      organizationId,
+      [{ key: "p0", name: parsed.data.name, title: null, email: parsed.data.email || null, phone: parsed.data.phone || null, companyKey: "c0" }],
+      new Map([["c0", [company.id]]]),
+    );
+    if (match?.candidates.length) return { dupes: match.candidates };
+  }
 
   const contact = await prisma.contact.create({
     data: {
