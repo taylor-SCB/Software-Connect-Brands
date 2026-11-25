@@ -2396,6 +2396,10 @@ what is still open is in Known gaps. Lessons worth keeping:
   `EXISTS` / `NOT EXISTS`** (`my-day/load.ts`, 3.8 s → 0.13 s), or
   aggregated once with a UNION ALL (`gone-quiet.ts`). Otherwise every join
   onto it becomes a per-row loop.
+- **quotes-improvement step 54 ("the Save bar is at the foot of the window")
+  failed once in a full run and passed alone** (Nov 25, 2026): it measures
+  the bar straight after `goto` without `settle()`. Move it onto `settle()`
+  when the suite is next touched.
 - **pipeline-opportunities step 19 (a drag to Quote Sent) can time out once**
   with "element is not stable": the board scrolls sideways under the
   drag. It passes when run again; a person's drag isn't affected.
